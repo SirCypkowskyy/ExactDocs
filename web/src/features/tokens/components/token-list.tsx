@@ -1,7 +1,6 @@
 import type { ColumnDef, FilterFn, SortingFn } from "@tanstack/react-table";
 import { CircleX, Clock, Infinity as Endless } from "lucide-react";
-import { formatNumber, type Language, useLanguage, useMessages } from "@/shared/lib/i18n";
-import { absoluteTimeWithZone } from "@/shared/lib/time";
+import { formatNumber, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { useNow } from "@/shared/lib/use-now";
 import { cn } from "@/shared/lib/utils";
 import { Badge } from "@/shared/ui/badge";
@@ -9,7 +8,6 @@ import { Button } from "@/shared/ui/button";
 import { MonoCopy, RelativeTime } from "@/shared/ui/data-table/cells";
 import type { TableFilter } from "@/shared/ui/data-table/use-data-table";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
-import { Tooltip } from "@/shared/ui/tooltip";
 import { messages } from "../messages";
 import {
   expiryOf,
@@ -90,41 +88,6 @@ function LibrariesCell({ token }: { token: Token }) {
   );
 }
 
-const HOUR = 3_600_000;
-const DAY = 24 * HOUR;
-
-/** "in 3 hours", "tomorrow", "in 12 days", "in 3 months" ("za 12 dni"): how far off a time is. */
-function untilText(iso: string, now: number, language: Language): string {
-  const relative = new Intl.RelativeTimeFormat(language, { numeric: "auto" });
-  const ms = Math.max(0, Date.parse(iso) - now);
-  if (ms < DAY) return relative.format(Math.max(1, Math.floor(ms / HOUR)), "hour");
-  const days = Math.floor(ms / DAY);
-  if (days <= 60) return relative.format(days, "day");
-  if (days < 365) return relative.format(Math.floor(days / 30), "month");
-  return relative.format(Math.floor(days / 365), "year");
-}
-
-/**
- * A time ahead, like the kit's RelativeTime (which only looks back): relative, with the exact time
- * and its zone in the tooltip, the accessible name and `dateTime`.
- */
-function Until({ iso }: { iso: string }) {
-  const now = useNow();
-  const language = useLanguage();
-  const until = untilText(iso, now, language);
-  const exact = absoluteTimeWithZone(iso, language);
-  return (
-    <Tooltip label={exact}>
-      <time dateTime={iso} className="whitespace-nowrap">
-        <span aria-hidden="true">{until}</span>
-        <span className="sr-only">
-          {until}, {exact}
-        </span>
-      </time>
-    </Tooltip>
-  );
-}
-
 /** When it stops working: "in 12 days", a warning pill within a week, "Expired", or no expiry. */
 function ExpiresCell({ token }: { token: Token }) {
   const t = useMessages(messages).list;
@@ -149,11 +112,11 @@ function ExpiresCell({ token }: { token: Token }) {
     return (
       <Badge tone="warning">
         <Clock aria-hidden="true" className="size-3" />
-        <Until iso={at} />
+        <RelativeTime iso={at} future />
       </Badge>
     );
   }
-  return <Until iso={at} />;
+  return <RelativeTime iso={at} future />;
 }
 
 /** The name, muted once the token has expired. */

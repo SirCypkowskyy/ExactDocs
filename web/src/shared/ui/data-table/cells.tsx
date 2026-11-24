@@ -32,18 +32,24 @@ import { Tooltip } from "../tooltip";
  * pills with an icon, times relative with the exact time one hover (or the accessible name) away.
  */
 
-/** "3 days ago"; the exact time with its zone in the tooltip, the accessible name and `dateTime`. */
+/**
+ * "3 days ago" ("in 12 days" with `future`, for an expiry); the exact time with its zone in the
+ * tooltip, the accessible name and `dateTime`.
+ */
 export function RelativeTime({
   iso,
   empty = "–",
+  future = false,
 }: {
   iso: string | null | undefined;
   empty?: string;
+  /** A time ahead: "in 3 days", "tomorrow". */
+  future?: boolean;
 }) {
   const now = useNow();
   const language = useLanguage();
   if (!iso) return <span className="text-muted-foreground">{empty}</span>;
-  const relative = relativeTime(iso, now, language);
+  const relative = relativeTime(iso, now, language, { future });
   const exact = absoluteTimeWithZone(iso, language);
   return (
     <Tooltip label={exact}>

@@ -67,4 +67,20 @@ describe("relativeTime", () => {
     expect(relativeTime("2026-11-20T12:00:00Z", now, "pl")).toBe("3 dni temu");
     expect(relativeTime("2026-11-20T12:00:00Z", now, "en")).toBe("3 days ago");
   });
+
+  it("reads a time a little ahead as just now, unless asked to look ahead", () => {
+    expect(relativeTime("2026-11-23T12:05:00Z", now, "en")).toBe("just now");
+    const ahead = (iso: string, language: "en" | "pl" = "en") =>
+      relativeTime(iso, now, language, { future: true });
+    expect(ahead("2026-11-23T12:00:20Z")).toBe("in a moment");
+    expect(ahead("2026-11-23T11:00:00Z")).toBe("in a moment");
+    expect(ahead("2026-11-23T12:10:00Z")).toBe("in 10 minutes");
+    expect(ahead("2026-11-23T15:30:00Z")).toBe("in 3 hours");
+    expect(ahead("2026-11-24T12:00:00Z")).toBe("tomorrow");
+    expect(ahead("2026-12-05T12:00:00Z")).toBe("in 12 days");
+    expect(ahead("2027-03-23T12:00:00Z")).toBe("in 4 months");
+    expect(ahead("2028-11-23T12:00:00Z")).toBe("in 2 years");
+    expect(ahead("2026-12-05T12:00:00Z", "pl")).toBe("za 12 dni");
+    expect(ahead("2026-11-23T12:00:20Z", "pl")).toBe("za chwilę");
+  });
 });
