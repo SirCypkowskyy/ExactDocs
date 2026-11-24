@@ -1,8 +1,9 @@
 """Stand-in models that run the whole benchmark with no provider (pydantic-ai ``FunctionModel``).
 
 They prove the plumbing, not answer quality: the agents drive the real MCP tools the way a
-careful agent would (find the library, search the asked version, read the top section), and the
-judge grades by word overlap with the facts. ``just agent-bench run --offline`` uses them.
+careful agent would (find the library, search the asked version, read the top section), or, with
+no tools (the ``none`` arm), say they do not know; the judge grades by word overlap with the facts.
+``just agent-bench run --offline`` uses them.
 """
 
 import json
@@ -33,8 +34,11 @@ ANSWER_CHARS: Final[int] = 1500
 """The most characters of documentation a stand-in answer quotes."""
 NOT_COVERED: Final[str] = "The documentation of {version} does not cover this."
 """A stand-in agent's answer when the search finds nothing."""
+DO_NOT_KNOW: Final[str] = "I do not know what {title} {version} does here."
+"""A stand-in agent's answer with no tools (the ``none`` arm)."""
 REFUSALS: Final[re.Pattern[str]] = re.compile(
-    r"does not cover|doesn't cover|not documented|no documentation|does not (?:say|mention)",
+    r"does not cover|doesn't cover|not documented|no documentation|does not (?:say|mention)"
+    r"|(?:do not|don't) know",
     re.IGNORECASE,
 )
 """What the stand-in judge takes as an answer saying the documentation does not cover it."""
@@ -99,12 +103,13 @@ def _agent(*, read: bool) -> FunctionDef:
             info: The run's tools.
 
         Returns:
-            A tool call, or the answer.
+            A tool call, or the answer; with no tools, that it does not know.
         """
-        del info
         prompt = _prompt(messages)
         asked = PROMPT_LINE.search(prompt)
         title, version = (asked["title"], asked["version"]) if asked else ("", "")
+        if not info.function_tools:
+            return ModelResponse(parts=[TextPart(DO_NOT_KNOW.format(title=title, version=version))])
         query = prompt.split("\n\n", 1)[-1]
         returns = _returns(messages)
         if "list_libraries" not in returns:
