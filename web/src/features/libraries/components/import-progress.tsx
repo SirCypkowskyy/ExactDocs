@@ -341,7 +341,8 @@ function Heading({
         version ? "text-section" : "flex items-start gap-3 text-title tracking-[-0.01em]",
       )}
     >
-      {/* A new library is named with its mark (DESIGN.md); #504: `logo` once the API sends one. */}
+      {/* A new library is named with its mark (DESIGN.md): the generic one, as its import is what
+          looks for a logo (the add answer has none to show). */}
       {!version && <LibraryMark id={libraryId} size="lg" className="mt-0.5" />}
       <span className="min-w-0">
         {verb}{" "}

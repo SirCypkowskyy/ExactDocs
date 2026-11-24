@@ -40,11 +40,11 @@ export const columnsOf = (t: ListMessages): ColumnDef<Library>[] => [
     enableHiding: false,
     meta: { priority: 1, skeleton: "avatar" },
     cell: ({ row }) => (
-      // #504: `logo` once the API sends one.
       <LibraryCell
         id={row.original.id}
         title={row.original.title}
         description={row.original.description}
+        logo={row.original.logo}
         size="md"
       />
     ),

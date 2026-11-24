@@ -7,9 +7,10 @@ import { common, formatNumber, useLanguage, useMessages } from "@/shared/lib/i18
 import { normalizeQuery } from "@/shared/lib/search-query";
 import { cn } from "@/shared/lib/utils";
 import { Button, buttonVariants } from "@/shared/ui/button";
+import { LibraryMark } from "@/shared/ui/library-mark";
 import { EmptyState, Page, PageHeader } from "@/shared/ui/page";
 import { kbd } from "@/shared/ui/recipes";
-import { Commit, LibraryBullet } from "@/shared/ui/route";
+import { Commit } from "@/shared/ui/route";
 import { globalSearchQueryOptions } from "../api/global-search-queries";
 import { messages } from "../messages";
 import {
@@ -69,7 +70,7 @@ function FacetLink({
         className={cn(chip, chipTone(selected))}
       >
         <span className="flex min-w-0 items-center gap-2">
-          <LibraryBullet id={f.library} size="sm" />
+          <LibraryMark id={f.library} size="sm" />
           <LibraryName id={f.library} />
         </span>
         <span aria-hidden="true" className="shrink-0 tabular-nums opacity-80">
@@ -180,7 +181,7 @@ function HitGroup({ group }: { group: Group }) {
   return (
     <li>
       <h2 className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-body font-medium">
-        <LibraryBullet id={group.library} size="sm" />
+        <LibraryMark id={group.library} size="sm" />
         <Link
           to="/libraries/$owner/$repo"
           params={{ owner, repo }}

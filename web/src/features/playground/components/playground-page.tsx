@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { FlaskConical, Search, Sparkles } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useContext, useMemo, useState } from "react";
 import { common, useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Button } from "@/shared/ui/button";
 import { Field } from "@/shared/ui/field";
+import { LibraryMark } from "@/shared/ui/library-mark";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { SelectField } from "@/shared/ui/select-field";
 import {
@@ -21,6 +22,7 @@ import {
   searchableLibraries,
 } from "../model/playground";
 import { AgentAnswer } from "./agent-answer";
+import { LibraryLogos } from "./library-logos";
 import { ModeResults } from "./mode-results";
 
 function LibraryPicker({
@@ -33,6 +35,7 @@ function LibraryPicker({
   onChange: (next: string[]) => void;
 }) {
   const t = useMessages(messages);
+  const logos = useContext(LibraryLogos);
   const picked = new Set(chosen);
   const toggle = (id: string) =>
     onChange(picked.has(id) ? chosen.filter((c) => c !== id) : [...chosen, id]);
@@ -60,6 +63,7 @@ function LibraryPicker({
               onChange={() => toggle(id)}
               className="size-4 cursor-pointer accent-primary"
             />
+            <LibraryMark id={id} logo={logos.get(id)} size="sm" />
             <span className="font-mono text-mono">{id}</span>
           </label>
         ))}
@@ -130,6 +134,10 @@ export function PlaygroundPage() {
   const heading = usePageTitle(t.page.title);
   const { data: summaries } = useQuery(playgroundLibrariesQueryOptions());
   const libraries = searchableLibraries(summaries ?? []);
+  const logos = useMemo(
+    () => new Map((summaries ?? []).map((l) => [l.id, l.logo] as const)),
+    [summaries],
+  );
   const [q, setQ] = useState("");
   const [chosen, setChosen] = useState<string[]>([]);
   const { data: availability } = useQuery(answerAvailabilityQueryOptions());
@@ -158,70 +166,72 @@ export function PlaygroundPage() {
   };
 
   return (
-    <Page>
-      <PageHeader
-        icon={<FlaskConical />}
-        title={t.page.title}
-        headingRef={heading}
-        description={t.page.description}
-      />
-      <form
-        onSubmit={submit}
-        className="max-w-3xl space-y-5 rounded-lg border border-border bg-raised p-5"
-        aria-label={t.page.form}
-      >
-        <Field
-          id="playground-q"
-          label={t.page.query}
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder={t.page.queryPlaceholder}
-          maxLength={2000}
+    <LibraryLogos.Provider value={logos}>
+      <Page>
+        <PageHeader
+          icon={<FlaskConical />}
+          title={t.page.title}
+          headingRef={heading}
+          description={t.page.description}
         />
-        <LibraryPicker libraries={libraries} chosen={chosen} onChange={setChosen} />
-        <div className="grid gap-4 sm:grid-cols-2">
-          <ModeSelect
-            id="playground-mode"
-            label={t.page.mode}
-            value={mode}
-            onChange={setMode}
-            agent={agentOffer}
+        <form
+          onSubmit={submit}
+          className="max-w-3xl space-y-5 rounded-lg border border-border bg-raised p-5"
+          aria-label={t.page.form}
+        >
+          <Field
+            id="playground-q"
+            label={t.page.query}
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={t.page.queryPlaceholder}
+            maxLength={2000}
           />
-          {compare && !agentChosen && (
+          <LibraryPicker libraries={libraries} chosen={chosen} onChange={setChosen} />
+          <div className="grid gap-4 sm:grid-cols-2">
             <ModeSelect
-              id="playground-other"
-              label={t.page.compareWith}
-              value={other}
-              onChange={(m) => setOther(m as PlaygroundMode)}
+              id="playground-mode"
+              label={t.page.mode}
+              value={mode}
+              onChange={setMode}
+              agent={agentOffer}
             />
+            {compare && !agentChosen && (
+              <ModeSelect
+                id="playground-other"
+                label={t.page.compareWith}
+                value={other}
+                onChange={(m) => setOther(m as PlaygroundMode)}
+              />
+            )}
+          </div>
+          {agentChosen ? (
+            <p className="text-body text-muted-foreground">{t.page.agentNote}</p>
+          ) : (
+            <label className="flex min-h-11 cursor-pointer items-center gap-2.5 text-body md:min-h-9">
+              <input
+                type="checkbox"
+                checked={compare}
+                onChange={(e) => setCompare(e.target.checked)}
+                className="size-4 cursor-pointer accent-primary"
+              />
+              {t.page.compare}
+            </label>
           )}
-        </div>
-        {agentChosen ? (
-          <p className="text-body text-muted-foreground">{t.page.agentNote}</p>
-        ) : (
-          <label className="flex min-h-11 cursor-pointer items-center gap-2.5 text-body md:min-h-9">
-            <input
-              type="checkbox"
-              checked={compare}
-              onChange={(e) => setCompare(e.target.checked)}
-              className="size-4 cursor-pointer accent-primary"
-            />
-            {t.page.compare}
-          </label>
+          <RunButton agent={agentChosen} disabled={!q.trim()} />
+        </form>
+        {run && run.first === AGENT && (
+          <div className="mt-8 max-w-3xl">
+            <AgentAnswer q={run.q} libraries={run.libraries} />
+          </div>
         )}
-        <RunButton agent={agentChosen} disabled={!q.trim()} />
-      </form>
-      {run && run.first === AGENT && (
-        <div className="mt-8 max-w-3xl">
-          <AgentAnswer q={run.q} libraries={run.libraries} />
-        </div>
-      )}
-      {run && run.first !== AGENT && (
-        <div className={run.second ? "mt-8 grid gap-8 lg:grid-cols-2" : "mt-8 max-w-3xl"}>
-          <ModeResults q={run.q} mode={run.first} libraries={run.libraries} />
-          {run.second && <ModeResults q={run.q} mode={run.second} libraries={run.libraries} />}
-        </div>
-      )}
-    </Page>
+        {run && run.first !== AGENT && (
+          <div className={run.second ? "mt-8 grid gap-8 lg:grid-cols-2" : "mt-8 max-w-3xl"}>
+            <ModeResults q={run.q} mode={run.first} libraries={run.libraries} />
+            {run.second && <ModeResults q={run.q} mode={run.second} libraries={run.libraries} />}
+          </div>
+        )}
+      </Page>
+    </LibraryLogos.Provider>
   );
 }

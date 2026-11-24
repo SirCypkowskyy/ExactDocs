@@ -36,6 +36,7 @@ export function Page({
 export function PageHeader({
   title,
   icon,
+  mark,
   headingRef,
   description,
   actions,
@@ -45,6 +46,11 @@ export function PageHeader({
   title: ReactNode;
   /** The page's own icon (the one its navigation entry uses), in a hairline tile beside the title. */
   icon?: ReactNode;
+  /**
+   * What the page is about, drawn as it is in place of the icon tile: a library's `LibraryMark`
+   * on that library's pages. It brings its own fixed size.
+   */
+  mark?: ReactNode;
   headingRef?: Ref<HTMLHeadingElement>;
   description?: ReactNode;
   actions?: ReactNode;
@@ -57,13 +63,19 @@ export function PageHeader({
       {above && <div className="mb-3">{above}</div>}
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
         <div className="flex min-w-0 flex-1 basis-64 items-start gap-3">
-          {icon && (
-            <span
-              aria-hidden="true"
-              className="mt-0.5 inline-flex size-9 flex-none items-center justify-center rounded-lg border border-border bg-raised text-muted-foreground [&_svg]:size-[1.125rem]"
-            >
-              {icon}
+          {mark ? (
+            <span aria-hidden="true" className="mt-0.5 flex flex-none">
+              {mark}
             </span>
+          ) : (
+            icon && (
+              <span
+                aria-hidden="true"
+                className="mt-0.5 inline-flex size-9 flex-none items-center justify-center rounded-lg border border-border bg-raised text-muted-foreground [&_svg]:size-[1.125rem]"
+              >
+                {icon}
+              </span>
+            )
           )}
           <div className="min-w-0 flex-1">
             <h1

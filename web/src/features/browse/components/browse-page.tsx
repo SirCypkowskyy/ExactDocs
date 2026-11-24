@@ -1,6 +1,6 @@
 import { useSuspenseQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { ArrowUpRight, GitBranch, Info, LibraryBig, Settings, Share2 } from "lucide-react";
+import { ArrowUpRight, GitBranch, Info, Settings, Share2 } from "lucide-react";
 import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import { absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
 import { usePageTitle } from "@/shared/lib/use-page-title";
@@ -13,9 +13,9 @@ import {
   BreadcrumbSeparator,
 } from "@/shared/ui/breadcrumb";
 import { buttonVariants } from "@/shared/ui/button";
+import { LibraryMark } from "@/shared/ui/library-mark";
 import { EmptyState, Page, PageHeader } from "@/shared/ui/page";
 import { kbd } from "@/shared/ui/recipes";
-import { LibraryBullet } from "@/shared/ui/route";
 import { libraryQueryOptions } from "../api/browse-queries";
 import { messages } from "../messages";
 import {
@@ -177,7 +177,7 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
       <PageHeader
         headingRef={heading}
         title={library.title || library.id}
-        icon={<LibraryBig />}
+        mark={<LibraryMark id={library.id} logo={library.logo} size="xl" />}
         above={
           <Breadcrumb>
             <BreadcrumbList>
@@ -190,7 +190,6 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
               </BreadcrumbItem>
               <BreadcrumbSeparator />
               <BreadcrumbItem>
-                <LibraryBullet id={library.id} size="sm" />
                 <BreadcrumbPage className="font-mono text-mono font-normal">
                   {library.id}
                 </BreadcrumbPage>

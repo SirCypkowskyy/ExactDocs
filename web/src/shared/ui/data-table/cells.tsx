@@ -106,6 +106,7 @@ export function LibraryCell({
   title?: string | null | undefined;
   /** One truncated line under the ID, from `lg` up (the libraries list). */
   description?: string | null | undefined;
+  /** The library's `logo` from the API (its version); without it the mark is the generic icon. */
   logo?: string | null | undefined;
   size?: "sm" | "md";
   link?: boolean;

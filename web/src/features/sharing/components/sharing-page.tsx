@@ -7,7 +7,6 @@ import {
   type LucideIcon,
   Pencil,
   ScrollText,
-  Share2,
   ShieldCheck,
   Trash2,
   UserPlus,
@@ -30,6 +29,7 @@ import { Button, buttonVariants, type IconMotion } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { type RowAction, restoreRowFocus } from "@/shared/ui/data-table/row-actions";
 import { TableError, TableMessage } from "@/shared/ui/data-table/states";
+import { LibraryMark } from "@/shared/ui/library-mark";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { putGrant, revokeGrant, sharingKey, sharingSummaryQueryOptions } from "../api/grants";
@@ -56,13 +56,14 @@ const ROLE_ICONS: Record<GrantedRole, { icon: LucideIcon; motion: IconMotion }> 
 interface Props {
   owner: string;
   repo: string;
-  /** The library's ID (`/owner/repo`) and title, for the header. */
+  /** The library's ID (`/owner/repo`), title and `logo` (its version), for the header. */
   libraryId: string;
   title?: string | undefined;
+  logo?: string | null | undefined;
 }
 
 /** Who may read, change and manage one library; its admins share it, its creator hands it over. */
-export function SharingPage({ owner, repo, libraryId, title }: Props) {
+export function SharingPage({ owner, repo, libraryId, title, logo }: Props) {
   const t = useMessages(messages);
   const c = useMessages(common);
   const language = useLanguage();
@@ -156,7 +157,7 @@ export function SharingPage({ owner, repo, libraryId, title }: Props) {
     <Page>
       <PageHeader
         headingRef={heading}
-        icon={<Share2 />}
+        mark={<LibraryMark id={libraryId} logo={logo} size="lg" />}
         title={t.page.title}
         description={summary.data ? <Owner creator={summary.data.creator} /> : t.page.description}
         actions={
@@ -393,7 +394,7 @@ export function SharingSkeleton() {
   return (
     <Page aria-busy="true" className="pending-in">
       <PageHeader
-        icon={<Share2 />}
+        mark={<Skeleton className="size-9 rounded-md" />}
         title={t.page.title}
         description={<Skeleton className="mt-1 h-4 w-80 max-w-full" />}
         above={<Skeleton className="h-4 w-56" />}

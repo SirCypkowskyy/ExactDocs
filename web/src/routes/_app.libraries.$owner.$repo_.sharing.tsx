@@ -34,6 +34,14 @@ export const Route = createFileRoute("/_app/libraries/$owner/$repo_/sharing")({
   component: function Sharing() {
     const { owner, repo } = Route.useParams();
     const { data } = useSuspenseQuery(libraryQueryOptions(owner, repo));
-    return <SharingPage owner={owner} repo={repo} libraryId={data.id} title={data.title} />;
+    return (
+      <SharingPage
+        owner={owner}
+        repo={repo}
+        libraryId={data.id}
+        title={data.title}
+        logo={data.logo}
+      />
+    );
   },
 });

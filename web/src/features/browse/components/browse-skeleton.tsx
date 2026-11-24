@@ -1,4 +1,3 @@
-import { LibraryBig } from "lucide-react";
 import { useMessages } from "@/shared/lib/i18n";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { Skeleton as Bar } from "@/shared/ui/skeleton";
@@ -24,7 +23,7 @@ export function BrowseSkeleton() {
   return (
     <Page width="wide" className="pending-in" aria-busy="true">
       <PageHeader
-        icon={<LibraryBig />}
+        mark={<Bar className="size-12 rounded-md" />}
         above={
           <div aria-hidden="true" className="flex min-h-11 items-center gap-1.5 lg:min-h-7">
             <Bar className="h-4 w-16" />

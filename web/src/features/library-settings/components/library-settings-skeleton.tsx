@@ -1,5 +1,4 @@
 import { useParams } from "@tanstack/react-router";
-import { Settings } from "lucide-react";
 import type { ReactNode } from "react";
 import { useMessages } from "@/shared/lib/i18n";
 import { Page, PageHeader } from "@/shared/ui/page";
@@ -85,7 +84,7 @@ export function LibrarySettingsSkeleton() {
             <Skeleton className="mt-1 h-7 w-56" />
           </>
         }
-        icon={<Settings />}
+        mark={<Skeleton className="size-9 rounded-md" />}
         description={t.description}
         above={<SettingsBreadcrumb owner={owner} repo={repo} id={`/${owner}/${repo}`} />}
       />

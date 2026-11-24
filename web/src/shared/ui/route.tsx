@@ -45,7 +45,7 @@ export function LibraryBullet({
   className,
 }: {
   id: string;
-  size?: "sm" | "md" | "lg";
+  size?: "sm" | "md" | "lg" | "xl";
   className?: string;
 }) {
   return (
@@ -57,6 +57,7 @@ export function LibraryBullet({
         size === "sm" && "size-6 text-small",
         size === "md" && "size-7 text-small",
         size === "lg" && "size-9 text-body",
+        size === "xl" && "size-12 text-section",
         className,
       )}
     >

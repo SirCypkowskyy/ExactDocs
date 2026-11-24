@@ -1,12 +1,14 @@
 import { Link } from "@tanstack/react-router";
 import { CircleAlert, Info, type LucideIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useContext } from "react";
 import { useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
-import { LibraryBullet, VersionStation } from "@/shared/ui/route";
+import { LibraryMark } from "@/shared/ui/library-mark";
+import { VersionStation } from "@/shared/ui/route";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { messages } from "../messages";
 import { splitLibrary } from "../model/playground";
+import { LibraryLogos } from "./library-logos";
 
 /** A line under a heading: an error (alert), or a neutral note about how the answer came about. */
 export function Notice({ tone, children }: { tone: "error" | "note"; children: ReactNode }) {
@@ -69,11 +71,12 @@ export function ResultHead({
   headingPath: readonly string[];
 }) {
   const t = useMessages(messages);
+  const logo = useContext(LibraryLogos).get(library);
   const { owner, repo } = splitLibrary(library);
   return (
     <>
       <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-body">
-        <LibraryBullet id={library} size="sm" />
+        <LibraryMark id={library} logo={logo} size="sm" />
         <span className="font-medium">{library}</span>
         <span className="sr-only">{t.results.version}</span>
         <VersionStation version={version} />

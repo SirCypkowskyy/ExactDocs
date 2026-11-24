@@ -167,7 +167,8 @@ export function InterfaceMenu({
     prefs.font !== "default" ||
     prefs.text_spacing !== "standard" ||
     prefs.underline_links ||
-    prefs.large_targets;
+    prefs.large_targets ||
+    !prefs.library_logos;
   return (
     <M.Root>
       <M.Trigger asChild>
@@ -233,6 +234,12 @@ export function InterfaceMenu({
             onChange={(v) => setPreferences({ large_targets: v })}
           >
             {t.largerTargets}
+          </CheckRow>
+          <CheckRow
+            checked={prefs.library_logos}
+            onChange={(v) => setPreferences({ library_logos: v })}
+          >
+            {t.libraryLogos}
           </CheckRow>
           {settings && (
             <>

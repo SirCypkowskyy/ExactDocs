@@ -10,6 +10,7 @@ import {
   SquareTerminal,
 } from "lucide-react";
 import { useState } from "react";
+import { API_BASE_URL } from "@/shared/config/env";
 import { usePreferences } from "@/shared/lib/preferences";
 import { cn } from "@/shared/lib/utils";
 import { LibraryBullet, lineIndex } from "./route";
@@ -45,6 +46,17 @@ const LINE_BG = [
   "bg-line-8",
 ] as const;
 
+/**
+ * Where this server serves a library's logo: `/api/v1/libraries/{owner}/{repo}/logo?v=<logo>`.
+ * `logo` is the version the API sends with the library (16 hex digits); with it in the URL the
+ * browser may keep the image until the logo changes, and a new logo is a new URL.
+ */
+export function libraryLogoUrl(libraryId: string, logo: string): string {
+  const [owner = "", repo = ""] = libraryId.split("/").filter(Boolean);
+  const path = `${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  return `${API_BASE_URL}/v1/libraries/${path}/logo?v=${encodeURIComponent(logo)}`;
+}
+
 /** A second stable pick from the ID, so icon and colour do not always travel together. */
 function iconIndex(libraryId: string): number {
   let h = 5381;
@@ -66,17 +78,16 @@ export function LibraryMark({
   className,
 }: {
   id: string;
-  /** The URL of the library's logo on this server, when it has one. */
+  /** The library's `logo` as the API sends it (its version), or null when it has none. */
   logo?: string | null | undefined;
   size?: keyof typeof SIZES;
   className?: string;
 }) {
   const { prefs } = usePreferences();
+  // The logo version that failed to load: a new version gets a new try.
   const [broken, setBroken] = useState<string | null>(null);
   if (!prefs.library_logos) {
-    return (
-      <LibraryBullet id={id} size={size === "xl" ? "lg" : size} {...(className && { className })} />
-    );
+    return <LibraryBullet id={id} size={size} {...(className && { className })} />;
   }
   const box = cn(
     "inline-flex flex-none items-center justify-center overflow-hidden rounded-md select-none",
@@ -90,8 +101,9 @@ export function LibraryMark({
         className={cn(box, "border border-logo-tile-edge bg-logo-tile p-0.5")}
       >
         <img
-          src={logo}
+          src={libraryLogoUrl(id, logo)}
           alt=""
+          draggable={false}
           loading="lazy"
           decoding="async"
           className="size-full object-contain"

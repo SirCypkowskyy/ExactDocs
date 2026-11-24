@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { History, Settings, Share2 } from "lucide-react";
+import { History, Share2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
@@ -13,8 +13,8 @@ import {
   BreadcrumbSeparator,
 } from "@/shared/ui/breadcrumb";
 import { buttonVariants } from "@/shared/ui/button";
+import { LibraryMark } from "@/shared/ui/library-mark";
 import { Page, PageHeader } from "@/shared/ui/page";
-import { LibraryBullet } from "@/shared/ui/route";
 import { pageMessages } from "../messages/page";
 import { SECTIONS } from "../model/sections";
 import type { Activity, JobViews, SettingsLibrary } from "../model/settings";
@@ -117,7 +117,6 @@ export function SettingsBreadcrumb({
         </BreadcrumbItem>
         <BreadcrumbSeparator />
         <BreadcrumbItem>
-          <LibraryBullet id={id} size="sm" />
           <BreadcrumbLink asChild>
             <Link
               to="/libraries/$owner/$repo"
@@ -152,7 +151,7 @@ export function LibrarySettingsPage({ owner, repo, library, jobs }: Props) {
           headingRef={heading}
           title={name}
           description={t.description}
-          icon={<Settings />}
+          mark={<LibraryMark id={library.id} logo={library.logo} size="lg" />}
           above={<SettingsBreadcrumb owner={owner} repo={repo} id={library.id} />}
         />
         <div className="lg:grid lg:grid-cols-[11rem_minmax(0,1fr)] lg:gap-12">
