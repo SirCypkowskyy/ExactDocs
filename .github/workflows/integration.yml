@@ -4,7 +4,8 @@ name: Integration
 # network or another external system, which pull request CI (ci.yml) leaves out. They run only
 # when asked for:
 #   - on a pull request that carries the label `run integration` (when it is added, and on each
-#     push while it is on);
+#     push while it is on; a pull request from a fork only when the label is added: each new
+#     commit needs the label removed and added again);
 #   - by a manual CI run with the input `integration` (ci.yml calls this workflow);
 #   - by every release (release.yml calls it; nothing is published unless it passes).
 # The tests they run are marked: pytest's `integration` marker and behave's `@integration` tag,
@@ -29,10 +30,16 @@ on:
         type: boolean
         default: false
 
-# A new push to a labelled pull request cancels the run in progress; adding any other label starts
-# a run of its own (its jobs are skipped) that cancels nothing.
+# A new push to a labelled pull request cancels the run in progress; adding any other label, or a
+# push to a fork's pull request, starts a run of its own (its jobs are skipped) that cancels
+# nothing.
 concurrency:
-  group: integration-${{ github.workflow }}-${{ github.ref }}-${{ github.event.action == 'labeled' && github.event.label.name != 'run integration' && github.run_id || 'run' }}
+  group: >-
+    integration-${{ github.workflow }}-${{ github.ref }}-${{
+    ((github.event.action == 'labeled' && github.event.label.name != 'run integration')
+    || (github.event_name == 'pull_request' && github.event.action != 'labeled'
+    && github.event.pull_request.head.repo.full_name != github.repository))
+    && github.run_id || 'run' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -45,10 +52,13 @@ jobs:
   python:
     name: Python integration (pytest, behave; PostgreSQL, search and vector servers)
     # Every job: called (a manual CI run, a release), or a pull request with the label, except on
-    # the event of another label being added.
+    # the event of another label being added. A pull request from a fork runs only on the event
+    # of the label being added (a maintainer's look at that commit), never on its later pushes:
+    # remove the label and add it again to run a new commit.
     if: >-
       github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'run integration')
-      && (github.event.action != 'labeled' || github.event.label.name == 'run integration'))
+      && ((github.event.action == 'labeled' && github.event.label.name == 'run integration')
+      || (github.event.action != 'labeled' && github.event.pull_request.head.repo.full_name == github.repository)))
     runs-on: ${{ (inputs.release || vars.RUNNER_MODE == 'self-hosted') && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     # GitHub-hosted (#468): a smaller machine than the old self-hosted VM. With the E14 backends'
     # service containers (#351) the whole pytest suite took 53 minutes; the integration part alone
@@ -186,8 +196,8 @@ jobs:
       - name: Free disk space
         if: runner.environment == 'github-hosted'
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
       - name: Install
@@ -317,7 +327,7 @@ jobs:
       - name: Stop libSQL server (database)
         if: ${{ always() }}
         run: docker rm -f "exactdocs-libsql-db-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null || true
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: python-integration-reports
@@ -329,25 +339,26 @@ jobs:
     name: Docker image (build, scan, smoke test)
     if: >-
       github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'run integration')
-      && (github.event.action != 'labeled' || github.event.label.name == 'run integration'))
+      && ((github.event.action == 'labeled' && github.event.label.name == 'run integration')
+      || (github.event.action != 'labeled' && github.event.pull_request.head.repo.full_name == github.repository)))
     runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # GitHub-hosted runners (#468) start with about 14 GB free; the image builds need more.
       - name: Free disk space
         if: runner.environment == 'github-hosted'
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
       # The daemon's own BuildKit (driver "docker"): the image loads straight into the local
       # store. On GitHub-hosted runners (#468) nothing is cached between runs.
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           driver: docker
       - id: created
         run: |
           echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
-      - uses: docker/build-push-action@v7
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: deploy/Dockerfile
@@ -363,7 +374,7 @@ jobs:
       # docs/releasing.md). The -ai and -local variants: job image-variants.
       - name: Image size budget, no ML package and no model files
         run: python3 deploy/check_artifacts.py image exactdocs:ci base
-      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - name: Wheel size budget, no model files, no ML dependencies
         run: |
           cid=$(docker create exactdocs:ci)
@@ -381,12 +392,12 @@ jobs:
       # The release also ships amd64; on the GitHub-hosted runners (#468) this stage is native, on
       # the ARM64 runner it runs under QEMU (apt-get, dpkg: no Python). Build just the
       # runtime-tools stage and prove the tools run there.
-      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         if: runner.arch == 'ARM64'
         with:
           platforms: amd64
       - name: amd64 runtime-tools stage builds and runs git, ssh, tini
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: deploy/Dockerfile
@@ -483,16 +494,17 @@ jobs:
     name: Docker image variants (-ai, -local)
     if: >-
       github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'run integration')
-      && (github.event.action != 'labeled' || github.event.label.name == 'run integration'))
+      && ((github.event.action == 'labeled' && github.event.label.name == 'run integration')
+      || (github.event.action != 'labeled' && github.event.pull_request.head.repo.full_name == github.repository)))
     runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # GitHub-hosted runners (#468) start with about 14 GB free; the image builds need more.
       - name: Free disk space
         if: runner.environment == 'github-hosted'
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           driver: docker
       - id: created
@@ -500,7 +512,7 @@ jobs:
           echo "at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
           echo "week=$(date -u +%G-W%V)" >> "$GITHUB_OUTPUT"
       - name: Build -ai
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: deploy/Dockerfile
@@ -515,7 +527,7 @@ jobs:
       # The default models are pulled at their pinned revisions into a BuildKit cache mount
       # (about 160 MB); on GitHub-hosted runners (#468) every run downloads them.
       - name: Build -local
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: deploy/Dockerfile
@@ -619,20 +631,21 @@ jobs:
     name: uvx smoke, upgrade + browser end-to-end (built wheel)
     if: >-
       github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'run integration')
-      && (github.event.action != 'labeled' || github.event.label.name == 'run integration'))
+      && ((github.event.action == 'labeled' && github.event.label.name == 'run integration')
+      || (github.event.action != 'labeled' && github.event.pull_request.head.repo.full_name == github.repository)))
     runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-tags: true # only for a manual run on a tagged checkout: CI has no tag builds, and a PR's HEAD is the merge commit
-      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           package_json_file: web/package.json
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: web/.nvmrc
           cache: pnpm
@@ -721,7 +734,7 @@ jobs:
           node --test probe-chromium.test.cjs
       - id: playwright
         run: echo "version=$(node -p "require('./e2e/node_modules/@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
@@ -732,7 +745,7 @@ jobs:
         env:
           UV_CACHE_DIR: ${{ runner.temp }}/uv-wheel-cache
         run: python3 e2e/run.py --wheels "$RUNNER_TEMP/dist"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: e2e-screenshots

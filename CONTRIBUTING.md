@@ -34,7 +34,8 @@ variable, when it is not; [docs/releasing.md](docs/releasing.md#fast-and-integra
 them and the helper scripts that start the servers. Pull request CI runs the fast checks only; a
 maintainer adds the label **`run integration`** to a PR that touches PostgreSQL, an index
 backend on a server, the Dockerfile, the wheel or the end-to-end flow, and every release runs
-them before anything is published.
+them before anything is published. On a PR from a fork, the label runs them once, on the commit
+it was added to; a later push needs a maintainer to add it again.
 
 ## Workflow
 

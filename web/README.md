@@ -15,10 +15,17 @@ Requires Node 26 LTS (`.nvmrc`) and pnpm 12 (`packageManager` in `package.json`)
 ```bash
 pnpm install
 pnpm dev          # http://localhost:5173, proxies /api and /mcp to http://localhost:3000 (override: EXACTDOCS_API_URL)
-pnpm build        # typecheck + production build into dist/
+pnpm build        # typecheck + production build into dist/ (with dist/THIRD_PARTY_NOTICES.txt)
 pnpm test         # Vitest
 pnpm lint         # Biome + fallow (architecture, dead code) + react-doctor
 ```
+
+The build writes `dist/THIRD_PARTY_NOTICES.txt` (`scripts/third-party-notices.ts`): the licence
+of every package the production `dependencies` pull in (the IBM Plex fonts' SIL Open Font License
+among them), of the build tools whose code is in the bundle (Tailwind CSS, Vite), and of the
+source adapted into `src/` (shadcn/ui, and the Shadcnblocks.com free blocks named in `DESIGN.md`).
+It ships with the UI in the wheel and the image. A bundled module from any other package (say, a
+devDependency imported by the app) fails the build: make it a production dependency.
 
 ## Layout: vertical slices
 

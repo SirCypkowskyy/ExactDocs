@@ -60,7 +60,7 @@ jobs:
             not-stable: '^(?!sha256[:-])(?!(latest|\d+\.\d+|\d+\.\d+\.\d+)-local$)'
     steps:
       - name: Dev images (X.Y.Z.devN) of ${{ matrix.variant }}, keep the newest ${{ env.KEEP_DEV }}
-        uses: dataaxiom/ghcr-cleanup-action@v1.2.2 # upstream has no floating major tag
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
           package: exactdocs
           use-regex: true
@@ -70,7 +70,7 @@ jobs:
           dry-run: ${{ inputs.dry-run || false }}
 
       - name: Stable images (X.Y.Z) of ${{ matrix.variant }}, keep the newest ${{ env.KEEP_STABLE }}
-        uses: dataaxiom/ghcr-cleanup-action@v1.2.2
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
           package: exactdocs
           use-regex: true
@@ -84,7 +84,7 @@ jobs:
     runs-on: [self-hosted, linux, ARM64, exactdocs]
     steps:
       - name: Untagged leftovers, orphaned signatures and partial images
-        uses: dataaxiom/ghcr-cleanup-action@v1.2.2
+        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
           package: exactdocs
           delete-untagged: true

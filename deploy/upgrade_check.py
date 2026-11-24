@@ -3,10 +3,10 @@
     python3 deploy/upgrade_check.py [--wheels DIR] [--previous X.Y.Z] [--head REVISION]
     python3 deploy/upgrade_check.py --print-head   # the Alembic head of this checkout
 
-1. The previous release (``uvx --from exactdocs==X.Y.Z``, from PyPI; default: the newest stable
-   one below this build's version) starts on an empty data directory; an admin, a token and the
-   fixture docs repository at two tags are added over its REST API, and what it serves is
-   recorded.
+1. The previous release (``uvx --from exactdocs==X.Y.Z --with exactdocs-kernel==X.Y.Z``, from
+   PyPI; default: the newest stable one below this build's version, yanked or not) starts on an
+   empty data directory; an admin, a token and the fixture docs repository at two tags are added
+   over its REST API, and what it serves is recorded.
 2. It stops, and this build starts on the same directory: it must migrate the schema to the head
    of this checkout's Alembic revisions (not the head the build reports about itself) and serve
    the same libraries, articles and search results, to the same token.
@@ -79,7 +79,11 @@ def this_version(wheels: Path | None) -> tuple[int, ...] | None:
 
 
 def previous_release(below: tuple[int, ...] | None) -> str | None:
-    """Return the newest stable release on PyPI older than ``below`` (any when it is ``None``)."""
+    """Return the newest stable release on PyPI older than ``below`` (any when it is ``None``).
+
+    A yanked release counts: 0.1.0 to 0.2.0 are yanked (#533) and are still what a data
+    directory may come from. ``commands`` pins it exactly, which installs a yanked release.
+    """
     with urllib.request.urlopen("https://pypi.org/pypi/exactdocs/json", timeout=30) as response:
         releases = json.load(response)["releases"]
     stable = {
@@ -303,8 +307,21 @@ def wheel_version(wheels: Path) -> str:
 
 
 def commands(wheels: Path | None, previous: str) -> tuple[list[str], list[str]]:
-    """Return the previous release's command and this build's."""
-    old = ["uvx", "--from", f"exactdocs=={previous}", "exactdocs"]
+    """Return the previous release's command and this build's.
+
+    The previous release's kernel is pinned too: uv installs a yanked version only when a
+    requirement the user gives pins it with ``==`` (PEP 592), not when the pin comes from another
+    package's metadata (exactdocs X.Y.Z requires exactdocs-kernel==X.Y.Z), so with both yanked
+    ``--from exactdocs==X.Y.Z`` alone does not resolve (checked with uv 0.11 and 0.13).
+    """
+    old = [
+        "uvx",
+        "--from",
+        f"exactdocs=={previous}",
+        "--with",
+        f"exactdocs-kernel=={previous}",
+        "exactdocs",
+    ]
     if not wheels:
         return old, ["uv", "run", "--project", str(ROOT), "exactdocs"]
     return old, [
