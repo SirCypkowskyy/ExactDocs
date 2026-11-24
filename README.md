@@ -171,8 +171,12 @@ ExactDocs is measured on a [golden set](docs/benchmark/golden-set.md) of 321 que
 docs of Starlette, Pydantic, TanStack Query, Zod and Electron, at three pinned versions each. With
 no model at all, BM25 puts the section that answers in the top 5 for 81.7% of the 267 answerable
 questions, at 57 ms p95. Hybrid search on a small local embedding model (bge-small) reaches up
-to 84.6%. Hosted models and the agent benchmark have not run yet. [Benchmark](docs/benchmark/index.md) has
-the method, every table and the known weak spots.
+to 84.6%. Hosted retrieval models have not run yet. In the first run of the
+[agent benchmark](docs/benchmark/agent.md) (60 questions, two open-weight models on Ollama Cloud,
+an LLM judge not yet checked against people), an agent with the ExactDocs MCP tools answered 43%
+(`gpt-oss:120b`) and 85% (`kimi-k3`) of the questions right, against 13% and 33% from memory, and
+none of its answers held only for another version. [Benchmark](docs/benchmark/index.md) has the
+method, every table and the known weak spots.
 
 ## How it works
 

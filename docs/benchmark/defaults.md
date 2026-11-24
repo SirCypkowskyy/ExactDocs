@@ -48,9 +48,9 @@ BM25 at `default` also reaches 84.6% (p 0.18) at about 2.5 s per question.
 
 **Not measured yet.** No hosted embedding model, LLM judge, HyDE or agentic configuration has
 run on the golden set. A run of the manual *Retrieval eval (real providers)* workflow
-(`eval-providers.yml`) with the `benchmark` input ticked produces the numbers, and the
-[agent results](agent.md) need a run of *Agent benchmark (real providers)* (`agent-bench.yml`).
-Until then, the local recommendation applies.
+(`eval-providers.yml`) with the `benchmark` input ticked produces the numbers. Until then, the
+local recommendation applies. (The first [agent results](agent.md), open-weight agents on Ollama
+Cloud with ExactDocs on BM25, measure the agent, not a hosted retrieval model.)
 
 ## Known weak spots
 
