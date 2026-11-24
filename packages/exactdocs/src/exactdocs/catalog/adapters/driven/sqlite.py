@@ -549,7 +549,8 @@ class SqliteLibraryLogos:
             "ref": logo.ref.value,
         }
         try:
-            async with self.engine.begin() as connection:
+            # BEGIN IMMEDIATE, as in ``SqliteManifestRepository._write``: it reads, then writes.
+            async with self.engine.execution_options(begin_immediate=True).begin() as connection:
                 known = select(libraries.c.id).where(libraries.c.id == library_id.value)
                 if (await connection.execute(known)).first() is None:
                     return
