@@ -1,3 +1,9 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="public/brand/exactdocs-lockup-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="public/brand/exactdocs-lockup-light.svg">
+  <img src="public/brand/exactdocs-lockup-light.svg" alt="ExactDocs" width="220">
+</picture>
+
 # ExactDocs web UI
 
 React client served by the ExactDocs backend from `web/dist` in production.
