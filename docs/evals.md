@@ -720,40 +720,37 @@ still 1, and a report without them still reads.
 
 ### The recorded run
 
-Measured on an Apple M-series laptop (10 cores) with no network, on the whole golden set, in about
-1 h 40 min. A full local matrix (three embedding models, each with and without the cross-encoder,
-at four chunkings) would take about six hours on that CPU, so it ran on this subset:
+Recorded on 23–24 November 2026 for the golden-set review (#490), on the reviewed set
+(`sha256:7dd51c59057c279a`), by the manual *Retrieval eval (real providers)* workflow with
+`benchmark` ticked and local configurations only
+([run 45276428449](https://github.com/SirCypkowskyy/ExactDocs/actions/runs/45276428449)): one
+self-hosted runner VM (Linux aarch64, 4 CPUs), ExactDocs `861b5ea`, in 3 h 17 min. A full local
+matrix (three embedding models, each with and without the cross-encoder, at four chunkings) would
+take far longer there, so it ran on this subset:
 
 - `bm25` and `hybrid:bge-small-en-v1.5` at every chunking configuration;
-- `bm25+ce` at `h6` and `h2`; `hybrid:bge-small-en-v1.5+ce` at `h6`;
+- `bm25+ce` at `default`, `h6` and `h2`; `hybrid:bge-small-en-v1.5+ce` at `default` and `h6`;
 - `hybrid:snowflake-arctic-embed-s` at `h6` (the second local embedding model);
-- `hybrid:bge-base-en-v1.5` did not run (about 50 minutes of embedding per chunking there);
+- `hybrid:bge-base-en-v1.5` did not run (about 50 minutes of embedding per chunking);
 - every hosted configuration is listed as skipped: it needs a real-providers run.
 
 ```bash
 EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
-  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@h6,bm25+ce@h2,hybrid:bge-small-en-v1.5+ce@h6,hybrid:snowflake-arctic-embed-s@h6,*+judge,*:hosted*' \
+  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@h6,bm25+ce@h2,bm25+ce@default,hybrid:bge-small-en-v1.5+ce@h6,hybrid:bge-small-en-v1.5+ce@default,hybrid:snowflake-arctic-embed-s@h6' \
   --out packages/exactdocs/evals/results
 ```
 
-The run predates #381, so its `default` was today's `h6`; the report was relabelled when the
-default changed (the commands above name today's chunkings). Embedding the whole corpus took 17
-minutes with bge-small at `h6` (8 at `h2`, 13 at `default`, 11 at `merge-400`) and 16 with
-arctic-embed-s; the cross-encoder adds about 1.4 s per question (32 candidates). What it found:
-BM25 is best at `default`, split level 3 and 4,000 characters (recall@5 81.7%, against 79.8% at
-`h6`), which #381 made the default for new libraries; hybrid on bge-small reaches 84.6% at `h6`,
-3 points more, under the 5-point margin, so BM25 stays the default for both the no-model and the
-local budget; the cross-encoder adds as much as hybrid at `h6` and loses recall at `h2`, whose
-chunks are longer than its window; arctic-embed-s is below BM25 (75.3%).
-
-The run kept aggregates only, so it had no per-case outcomes for intervals and tests (#489).
-BM25 was run again at every chunking for #489 (`just retrieval-bench --offline --configs bm25`,
-on Linux x86_64 with 4 CPUs); its recall@k, MRR, nDCG@10, section recall and rates matched the
-recorded ones exactly overall, per kind and per project, so its `rows` were added to the four
-recorded BM25 results, with `rows_from` saying where they come from (their `search_ms` are that
-re-run's; the recorded latencies stay), and the intervals, tests and recommendation were derived
-again. The model configurations were not run again: they have no rows, so no interval and no
-test, until the next recorded run, which keeps rows for every result.
+Every result keeps its per-case `rows`, so every one has intervals and a paired test against its
+budget's default (#489). On that runner, embedding the whole corpus took 24 minutes with
+bge-small at `default` (30 at `h6`, 14 at `h2`, 23 at `merge-400`) and 34 with arctic-embed-s; the
+cross-encoder adds about 2.5 s per question (32 candidates). What it found: BM25 is best at
+`default` (recall@5 81.7%, against 79.8% at `h6`); hybrid on bge-small reaches 84.6% at `h6` and
+the cross-encoder on BM25 84.6% at `default`, both 3 points more, under the 5-point margin and not
+significant (McNemar mid-p 0.11 and 0.18), so BM25 stays the default for both the no-model and the
+local budget; the cross-encoder loses recall at `h2`, whose chunks are longer than its window;
+arctic-embed-s is below BM25 (75.3%). The review (#490) did not change any case's first expected
+section, so recall@k and MRR match the run it replaces (13 November 2026, before the review, on a
+10-core laptop) for every configuration both ran.
 
 ### Running it with local models
 

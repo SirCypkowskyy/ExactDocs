@@ -158,9 +158,8 @@ section (often an API reference page) is still scored a miss there. Comparisons 
 favour reference pages should report nDCG@10 and section recall next to recall@k.
 
 The fixes changed the golden set's fingerprint (`sha256:39f6f9d5e909d128` to
-`sha256:7dd51c59057c279a`). The [ingestion run](ingestion.md) was recorded again on the reviewed
-set; the [retrieval run](retrieval.md) still measures the set as it was before the review, and is
-recorded again when its local models run on it (hours of CPU, not done in the review's pull request).
+`sha256:7dd51c59057c279a`). The [ingestion run](ingestion.md) and the
+[retrieval run](retrieval.md) were both recorded again on the reviewed set.
 
 ### Wording
 
