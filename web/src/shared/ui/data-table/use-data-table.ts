@@ -487,9 +487,7 @@ function useTableModel<T>(options: DataTableOptions<T>, write: Write): DataTable
     error: feed.error,
     busy: feed.busy,
     canJump: !server || source.paging === "offset",
-    lastJump: server
-      ? Math.min(pageCount, lastJumpPage(source as ServerSource<unknown>, size))
-      : pageCount,
+    lastJump: server ? Math.min(pageCount, lastJumpPage(source, size)) : pageCount,
     filtered: isFiltered(values, filters, params),
     viewKey: JSON.stringify([source?.key, search.q, filterKey, search.sort, page, size]),
     q: search.q,

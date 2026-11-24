@@ -78,7 +78,10 @@ function knownCursors(client: QueryClient, source: ServerSource<unknown>): Map<n
  * The farthest page a jump reaches in one request, at this size: every page of a list that pages
  * by offset up to the API's bound, only the first one of a list that pages by cursor.
  */
-export function lastJumpPage(source: ServerSource<unknown>, size: number): number {
+export function lastJumpPage(
+  source: Pick<ServerSource<unknown>, "paging" | "maxOffset">,
+  size: number,
+): number {
   if (source.paging !== "offset") return 1;
   return Math.floor((source.maxOffset ?? MAX_OFFSET) / size) + 1;
 }
