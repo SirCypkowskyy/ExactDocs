@@ -11,6 +11,7 @@ from exactdocs.catalog.constants import SCAN_PAGE
 from exactdocs.catalog.models import (
     Access,
     LibraryId,
+    LibraryLogo,
     ManifestEntry,
     ManifestId,
     ManifestInstruction,
@@ -24,6 +25,7 @@ from exactdocs.catalog.ports.driven import (
     EntrySearch,
     ImportedTagWriter,
     InstructionFileReader,
+    LibraryLogos,
     LibraryRepository,
     ManifestCopier,
     ManifestRepository,
@@ -31,6 +33,7 @@ from exactdocs.catalog.ports.driven import (
 )
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
+    ApplyLogo,
     ApplyManualTags,
     ApplyReadme,
     CollectGarbage,
@@ -45,6 +48,7 @@ from exactdocs.catalog.ports.driving import (
     GetAsset,
     GetInstructionFiles,
     GetLibrary,
+    GetLogo,
     GetManifestStates,
     GetVersionTags,
     IsLibraryIdTaken,
@@ -68,6 +72,7 @@ from exactdocs.catalog.ports.driving import (
 )
 from exactdocs.catalog.use_cases import (
     ActivateManifestUseCase,
+    ApplyLogoUseCase,
     ApplyManualTagsUseCase,
     ApplyReadmeUseCase,
     CollectGarbageUseCase,
@@ -82,6 +87,7 @@ from exactdocs.catalog.use_cases import (
     GetAssetUseCase,
     GetInstructionFilesUseCase,
     GetLibraryUseCase,
+    GetLogoUseCase,
     GetManifestStatesUseCase,
     GetVersionTagsUseCase,
     IsLibraryIdTakenUseCase,
@@ -121,6 +127,39 @@ class _NoInstructions:
         """
         del manifest_id
         return ()
+
+
+class _NoLogos:
+    """The default ``logos`` of ``build``: no library keeps a logo."""
+
+    async def get(self, library_id: LibraryId) -> LibraryLogo | None:
+        """Have none.
+
+        Args:
+            library_id: The library.
+
+        Returns:
+            Nothing.
+        """
+        del library_id
+        return None
+
+    async def put(self, library_id: LibraryId, logo: LibraryLogo) -> None:
+        """Keep nothing.
+
+        Args:
+            library_id: The library.
+            logo: The logo offered.
+        """
+        del library_id, logo
+
+    async def remove(self, library_id: LibraryId) -> None:
+        """Forget nothing: nothing was kept.
+
+        Args:
+            library_id: The library.
+        """
+        del library_id
 
 
 class _EveryoneMayDoAnything:
@@ -379,6 +418,10 @@ class CatalogModule:
     """Pin the library's default version to an imported one, or unpin it (LIB-10)."""
     apply_readme: ApplyReadme
     """Take title and description from the README of a just-imported version."""
+    apply_logo: ApplyLogo
+    """Keep the logo of a just-imported default version, or remove the library's (#504)."""
+    get_logo: GetLogo
+    """Read a library's logo (#504)."""
     remove_version: RemoveVersion
     """Remove a version: it and its manifests are gone at once, in one transaction."""
     remove_library: RemoveLibrary
@@ -414,6 +457,7 @@ class CatalogModule:
         instruction_files: InstructionFileReader | None = None,
         access: AccessPolicy | None = None,
         entry_search: EntrySearch | None = None,
+        logos: LibraryLogos | None = None,
         article_counts: ArticleCounts | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
@@ -437,6 +481,8 @@ class CatalogModule:
             access: Library roles: what the caller may do with a library; everything without it.
             entry_search: Filters, sorts and pages entries in the store; without it every entry is
                 read through ``manifests`` and sorted in memory (for tests).
+            logos: Keeps each library's logo (shares its data with ``repository``, which reads
+                ``Library.logo`` from it); without it no library has one.
             article_counts: Counts many versions' articles at once; without it each version's
                 entries are read through ``manifests`` (for tests).
 
@@ -504,6 +550,10 @@ class CatalogModule:
             update_library=UpdateLibraryUseCase(repository=repository, access=access),
             pin_default_version=PinDefaultVersionUseCase(repository=repository, access=access),
             apply_readme=ApplyReadmeUseCase(repository=repository),
+            apply_logo=ApplyLogoUseCase(repository=repository, logos=logos or _NoLogos()),
+            get_logo=GetLogoUseCase(
+                repository=repository, logos=logos or _NoLogos(), access=access
+            ),
             remove_version=RemoveVersionUseCase(
                 repository=repository, manifests=manifests, access=access
             ),

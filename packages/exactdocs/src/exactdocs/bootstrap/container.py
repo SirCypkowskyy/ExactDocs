@@ -32,6 +32,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogKnownLibraries,
     CatalogLibraries,
     CatalogLibraryIds,
+    CatalogLibraryLogos,
     CatalogLibrarySettings,
     CatalogLibrarySources,
     CatalogManualTags,
@@ -111,6 +112,7 @@ from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteEntrySearch,
     SqliteImportedTags,
     SqliteInstructionFiles,
+    SqliteLibraryLogos,
     SqliteLibraryRepository,
     SqliteManifestCopier,
     SqliteManifestRepository,
@@ -672,6 +674,7 @@ def _build_read_side(
         instruction_files=SqliteInstructionFiles(engine=engine),
         access=access,
         entry_search=SqliteEntrySearch(engine=engine),
+        logos=SqliteLibraryLogos(engine=engine),
         article_counts=SqliteArticleCounts(engine=engine),
     )
     choice = None
@@ -1183,6 +1186,9 @@ class Container:
                 get_library_retrieval=read.retrieval.get_library_retrieval
             ),
             files=files,
+            logos=CatalogLibraryLogos(
+                get_library=read.catalog.get_library, apply_logo=read.catalog.apply_logo
+            ),
         )
         ingestion = IngestionModule.build(
             jobs=SqliteJobRepository(engine=engine),

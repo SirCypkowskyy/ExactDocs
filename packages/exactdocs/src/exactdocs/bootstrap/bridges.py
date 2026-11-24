@@ -13,6 +13,7 @@ from pydantic import ValidationError as PydanticValidationError
 from exactdocs.bootstrap.constants import STATUSES
 from exactdocs.catalog.dtos import (
     ActivateManifestCommand,
+    ApplyLogoCommand,
     ApplyManualTagsCommand,
     ApplyReadmeCommand,
     ArticleIn,
@@ -36,6 +37,7 @@ from exactdocs.catalog.dtos import (
     ListArticlesQuery,
     ListLibrariesQuery,
     ListRenamesQuery,
+    LogoIn,
     RemoveLibraryCommand,
     RemoveVersionCommand,
     RenameIn,
@@ -72,6 +74,7 @@ from exactdocs.catalog.errors import StoredContentOutdatedError
 from exactdocs.catalog.models import Access as CatalogAccess
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
+    ApplyLogo,
     ApplyManualTags,
     ApplyReadme,
     CollectGarbage,
@@ -136,6 +139,7 @@ from exactdocs.ingestion.models import (
     KnownLibrary,
     NewLibrary,
     PathSelection,
+    ProjectLogo,
     ProposedId,
     RefKind,
     Removed,
@@ -733,6 +737,44 @@ class CatalogVersionPublisher:
                 manifest_id=manifest_id, library=None if manifest_id else library
             )
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CatalogLibraryLogos:
+    """Implements ``ingestion.ports.driven.LibraryLogos`` using the catalog (#504)."""
+
+    get_library: GetLibrary
+    """The catalog's library read: which version is the default."""
+    apply_logo: ApplyLogo
+    """The catalog's update of a library's logo from a version."""
+
+    async def wants_logo(self, library: str, ref: str) -> bool:
+        """Tell whether the version is the library's default now.
+
+        Args:
+            library: The library ID.
+            ref: The activated version.
+
+        Returns:
+            True for the default version.
+        """
+        detail = await self.get_library(GetLibraryQuery(id=library))
+        return detail.default_version == ref
+
+    async def offer_logo(self, *, library: str, ref: str, logo: ProjectLogo | None) -> None:
+        """Offer the version's logo to the catalog, which keeps only the default version's.
+
+        Args:
+            library: The library ID.
+            ref: The activated version.
+            logo: The logo found, or ``None`` when there is none.
+        """
+        found = None
+        if logo is not None:
+            found = LogoIn.model_validate(
+                {"path": logo.path, "content_type": logo.content_type, "data": logo.data}
+            )
+        await self.apply_logo(ApplyLogoCommand(library=library, ref=ref, logo=found))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -363,8 +363,25 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   or an unknown library is 404 `not_found`; a missing or empty ref, a malformed library ID or ref,
   or a short SHA that matches more than one commit version is 422. Libraries carry
   `default_pinned` (also in the MCP `list_libraries` tool). Removing the pinned version unpins the
-  library. Changing the pin does not re-derive the title and description from the new default's
-  README (LIB-07); re-import the new default to refresh them.
+  library. Changing the pin does not re-derive the title, description and logo from the new
+  default's README (LIB-07); re-import the new default to refresh them.
+- **Library logos** (#504): libraries carry `logo` (in `GET /libraries`, `GET
+  /libraries/{owner}/{repo}` and every answer that returns a library, MCP `list_libraries` too):
+  the logo's version, 16 hex digits of the SHA-256 of its bytes, or `null` when the importer found
+  none. `GET /libraries/{owner}/{repo}/logo` serves it from ExactDocs itself, never from the git
+  host: a PNG, JPEG or WebP as the repository has it, or an SVG as the importer cleaned it, with
+  the stored type, `ETag` = the version (`If-None-Match` answers 304) and the asset headers
+  (`X-Content-Type-Options: nosniff`, `Cross-Origin-Resource-Policy: same-origin`,
+  `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox; ...`; an SVG
+  is an attachment, which an `<img>` still shows). With `?v=` set to the current version it is
+  `Cache-Control: private, max-age=31536000, immutable` (the URL changes with the logo), otherwise
+  `private, no-cache`; an old `v` gets the current logo, never a cached old one. A library without
+  a logo (or unknown, or hidden from the caller) is 404 `not_found`. The logo is the **default
+  version's**: each import or re-sync of the version that is then the default looks for one and
+  replaces the library's, or removes it when the version has none; importing any other version
+  changes nothing. A library imported before logos existed gets one at the next import of its
+  default version (`versions/reimport`, a re-sync of a branch that moved, or a paths edit).
+  Where the importer looks and what it keeps: [Architecture](architecture.md), *Project logos*.
 - **Adding a library**: `POST /libraries` (`{"url", "library_id"?, "ref"?, "include_paths"?,
   "exclude_paths"?}`) validates everything first, then stores the library with its selection and
   queues an `import` job; it answers 201 with `library_id`, `ref`, `ref_kind` (`tag`, `branch`

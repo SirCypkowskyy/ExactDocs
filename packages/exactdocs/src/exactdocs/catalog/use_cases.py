@@ -21,6 +21,7 @@ from exactdocs.catalog.dtos import (
     ActivatedManifest,
     ActivateManifestCommand,
     ActiveManifest,
+    ApplyLogoCommand,
     ApplyManualTagsCommand,
     ApplyReadmeCommand,
     Article,
@@ -48,6 +49,7 @@ from exactdocs.catalog.dtos import (
     GetAssetQuery,
     GetInstructionFilesQuery,
     GetLibraryQuery,
+    GetLogoQuery,
     GetManifestStatesQuery,
     GetVersionTagsQuery,
     InstructionFileOut,
@@ -60,6 +62,7 @@ from exactdocs.catalog.dtos import (
     ListRenamesQuery,
     ListTagsQuery,
     ListVersionsQuery,
+    Logo,
     ManifestStates,
     ManualTagsOut,
     PinDefaultVersionCommand,
@@ -97,6 +100,7 @@ from exactdocs.catalog.errors import (
     LibraryCreationDeniedError,
     LibraryNotEmptyError,
     LibraryNotFoundError,
+    LogoNotFoundError,
     ManifestNotFoundError,
     VersionNotFoundError,
 )
@@ -108,6 +112,7 @@ from exactdocs.catalog.models import (
     ImportedTags,
     Library,
     LibraryId,
+    LibraryLogo,
     LibrarySettings,
     Manifest,
     ManifestEntry,
@@ -133,6 +138,7 @@ from exactdocs.catalog.ports.driven import (
     EntrySearch,
     ImportedTagWriter,
     InstructionFileReader,
+    LibraryLogos,
     LibraryRepository,
     ManifestCopier,
     ManifestRepository,
@@ -579,6 +585,50 @@ class ApplyReadmeUseCase:
             description=command.description or "",
             rules=tuple(command.rules),
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ApplyLogoUseCase:
+    """Implements ``ports.driving.ApplyLogo``."""
+
+    repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
+    logos: LibraryLogos
+    """Keeps each library's logo."""
+
+    async def __call__(self, command: ApplyLogoCommand) -> None:
+        """Follow the default version's logo: keep it, or remove the library's when it has none.
+
+        The logo of any other version is ignored, as its README is (``ApplyReadme``), so a
+        library shows the logo of the version its ID resolves to, and the newest import of an old
+        tag never replaces it. The same bytes are not written again (a branch synced often).
+        The caller does not retry: if this fails the library keeps its logo until the default
+        version is imported again.
+
+        Args:
+            command: The version imported and its logo, if any.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog.
+        """
+        library = await self.repository.get(LibraryId(command.library))
+        if library is None:
+            raise LibraryNotFoundError(command.library)
+        default = library.default_version()
+        if default is None or default.ref != VersionRef(command.ref):
+            return
+        if command.logo is None:
+            if library.logo is not None:
+                await self.logos.remove(library.id)
+            return
+        logo = LibraryLogo(
+            content_type=command.logo.content_type,
+            data=command.logo.data,
+            path=command.logo.path,
+            ref=default.ref,
+        )
+        if logo.digest != library.logo:
+            await self.logos.put(library.id, logo)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1531,6 +1581,44 @@ class GetAssetUseCase:
         if image is None:
             raise AssetNotFoundError(str(library.id), str(version.ref), query.path)
         return Asset(blob_sha=image.blob_sha, content_type=image.content_type, data=image.data)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GetLogoUseCase:
+    """Implements ``ports.driving.GetLogo``."""
+
+    repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
+    logos: LibraryLogos
+    """Keeps each library's logo."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
+
+    async def __call__(self, query: GetLogoQuery) -> Logo:
+        """Read the library's logo, or only say the caller's copy is current.
+
+        Args:
+            query: The library and the logo versions the caller holds.
+
+        Returns:
+            The logo, or ``unchanged`` without bytes when its version is one the caller holds.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog (or hidden from the caller).
+            LogoNotFoundError: The library has no logo.
+        """
+        await _require(self.access, query.library, Access.READ)
+        library_id = LibraryId(query.library)
+        logo = await self.logos.get(library_id)
+        if logo is None:
+            if await self.repository.get(library_id) is None:
+                raise LibraryNotFoundError(query.library)
+            raise LogoNotFoundError(str(library_id))
+        if logo.digest in query.known_digests:
+            return Logo(
+                digest=logo.digest, content_type=logo.content_type, data=b"", unchanged=True
+            )
+        return Logo(digest=logo.digest, content_type=logo.content_type, data=logo.data)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

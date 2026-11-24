@@ -2948,6 +2948,138 @@
         }
       }
     },
+    "/api/v1/libraries/{owner}/{repo}/logo": {
+      "get": {
+        "tags": [
+          "catalog",
+          "catalog"
+        ],
+        "summary": "Get Library Logo",
+        "description": "Serve the library's project logo, found by the importer in its default version.\n\nFrom ExactDocs' own origin, never from the repository's host. The `ETag` is the logo's\nversion (the library's `logo` field). Asked for with `?v=` set to that version, it is\ncached for a year; otherwise the browser asks again (`no-cache`) and gets a 304 while the\nlogo is the same. An SVG is served as an attachment (an `<img>` still shows it) under a\nCSP that forbids scripts and any request. 404 `not_found` when the library has no logo.",
+        "operationId": "catalog-get_library_logo",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The library's `logo` version: when it is the current one, the answer may be cached for a year (the URL changes with the logo).",
+              "title": "V"
+            },
+            "description": "The library's `logo` version: when it is the current one, the answer may be cached for a year (the URL changes with the logo)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The logo's bytes: a PNG, JPEG or WebP as the repository has it, or an SVG as the importer cleaned it.",
+            "content": {
+              "image/png": {},
+              "image/jpeg": {},
+              "image/webp": {},
+              "image/svg+xml": {}
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The caller's copy (`If-None-Match`) is current."
+          }
+        }
+      }
+    },
     "/api/v1/libraries/{owner}/{repo}/default-version": {
       "put": {
         "tags": [
@@ -14406,6 +14538,18 @@
             "type": "array",
             "title": "Rules",
             "description": "The rules of the default version's `context7.json`, shown to agents with every `query-docs`\nanswer. Untrusted repository text."
+          },
+          "logo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo",
+            "description": "Version of the library's project logo (hex digits of its SHA-256); null when the importer\nfound none in the default version. The image is `GET /api/v1/libraries/{owner}/{repo}/logo`;\nwith `?v=<logo>` a browser may keep it until the logo changes."
           }
         },
         "additionalProperties": false,
@@ -14420,7 +14564,8 @@
           "settings",
           "versions",
           "default_version",
-          "default_pinned"
+          "default_pinned",
+          "logo"
         ],
         "title": "LibraryDetail",
         "description": "Everything known about one library."
@@ -15423,6 +15568,18 @@
             "title": "Last Imported At",
             "description": "When any version was last imported; null while none is."
           },
+          "logo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo",
+            "description": "Version of the library's project logo (hex digits of its SHA-256); null when the importer\nfound none in the default version. The image is `GET /api/v1/libraries/{owner}/{repo}/logo`;\nwith `?v=<logo>` a browser may keep it until the logo changes."
+          },
           "article_count": {
             "type": "integer",
             "minimum": 0.0,
@@ -15444,6 +15601,7 @@
           "version_count",
           "tags",
           "last_imported_at",
+          "logo",
           "article_count"
         ],
         "title": "LibrarySummary",
