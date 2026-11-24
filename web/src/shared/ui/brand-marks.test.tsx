@@ -41,9 +41,7 @@ describe("ProviderMark", () => {
   });
 
   it("shows an operator's icon from this server, fitted and silent", () => {
-    const { container } = render(
-      <ProviderMark iconUrl="/api/v1/auth/corp/icon?v=3" size="md" />,
-    );
+    const { container } = render(<ProviderMark iconUrl="/api/v1/auth/corp/icon?v=3" size="md" />);
     const img = container.querySelector("img");
     expect(img).toHaveAttribute("src", "/api/v1/auth/corp/icon?v=3");
     expect(img).toHaveAttribute("alt", "");
