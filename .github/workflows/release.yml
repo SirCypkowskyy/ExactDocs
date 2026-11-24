@@ -5,14 +5,16 @@
 #   tag on develop  vX.Y.Z.devN   -> PyPI X.Y.Z.devN     ghcr X.Y.Z.devN, X.Y.Z.devN-<sha7>, dev
 #                                    (pre-release: pip/uvx skip it unless asked with --prerelease)
 # Every image tag also comes as -ai and -local (X.Y.Z-ai, latest-local, dev-ai, ...): the three
-# variants of deploy/Dockerfile (#246). Nothing is published before the retrieval eval passes
-# (job `eval`, docs/evals.md). See docs/releasing.md.
+# variants of deploy/Dockerfile (#246). Nothing is published before the retrieval eval (job `eval`,
+# docs/evals.md) and the integration and end-to-end jobs that pull requests do not run (job
+# `integration`, integration.yml: #507) pass. See docs/releasing.md.
 #
 # Runners (#478, docs/releasing.md "CI/CD and runners"), switched by the repository variable
 # RUNNER_MODE (Settings -> Secrets and variables -> Actions -> Variables):
 #   hybrid (default, also when unset): the self-hosted ARM64 runner [self-hosted, linux, ARM64,
-#     exactdocs] runs the eval, the web and Python builds and the arm64 image legs; GitHub-hosted
-#     ubuntu-24.04 runs the amd64 image legs (natively) and the short jobs that validate the tag,
+#     exactdocs] runs the eval, the integration pytest and behave suites, the web and Python builds
+#     and the arm64 image legs; GitHub-hosted ubuntu-24.04 runs the amd64 image legs (natively),
+#     the integration image, uvx and browser jobs, and the short jobs that validate the tag,
 #     publish and sign (a fresh VM each time).
 #   self-hosted (when the GitHub-hosted minutes ran out): every job on the self-hosted runner.
 #     The amd64 legs are cross-built there (QEMU runs only the runtime stage's apt-get, never
@@ -197,7 +199,7 @@ jobs:
         run: uv run exactdocs models pull
       - name: The default models embed and rerank with sockets blocked
         continue-on-error: true
-        run: uv run pytest -p no:cacheprovider packages/exactdocs/tests/bootstrap/test_local_models_real.py
+        run: uv run pytest --integration -p no:cacheprovider packages/exactdocs/tests/bootstrap/test_local_models_real.py
       - name: Retrieval eval, hybrid on bge-small (local embedding, report-only)
         continue-on-error: true
         run: >-
@@ -221,6 +223,20 @@ jobs:
           name: retrieval-eval
           path: reports/
           retention-days: 30
+
+  # The integration and end-to-end jobs (#507), as a manual CI run with `integration` runs them:
+  # the integration pytest and behave suites on PostgreSQL, Supabase, PgBouncer and every search
+  # and vector server; the Docker images' build, scan and smoke tests; uvx, the upgrade from the
+  # previous release and the browser end-to-end test. Pull requests leave them out unless
+  # labelled `run integration`, so they gate the release instead: `pypi-kernel` and `image` need
+  # them. The Python job runs on the self-hosted runner in both modes (input `release`), as the
+  # eval does; there Pinecone Local (amd64-only) is not started and its cases skip.
+  integration:
+    name: Integration
+    needs: meta
+    uses: ./.github/workflows/integration.yml
+    with:
+      release: true
 
   web:
     name: Build web UI
@@ -284,7 +300,7 @@ jobs:
   # pins exactdocs-kernel==<same version>. Never in a dry run.
   pypi-kernel:
     name: Publish exactdocs-kernel to PyPI
-    needs: [meta, python, eval]
+    needs: [meta, python, eval, integration]
     if: github.event_name == 'push'
     runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     environment:
@@ -398,7 +414,7 @@ jobs:
   # only: no tag until `image-publish`. A dry run builds it and pushes nothing.
   image:
     name: Build image (${{ matrix.variant }}, ${{ matrix.arch }})
-    needs: [meta, image-scan, eval]
+    needs: [meta, image-scan, eval, integration]
     runs-on: ${{ (matrix.arch == 'arm64' || vars.RUNNER_MODE == 'self-hosted') && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
     permissions:

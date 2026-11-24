@@ -22,3 +22,6 @@ packages/*/tests
 packages/*/features
 packages/*/evals
 packages/*/alembic.ini
+# CI shards' recorded test times (#507)
+.test_durations
+.behave_durations

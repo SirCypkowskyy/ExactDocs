@@ -1,4 +1,4 @@
-@postgres
+@integration @postgres
 Feature: A shared instance runs on PostgreSQL with several server processes
   As the operator of a team's ExactDocs instance
   I want its server processes to share one PostgreSQL database

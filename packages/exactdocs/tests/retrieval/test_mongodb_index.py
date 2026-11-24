@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+import integration
 from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.index_backends import build_index_backends
 from exactdocs.bootstrap.settings import Settings
@@ -48,9 +49,7 @@ LIB = "/acme/payments"
 URL = "mongodb://mongo.internal:27017/?replicaSet=rs0"
 NO_TAGS = TagFilter()
 
-needs_mongodb = pytest.mark.skipif(
-    MONGODB_URL is None, reason="needs MongoDB with mongot: set EXACTDOCS_TEST_MONGODB_URL"
-)
+needs_mongodb = integration.MONGODB
 
 
 def manifest(manifest_id: str, library: str = LIB, ref: str = "v1") -> IndexedManifest:

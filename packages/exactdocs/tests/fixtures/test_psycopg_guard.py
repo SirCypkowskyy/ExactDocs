@@ -12,12 +12,13 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+import integration
 import psycopg_guard
-from databases import ADMIN_URL, PostgresDatabase, postgres_database
+from databases import PostgresDatabase, postgres_database
 from psycopg_guard import _pick, no_psycopg_connection_left_open
 
 pytestmark = [
-    pytest.mark.skipif(ADMIN_URL is None, reason="needs EXACTDOCS_TEST_POSTGRES_URL"),
+    integration.POSTGRES,
     pytest.mark.usefixtures("short_grace"),
 ]
 

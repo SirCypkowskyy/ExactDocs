@@ -1,4 +1,4 @@
-@mongodb
+@integration @mongodb
 Feature: MongoDB holds the search and vector indexes
   As an operator whose data lives in MongoDB (Atlas, or MongoDB with mongot)
   I want ExactDocs' chunks and vectors indexed and searched there, filtered to the asked version
