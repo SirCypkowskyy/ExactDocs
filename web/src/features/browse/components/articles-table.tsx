@@ -13,11 +13,10 @@ import {
 } from "lucide-react";
 import { useId, useMemo } from "react";
 import { toast } from "sonner";
-import { formatNumber, useLanguage, useMessages } from "@/shared/lib/i18n";
+import { useMessages } from "@/shared/lib/i18n";
 import { tagsQueryOptions } from "@/shared/lib/tags-query";
-import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
-import { Bytes } from "@/shared/ui/data-table/cells";
+import { Bytes, Chips } from "@/shared/ui/data-table/cells";
 import { DataTable } from "@/shared/ui/data-table/data-table";
 import { DataTablePagination } from "@/shared/ui/data-table/pagination";
 import type { RowAction } from "@/shared/ui/data-table/row-actions";
@@ -29,7 +28,6 @@ import {
   useDataTable,
 } from "@/shared/ui/data-table/use-data-table";
 import { Section } from "@/shared/ui/page";
-import { pill, pillTone } from "@/shared/ui/recipes";
 import { articlesSource, type VersionArgs } from "../api/browse-queries";
 import { messages } from "../messages";
 import { ARTICLES_TABLE, articleFilters, articlesView, folderOf } from "../model/articles-view";
@@ -71,27 +69,6 @@ function PathText({ path }: { path: string }) {
   );
 }
 
-function TagList({ tags, label }: { tags: readonly string[]; label: string }) {
-  const language = useLanguage();
-  if (tags.length === 0) return <span className="text-muted-foreground">–</span>;
-  const rest = tags.slice(SHOWN_TAGS);
-  return (
-    <ul aria-label={label} className="flex flex-wrap gap-1">
-      {tags.slice(0, SHOWN_TAGS).map((tag) => (
-        <li key={tag} className={cn(pill, pillTone.neutral)}>
-          {tag}
-        </li>
-      ))}
-      {rest.length > 0 && (
-        <li className={cn(pill, pillTone.neutral, "num")}>
-          <span aria-hidden="true">+{formatNumber(rest.length, language)}</span>
-          <span className="sr-only">{rest.join(", ")}</span>
-        </li>
-      )}
-    </ul>
-  );
-}
-
 /** Where a row's link goes: the reader, in the version and tag filter the page shows. */
 interface Target {
   owner: string;
@@ -130,7 +107,16 @@ const columnsOf = (t: TableMessages, to: Target): ColumnDef<ArticleSummary>[] =>
     header: t.tags,
     enableSorting: false,
     meta: { skeleton: "pill", className: "max-lg:hidden" },
-    cell: ({ row }) => <TagList tags={row.original.tags} label={t.tags} />,
+    cell: ({ row }) => (
+      <Chips
+        items={row.original.tags}
+        label={t.tags}
+        shown={SHOWN_TAGS}
+        look="pill"
+        more={(n) => t.moreTags(n, row.original.path)}
+        title={t.tagsOf(row.original.path)}
+      />
+    ),
   },
   {
     accessorKey: "size",

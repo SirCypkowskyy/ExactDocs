@@ -46,6 +46,9 @@ export const messages = defineMessages(
       path: "Path",
       title: "Title",
       tags: "Tags",
+      moreTags: (n: number, path: string) =>
+        `${plural.en(n, { one: "# more tag", other: "# more tags" })} of ${path}`,
+      tagsOf: (path: string) => `Tags of ${path}`,
       size: "Size",
       loadFailed: "Couldn't load articles.",
       retry: "Retry",
@@ -234,6 +237,9 @@ export const messages = defineMessages(
       path: "Ścieżka",
       title: "Tytuł",
       tags: "Tagi",
+      moreTags: (n, path) =>
+        `${plural.pl(n, { one: "Jeszcze # tag", few: "Jeszcze # tagi", many: "Jeszcze # tagów" })}: ${path}`,
+      tagsOf: (path) => `Tagi: ${path}`,
       size: "Rozmiar",
       loadFailed: "Nie udało się wczytać artykułów.",
       retry: "Ponów",

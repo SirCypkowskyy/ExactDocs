@@ -27,7 +27,7 @@ import {
 } from "./breadcrumb";
 import { Button, IconButton } from "./button";
 import { CredentialField } from "./credential-field";
-import { StateBadge } from "./data-table/cells";
+import { Chips as ChipsCell, StateBadge } from "./data-table/cells";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -424,6 +424,37 @@ describe("ToggleGroup", () => {
     render(<Period />);
     await userEvent.click(screen.getByRole("radio", { name: "Week" }));
     expect(screen.getByRole("radio", { name: "Week" })).toBeChecked();
+  });
+});
+
+describe("Chips cell", () => {
+  const props = {
+    more: (n: number) => `${n} more groups of carol`,
+    title: "Groups of carol",
+  };
+
+  it("shows the first chips and opens all of them from +N", async () => {
+    render(<ChipsCell {...props} label="Groups" items={["ops", "dev", "qa", "sec"]} />);
+    const list = screen.getByRole("list", { name: "Groups" });
+    expect(list).toHaveTextContent("opsdev+2");
+
+    await userEvent.click(within(list).getByRole("button", { name: "2 more groups of carol" }));
+
+    const all = await screen.findByRole("dialog");
+    expect(all).toHaveTextContent("Groups of carol");
+    expect(
+      within(all)
+        .getAllByRole("listitem")
+        .map((i) => i.textContent),
+    ).toEqual(["ops", "dev", "qa", "sec"]);
+  });
+
+  it("has no +N when every chip fits, and says when there are none", () => {
+    const { rerender } = render(<ChipsCell {...props} items={["ops", "dev"]} />);
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
+    rerender(<ChipsCell {...props} items={[]} empty="No groups" />);
+    expect(screen.getByText("No groups")).toBeInTheDocument();
+    expect(screen.queryByRole("list")).not.toBeInTheDocument();
   });
 });
 

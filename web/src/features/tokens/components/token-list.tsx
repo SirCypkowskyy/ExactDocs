@@ -1,13 +1,11 @@
 import type { ColumnDef, FilterFn, SortingFn } from "@tanstack/react-table";
 import { CircleX, Clock, Infinity as Endless } from "lucide-react";
-import { formatNumber, useLanguage, useMessages } from "@/shared/lib/i18n";
+import { useMessages } from "@/shared/lib/i18n";
 import { useNow } from "@/shared/lib/use-now";
 import { cn } from "@/shared/lib/utils";
 import { Badge } from "@/shared/ui/badge";
-import { Button } from "@/shared/ui/button";
-import { MonoCopy, RelativeTime } from "@/shared/ui/data-table/cells";
+import { Chips, MonoCopy, RelativeTime } from "@/shared/ui/data-table/cells";
 import type { TableFilter } from "@/shared/ui/data-table/use-data-table";
-import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { messages } from "../messages";
 import {
   expiryOf,
@@ -41,50 +39,18 @@ const byTime =
     return x < y ? -1 : x > y ? 1 : 0;
   };
 
-/** How many library chips a row shows before the rest move behind "+N". */
-const SHOWN = 2;
-const chip = "rounded-sm bg-accent px-1.5 py-0.5 font-mono text-small text-foreground";
-
 /** The libraries a token reaches: all, none, or the first two as chips and the rest on demand. */
 function LibrariesCell({ token }: { token: Token }) {
   const t = useMessages(messages).list;
-  const language = useLanguage();
   const ids = token.library_ids;
   if (ids == null) return <span className="text-muted-foreground">{t.allLibraries}</span>;
-  if (ids.length === 0) return <span className="text-muted-foreground">{t.noLibraries}</span>;
-  const rest = ids.length - SHOWN;
   return (
-    <span className="flex flex-wrap items-center gap-1.5">
-      {ids.slice(0, SHOWN).map((id) => (
-        <span key={id} className={chip}>
-          {id}
-        </span>
-      ))}
-      {rest > 0 && (
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              aria-label={t.moreLibraries(rest, token.name)}
-              className="-my-2 min-w-11 px-1.5 text-small text-muted-foreground data-[state=open]:bg-accent fine:h-6 fine:min-w-6"
-            >
-              +{formatNumber(rest, language)}
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent className="w-auto max-w-80 p-3">
-            <p className="mb-2 text-small text-muted-foreground">{t.librariesOf(token.name)}</p>
-            <ul className="flex flex-wrap gap-1.5">
-              {ids.map((id) => (
-                <li key={id} className={chip}>
-                  {id}
-                </li>
-              ))}
-            </ul>
-          </PopoverContent>
-        </Popover>
-      )}
-    </span>
+    <Chips
+      items={ids}
+      more={(n) => t.moreLibraries(n, token.name)}
+      title={t.librariesOf(token.name)}
+      empty={t.noLibraries}
+    />
   );
 }
 

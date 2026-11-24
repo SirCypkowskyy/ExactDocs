@@ -163,9 +163,16 @@ describe("the articles table", () => {
     // The table's requests never name a folder unless it is filtered to one.
     expect(pages(fetchMock)[0]?.searchParams.has("path_prefix")).toBe(false);
     expect(pages(fetchMock)[0]?.searchParams.get("limit")).toBe("20");
-    // Tags: three, then "+1".
+    // Tags: three, then "+1", which opens all of them.
     const row = first.closest("tr") as HTMLElement;
-    expect(within(row).getByRole("list", { name: "Tags" })).toHaveTextContent("apiguidebeta+1auth");
+    expect(within(row).getByRole("list", { name: "Tags" })).toHaveTextContent("apiguidebeta+1");
+    await userEvent.click(
+      within(row).getByRole("button", { name: "1 more tag of docs/guide/a01.md" }),
+    );
+    expect(await screen.findByRole("dialog")).toHaveTextContent(
+      "Tags of docs/guide/a01.mdapiguidebetaauth",
+    );
+    await userEvent.keyboard("{Escape}");
     expect(within(row).getByText("1 kB")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Next page" }));

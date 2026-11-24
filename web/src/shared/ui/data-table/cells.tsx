@@ -19,10 +19,12 @@ import { useNow } from "@/shared/lib/use-now";
 import { cn } from "@/shared/lib/utils";
 import { Avatar } from "../avatar";
 import { Badge, type BadgeTone } from "../badge";
-import { IconButton } from "../button";
+import { Button, IconButton } from "../button";
 import { LibraryMark } from "../library-mark";
 import { messages } from "../messages";
 import { Meter } from "../meter";
+import { Popover, PopoverContent, PopoverTrigger } from "../popover";
+import { pill, pillTone } from "../recipes";
 import { Commit, VersionStation } from "../route";
 import { Tooltip } from "../tooltip";
 
@@ -255,5 +257,77 @@ export function MonoCopy({
         {done ? t.copied(what) : ""}
       </span>
     </span>
+  );
+}
+
+const CHIP_LOOKS = {
+  mono: "rounded-sm bg-accent px-1.5 py-0.5 font-mono text-small text-foreground",
+  pill: cn(pill, pillTone.neutral),
+} as const;
+
+/**
+ * A short list of literals (groups, libraries, tags): the first `shown` as chips, the rest behind
+ * a "+N" button that opens all of them in a popover. None is `empty` (a dash).
+ */
+export function Chips({
+  items,
+  label,
+  more,
+  title,
+  shown = 2,
+  look = "mono",
+  empty = "–",
+}: {
+  items: readonly string[];
+  /** The list's accessible name ("Tags"); none leaves it unnamed. */
+  label?: string;
+  /** The "+N" button's name: "2 more groups of carol". */
+  more: (n: number) => string;
+  /** The popover's heading: "Groups of carol". */
+  title: string;
+  /** Chips before "+N". */
+  shown?: number;
+  /** `mono` chips for IDs and names, neutral `pill`s for tags. */
+  look?: keyof typeof CHIP_LOOKS;
+  empty?: ReactNode;
+}) {
+  const language = useLanguage();
+  if (items.length === 0) return <span className="text-muted-foreground">{empty}</span>;
+  const rest = items.length - shown;
+  const chip = CHIP_LOOKS[look];
+  return (
+    <ul aria-label={label} className="flex flex-wrap items-center gap-1.5">
+      {items.slice(0, shown).map((item) => (
+        <li key={item} className={chip}>
+          {item}
+        </li>
+      ))}
+      {rest > 0 && (
+        <li className="flex">
+          <Popover>
+            <PopoverTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={more(rest)}
+                className="num -my-2 min-w-11 px-1.5 text-small text-muted-foreground data-[state=open]:bg-accent fine:h-6 fine:min-w-6"
+              >
+                +{formatNumber(rest, language)}
+              </Button>
+            </PopoverTrigger>
+            <PopoverContent className="w-auto max-w-80 p-3">
+              <p className="mb-2 text-small text-muted-foreground">{title}</p>
+              <ul className="flex flex-wrap gap-1.5">
+                {items.map((item) => (
+                  <li key={item} className={chip}>
+                    {item}
+                  </li>
+                ))}
+              </ul>
+            </PopoverContent>
+          </Popover>
+        </li>
+      )}
+    </ul>
   );
 }

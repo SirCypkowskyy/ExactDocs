@@ -21,7 +21,7 @@ import { cn } from "@/shared/lib/utils";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
-import { Person, RelativeTime } from "@/shared/ui/data-table/cells";
+import { Chips, Person, RelativeTime } from "@/shared/ui/data-table/cells";
 import { DataTable } from "@/shared/ui/data-table/data-table";
 import { DataTablePagination } from "@/shared/ui/data-table/pagination";
 import { type RowAction, restoreRowFocus } from "@/shared/ui/data-table/row-actions";
@@ -34,7 +34,6 @@ import { messages } from "../messages";
 import { parseUsersView, USER_ROLES, USER_STATUSES, USERS_TABLE } from "../model/list-view";
 import { explainUserError, type Role, type User } from "../model/user";
 import { CreateUserDialog } from "./create-user-dialog";
-import { GroupChips } from "./group-chips";
 import { ResetPasswordDialog } from "./reset-password-dialog";
 
 /*
@@ -105,7 +104,11 @@ const columnsOf = (m: UsersMessages, me: string): ColumnDef<User>[] => [
     enableSorting: false,
     meta: { label: m.list.groups, className: "max-lg:hidden" },
     cell: ({ row }) => (
-      <GroupChips name={row.original.username} groups={row.original.groups ?? []} />
+      <Chips
+        items={row.original.groups ?? []}
+        more={(n) => m.list.moreGroups(n, row.original.username)}
+        title={m.list.allGroups(row.original.username)}
+      />
     ),
   },
   {
