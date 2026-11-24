@@ -59,9 +59,15 @@ export interface LibraryChoices {
   total?: number | undefined;
 }
 
-export type LibraryChoicesQuery = UseQueryOptions<LibraryChoices, Error, LibraryChoices, QueryKey>;
+/** A feature's queryOptions for the libraries matching some text. */
+export type LibraryChoicesQuery<K extends QueryKey = QueryKey> = UseQueryOptions<
+  LibraryChoices,
+  Error,
+  LibraryChoices,
+  K
+>;
 
-interface BaseProps {
+interface BaseProps<K extends QueryKey> {
   /** What is chosen ("Library", "Libraries"): the field's label, or the filter button's name. */
   label: string;
   /**
@@ -81,7 +87,7 @@ interface BaseProps {
   failed?: boolean | undefined;
   onRetry?: (() => void) | undefined;
   /** Or the feature's query for the libraries matching some text (debounced). */
-  query?: ((text: string) => LibraryChoicesQuery) | undefined;
+  query?: ((text: string) => LibraryChoicesQuery<K>) | undefined;
   /** Offer the typed text itself when it passes (e.g. a removed library's `/owner/repo`). */
   custom?: ((text: string) => boolean) | undefined;
   /** A trigger of the caller's own (a "+3 more" button); it is given the popover's behaviour. */
@@ -91,19 +97,19 @@ interface BaseProps {
   className?: string | undefined;
 }
 
-interface SingleProps extends BaseProps {
+interface SingleProps<K extends QueryKey> extends BaseProps<K> {
   multiple?: false;
   value: string | undefined;
   onChange: (id: string | undefined) => void;
 }
 
-interface MultipleProps extends BaseProps {
+interface MultipleProps<K extends QueryKey> extends BaseProps<K> {
   multiple: true;
   value: readonly string[];
   onChange: (ids: string[]) => void;
 }
 
-export type LibraryComboboxProps = SingleProps | MultipleProps;
+export type LibraryComboboxProps<K extends QueryKey = QueryKey> = SingleProps<K> | MultipleProps<K>;
 
 /** Above this many libraries the list is grouped by owner. */
 const GROUP_FROM = 20;
@@ -183,7 +189,7 @@ const IDLE: LibraryChoicesQuery = {
   enabled: false,
 };
 
-export function LibraryCombobox(props: LibraryComboboxProps) {
+export function LibraryCombobox<K extends QueryKey>(props: LibraryComboboxProps<K>) {
   const {
     label,
     variant = "field",
@@ -236,8 +242,10 @@ export function LibraryCombobox(props: LibraryComboboxProps) {
   }, []);
   const [recent, setRecent] = useState<Recent[]>(readRecent);
   const rested = useDebounced(text.trim(), DEBOUNCE_MS);
+  // The feature's key type only matters to the feature: here any key will do.
+  const asked = (query && opened ? query(rested) : undefined) as LibraryChoicesQuery | undefined;
   const fetched = useQuery(
-    query && opened ? { ...query(rested), placeholderData: keepPreviousData, retry: false } : IDLE,
+    asked ? { ...asked, placeholderData: keepPreviousData, retry: false } : IDLE,
   );
 
   const chosen = props.multiple ? props.value : props.value ? [props.value] : [];
