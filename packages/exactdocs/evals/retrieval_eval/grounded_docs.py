@@ -11,7 +11,7 @@ the paired tests against ExactDocs (#489) and the Markdown. See docs/evals.md#gr
 """
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict
@@ -238,7 +238,8 @@ class RunResult(_Model):
     errors: list[str]
     """Questions whose search failed (scored as an empty answer)."""
     cases_not_indexed: list[str]
-    """Answerable cases whose first expected article it did not index."""
+    """Answerable cases none of whose listed articles it indexed: out of its reach, since recall
+    counts a hit on any section a case lists (#501)."""
 
 
 class Baseline(_Model):
@@ -357,21 +358,25 @@ def paired(
 
 def cases_not_indexed(
     rows: Sequence[TextRow],
-    first_articles: Mapping[str, tuple[str, str]],
+    articles: Mapping[str, Collection[tuple[str, str]]],
     indexing: Sequence[VersionIndex],
 ) -> list[str]:
-    """Name the answerable cases whose first expected article was not indexed.
+    """Name the answerable cases none of whose listed articles was indexed.
+
+    Recall counts the first hit on any section a case lists, each part and its alternatives
+    alike (#501, ``evaluators.first_rank``), so a case is out of reach only when every article
+    it lists was left out.
 
     Args:
         rows: Every case's row.
-        first_articles: Each answerable case's first expected ``(version, article)``, by name.
+        articles: The ``(version, article)`` of every section each answerable case lists, by name.
         indexing: Every version as it was indexed.
 
     Returns:
         The cases' names, in row order.
     """
     missing = {(v.version, path) for v in indexing for path in v.not_indexed}
-    return [r.case for r in rows if first_articles.get(r.case) in missing]
+    return [r.case for r in rows if (listed := articles.get(r.case)) and set(listed) <= missing]
 
 
 # ---------------------------------------------------------------- the summary
@@ -679,7 +684,7 @@ def indexing(report: GroundedDocsReport) -> list[str]:
 
 
 def not_indexed(report: GroundedDocsReport) -> list[str]:
-    """The articles Grounded Docs did not index, and the cases that expected one.
+    """The articles Grounded Docs did not index, and the cases they put out of its reach.
 
     Args:
         report: The run.
@@ -699,7 +704,7 @@ def not_indexed(report: GroundedDocsReport) -> list[str]:
         lines = ["- none: every article the importer takes was indexed"]
     cases = first.cases_not_indexed
     lines.append(
-        f"- answerable cases whose first expected article is among them: {len(cases)}"
+        f"- answerable cases that list no other article: {len(cases)}"
         + (f" ({', '.join(cases)})" if cases else "")
     )
     return lines

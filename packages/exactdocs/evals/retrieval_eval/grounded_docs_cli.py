@@ -1000,17 +1000,17 @@ def _variables(configuration: Configuration, endpoint: Endpoint | None) -> dict[
     }
 
 
-def _first_articles(dataset: RetrievalDataset) -> dict[str, tuple[str, str]]:
-    """Each answerable case's first expected section's version and article.
+def _listed_articles(dataset: RetrievalDataset) -> dict[str, frozenset[tuple[str, str]]]:
+    """The version and article of every section each answerable case lists, alternatives too.
 
     Args:
         dataset: The golden set.
 
     Returns:
-        ``(version, article)`` by case name.
+        ``(version, article)`` pairs by case name.
     """
     return {
-        c.name or "": (c.expected_output.hits[0].version, c.expected_output.hits[0].article)
+        c.name or "": frozenset((h.version, h.article) for h in c.expected_output.hits)
         for c in dataset.cases
         if c.expected_output and c.expected_output.hits
     }
@@ -1120,7 +1120,7 @@ async def run_configuration(
         rows=sorted(rows, key=lambda r: r.case),
         versus=[],
         errors=errors,
-        cases_not_indexed=cases_not_indexed(rows, _first_articles(plan.dataset), indexing),
+        cases_not_indexed=cases_not_indexed(rows, _listed_articles(plan.dataset), indexing),
     )
 
 

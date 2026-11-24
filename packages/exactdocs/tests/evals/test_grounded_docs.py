@@ -31,6 +31,8 @@ from retrieval_eval.grounded_docs import (
     TOP_K,
     VERSION,
     GroundedDocsReport,
+    VersionIndex,
+    cases_not_indexed,
     markdown,
     page_blocks,
     paired,
@@ -47,6 +49,7 @@ from retrieval_eval.grounded_docs_cli import (
     write_config,
 )
 from retrieval_eval.retrieval_bench import Row
+from retrieval_eval.text_bench import TextRow
 
 INSTALL_QUERY = "install demo package pip"
 """The tiny corpus' answerable question."""
@@ -300,6 +303,71 @@ def test_an_article_left_out_is_named_with_the_cases_that_expected_it(
     assert problems(report) == [f"{FULL_TEXT}: nothing indexed for demo v1"]
     assert code == 1
     assert "`docs/guide.md`" in markdown(report)
+
+
+def test_a_part_and_its_alternative_count_once_as_the_text_scorer_counts_them(
+    tmp_path: Path,
+) -> None:
+    guide = {"version": "v1", "article": "docs/guide.md"}
+    install = guide | {"heading_path": ["Guide", "Install"]}
+    configure = guide | {"heading_path": ["Guide", "Configure"]}
+
+    def case(name: str, hits: list[dict]) -> dict:
+        return {
+            "name": f"demo v1: {name}",
+            "inputs": {"query": INSTALL_QUERY, "version": "v1", "project": "demo"},
+            "metadata": {"kind": "how-to"},
+            "expected_output": {"hits": hits, "reference": "pip.", "facts": ["pip"]},
+        }
+
+    cases = [
+        case("either section", [install, configure | {"alternative": True}]),
+        case("both sections", [install, configure]),
+    ]
+    args = tiny_corpus(tmp_path / "corpus", cases=cases)[:6]
+
+    _, report = _run(tmp_path, args, ReplayingGroundedDocs(), "--configs", FULL_TEXT)
+
+    assert report is not None
+    rows = {r.case: r.row for r in report.runs[0].rows}
+    either, both = rows["demo v1: either section"], rows["demo v1: both sections"]
+    assert (either.rank, either.sections, either.section_ranks, either.ndcg) == (1, 1, (1,), 1.0)
+    assert (both.rank, both.sections, both.section_ranks) == (1, 2, (1,))  # one result, one part
+    assert both.ndcg < 1
+
+
+def test_a_case_with_an_article_still_indexed_is_not_out_of_reach() -> None:
+    def row(case: str) -> TextRow:
+        return TextRow(
+            case=case,
+            row=Row(
+                case=case, kind="version-change", project="demo", answerable=True, rank=None,
+                ndcg=0.0, sections=1, section_ranks=(), wrong_version=False, empty=False,
+                search_ms=1.0, tokens=0, usd=0.0,
+            ),
+            results=0, neutral=0, unmatched=0, context_tokens=0, tokens_to_hit=None, facts=0,
+            facts_found=0,
+        )  # fmt: skip
+
+    indexing = [
+        VersionIndex(
+            project="demo", version="v1", commit="c", library="demo", seconds=1.0, offered=3,
+            indexed=2, chunks=2, embedded=0, max_depth=3, max_pages=1000,
+            not_indexed=["docs/changelog.md"],
+        )
+    ]  # fmt: skip
+    articles = {
+        "only the changelog": {("v1", "docs/changelog.md")},
+        "an alternative or a part in the guide": {
+            ("v1", "docs/changelog.md"),
+            ("v1", "docs/guide.md"),
+        },
+        "another version's changelog": {("v2", "docs/changelog.md")},
+    }
+
+    found = cases_not_indexed([row(name) for name in articles], articles, indexing)
+
+    assert found == ["only the changelog"]  # recall counts a hit on any section a case lists
 
 
 def test_a_failed_search_is_scored_empty_and_fails_the_run(
