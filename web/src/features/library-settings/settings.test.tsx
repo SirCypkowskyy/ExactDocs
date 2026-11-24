@@ -189,7 +189,7 @@ const jobs = {
   Preview: () => null,
 };
 
-function renderPage(lib = library, start = "/libraries/acme/payments/settings") {
+function renderPage(lib: object = library, start = "/libraries/acme/payments/settings") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
@@ -310,6 +310,19 @@ describe("sharing section", () => {
       "/libraries/acme/payments/access-log",
     );
     expect(screen.getAllByRole("link", { name: "Access log" })).toHaveLength(1);
+  });
+});
+
+describe("header", () => {
+  it("names the library with its logo beside the title", async () => {
+    serve();
+    renderPage({ ...library, logo: "0123456789abcdef" });
+    const header = (await screen.findByRole("heading", { level: 1 })).closest("header");
+    expect(header?.querySelector("img")).toHaveAttribute(
+      "src",
+      "/api/v1/libraries/acme/payments/logo?v=0123456789abcdef",
+    );
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).querySelector("img")).toBeNull();
   });
 });
 

@@ -99,7 +99,7 @@ function defaultRows(): Row[] {
 const PATH = "/libraries/acme/payments/sharing";
 
 /** The page under a memory router, so the table's view lives in the URL as in the app. */
-function renderPage(search = "") {
+function renderPage(search = "", logo: string | null = null) {
   const history = createMemoryHistory({ initialEntries: [`${PATH}${search}`] });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
@@ -116,6 +116,7 @@ function renderPage(search = "") {
                 repo="payments"
                 libraryId="/acme/payments"
                 title="Payments"
+                logo={logo}
               />
             ),
           }}
@@ -219,6 +220,16 @@ describe("the sharing view", () => {
 describe("sharing page", () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => vi.unstubAllGlobals());
+
+  it("shows the library's logo in the header", async () => {
+    stubApi("alice");
+    renderPage("", "0123456789abcdef");
+    const header = (await screen.findByRole("heading", { level: 1 })).closest("header");
+    expect(header?.querySelector("img")).toHaveAttribute(
+      "src",
+      "/api/v1/libraries/acme/payments/logo?v=0123456789abcdef",
+    );
+  });
 
   it("shows the creator, the roles, and lets the creator change and remove an admin", async () => {
     const fetchMock = stubApi("alice");

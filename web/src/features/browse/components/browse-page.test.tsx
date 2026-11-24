@@ -2,6 +2,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { Suspense } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { TestRouter } from "@/shared/lib/test-router";
 import { TooltipProvider } from "@/shared/ui/tooltip";
 import { BrowsePage } from "./browse-page";
@@ -67,6 +68,51 @@ describe("the library page", () => {
     expect(within(crumbs).getByText("/acme/payments")).toHaveAttribute("aria-current", "page");
     // An imported version with no articles says so in the table's frame.
     expect(await screen.findByText("No articles.")).toBeInTheDocument();
+  });
+
+  it("puts the library's logo beside its title, and only there", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: string) => {
+        const { pathname } = new URL(input, "http://test");
+        if (pathname.endsWith("/articles"))
+          return Response.json({ articles: [], next_cursor: null, total: 0 });
+        if (pathname.endsWith("/tags")) return Response.json({ tags: [], truncated: false });
+        return Response.json({ ...library, logo: "0123456789abcdef" });
+      }),
+    );
+    show(() => <BrowsePage owner="acme" repo="payments" search={{}} />);
+    const header = (await screen.findByRole("heading", { level: 1 })).closest("header");
+    if (!header) throw new Error("no header");
+    const logos = header.querySelectorAll("img");
+    expect(logos).toHaveLength(1);
+    expect(logos[0]).toHaveAttribute(
+      "src",
+      "/api/v1/libraries/acme/payments/logo?v=0123456789abcdef",
+    );
+    expect(logos[0]).toHaveAttribute("alt", "");
+    // Not in the breadcrumb: the mark beside the title says it once.
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).querySelector("img")).toBeNull();
+  });
+
+  it("keeps the coloured monogram in the header with logos turned off", async () => {
+    setPreferences({ library_logos: false });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          ...library,
+          versions: [],
+          default_version: null,
+          logo: "0123456789abcdef",
+        }),
+      ),
+    );
+    show(() => <BrowsePage owner="acme" repo="payments" search={{}} />);
+    const header = (await screen.findByRole("heading", { level: 1 })).closest("header");
+    expect(header?.querySelector("img")).toBeNull();
+    expect(header).toHaveTextContent("PA");
+    resetPreferences();
   });
 
   it("says nothing is imported yet, with an icon", async () => {

@@ -128,6 +128,19 @@ describe("libraries slice", () => {
     expect(summary()).toHaveTextContent("1 library");
   });
 
+  it("shows a library's logo beside its name, and the generic mark when it has none", async () => {
+    serve([library({ logo: "0123456789abcdef" }), library({ id: "/acme/docs", title: "Docs" })]);
+    renderPage();
+    const withLogo = (await screen.findByRole("link", { name: "Payments" })).closest("tr");
+    expect(withLogo?.querySelector("img")).toHaveAttribute(
+      "src",
+      "/api/v1/libraries/acme/payments/logo?v=0123456789abcdef",
+    );
+    expect(withLogo?.querySelector("img")).toHaveAttribute("alt", "");
+    const without = screen.getByRole("link", { name: "Docs" }).closest("tr");
+    expect(without?.querySelector("img")).toBeNull();
+  });
+
   it("says when the default version is pinned", async () => {
     serve([library({ default_pinned: true })], [job()]);
     renderPage();

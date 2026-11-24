@@ -36,7 +36,6 @@ import {
 } from "./dropdown-menu";
 import { FormAlert } from "./form-alert";
 import { ThemeButton } from "./interface-controls";
-import { LibraryMark } from "./library-mark";
 import { Meter } from "./meter";
 import { EmptyState } from "./page";
 import { TagChips } from "./tag-chips";
@@ -540,26 +539,5 @@ describe("Meter", () => {
     expect(screen.getByRole("progressbar", { name: "Embedding" })).not.toHaveAttribute(
       "aria-valuenow",
     );
-  });
-});
-
-describe("LibraryMark", () => {
-  afterEach(() => resetPreferences());
-
-  it("shows the library's logo as decoration, and a generic mark when it does not load", () => {
-    const { container } = render(<LibraryMark id="/acme/payments" logo="/logo.svg?v=1" />);
-    const logo = container.querySelector("img");
-    expect(logo).toHaveAttribute("src", "/logo.svg?v=1");
-    expect(logo).toHaveAttribute("alt", "");
-    fireEvent.error(logo as HTMLImageElement);
-    expect(container.querySelector("img")).toBeNull();
-    expect(container.querySelector("svg")).not.toBeNull();
-  });
-
-  it("falls back to the monogram when logos are turned off", () => {
-    setPreferences({ library_logos: false });
-    const { container } = render(<LibraryMark id="/acme/payments" logo="/logo.svg?v=1" />);
-    expect(container.querySelector("img")).toBeNull();
-    expect(container).toHaveTextContent("PA");
   });
 });

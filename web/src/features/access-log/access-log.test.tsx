@@ -69,7 +69,7 @@ const asked = (fetchMock: ReturnType<typeof stubApi>) =>
   fetchMock.mock.calls.map(([url]) => String(url));
 
 /** A page under a memory router, as in the app: the table's view lives in the URL. */
-function renderAt(page: "all" | "library", search = "") {
+function renderAt(page: "all" | "library", search = "", logo: string | null = null) {
   const path = page === "all" ? "/access-log" : "/libraries/acme/payments/access-log";
   const history = createMemoryHistory({ initialEntries: [`${path}${search}`] });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -81,7 +81,7 @@ function renderAt(page: "all" | "library", search = "") {
           pages={{
             "/access-log": AccessLogPage,
             "/libraries/$owner/$repo/access-log": () => (
-              <LibraryAccessLogPage owner="acme" repo="payments" />
+              <LibraryAccessLogPage owner="acme" repo="payments" logo={logo} />
             ),
             "/libraries/$owner/$repo": () => <p>Browse</p>,
           }}
@@ -297,6 +297,16 @@ describe("a library's access log", () => {
     // One library's events need no library column, and no way to narrow to it.
     expect(screen.queryByRole("columnheader", { name: "Library" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /More actions/ })).not.toBeInTheDocument();
+  });
+
+  it("shows the library's logo in the header when the route knows it", async () => {
+    stubApi([event({})]);
+    renderAt("library", "", "0123456789abcdef");
+    const header = (await screen.findByRole("heading", { level: 1 })).closest("header");
+    expect(header?.querySelector("img")).toHaveAttribute(
+      "src",
+      "/api/v1/libraries/acme/payments/logo?v=0123456789abcdef",
+    );
   });
 
   it("tells someone who is no admin of it why they see nothing", async () => {

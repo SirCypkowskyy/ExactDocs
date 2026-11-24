@@ -15,11 +15,14 @@ import {
 
 const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
 
+const LOGO = "0123456789abcdef";
+
 const summary = (id: string, default_version: string | null = "v1") => ({
   id,
   title: id,
   description: "",
   default_version,
+  logo: id === "/acme/payments" ? LOGO : null,
 });
 
 const hit = (library: string, over: Record<string, unknown> = {}) => ({
@@ -146,6 +149,28 @@ describe("search playground", () => {
     expect(sent?.searchParams.get("mode")).toBe("hybrid");
     expect(sent?.searchParams.get("library")).toBe("/acme/payments,/acme/billing");
     expect(sent?.searchParams.get("q")).toBe("retry failed calls");
+  });
+
+  it("shows each library's logo in the picker and on its results, from the list it loaded", async () => {
+    const fetchMock = serve(() =>
+      Response.json(result("hybrid", [hit("/acme/payments"), hit("/acme/billing")])),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    const src = `/api/v1/libraries/acme/payments/logo?v=${LOGO}`;
+    const payments = (await screen.findByLabelText("/acme/payments")).closest("label");
+    expect(payments?.querySelector("img")).toHaveAttribute("src", src);
+    expect(
+      screen.getByLabelText("/acme/billing").closest("label")?.querySelector("img"),
+    ).toBeNull();
+    await user.type(screen.getByLabelText("Query"), "retry");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    const list = await screen.findByRole("list", { name: "Hybrid (BM25 + vectors) results" });
+    const [first, second] = within(list).getAllByRole("listitem");
+    expect(first?.querySelector("img")).toHaveAttribute("src", src);
+    expect(second?.querySelector("img")).toBeNull();
+    // The logos come with the list: the browser asks for the images, the page for nothing else.
+    expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("/logo"))).toHaveLength(0);
   });
 
   it("counts only the chosen libraries in the summary, not every library counted (#479)", async () => {

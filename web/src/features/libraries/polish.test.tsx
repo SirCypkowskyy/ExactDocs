@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -120,6 +120,29 @@ describe("the libraries slice in Polish", () => {
     const menu = await screen.findByRole("menu");
     expect(within(menu).getByRole("menuitem", { name: "Synchronizuj teraz" })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Pokaż jej zadania" })).toBeInTheDocument();
+  });
+
+  it("shows a library's logo in the Polish list too, and its monogram with logos off", async () => {
+    serve((url) => {
+      if (url.includes("/v1/libraries?")) {
+        return {
+          libraries: [{ ...library, logo: "0123456789abcdef" }],
+          next_cursor: null,
+          total: 1,
+        };
+      }
+      if (url.endsWith("/v1/jobs/latest")) return { jobs: [] };
+      return undefined;
+    });
+    renderWith(<TestRouter pages={{ "/": LibrariesPage }} />);
+    const row = (await screen.findByRole("link", { name: "Payments" })).closest("tr");
+    expect(row?.querySelector("img")).toHaveAttribute(
+      "src",
+      "/api/v1/libraries/acme/payments/logo?v=0123456789abcdef",
+    );
+    act(() => setPreferences({ library_logos: false }));
+    expect(row?.querySelector("img")).toBeNull();
+    expect(within(row as HTMLElement).getByText("PA")).toBeInTheDocument();
   });
 
   it("walks the add form in Polish, with Polish refusals", async () => {
