@@ -391,6 +391,23 @@ describe("DataTable v2's states", () => {
     expect(refetch).toHaveBeenCalledOnce();
   });
 
+  it("names its retry after what it retries when the page asks", async () => {
+    const refetch = vi.fn();
+    renderAt("/things", () => {
+      const model = useDataTable({
+        config: CLIENT,
+        search: {},
+        columns,
+        getRowId: (t: Thing) => t.id,
+        query: ready([], { data: undefined, isError: true, refetch }),
+      });
+      return <DataTable model={model} label="Things" retryLabel="Retry the list" />;
+    });
+    const alert = await screen.findByRole("alert");
+    await userEvent.click(within(alert).getByRole("button", { name: "Retry the list" }));
+    expect(refetch).toHaveBeenCalledOnce();
+  });
+
   it("holds the final layout with placeholder rows while loading", async () => {
     renderAt("/things", () => (
       <ClientThings query={ready([], { data: undefined, isPending: true })} />

@@ -1,26 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useRouter } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
-import {
-  ArrowRight,
-  ArrowUpRight,
-  CircleAlert,
-  Copy,
-  FileText,
-  FolderOpen,
-  Link2,
-  RotateCcw,
-} from "lucide-react";
+import { ArrowRight, ArrowUpRight, Copy, FileText, FolderOpen, Link2 } from "lucide-react";
 import { useId, useMemo } from "react";
 import { toast } from "sonner";
 import { useMessages } from "@/shared/lib/i18n";
 import { tagsQueryOptions } from "@/shared/lib/tags-query";
-import { Button } from "@/shared/ui/button";
 import { Bytes, Chips } from "@/shared/ui/data-table/cells";
 import { DataTable } from "@/shared/ui/data-table/data-table";
 import { DataTablePagination } from "@/shared/ui/data-table/pagination";
 import type { RowAction } from "@/shared/ui/data-table/row-actions";
-import { TableMessage } from "@/shared/ui/data-table/states";
 import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
 import {
   type TableFilter,
@@ -253,29 +242,17 @@ export function ArticlesTable({ owner, repo, library, version, search }: Props) 
         model={model}
         search={{ label: t.findArticle, placeholder: t.pathOrTitle }}
       />
-      {model.status === "error" ? (
-        // The table's own retry, not the kit's "Try again": the file tree beside it has that one.
-        <TableMessage
-          role="alert"
-          icon={CircleAlert}
-          title={t.loadFailed}
-          action={
-            <Button variant="outline" size="sm" onClick={model.retry}>
-              <RotateCcw aria-hidden="true" data-icon-motion="refresh" />
-              {t.retry}
-            </Button>
-          }
-        />
-      ) : (
-        <DataTable
-          model={model}
-          label={t.articles}
-          rowActions={actions}
-          rowLabel={(a) => a.path}
-          empty={{ icon: FileText, title: t.none }}
-          noMatch={{ title: t.noMatch }}
-        />
-      )}
+      <DataTable
+        model={model}
+        label={t.articles}
+        rowActions={actions}
+        rowLabel={(a) => a.path}
+        empty={{ icon: FileText, title: t.none }}
+        noMatch={{ title: t.noMatch }}
+        errorMessage={t.loadFailed}
+        // Not the kit's "Try again": the file tree beside it has that one.
+        retryLabel={t.retry}
+      />
       <DataTablePagination model={model} />
     </Section>
   );

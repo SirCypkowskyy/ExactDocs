@@ -152,8 +152,19 @@ export function TableNoMatch({
   );
 }
 
-/** The list could not be loaded: one sentence and Retry. */
-export function TableError({ message, onRetry }: { message?: ReactNode; onRetry: () => void }) {
+/**
+ * The list could not be loaded: one sentence and Retry. `retryLabel` names the button when another
+ * "Try again" sits beside the table (a file tree), so each says what it retries.
+ */
+export function TableError({
+  message,
+  onRetry,
+  retryLabel,
+}: {
+  message?: ReactNode;
+  onRetry: () => void;
+  retryLabel?: ReactNode;
+}) {
   const t = useMessages(messages).dataTable;
   const c = useMessages(common);
   return (
@@ -164,7 +175,7 @@ export function TableError({ message, onRetry }: { message?: ReactNode; onRetry:
       action={
         <Button variant="outline" size="sm" onClick={onRetry}>
           <RefreshCw aria-hidden="true" data-icon-motion="refresh" />
-          {c.retry}
+          {retryLabel ?? c.retry}
         </Button>
       }
     />

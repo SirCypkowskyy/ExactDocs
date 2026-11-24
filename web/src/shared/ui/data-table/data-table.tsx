@@ -45,6 +45,8 @@ interface DataTableProps<T> {
   noMatch?: { title: ReactNode; body?: ReactNode };
   /** The sentence when the list fails to load. */
   errorMessage?: ReactNode;
+  /** The retry button's label when the default "Try again" would be ambiguous on the page. */
+  retryLabel?: ReactNode;
 }
 
 /** Rows that arrived while the same page was shown (a refresh), so they can fade in. */
@@ -70,14 +72,19 @@ function cellClass<T>(cell: Cell<T, unknown>) {
   return cn(meta?.align === "end" && "text-right", meta?.className);
 }
 
-type TableStates = Pick<DataTableProps<unknown>, "empty" | "noMatch" | "errorMessage">;
+type TableStates = Pick<
+  DataTableProps<unknown>,
+  "empty" | "noMatch" | "errorMessage" | "retryLabel"
+>;
 
 /** The frame's message instead of rows: the list failed, is empty, or nothing matches. */
 function stateOf<T>(
   model: DataTableModel<T>,
-  { empty, noMatch, errorMessage }: TableStates,
+  { empty, noMatch, errorMessage, retryLabel }: TableStates,
 ): ReactNode {
-  if (model.status === "error") return <TableError message={errorMessage} onRetry={model.retry} />;
+  if (model.status === "error") {
+    return <TableError message={errorMessage} onRetry={model.retry} retryLabel={retryLabel} />;
+  }
   if (model.status !== "ready" || model.rows.length > 0 || model.busy) return null;
   if (model.filtered) {
     return (
