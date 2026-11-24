@@ -146,6 +146,8 @@ def as_session(client: httpx.AsyncClient, session: str | None) -> None:
 async def test_users_carry_last_activity_provider_and_token_count(
     client: httpx.AsyncClient,
 ) -> None:
+    # The fixture's operator was active before this test started: its hour can be the one before.
+    before = datetime.now(UTC).replace(minute=0, second=0, microsecond=0) - timedelta(hours=1)
     _, token = await signed_in_user(client, "bob")
     await signed_in_user(client, "carol")
     used = await client.get("/api/v1/libraries", headers={"authorization": f"Bearer {token}"})
@@ -161,7 +163,8 @@ async def test_users_carry_last_activity_provider_and_token_count(
         assert user["provider"] is None
         active = datetime.fromisoformat(user["last_active_at"])
         assert (active.minute, active.second, active.microsecond) == (0, 0, 0), active
-        assert active <= datetime.now(UTC) < active + timedelta(hours=1), active
+        # Read the clock around the requests, not after them only: an hour can begin in between.
+        assert before <= active <= datetime.now(UTC), active
     google = await client.get("/api/v1/users", params={"provider": ["google", "github"]})
     assert (google.json()["users"], google.json()["total"]) == ([], 0)
     by_tokens = await client.get("/api/v1/users", params={"sort": "-last_active_at"})
