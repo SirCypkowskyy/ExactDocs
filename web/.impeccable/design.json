@@ -1,52 +1,82 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-11-21T20:46:14.517558+00:00",
+  "generatedAt": "2026-11-23T23:59:00+00:00",
   "title": "Design System: ExactDocs",
   "extensions": {
     "colorMeta": {
+      "lamp": {
+        "role": "primary",
+        "displayName": "The Lamp",
+        "canonical": "oklch(0.84 0.15 88)",
+        "tonalRamp": [
+          "oklch(0.20 0.108 88)",
+          "oklch(0.30 0.120 88)",
+          "oklch(0.40 0.132 88)",
+          "oklch(0.50 0.144 88)",
+          "oklch(0.62 0.142 88)",
+          "oklch(0.74 0.127 88)",
+          "oklch(0.86 0.113 88)",
+          "oklch(0.95 0.102 88)"
+        ]
+      },
+      "route-soft": {
+        "role": "primary",
+        "displayName": "Lamp Wash",
+        "canonical": "oklch(0.95 0.06 92)",
+        "tonalRamp": [
+          "oklch(0.20 0.043 92)",
+          "oklch(0.30 0.048 92)",
+          "oklch(0.40 0.053 92)",
+          "oklch(0.50 0.058 92)",
+          "oklch(0.62 0.057 92)",
+          "oklch(0.74 0.051 92)",
+          "oklch(0.86 0.045 92)",
+          "oklch(0.95 0.041 92)"
+        ]
+      },
       "route": {
         "role": "primary",
-        "displayName": "Deep Route Teal",
-        "canonical": "oklch(0.47 0.08 215)",
+        "displayName": "Route (ink in light, lamp in dark)",
+        "canonical": "oklch(0.2 0.005 286)",
         "tonalRamp": [
-          "oklch(0.20 0.051 215)",
-          "oklch(0.30 0.061 215)",
-          "oklch(0.40 0.070 215)",
-          "oklch(0.50 0.080 215)",
-          "oklch(0.62 0.068 215)",
-          "oklch(0.74 0.057 215)",
-          "oklch(0.86 0.045 215)",
-          "oklch(0.95 0.037 215)"
+          "oklch(0.20 0.004 286)",
+          "oklch(0.30 0.004 286)",
+          "oklch(0.40 0.004 286)",
+          "oklch(0.50 0.005 286)",
+          "oklch(0.62 0.005 286)",
+          "oklch(0.74 0.004 286)",
+          "oklch(0.86 0.004 286)",
+          "oklch(0.95 0.003 286)"
         ]
       },
       "ink": {
         "role": "primary",
-        "displayName": "Ink",
-        "canonical": "oklch(0.2 0.006 250)",
+        "displayName": "Anthracite Ink",
+        "canonical": "oklch(0.2 0.005 286)",
         "tonalRamp": [
-          "oklch(0.20 0.004 250)",
-          "oklch(0.30 0.005 250)",
-          "oklch(0.40 0.005 250)",
-          "oklch(0.50 0.006 250)",
-          "oklch(0.62 0.005 250)",
-          "oklch(0.74 0.004 250)",
-          "oklch(0.86 0.003 250)",
-          "oklch(0.95 0.003 250)"
+          "oklch(0.20 0.004 286)",
+          "oklch(0.30 0.004 286)",
+          "oklch(0.40 0.004 286)",
+          "oklch(0.50 0.005 286)",
+          "oklch(0.62 0.005 286)",
+          "oklch(0.74 0.004 286)",
+          "oklch(0.86 0.004 286)",
+          "oklch(0.95 0.003 286)"
         ]
       },
       "frame": {
         "role": "neutral",
-        "displayName": "Cool Frame",
-        "canonical": "oklch(0.965 0.006 230)",
+        "displayName": "Stone Frame",
+        "canonical": "oklch(0.963 0.004 90)",
         "tonalRamp": [
-          "oklch(0.20 0.004 230)",
-          "oklch(0.30 0.005 230)",
-          "oklch(0.40 0.005 230)",
-          "oklch(0.50 0.006 230)",
-          "oklch(0.62 0.005 230)",
-          "oklch(0.74 0.004 230)",
-          "oklch(0.86 0.003 230)",
-          "oklch(0.95 0.003 230)"
+          "oklch(0.20 0.003 90)",
+          "oklch(0.30 0.003 90)",
+          "oklch(0.40 0.004 90)",
+          "oklch(0.50 0.004 90)",
+          "oklch(0.62 0.004 90)",
+          "oklch(0.74 0.003 90)",
+          "oklch(0.86 0.003 90)",
+          "oklch(0.95 0.003 90)"
         ]
       },
       "sheet": {
@@ -67,31 +97,91 @@
       "raised": {
         "role": "neutral",
         "displayName": "Raised Panel",
-        "canonical": "oklch(0.973 0.004 240)",
+        "canonical": "oklch(0.973 0.003 75)",
         "tonalRamp": [
-          "oklch(0.20 0.003 240)",
-          "oklch(0.30 0.003 240)",
-          "oklch(0.40 0.004 240)",
-          "oklch(0.50 0.004 240)",
-          "oklch(0.62 0.003 240)",
-          "oklch(0.74 0.003 240)",
-          "oklch(0.86 0.002 240)",
-          "oklch(0.95 0.002 240)"
+          "oklch(0.20 0.002 75)",
+          "oklch(0.30 0.002 75)",
+          "oklch(0.40 0.003 75)",
+          "oklch(0.50 0.003 75)",
+          "oklch(0.62 0.003 75)",
+          "oklch(0.74 0.003 75)",
+          "oklch(0.86 0.002 75)",
+          "oklch(0.95 0.002 75)"
+        ]
+      },
+      "accent-fill": {
+        "role": "neutral",
+        "displayName": "Hover Fill",
+        "canonical": "oklch(0.947 0.004 85)",
+        "tonalRamp": [
+          "oklch(0.20 0.003 85)",
+          "oklch(0.30 0.003 85)",
+          "oklch(0.40 0.004 85)",
+          "oklch(0.50 0.004 85)",
+          "oklch(0.62 0.004 85)",
+          "oklch(0.74 0.003 85)",
+          "oklch(0.86 0.003 85)",
+          "oklch(0.95 0.003 85)"
         ]
       },
       "ink-muted": {
         "role": "neutral",
         "displayName": "Muted Ink",
-        "canonical": "oklch(0.47 0.005 250)",
+        "canonical": "oklch(0.47 0.01 280)",
         "tonalRamp": [
-          "oklch(0.20 0.003 250)",
-          "oklch(0.30 0.004 250)",
-          "oklch(0.40 0.004 250)",
-          "oklch(0.50 0.005 250)",
-          "oklch(0.62 0.004 250)",
-          "oklch(0.74 0.004 250)",
-          "oklch(0.86 0.003 250)",
-          "oklch(0.95 0.002 250)"
+          "oklch(0.20 0.007 280)",
+          "oklch(0.30 0.008 280)",
+          "oklch(0.40 0.009 280)",
+          "oklch(0.50 0.010 280)",
+          "oklch(0.62 0.009 280)",
+          "oklch(0.74 0.008 280)",
+          "oklch(0.86 0.008 280)",
+          "oklch(0.95 0.007 280)"
+        ]
+      },
+      "border": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "oklch(0.92 0.005 90)",
+        "tonalRamp": [
+          "oklch(0.20 0.004 90)",
+          "oklch(0.30 0.004 90)",
+          "oklch(0.40 0.004 90)",
+          "oklch(0.50 0.005 90)",
+          "oklch(0.62 0.005 90)",
+          "oklch(0.74 0.004 90)",
+          "oklch(0.86 0.004 90)",
+          "oklch(0.95 0.003 90)"
+        ]
+      },
+      "control-border": {
+        "role": "neutral",
+        "displayName": "Control Border",
+        "canonical": "oklch(0.78 0.006 95)",
+        "tonalRamp": [
+          "oklch(0.20 0.004 95)",
+          "oklch(0.30 0.005 95)",
+          "oklch(0.40 0.005 95)",
+          "oklch(0.50 0.006 95)",
+          "oklch(0.62 0.006 95)",
+          "oklch(0.74 0.005 95)",
+          "oklch(0.86 0.005 95)",
+          "oklch(0.95 0.004 95)"
+        ]
+      },
+      "tip": {
+        "role": "neutral",
+        "displayName": "Tip",
+        "canonical": "oklch(0.2 0.005 286)",
+        "tonalRamp": [
+          "oklch(0.20 0.004 286)",
+          "oklch(0.30 0.004 286)",
+          "oklch(0.40 0.004 286)",
+          "oklch(0.50 0.005 286)",
+          "oklch(0.62 0.005 286)",
+          "oklch(0.74 0.004 286)",
+          "oklch(0.86 0.004 286)",
+          "oklch(0.95 0.003 286)"
         ]
       },
       "positive": {
@@ -99,14 +189,14 @@
         "displayName": "Positive Green",
         "canonical": "oklch(0.5 0.11 155)",
         "tonalRamp": [
-          "oklch(0.20 0.070 155)",
-          "oklch(0.30 0.084 155)",
+          "oklch(0.20 0.079 155)",
+          "oklch(0.30 0.088 155)",
           "oklch(0.40 0.097 155)",
-          "oklch(0.50 0.110 155)",
-          "oklch(0.62 0.094 155)",
-          "oklch(0.74 0.078 155)",
-          "oklch(0.86 0.062 155)",
-          "oklch(0.95 0.051 155)"
+          "oklch(0.50 0.106 155)",
+          "oklch(0.62 0.104 155)",
+          "oklch(0.74 0.093 155)",
+          "oklch(0.86 0.083 155)",
+          "oklch(0.95 0.075 155)"
         ]
       },
       "warning": {
@@ -114,14 +204,14 @@
         "displayName": "Warning Amber",
         "canonical": "oklch(0.47 0.12 55)",
         "tonalRamp": [
-          "oklch(0.20 0.077 55)",
-          "oklch(0.30 0.091 55)",
+          "oklch(0.20 0.086 55)",
+          "oklch(0.30 0.096 55)",
           "oklch(0.40 0.106 55)",
-          "oklch(0.50 0.120 55)",
-          "oklch(0.62 0.103 55)",
-          "oklch(0.74 0.085 55)",
-          "oklch(0.86 0.068 55)",
-          "oklch(0.95 0.055 55)"
+          "oklch(0.50 0.115 55)",
+          "oklch(0.62 0.113 55)",
+          "oklch(0.74 0.102 55)",
+          "oklch(0.86 0.090 55)",
+          "oklch(0.95 0.082 55)"
         ]
       },
       "destructive": {
@@ -129,14 +219,14 @@
         "displayName": "Destructive Red",
         "canonical": "oklch(0.52 0.19 27)",
         "tonalRamp": [
-          "oklch(0.20 0.122 27)",
-          "oklch(0.30 0.144 27)",
+          "oklch(0.20 0.137 27)",
+          "oklch(0.30 0.152 27)",
           "oklch(0.40 0.167 27)",
-          "oklch(0.50 0.190 27)",
-          "oklch(0.62 0.163 27)",
-          "oklch(0.74 0.135 27)",
-          "oklch(0.86 0.108 27)",
-          "oklch(0.95 0.087 27)"
+          "oklch(0.50 0.182 27)",
+          "oklch(0.62 0.179 27)",
+          "oklch(0.74 0.161 27)",
+          "oklch(0.86 0.143 27)",
+          "oklch(0.95 0.129 27)"
         ]
       },
       "line-1": {
@@ -144,14 +234,14 @@
         "displayName": "Line 1 Teal",
         "canonical": "oklch(0.47 0.08 215)",
         "tonalRamp": [
-          "oklch(0.20 0.051 215)",
-          "oklch(0.30 0.061 215)",
+          "oklch(0.20 0.058 215)",
+          "oklch(0.30 0.064 215)",
           "oklch(0.40 0.070 215)",
-          "oklch(0.50 0.080 215)",
-          "oklch(0.62 0.068 215)",
-          "oklch(0.74 0.057 215)",
-          "oklch(0.86 0.045 215)",
-          "oklch(0.95 0.037 215)"
+          "oklch(0.50 0.077 215)",
+          "oklch(0.62 0.076 215)",
+          "oklch(0.74 0.068 215)",
+          "oklch(0.86 0.060 215)",
+          "oklch(0.95 0.054 215)"
         ]
       },
       "line-2": {
@@ -159,14 +249,14 @@
         "displayName": "Line 2 Blue",
         "canonical": "oklch(0.47 0.15 255)",
         "tonalRamp": [
-          "oklch(0.20 0.096 255)",
-          "oklch(0.30 0.114 255)",
+          "oklch(0.20 0.108 255)",
+          "oklch(0.30 0.120 255)",
           "oklch(0.40 0.132 255)",
-          "oklch(0.50 0.150 255)",
-          "oklch(0.62 0.128 255)",
-          "oklch(0.74 0.107 255)",
-          "oklch(0.86 0.085 255)",
-          "oklch(0.95 0.069 255)"
+          "oklch(0.50 0.144 255)",
+          "oklch(0.62 0.142 255)",
+          "oklch(0.74 0.127 255)",
+          "oklch(0.86 0.113 255)",
+          "oklch(0.95 0.102 255)"
         ]
       },
       "line-3": {
@@ -174,14 +264,14 @@
         "displayName": "Line 3 Green",
         "canonical": "oklch(0.48 0.11 155)",
         "tonalRamp": [
-          "oklch(0.20 0.070 155)",
-          "oklch(0.30 0.084 155)",
+          "oklch(0.20 0.079 155)",
+          "oklch(0.30 0.088 155)",
           "oklch(0.40 0.097 155)",
-          "oklch(0.50 0.110 155)",
-          "oklch(0.62 0.094 155)",
-          "oklch(0.74 0.078 155)",
-          "oklch(0.86 0.062 155)",
-          "oklch(0.95 0.051 155)"
+          "oklch(0.50 0.106 155)",
+          "oklch(0.62 0.104 155)",
+          "oklch(0.74 0.093 155)",
+          "oklch(0.86 0.083 155)",
+          "oklch(0.95 0.075 155)"
         ]
       },
       "line-4": {
@@ -189,14 +279,14 @@
         "displayName": "Line 4 Red",
         "canonical": "oklch(0.5 0.17 27)",
         "tonalRamp": [
-          "oklch(0.20 0.109 27)",
-          "oklch(0.30 0.129 27)",
+          "oklch(0.20 0.122 27)",
+          "oklch(0.30 0.136 27)",
           "oklch(0.40 0.150 27)",
-          "oklch(0.50 0.170 27)",
-          "oklch(0.62 0.146 27)",
-          "oklch(0.74 0.121 27)",
-          "oklch(0.86 0.097 27)",
-          "oklch(0.95 0.078 27)"
+          "oklch(0.50 0.163 27)",
+          "oklch(0.62 0.160 27)",
+          "oklch(0.74 0.144 27)",
+          "oklch(0.86 0.128 27)",
+          "oklch(0.95 0.116 27)"
         ]
       },
       "line-5": {
@@ -204,14 +294,14 @@
         "displayName": "Line 5 Ochre",
         "canonical": "oklch(0.47 0.1 70)",
         "tonalRamp": [
-          "oklch(0.20 0.064 70)",
-          "oklch(0.30 0.076 70)",
+          "oklch(0.20 0.072 70)",
+          "oklch(0.30 0.080 70)",
           "oklch(0.40 0.088 70)",
-          "oklch(0.50 0.100 70)",
-          "oklch(0.62 0.086 70)",
-          "oklch(0.74 0.071 70)",
-          "oklch(0.86 0.057 70)",
-          "oklch(0.95 0.046 70)"
+          "oklch(0.50 0.096 70)",
+          "oklch(0.62 0.094 70)",
+          "oklch(0.74 0.085 70)",
+          "oklch(0.86 0.075 70)",
+          "oklch(0.95 0.068 70)"
         ]
       },
       "line-6": {
@@ -219,14 +309,14 @@
         "displayName": "Line 6 Magenta",
         "canonical": "oklch(0.48 0.14 350)",
         "tonalRamp": [
-          "oklch(0.20 0.090 350)",
-          "oklch(0.30 0.106 350)",
+          "oklch(0.20 0.101 350)",
+          "oklch(0.30 0.112 350)",
           "oklch(0.40 0.123 350)",
-          "oklch(0.50 0.140 350)",
-          "oklch(0.62 0.120 350)",
-          "oklch(0.74 0.100 350)",
-          "oklch(0.86 0.080 350)",
-          "oklch(0.95 0.064 350)"
+          "oklch(0.50 0.134 350)",
+          "oklch(0.62 0.132 350)",
+          "oklch(0.74 0.119 350)",
+          "oklch(0.86 0.105 350)",
+          "oklch(0.95 0.095 350)"
         ]
       },
       "line-7": {
@@ -234,14 +324,14 @@
         "displayName": "Line 7 Olive",
         "canonical": "oklch(0.48 0.09 120)",
         "tonalRamp": [
-          "oklch(0.20 0.058 120)",
-          "oklch(0.30 0.068 120)",
+          "oklch(0.20 0.065 120)",
+          "oklch(0.30 0.072 120)",
           "oklch(0.40 0.079 120)",
-          "oklch(0.50 0.090 120)",
-          "oklch(0.62 0.077 120)",
-          "oklch(0.74 0.064 120)",
-          "oklch(0.86 0.051 120)",
-          "oklch(0.95 0.041 120)"
+          "oklch(0.50 0.086 120)",
+          "oklch(0.62 0.085 120)",
+          "oklch(0.74 0.076 120)",
+          "oklch(0.86 0.068 120)",
+          "oklch(0.95 0.061 120)"
         ]
       },
       "line-8": {
@@ -249,37 +339,67 @@
         "displayName": "Line 8 Slate",
         "canonical": "oklch(0.45 0.02 250)",
         "tonalRamp": [
-          "oklch(0.20 0.013 250)",
-          "oklch(0.30 0.015 250)",
+          "oklch(0.20 0.014 250)",
+          "oklch(0.30 0.016 250)",
           "oklch(0.40 0.018 250)",
-          "oklch(0.50 0.020 250)",
-          "oklch(0.62 0.017 250)",
-          "oklch(0.74 0.014 250)",
-          "oklch(0.86 0.011 250)",
-          "oklch(0.95 0.009 250)"
+          "oklch(0.50 0.019 250)",
+          "oklch(0.62 0.019 250)",
+          "oklch(0.74 0.017 250)",
+          "oklch(0.86 0.015 250)",
+          "oklch(0.95 0.014 250)"
+        ]
+      },
+      "chart-series": {
+        "role": "neutral",
+        "displayName": "Chart Series",
+        "canonical": "oklch(0.53 0.009 278)",
+        "tonalRamp": [
+          "oklch(0.20 0.009 278)",
+          "oklch(0.30 0.009 278)",
+          "oklch(0.40 0.009 278)",
+          "oklch(0.50 0.009 278)",
+          "oklch(0.62 0.009 278)",
+          "oklch(0.74 0.009 278)",
+          "oklch(0.86 0.009 278)",
+          "oklch(0.95 0.009 278)"
+        ]
+      },
+      "logo-tile": {
+        "role": "neutral",
+        "displayName": "Logo Tile (white in both themes)",
+        "canonical": "oklch(1 0 0)",
+        "tonalRamp": [
+          "oklch(0.20 0.000 0)",
+          "oklch(0.30 0.000 0)",
+          "oklch(0.40 0.000 0)",
+          "oklch(0.50 0.000 0)",
+          "oklch(0.62 0.000 0)",
+          "oklch(0.74 0.000 0)",
+          "oklch(0.86 0.000 0)",
+          "oklch(0.95 0.000 0)"
         ]
       }
     },
     "typographyMeta": {
       "small": {
         "displayName": "Small",
-        "purpose": "Meta, helper text, table headers, pills, key hints, bullets."
+        "purpose": "Meta, helper text, table headers, pills, key hints, tooltips, bullets."
       },
       "mono": {
         "displayName": "Mono",
-        "purpose": "Refs, paths, IDs, SHAs beside 14px text."
+        "purpose": "JetBrains Mono for literals (refs, paths, IDs, SHAs) beside 14px text."
       },
       "body": {
         "displayName": "Body",
-        "purpose": "UI text, cells, labels, descriptions."
+        "purpose": "UI text, cells, labels, nav pills, menu rows, descriptions."
       },
       "section": {
         "displayName": "Section",
-        "purpose": "Section headings and list titles."
+        "purpose": "Section headings and list titles; inputs on touch."
       },
       "title": {
         "displayName": "Title",
-        "purpose": "The page h1, one per page."
+        "purpose": "The page h1, one per page; dialog titles."
       },
       "figure": {
         "displayName": "Figure",
@@ -298,49 +418,69 @@
       {
         "name": "focus-ring",
         "value": "outline: 2px solid var(--ring); outline-offset: 2px",
-        "purpose": "Focus on every interactive element."
+        "purpose": "Focus on every interactive element: ink in light, the lamp in dark."
       },
       {
-        "name": "floating-overlay",
-        "value": "Tailwind shadow-md / shadow-lg",
-        "purpose": "Menus, popovers and dialogs only; nothing at rest has a shadow."
+        "name": "shadow-float",
+        "value": "0 10px 30px -12px rgb(23 23 26 / 0.22), 0 0 0 1px rgb(23 23 26 / 0.06)",
+        "purpose": "Menus, tooltips, popovers (and dialogs, sheets): floating layers only. Dark: 0 12px 32px -10px rgb(0 0 0 / 0.7), 0 0 0 1px rgb(255 255 255 / 0.07)."
       }
     ],
     "motion": [
       {
+        "name": "ease-out",
+        "value": "cubic-bezier(0.23, 1, 0.32, 1)",
+        "purpose": "Everything that arrives or moves."
+      },
+      {
+        "name": "ease-in-out",
+        "value": "cubic-bezier(0.77, 0, 0.175, 1)",
+        "purpose": "Symmetric moves."
+      },
+      {
+        "name": "ease-drawer",
+        "value": "cubic-bezier(0.32, 0.72, 0, 1)",
+        "purpose": "Drawer-like travel."
+      },
+      {
         "name": "dur-fast",
         "value": "120ms",
-        "purpose": "Hover, press, colour changes."
+        "purpose": "Press, hover, colour; exits of tooltips, menus, dialogs."
+      },
+      {
+        "name": "dur-tip",
+        "value": "125ms",
+        "purpose": "Tooltip entrance (fade plus 0.96 scale from the trigger)."
+      },
+      {
+        "name": "dur-menu",
+        "value": "150ms",
+        "purpose": "Menus, popovers, selects entering (0.97 scale from the trigger's corner); they leave in dur-exit (100ms)."
       },
       {
         "name": "dur",
         "value": "180ms",
-        "purpose": "Menus, rows arriving, notices, route change."
+        "purpose": "Rows arriving, notices, route change, tab indicator, nav underline, theme cross-fade, dialogs."
       },
       {
         "name": "dur-slow",
         "value": "240ms",
-        "purpose": "Sheets, the route rule drawing in."
+        "purpose": "Sheets, the auth entrance, the route rule drawing in."
       },
       {
-        "name": "ease-out",
-        "value": "cubic-bezier(0.23, 1, 0.32, 1)",
-        "purpose": "Everything that arrives."
+        "name": "press",
+        "value": "scale(0.97); band icons scale(0.94)",
+        "purpose": "Button press feedback."
       },
       {
-        "name": "ease-in-out",
-        "value": "cubic-bezier(0.65, 0, 0.35, 1)",
-        "purpose": "Defined token for symmetric moves."
+        "name": "tooltip-delay",
+        "value": "400ms open, 300ms skip window (next one instant, no animation)",
+        "purpose": "Tooltips."
       },
       {
         "name": "reveal",
         "value": "opacity 0 + translateY(-4px) to rest, var(--dur)",
-        "purpose": "Something appearing in place; replaces height animation."
-      },
-      {
-        "name": "route-draw",
-        "value": "scaleX(0) to 1 from left, var(--dur-slow)",
-        "purpose": "The route rule draws from bullet to new station."
+        "purpose": "Something appearing in place."
       },
       {
         "name": "row-in",
@@ -349,13 +489,33 @@
       },
       {
         "name": "page-in",
-        "value": "opacity 0 + translateY(4px) to rest, var(--dur)",
-        "purpose": "Sheet cross-fade on route change (View Transitions)."
+        "value": "opacity 0 + translateY(4px) to rest, var(--dur); old page fades out in var(--dur-fast)",
+        "purpose": "The sheet on route change (View Transitions, page)."
+      },
+      {
+        "name": "route-draw",
+        "value": "scaleX(0) to 1 from left, var(--dur-slow)",
+        "purpose": "The route rule draws from bullet to new station."
       },
       {
         "name": "sweep",
         "value": "translateX(-100%) to 300%, 1.4s infinite",
         "purpose": "Progress with no total yet."
+      },
+      {
+        "name": "breathe",
+        "value": "opacity to 0.35 at 50%, 1.2s infinite",
+        "purpose": "Busy indicators under reduced motion."
+      },
+      {
+        "name": "icon-reactions",
+        "value": "data-icon-motion=\"forward|back|out|down|up|turn|cog|refresh|tilt|pop|warn|draw|alert\" (src/app/icon-motion.css): transform only (clip-path for draw), at most 2px, var(--dur), var(--ease-out)",
+        "purpose": "An icon inside something pressable says what the action does on hover, keyboard focus, menu highlight or press; off under reduced motion."
+      },
+      {
+        "name": "reduced-motion",
+        "value": ":root[data-reduce-motion]",
+        "purpose": "Removes travel, zoom, rotation and view transitions; fades stay."
       }
     ],
     "breakpoints": [
@@ -377,18 +537,109 @@
       }
     ],
     "darkTheme": {
-      "frame": "oklch(0.13 0.002 250)",
-      "sheet": "oklch(0.175 0.003 250)",
-      "ink": "oklch(0.95 0.002 250)",
-      "ink-muted": "oklch(0.74 0.004 250)",
-      "raised": "oklch(0.205 0.003 250)",
-      "border": "oklch(0.27 0.003 250)",
-      "route": "oklch(0.75 0.09 210)",
-      "route-soft": "oklch(0.27 0.035 215)",
-      "primary": "oklch(0.95 0.002 250)",
+      "frame": "#0e0e10",
+      "sheet": "#17171a",
+      "raised": "#1d1d21",
+      "popover": "#1f1f23",
+      "accent-fill": "#26262b",
+      "ink": "#f3f1ec",
+      "ink-muted": "#a6a6ae",
+      "ink-inverse": "#17171a",
+      "border": "#2a2a30",
+      "rule": "#222227",
+      "control-border": "#4a4a52",
+      "primary": "#f3f1ec",
+      "lamp": "#f5c542",
+      "route": "#f5c542",
+      "route-foreground": "#17171a",
+      "route-soft": "#3b3320",
+      "focus-ring": "#f5c542",
+      "tip": "#f3f1ec",
+      "tip-foreground": "#17171a",
+      "overlay": "rgb(0 0 0 / 0.6)",
+      "code": "#1d1d21",
       "positive": "oklch(0.75 0.14 155)",
+      "positive-soft": "oklch(0.26 0.04 155)",
+      "positive-ink": "oklch(0.82 0.12 155)",
       "warning": "oklch(0.8 0.13 75)",
-      "destructive": "oklch(0.7 0.17 22)"
+      "warning-soft": "oklch(0.27 0.04 75)",
+      "warning-ink": "oklch(0.85 0.11 80)",
+      "destructive": "oklch(0.7 0.17 22)",
+      "destructive-soft": "oklch(0.26 0.05 22)",
+      "destructive-ink": "oklch(0.8 0.12 22)",
+      "line-1": "oklch(0.5 0.08 215)",
+      "line-2": "oklch(0.5 0.14 255)",
+      "line-3": "oklch(0.5 0.11 155)",
+      "line-4": "oklch(0.52 0.17 27)",
+      "line-5": "oklch(0.5 0.1 70)",
+      "line-6": "oklch(0.5 0.14 350)",
+      "line-7": "oklch(0.5 0.09 120)",
+      "line-8": "oklch(0.48 0.02 250)",
+      "logo-tile": "#ffffff",
+      "logo-tile-edge": "rgb(23 23 26 / 0.12)",
+      "chart-series": "#8b8b94",
+      "chart-highlight": "#f5c542"
+    },
+    "contrastMore": {
+      "light": {
+        "ink-muted": "#3f4045",
+        "border": "#b4b3ae",
+        "rule": "#cfcec9",
+        "control-border": "#6f6e69",
+        "frame": "#ebeae6",
+        "chart-series": "#4f5055",
+        "logo-tile-edge": "rgb(23 23 26 / 0.3)"
+      },
+      "dark": {
+        "ink-muted": "#d2d2d8",
+        "border": "#55555e",
+        "rule": "#3c3c44",
+        "control-border": "#8a8a94",
+        "frame": "#060607",
+        "chart-series": "#a0a0a8",
+        "logo-tile-edge": "rgb(23 23 26 / 0.3)"
+      }
+    },
+    "brand": {
+      "mascot": {
+        "fur": "#2f3033",
+        "belly": "#4e4f55",
+        "lamp": "#f5c542",
+        "eyes": "cream, closed",
+        "nose-paws": "pink",
+        "page": "white, no tab",
+        "dark-outline": "cream"
+      },
+      "wordmark": "Bricolage Grotesque 650, opsz 96, outlined; manual kerning (c-t tightened, t-D opened); optically centred on the mole in the lockup",
+      "files": [
+        "public/brand/exactdocs-mark.svg",
+        "public/brand/exactdocs-mark-on-dark.svg",
+        "public/brand/exactdocs-mark-small.svg",
+        "public/brand/exactdocs-mark-small-on-dark.svg",
+        "public/brand/exactdocs-mark-mono-black.svg",
+        "public/brand/exactdocs-mark-mono-white.svg",
+        "public/brand/exactdocs-wordmark.svg",
+        "public/brand/exactdocs-lockup-light.svg",
+        "public/brand/exactdocs-lockup-dark.svg",
+        "public/favicon.svg",
+        "public/favicon.ico",
+        "public/apple-touch-icon.png",
+        "public/icon-192.png",
+        "public/icon-512.png",
+        "public/maskable-512.png"
+      ]
+    },
+    "preferences": {
+      "storageKey": "exactdocs-preferences",
+      "sync": "GET/PUT /api/v1/account/preferences (#487)",
+      "theme": ["light", "dark", "system"],
+      "contrast": ["standard", "more"],
+      "text_scale": [90, 100, 110, 125, 150],
+      "text_spacing": ["standard", "wide"],
+      "motion": ["system", "reduced", "full"],
+      "font": ["default", "hyperlegible", "dyslexic", "system"],
+      "underline_links": "boolean",
+      "large_targets": "boolean"
     }
   },
   "components": [
@@ -396,9 +647,9 @@
       "name": "Primary Button",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "The one primary action per screen.",
+      "description": "The one primary action per screen: anthracite, inverted in dark.",
       "html": "<button class=\"ds-btn-primary\">Add library</button>",
-      "css": ".ds-btn-primary{font-family:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border-radius:6px;font-weight:500;cursor:pointer;transition:background-color 120ms cubic-bezier(0.23,1,0.32,1),transform 120ms cubic-bezier(0.23,1,0.32,1);border:0;background:oklch(0.2 0.006 250);color:oklch(0.99 0 0)}.ds-btn-primary:hover{background:oklch(0.2 0.006 250 / .88)}.ds-btn-primary:active{transform:scale(.97)}.ds-btn-primary:focus-visible{outline:2px solid oklch(0.55 0.1 215);outline-offset:2px}"
+      "css": ".ds-btn-primary{font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:14px;font-weight:500;display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border-radius:6px;cursor:pointer;transition:background-color 120ms cubic-bezier(0.23,1,0.32,1),border-color 120ms,transform 120ms cubic-bezier(0.23,1,0.32,1);border:0;background:var(--primary,#17171a);color:var(--primary-foreground,#fff)}.ds-btn-primary:hover{background:color-mix(in oklab,var(--primary,#17171a) 88%,transparent)}.ds-btn-primary:active{transform:scale(.97)}.ds-btn-primary:focus-visible{outline:2px solid var(--ring,#17171a);outline-offset:2px}"
     },
     {
       "name": "Outline Button",
@@ -406,7 +657,7 @@
       "refersTo": "button-outline",
       "description": "Secondary action on the sheet.",
       "html": "<button class=\"ds-btn-outline\">Cancel</button>",
-      "css": ".ds-btn-outline{font-family:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border-radius:6px;font-weight:500;cursor:pointer;transition:background-color 120ms cubic-bezier(0.23,1,0.32,1),transform 120ms cubic-bezier(0.23,1,0.32,1);border:1px solid oklch(0.84 0.005 250);background:#fff;color:oklch(0.2 0.006 250)}.ds-btn-outline:hover{background:oklch(0.948 0.004 240)}.ds-btn-outline:active{transform:scale(.97)}.ds-btn-outline:focus-visible{outline:2px solid oklch(0.55 0.1 215);outline-offset:2px}"
+      "css": ".ds-btn-outline{font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:14px;font-weight:500;display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border-radius:6px;cursor:pointer;transition:background-color 120ms cubic-bezier(0.23,1,0.32,1),border-color 120ms,transform 120ms cubic-bezier(0.23,1,0.32,1);border:1px solid var(--input,#b9b8b3);background:var(--background,#fff);color:var(--foreground,#17171a)}.ds-btn-outline:hover{background:var(--accent,#efeeeb)}.ds-btn-outline:active{transform:scale(.97)}.ds-btn-outline:focus-visible{outline:2px solid var(--ring,#17171a);outline-offset:2px}"
     },
     {
       "name": "Destructive Button",
@@ -414,78 +665,177 @@
       "refersTo": "button-destructive",
       "description": "Removal, outlined in the destructive colour.",
       "html": "<button class=\"ds-btn-danger\">Remove version</button>",
-      "css": ".ds-btn-danger{font-family:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;font-size:14px;display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border-radius:6px;font-weight:500;cursor:pointer;transition:background-color 120ms cubic-bezier(0.23,1,0.32,1),transform 120ms cubic-bezier(0.23,1,0.32,1);border:1px solid oklch(0.52 0.19 27 / .4);background:#fff;color:oklch(0.52 0.19 27)}.ds-btn-danger:hover{background:oklch(0.965 0.025 27);border-color:oklch(0.52 0.19 27)}.ds-btn-danger:active{transform:scale(.97)}.ds-btn-danger:focus-visible{outline:2px solid oklch(0.55 0.1 215);outline-offset:2px}"
+      "css": ".ds-btn-danger{font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:14px;font-weight:500;display:inline-flex;align-items:center;justify-content:center;gap:8px;height:36px;padding:0 16px;border-radius:6px;cursor:pointer;transition:background-color 120ms cubic-bezier(0.23,1,0.32,1),border-color 120ms,transform 120ms cubic-bezier(0.23,1,0.32,1);border:1px solid color-mix(in oklab,oklch(0.52 0.19 27) 40%,transparent);background:var(--background,#fff);color:oklch(0.52 0.19 27)}.ds-btn-danger:hover{background:oklch(0.965 0.025 27);border-color:oklch(0.52 0.19 27)}.ds-btn-danger:active{transform:scale(.97)}.ds-btn-danger:focus-visible{outline:2px solid var(--ring,#17171a);outline-offset:2px}"
     },
     {
       "name": "Text Input",
       "kind": "input",
       "refersTo": "input",
-      "description": "White control with a hairline border and a soft teal focus ring.",
-      "html": "<input class=\"ds-input\" placeholder=\"Search docs\" />",
-      "css": ".ds-input{font-family:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;font-size:14px;width:240px;height:36px;padding:0 12px;border:1px solid oklch(0.84 0.005 250);border-radius:6px;background:#fff;color:oklch(0.2 0.006 250);outline:none;transition:border-color 120ms,box-shadow 120ms}.ds-input:hover{border-color:oklch(0.47 0.005 250 / .45)}.ds-input:focus-visible{border-color:oklch(0.55 0.1 215);box-shadow:0 0 0 3px oklch(0.55 0.1 215 / .25)}.ds-input::placeholder{color:oklch(0.47 0.005 250)}"
+      "description": "White control with a control border; the border turns ink with a soft ring on focus.",
+      "html": "<input class=\"ds-input\" placeholder=\"Search all libraries\" />",
+      "css": ".ds-input{font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:14px;width:240px;height:36px;padding:0 12px;border:1px solid var(--input,#b9b8b3);border-radius:6px;background:var(--background,#fff);color:var(--foreground,#17171a);outline:none;transition:border-color 120ms,box-shadow 120ms}.ds-input:hover{border-color:color-mix(in oklab,#5c5d63 45%,transparent)}.ds-input:focus-visible{border-color:var(--ring,#17171a);box-shadow:0 0 0 3px color-mix(in oklab,var(--ring,#17171a) 25%,transparent)}.ds-input::placeholder{color:var(--muted-foreground,#5c5d63)}"
+    },
+    {
+      "name": "Band Navigation",
+      "kind": "nav",
+      "refersTo": "nav-pill-active",
+      "description": "The band on the frame: nav pills, the current one ink with a 2px route underline (ink in light, lamp in dark).",
+      "html": "<nav class=\"ds-band\"><a class=\"ds-nav\" aria-current=\"page\" href=\"#\">Libraries</a><a class=\"ds-nav\" href=\"#\">Jobs</a><a class=\"ds-nav\" href=\"#\">Search</a></nav>",
+      "css": ".ds-band{display:flex;align-items:center;gap:2px;height:52px;padding:0 16px;background:var(--frame,#f3f2ef)}.ds-nav{position:relative;display:inline-flex;align-items:center;height:36px;padding:0 12px;border-radius:6px;font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:14px;font-weight:500;color:var(--muted-foreground,#5c5d63);text-decoration:none;transition:background-color 120ms,color 120ms}.ds-nav:hover{background:var(--accent,#efeeeb);color:var(--foreground,#17171a)}.ds-nav:focus-visible{outline:2px solid var(--ring,#17171a);outline-offset:2px}.ds-nav[aria-current=page]{color:var(--foreground,#17171a)}.ds-nav::after{content:'';position:absolute;left:12px;right:12px;bottom:-7px;height:2px;border-radius:9999px;background:var(--route,#17171a);transform:scaleX(0);transition:transform 180ms cubic-bezier(0.23,1,0.32,1)}.ds-nav[aria-current=page]::after{transform:scaleX(1)}"
+    },
+    {
+      "name": "Tooltip",
+      "kind": "custom",
+      "refersTo": "tooltip",
+      "description": "Inverted short name for an icon control, with an optional key hint; never the only name.",
+      "html": "<span class=\"ds-tip\">Search all libraries <kbd class=\"ds-tip-kbd\">/</kbd></span>",
+      "css": ".ds-tip{display:inline-flex;align-items:center;gap:8px;max-width:256px;padding:4px 8px;border-radius:4px;background:var(--tip,#17171a);color:var(--tip-foreground,#f6f5f2);font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:12px;line-height:18px;font-weight:500;box-shadow:var(--shadow-float,0 10px 30px -12px rgb(23 23 26 / .22),0 0 0 1px rgb(23 23 26 / .06))}.ds-tip-kbd{display:inline-flex;align-items:center;justify-content:center;height:20px;min-width:20px;padding:0 4px;border-radius:4px;border:1px solid color-mix(in oklab,#f6f5f2 25%,transparent);font-family:'JetBrains Mono Variable','JetBrains Mono',ui-monospace,monospace;font-size:12px;color:color-mix(in oklab,#f6f5f2 80%,transparent)}"
+    },
+    {
+      "name": "Tabs",
+      "kind": "nav",
+      "refersTo": "tab-active",
+      "description": "Underline tabs; one 2px route indicator slides to the active tab.",
+      "html": "<div class=\"ds-tabs\" role=\"tablist\"><button class=\"ds-tab\" aria-selected=\"true\">Rendered</button><button class=\"ds-tab\" aria-selected=\"false\">Source</button><span class=\"ds-tab-bar\"></span></div>",
+      "css": ".ds-tabs{position:relative;display:flex;gap:4px;border-bottom:1px solid var(--border,#e5e4e0)}.ds-tab{height:40px;padding:0 12px;border:0;border-radius:6px 6px 0 0;background:none;font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:14px;font-weight:500;color:var(--muted-foreground,#5c5d63);cursor:pointer;transition:color 120ms}.ds-tab:hover,.ds-tab[aria-selected=true]{color:var(--foreground,#17171a)}.ds-tab:focus-visible{outline:2px solid var(--ring,#17171a);outline-offset:2px}.ds-tab-bar{position:absolute;left:0;bottom:-1px;height:2px;width:92px;border-radius:9999px;background:var(--route,#17171a);transition:transform 180ms cubic-bezier(0.23,1,0.32,1)}"
+    },
+    {
+      "name": "Selected Choice",
+      "kind": "chip",
+      "refersTo": "choice-selected",
+      "description": "A segmented choice on the Interface tab: the selected one sits on the lamp's wash with a route border.",
+      "html": "<div class=\"ds-choices\"><button class=\"ds-choice\" aria-checked=\"false\">Light</button><button class=\"ds-choice\" aria-checked=\"true\">Dark</button><button class=\"ds-choice\" aria-checked=\"false\">Follow the system</button></div>",
+      "css": ".ds-choices{display:flex;gap:8px}.ds-choice{min-height:36px;padding:8px 12px;border:1px solid var(--input,#b9b8b3);border-radius:6px;background:var(--background,#fff);color:var(--foreground,#17171a);font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:14px;font-weight:500;cursor:pointer;transition:border-color 120ms,background-color 120ms,transform 120ms}.ds-choice:active{transform:scale(.98)}.ds-choice:focus-visible{outline:2px solid var(--ring,#17171a);outline-offset:2px}.ds-choice[aria-checked=true]{background:var(--route-soft,#fcefc4);border-color:var(--route,#17171a);box-shadow:inset 0 0 0 1px var(--route,#17171a)}"
     },
     {
       "name": "Status Pill",
       "kind": "chip",
-      "refersTo": "pill-positive",
-      "description": "A status beside a value; soft ground, ink text.",
-      "html": "<span class=\"ds-pill\">Synced</span>",
-      "css": ".ds-pill{font-family:'IBM Plex Sans',ui-sans-serif,system-ui,sans-serif;font-size:14px;display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:9999px;font-size:12px;font-weight:500;background:oklch(0.96 0.04 155);color:oklch(0.3 0.07 155)}"
-    },
-    {
-      "name": "Library Bullet",
-      "kind": "custom",
-      "refersTo": "library-bullet",
-      "description": "A library's round bullet in its line colour, two initials.",
-      "html": "<span class=\"ds-bullet\">DR</span>",
-      "css": ".ds-bullet{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:9999px;background:oklch(0.47 0.15 255);color:#fff;font-family:'IBM Plex Sans',sans-serif;font-size:12px;font-weight:600;letter-spacing:-0.025em}"
+      "refersTo": "pill-route",
+      "description": "A status beside a value: the route tone is the lamp's wash with ink text.",
+      "html": "<span class=\"ds-pill\">Default</span> <span class=\"ds-pill ds-pill-pos\">Synced</span>",
+      "css": ".ds-pill{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:9999px;font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:12px;font-weight:500;background:var(--route-soft,#fcefc4);color:var(--foreground,#17171a)}.ds-pill-pos{background:oklch(0.96 0.04 155);color:oklch(0.3 0.07 155)}"
     },
     {
       "name": "Route Strip",
-      "kind": "nav",
+      "kind": "custom",
       "refersTo": "library-bullet",
-      "description": "Library, drawn rule, version station, short SHA: the identity line.",
+      "description": "Library bullet in its line colour, a drawn route rule, the version station and the short SHA.",
       "html": "<div class=\"ds-route\"><span class=\"ds-r-b\">DR</span><span class=\"ds-r-name\">docs-repo</span><span class=\"ds-r-rule\"></span><span class=\"ds-r-st\"></span><span class=\"ds-r-ver\">v1.3.0</span><span class=\"ds-r-rule\"></span><span class=\"ds-r-sha\">a1b2c3d</span></div>",
-      "css": ".ds-route{display:flex;align-items:center;gap:8px;font-family:'IBM Plex Sans',sans-serif;font-size:14px;color:oklch(0.2 0.006 250)}.ds-r-b{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:9999px;background:oklch(0.47 0.15 255);color:#fff;font-size:12px;font-weight:600}.ds-r-name{font-weight:500}.ds-r-rule{width:16px;height:2px;border-radius:9999px;background:oklch(0.47 0.08 215 / .6)}.ds-r-st{width:10px;height:10px;border-radius:9999px;border:2px solid oklch(0.47 0.08 215);background:oklch(0.47 0.08 215);box-sizing:border-box}.ds-r-ver{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:500}.ds-r-sha{font-family:'IBM Plex Mono',monospace;font-size:12px;color:oklch(0.47 0.005 250)}"
+      "css": ".ds-route{display:flex;align-items:center;gap:8px;font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:14px;color:var(--foreground,#17171a)}.ds-r-b{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:9999px;background:oklch(0.47 0.15 255);color:#fff;font-size:12px;font-weight:600;letter-spacing:-0.025em}.ds-r-name{font-weight:500}.ds-r-rule{width:16px;height:2px;border-radius:9999px;background:color-mix(in oklab,var(--route,#17171a) 60%,transparent)}.ds-r-st{width:10px;height:10px;border-radius:9999px;border:2px solid var(--route,#17171a);background:var(--route,#17171a);box-sizing:border-box}.ds-r-ver{font-family:'JetBrains Mono Variable','JetBrains Mono',ui-monospace,monospace;font-size:13px;font-weight:500}.ds-r-sha{font-family:'JetBrains Mono Variable','JetBrains Mono',ui-monospace,monospace;font-size:12px;color:var(--muted-foreground,#5c5d63)}"
     },
     {
       "name": "Code Well",
       "kind": "custom",
       "refersTo": "code-well",
-      "description": "Literal text shown as it is.",
-      "html": "<pre class=\"ds-code\">exactdocs serve --port 3000</pre>",
-      "css": ".ds-code{margin:0;padding:10px 12px;border-radius:6px;background:oklch(0.973 0.004 240);color:oklch(0.2 0.006 250);font-family:'IBM Plex Mono',monospace;font-size:13px;line-height:20px;overflow-wrap:anywhere}"
+      "description": "Literal text shown as it is, in JetBrains Mono.",
+      "html": "<pre class=\"ds-code\">uvx exactdocs serve --port 3000</pre>",
+      "css": ".ds-code{margin:0;padding:10px 12px;border-radius:6px;background:var(--code,#f7f6f4);color:var(--foreground,#17171a);font-family:'JetBrains Mono Variable','JetBrains Mono',ui-monospace,monospace;font-size:13px;line-height:20px;overflow-wrap:anywhere}"
+    },
+    {
+      "name": "Icon Button",
+      "kind": "button",
+      "refersTo": "icon-button",
+      "description": "A button that shows only an icon: its label is its accessible name and its tooltip; the icon reacts (here `forward`).",
+      "html": "<button class=\"ds-icon-btn\" aria-label=\"Next page\"><svg viewBox=\"0 0 24 24\" width=\"16\" height=\"16\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"m9 18 6-6-6-6\"/></svg></button>",
+      "css": ".ds-icon-btn{display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border:0;border-radius:6px;background:transparent;color:var(--foreground,#17171a);cursor:pointer;transition:background-color 120ms cubic-bezier(0.23,1,0.32,1),transform 120ms cubic-bezier(0.23,1,0.32,1)}.ds-icon-btn:hover{background:var(--accent,#efeeeb)}.ds-icon-btn:active{transform:scale(.97)}.ds-icon-btn:focus-visible{outline:2px solid var(--ring,#17171a);outline-offset:2px}.ds-icon-btn svg{transition:transform 180ms cubic-bezier(0.23,1,0.32,1)}.ds-icon-btn:hover svg,.ds-icon-btn:focus-visible svg{transform:translateX(2px)}"
+    },
+    {
+      "name": "Count Badge",
+      "kind": "chip",
+      "refersTo": "badge-count",
+      "description": "The number pill on a filter button: tabular, at least as wide as it is high.",
+      "html": "<button class=\"ds-filter\">State <span class=\"ds-count\">2</span></button>",
+      "css": ".ds-filter{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 12px;border:1px solid var(--input,#b9b8b3);border-radius:6px;background:var(--background,#fff);color:var(--foreground,#17171a);font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:14px;font-weight:500}.ds-count{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:20px;padding:0 6px;border-radius:9999px;background:var(--accent,#efeeeb);font-size:12px;font-variant-numeric:tabular-nums}"
+    },
+    {
+      "name": "Confirmation",
+      "kind": "custom",
+      "refersTo": "alert-dialog",
+      "description": "An AlertDialog: the question, what happens, Cancel focused first and the verb in destructive-solid.",
+      "html": "<div class=\"ds-confirm\" role=\"alertdialog\" aria-labelledby=\"ds-confirm-t\"><h2 id=\"ds-confirm-t\">Remove v1.4.0?</h2><p>Its articles leave search. The repository is not touched.</p><div class=\"ds-confirm-actions\"><button class=\"ds-confirm-cancel\">Cancel</button><button class=\"ds-confirm-go\">Remove version</button></div></div>",
+      "css": ".ds-confirm{max-width:448px;padding:24px;border:1px solid var(--border,#e5e4e0);border-radius:12px;background:var(--card,#fff);color:var(--foreground,#17171a);font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;box-shadow:var(--shadow-float,0 10px 30px -12px rgb(23 23 26 / .22),0 0 0 1px rgb(23 23 26 / .06))}.ds-confirm h2{margin:0;font-size:22px;line-height:28px;font-weight:600}.ds-confirm p{margin:8px 0 0;font-size:14px;line-height:20px;color:var(--muted-foreground,#5c5d63)}.ds-confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:24px}.ds-confirm-actions button{height:36px;padding:0 16px;border:0;border-radius:6px;font:inherit;font-size:14px;font-weight:500;cursor:pointer}.ds-confirm-cancel{background:transparent;color:var(--foreground,#17171a)}.ds-confirm-cancel:hover{background:var(--accent,#efeeeb)}.ds-confirm-go{background:var(--destructive,oklch(0.52 0.19 27));color:#fff}"
+    },
+    {
+      "name": "Segmented Control",
+      "kind": "nav",
+      "refersTo": "toggle-item-on",
+      "description": "A ToggleGroup for a few views or periods kept in the URL: one bordered group, the picked item on the lamp's wash.",
+      "html": "<div class=\"ds-seg\" role=\"radiogroup\" aria-label=\"Period\"><button role=\"radio\" aria-checked=\"false\">Day</button><button role=\"radio\" aria-checked=\"true\">Week</button><button role=\"radio\" aria-checked=\"false\">Month</button></div>",
+      "css": ".ds-seg{display:inline-flex;gap:2px;padding:2px;border:1px solid var(--input,#b9b8b3);border-radius:6px;background:var(--background,#fff)}.ds-seg button{height:32px;padding:0 12px;border:0;border-radius:4px;background:transparent;color:var(--muted-foreground,#5c5d63);font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:14px;font-weight:500;cursor:pointer;transition:background-color 120ms,color 120ms,transform 120ms}.ds-seg button:hover{color:var(--foreground,#17171a)}.ds-seg button:active{transform:scale(.97)}.ds-seg button[aria-checked=true]{background:var(--route-soft,#fcefc4);color:var(--foreground,#17171a)}"
+    },
+    {
+      "name": "Avatar",
+      "kind": "custom",
+      "refersTo": "avatar",
+      "description": "Initials on a full-round disc beside the username; decorative.",
+      "html": "<span class=\"ds-person\"><span class=\"ds-avatar\" aria-hidden=\"true\">AS</span>alice.smith</span>",
+      "css": ".ds-person{display:inline-flex;align-items:center;gap:8px;font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:14px;color:var(--foreground,#17171a)}.ds-avatar{display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:9999px;background:var(--secondary,#efeeeb);font-size:12px;font-weight:600}"
+    },
+    {
+      "name": "Meter",
+      "kind": "custom",
+      "refersTo": "meter",
+      "description": "A 6px bar whose fill moves by scaleX; route for progress, warning or destructive for budgets near or over.",
+      "html": "<div class=\"ds-meter\" role=\"progressbar\" aria-label=\"Import of v1.4.0\" aria-valuemin=\"0\" aria-valuemax=\"100\" aria-valuenow=\"40\"><div class=\"ds-meter-fill\"></div></div>",
+      "css": ".ds-meter{width:160px;height:6px;overflow:hidden;border-radius:9999px;background:var(--secondary,#efeeeb)}.ds-meter-fill{height:100%;border-radius:9999px;background:var(--route,#17171a);transform-origin:left;transform:scaleX(.4);transition:transform 240ms cubic-bezier(0.23,1,0.32,1)}"
+    },
+    {
+      "name": "Data Table Pagination",
+      "kind": "nav",
+      "refersTo": "table-header",
+      "description": "DataTable v2's bar: the range, rows per page, the page and First, Previous, Next, Last as icon buttons.",
+      "html": "<nav class=\"ds-pager\" aria-label=\"Pagination\"><span>21–40 of 233</span><span>Page 2 of 12</span></nav>",
+      "css": ".ds-pager{display:flex;justify-content:space-between;gap:24px;padding-top:16px;font-family:'Schibsted Grotesk Variable','Schibsted Grotesk',ui-sans-serif,system-ui,sans-serif;font-size:12px;line-height:18px;color:var(--muted-foreground,#5c5d63);font-variant-numeric:tabular-nums}"
+    },
+    {
+      "name": "Library Logo Tile",
+      "kind": "custom",
+      "refersTo": "logo-tile",
+      "description": "A library's own logo on white in both themes, inside an ink hairline at 12%.",
+      "html": "<span class=\"ds-logo\" aria-hidden=\"true\"><span class=\"ds-logo-mark\"></span></span>",
+      "css": ".ds-logo{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;padding:2px;box-sizing:border-box;border:1px solid var(--logo-tile-edge,rgb(23 23 26 / .12));border-radius:6px;background:var(--logo-tile,#fff)}.ds-logo-mark{width:16px;height:16px;border-radius:4px;background:#17171a}"
     }
   ],
   "narrative": {
-    "northStar": "The Wayfinding Line",
-    "overview": "**Every screen says exactly where you are on the line.** ExactDocs serves text at an exact library, version and commit, so the UI is set like a wayfinding system:\n\nAround that, the product is a quiet working tool. A cool tinted **frame** (the top band and the window's margin) holds a white **sheet** where the work happens. The text is ink with two greys. One **route hue** (deep teal) marks place, selection and progress. Nothing else is coloured unless it is a state or a library's line.\n\nBuilt from shadcn/ui and these free shadcnblocks.com blocks (no premium code): `application-shell3` (the band, mobile sheet and user menu), `login2` (the auth card), `blogpost2` (the reader's sticky contents column), `changelog1` (the version rail) and `data-table1` (the server-side tables, #434).\n\n",
+    "northStar": "The Headlamp",
+    "overview": "**Of all the layers, one thing is lit.** The sign is an anthracite mole with a yellow headlamp who\ndigs through layers of versions, lights exactly the one you asked for, and hands you the page. The\nUI keeps that one idea: a quiet, mature working tool in which a single light, the lamp, says which\nexact thing is lit (the current page, the selected version, the checked option, the active tab).\n\nThe layout is a framed sheet. A warm stone **frame** (the band at the top and the window's margin)\nholds a white **sheet** where the work happens. It is flat: hairlines separate, tones layer, nothing\nat rest casts a shadow. Words are anthracite ink with one grey. In light mode the lamp appears as a\npale yellow wash behind the lit item, with ink marks on it, because yellow text and thin yellow\nmarks do not read on white. In dark mode the lamp itself draws the marks. The mascot is friendly;\nthe interface and the type around it are grown-up.\n\nBuilt from shadcn/ui and these free shadcnblocks.com blocks (no premium code):\n`application-shell3` (the band, mobile sheet and user menu), `login2` (the auth card),\n`blogpost2` (the reader's sticky contents column), `changelog1` (the version rail) and\n`data-table1` (the server-side tables, #434). The app style is the design-taste \"framed-sheet\"\n(dealt seed 913649743) in Operate mode.",
     "keyCharacteristics": [
-      "Cool tinted frame around a white sheet; the sheet is inset 16px-rounded from `md` up.",
-      "Ink plus two greys for all words; one deep-teal route hue; eight line colours only on library bullets.",
-      "IBM Plex Sans for everything, IBM Plex Mono for versions, SHAs, paths, IDs, tokens and code.",
-      "Flat: depth is tonal (frame, sheet, raised) and by hairline borders, not shadows.",
-      "Motion is composite-only (transform and opacity) and explains state."
+      "Warm stone frame around a white sheet; from `md` up the sheet is inset 8px with 16px corners and a hairline border.",
+      "Anthracite ink plus one grey for all words; one accent, the lamp; eight line colours only on library bullets.",
+      "Schibsted Grotesk for the whole UI, JetBrains Mono only for literals (versions, SHAs, paths, IDs, tokens, code).",
+      "Flat: depth is tonal (frame, sheet, raised) and by hairlines; the one shadow is for floating layers.",
+      "Motion is short, composite-only (transform and opacity), interruptible, and explains state.",
+      "Interface preferences (theme, contrast, text size, spacing, motion, face, links, targets) are first-class and synced to the account."
     ],
     "rules": [
+      {
+        "name": "The One Lamp Rule",
+        "body": "The lamp is the only accent. It marks the one lit thing (where you are, what is selected, what is checked, what has focus) and nothing else. Line colours live only on library bullets; states only on states.",
+        "section": "colors"
+      },
+      {
+        "name": "The Wash, Not The Word Rule",
+        "body": "On light grounds the lamp is a wash (`route-soft`) with ink on it, never yellow text or a yellow hairline. Marks that must read in light mode are ink (`route`).",
+        "section": "colors"
+      },
+      {
+        "name": "The Lamp Draws In The Dark Rule",
+        "body": "In dark mode `route`, `ring` and `selection` are the lamp itself; use the tokens, never `lamp` directly, and each theme does the right thing.",
+        "section": "colors"
+      },
       {
         "name": "The Three Percent Rule",
         "body": "Colour is under about 3% of a screen. A delta or status is coloured only when it means good or bad. Zero is grey.",
         "section": "colors"
       },
       {
-        "name": "The One Route Hue Rule",
-        "body": "Teal means place, selection and progress, nothing else. Line colours live only on library bullets. Violet, indigo, gradients and glows are not used anywhere.",
-        "section": "colors"
-      },
-      {
-        "name": "The Two Greys Rule",
+        "name": "The Two Inks Rule",
         "body": "Words are ink or `muted-foreground`. No third grey for text.",
         "section": "colors"
       },
       {
         "name": "The Literal Is Mono Rule",
-        "body": "If a reader could copy it into a terminal or a config (version, SHA, path, ID, token), it is Plex Mono; nothing else is.",
+        "body": "If a reader could copy it into a terminal or a config (version, SHA, path, ID, token, code), it is JetBrains Mono; nothing else is.",
         "section": "typography"
       },
       {
@@ -495,24 +845,44 @@
       },
       {
         "name": "The Flat-At-Rest Rule",
-        "body": "Surfaces never carry a shadow at rest; only floating layers (menu, popover, dialog) do.",
+        "body": "Surfaces never carry a shadow at rest; only floating layers (menu, tooltip, popover, dialog, sheet) do, and they use `shadow-float`.",
         "section": "elevation"
+      },
+      {
+        "name": "Confirm with AlertDialog",
+        "body": "Every confirmation is an AlertDialog (`ConfirmDialog` or `TypedConfirmDialog`): `role=\"alertdialog\"`, Cancel focused first, Escape cancels, a click outside does nothing, the verb in `destructive-solid` when it removes or stops something. Never an inline \"Are you sure?\" row and never a plain Dialog.",
+        "section": "components"
+      },
+      {
+        "name": "A context menu mirrors a visible menu",
+        "body": "Nothing is reachable by right-click alone: touch, keyboard and new users would never find it. A row's context menu shows the same items as its visible \"More actions\" menu, fed from one list (`RowActions`), and opens from the keyboard with Shift+F10 or the Menu key.",
+        "section": "components"
       }
     ],
     "dos": [
-      "**Do** name library, version and commit with `LibraryBullet`, `VersionStation` and `Commit` wherever they appear.",
+      "**Do** let the lamp mark only the one lit thing, through `route`, `route-soft`, `selection` and `ring`.",
+      "**Do** put ink marks on the lamp's wash in light mode and let the lamp draw the marks in dark mode.",
       "**Do** use only the named tokens, sizes, durations and recipes; add to the tokens first.",
       "**Do** keep one primary button per screen and start every page with `PageHeader`.",
-      "**Do** set literal text (versions, SHAs, paths, tokens) in Plex Mono.",
-      "**Do** animate transform and opacity only, with `--dur-*` and `--ease-out`."
+      "**Do** set literal text (versions, SHAs, paths, IDs, tokens, code) in JetBrains Mono.",
+      "**Do** give every icon control an accessible name and a tooltip that repeats it.",
+      "**Do** read interface preferences through the `fine:`, `can-hover:` and `motion-*` variants, and size everything in rem.",
+      "**Do** animate transform and opacity only, with `--dur-*` and `--ease-out`.",
+      "**Do** confirm with an AlertDialog and give every row action a visible menu as well as a context menu.",
+      "**Do** keep a list's view (filters, sort, page, size) in the URL."
     ],
     "donts": [
-      "**Don't** colour more than about 3% of a screen, or use a delta colour for anything but good or bad.",
-      "**Don't** use violet, indigo, gradients or glows; line colours belong on library bullets only.",
+      "**Don't** set the lamp yellow as text or as a thin mark on a light ground.",
+      "**Don't** add a second accent hue, gradients or glows; line colours belong on library bullets only.",
       "**Don't** put `frame` behind content, or use navy in dark mode.",
+      "**Don't** use the mascot's playfulness in the interface: no rounded display faces, cartoon icons or bouncy motion in the UI.",
       "**Don't** use raw colours, `text-[13px]`, the default `text-sm`, tracked capitals or ad hoc durations.",
+      "**Don't** put a shadow on anything at rest, or any shadow but `shadow-float` on a floating layer.",
       "**Don't** animate a height, a width or `grid-template-rows`.",
-      "**Don't** use a dialog except for confirmations and for showing a secret once."
+      "**Don't** let a tooltip carry information the control's name does not.",
+      "**Don't** use a dialog except for confirmations and for showing a secret once.",
+      "**Don't** scale a button up on hover, or let anything bounce or overshoot.",
+      "**Don't** give a chart a second hue for its series: `chart-series`, with `chart-highlight` for the one lit thing."
     ]
   }
 }

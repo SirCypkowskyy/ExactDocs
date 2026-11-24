@@ -3,13 +3,15 @@ import { Plus, X } from "lucide-react";
 import { type FormEvent, type ReactNode, type RefObject, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import { HttpError } from "@/shared/lib/http";
+import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { MAX_TAG_LENGTH, MAX_TAGS } from "@/shared/lib/tags";
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
 import { cn } from "@/shared/lib/utils";
-import { Button } from "@/shared/ui/button";
+import { Button, IconButton } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { pill, pillTone } from "@/shared/ui/recipes";
 import { refreshTags, setManualTags } from "../api/manual-tags";
+import { messages } from "../messages";
 import {
   type AddResult,
   addedNothing,
@@ -32,23 +34,25 @@ const small =
   "inline-flex h-11 cursor-pointer items-center gap-1 rounded-full px-3 text-small font-medium outline-none transition-[background-color,color,transform] duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] disabled:cursor-progress disabled:opacity-60 lg:h-6 lg:px-2.5";
 /** One manual tag's identity: the same tag can be set on this path and on an older one. */
 const keyOf = (m: ManualTag) => `${m.path}\u0000${m.tag}`;
-const quiet = `${small} border border-dashed border-input text-muted-foreground [@media(hover:hover)]:hover:bg-accent [@media(hover:hover)]:hover:text-foreground`;
+const quiet = `${small} border border-dashed border-input text-muted-foreground can-hover:hover:bg-accent can-hover:hover:text-foreground`;
 
-const REASONS: Record<Extract<AddResult, { ok: false }>["reason"], string> = {
-  invalid: `A tag starts with a letter or digit and goes on with letters, digits and . _ + - (${MAX_TAG_LENGTH} characters at most).`,
-  duplicate: "This article already has that tag.",
-  "too-many": `An article path takes at most ${MAX_TAGS} tags by hand.`,
-};
+type Texts = (typeof messages)["en"]["tags"];
+type Reason = Extract<AddResult, { ok: false }>["reason"];
 
-function explain(error: unknown): string {
+/** Why a typed tag was refused, in words. */
+function reasonText(reason: Reason, t: Texts): string {
+  if (reason === "invalid") return t.invalid(MAX_TAG_LENGTH);
+  if (reason === "duplicate") return t.duplicate;
+  return t.tooMany(MAX_TAGS);
+}
+
+function explain(error: unknown, t: Texts): string {
   if (error instanceof HttpError && error.status === 422) {
-    return error.code === "invalid_tags" ? REASONS.invalid : error.message;
+    return error.code === "invalid_tags" ? reasonText("invalid", t) : error.message;
   }
-  if (error instanceof HttpError && error.status === 401) return "Sign in again to change tags.";
-  if (error instanceof HttpError && error.status === 404) {
-    return "This library is no longer imported. Reload the page.";
-  }
-  return "The tags could not be saved. Try again.";
+  if (error instanceof HttpError && error.status === 401) return t.signIn;
+  if (error instanceof HttpError && error.status === 404) return t.gone;
+  return t.saveFailed;
 }
 
 function Group({ label, children }: { label: string; children: ReactNode }) {
@@ -72,9 +76,6 @@ function Plain({ tags, label }: { tags: readonly string[]; label: string }) {
   );
 }
 
-const chipButton =
-  "inline-flex size-11 cursor-pointer items-center justify-center rounded-full text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring aria-disabled:cursor-progress aria-disabled:opacity-60 lg:size-6 [@media(hover:hover)]:hover:text-foreground";
-
 /** One manual tag, where it was set when that is an older path, and its remove button. */
 function ManualChip({
   tag,
@@ -89,28 +90,27 @@ function ManualChip({
   buttonRef: (button: HTMLButtonElement | null) => void;
   onRemove: () => void;
 }) {
+  const t = useMessages(messages).tags;
   return (
     <li className="row-in inline-flex items-center gap-0.5 rounded-full bg-route-soft pl-2.5 text-small font-medium">
       <span>{tag.tag}</span>
       {inherited && (
         <span className="ml-1 font-normal text-muted-foreground [overflow-wrap:anywhere]">
-          set on <span className="font-mono">{tag.path}</span>
+          {t.setOn(<span className="font-mono">{tag.path}</span>)}
         </span>
       )}
-      <button
+      <IconButton
         ref={buttonRef}
-        type="button"
+        label={inherited ? t.removeTagSetOn(tag.tag, tag.path) : t.removeTag(tag.tag)}
+        size="icon-sm"
+        motion="turn"
         // Not `disabled`: that would drop the focus while the change is saved.
         aria-disabled={busy || undefined}
         onClick={onRemove}
-        aria-label={
-          inherited ? `Remove tag ${tag.tag}, set on ${tag.path}` : `Remove tag ${tag.tag}`
-        }
-        title={inherited ? `Removes it from ${tag.path} in every version` : undefined}
-        className={chipButton}
+        className="rounded-full text-muted-foreground hover:bg-background/70 fine:size-6 [&_svg]:size-3.5"
       >
-        <X aria-hidden="true" className="size-3.5" />
-      </button>
+        <X aria-hidden="true" />
+      </IconButton>
     </li>
   );
 }
@@ -139,6 +139,8 @@ function AddTagForm({
   onSubmit,
   onClose,
 }: AddTagFormProps) {
+  const t = useMessages(messages).tags;
+  const c = useMessages(common);
   const hintId = `${inputId}-hint`;
   return (
     <form
@@ -149,7 +151,7 @@ function AddTagForm({
       className="mt-2 flex max-w-md flex-wrap items-center gap-2"
     >
       <label htmlFor={inputId} className="sr-only">
-        New tag
+        {t.newTag}
       </label>
       <Input
         ref={field}
@@ -166,13 +168,15 @@ function AddTagForm({
         className="h-11 min-w-0 flex-1 text-body lg:h-8"
       />
       <Button type="submit" size="sm" pending={busy}>
-        Add
+        {!busy && <Plus aria-hidden="true" data-icon-motion="turn" />}
+        {t.add}
       </Button>
       <button type="button" onClick={onClose} className={quiet}>
-        Cancel
+        <X aria-hidden="true" data-icon-motion="turn" className="size-3.5" />
+        {c.cancel}
       </button>
       <p id={hintId} className="w-full text-small text-muted-foreground">
-        For this path in every version of the library, and where it was renamed to later.
+        {t.hint}
       </p>
     </form>
   );
@@ -205,12 +209,15 @@ function Status({
  * closing the field returns it to "Add tag", removing a tag moves it to the next one.
  */
 export function TagEditor({ owner, repo, article }: TagEditorProps) {
+  const t = useMessages(messages).tags;
+  const c = useMessages(common);
+  const language = useLanguage();
   const queryClient = useQueryClient();
   const inputId = useId();
   const statusId = `${inputId}-status`;
   const [adding, setAdding] = useState(false);
   const [text, setText] = useState("");
-  const [problem, setProblem] = useState<string | undefined>();
+  const [problem, setProblem] = useState<Reason | undefined>();
   /** The tag last removed by hand, to say so when the import keeps giving it. */
   const [removed, setRemoved] = useState<string | undefined>();
   const addButton = useRef<HTMLButtonElement>(null);
@@ -225,22 +232,27 @@ export function TagEditor({ owner, repo, article }: TagEditorProps) {
     // The line under the tags says the same; a refused value has nothing to retry, a lost
     // connection does.
     onError: (failure, variables) =>
-      toast.error(explain(failure), {
+      toast.error(explain(failure, t), {
         ...(!(failure instanceof HttpError && failure.status < 500) && {
-          action: { label: "Try again", onClick: () => save.mutate(variables) },
+          action: { label: c.retry, onClick: () => save.mutate(variables) },
         }),
       }),
   });
   const groups = tagGroups(article);
   const busy = save.isPending;
-  const error = problem ?? (save.isError ? explain(save.error) : undefined);
+  const error =
+    problem !== undefined
+      ? reasonText(problem, t)
+      : save.isError
+        ? explain(save.error, t)
+        : undefined;
 
   function submit(event: FormEvent) {
     event.preventDefault();
     if (busy) return;
     setRemoved(undefined);
     const added = addTag(article, text);
-    setProblem(added.ok ? undefined : REASONS[added.reason]);
+    setProblem(added.ok ? undefined : added.reason);
     if (added.ok) {
       const before = added.tags.slice(0, -1);
       save.mutate(
@@ -250,9 +262,9 @@ export function TagEditor({ owner, repo, article }: TagEditorProps) {
             setText("");
             const addedTag = added.tags.at(-1) ?? "";
             if (!(saved && addedNothing(before, saved.tags)))
-              toast.success("Tag added", { description: addedTag });
+              toast.success(t.added, { description: addedTag });
             // The server made the tag; a spelling of one the path had adds nothing.
-            if (saved && addedNothing(before, saved.tags)) setProblem(REASONS.duplicate);
+            if (saved && addedNothing(before, saved.tags)) setProblem("duplicate");
           },
         },
       );
@@ -272,10 +284,10 @@ export function TagEditor({ owner, repo, article }: TagEditorProps) {
         onSuccess: () => {
           setRemoved(tag.tag);
           const previous = tagsSetOn(article.manual_tags, tag.path);
-          toast.success("Tag removed", {
+          toast.success(t.removed, {
             description: tag.tag,
             action: {
-              label: "Undo",
+              label: t.undo,
               onClick: () => save.mutate({ path: tag.path, tags: previous }),
             },
           });
@@ -294,29 +306,26 @@ export function TagEditor({ owner, repo, article }: TagEditorProps) {
   }
 
   return (
-    <section aria-label="Tags" className="min-w-0">
+    <section aria-label={t.region} className="min-w-0">
       <dl className="m-0 flex flex-wrap items-center gap-x-4 gap-y-2">
         {groups.frontMatter.length > 0 && (
-          <Group label="From the file">
-            <Plain tags={groups.frontMatter} label="Tags from front matter" />
+          <Group label={t.fromFile}>
+            <Plain tags={groups.frontMatter} label={t.fromFrontMatter} />
           </Group>
         )}
         {groups.rules.length > 0 && (
-          <Group label="From path rules">
-            <Plain tags={groups.rules} label="Tags from path rules" />
+          <Group label={t.fromRules}>
+            <Plain tags={groups.rules} label={t.fromRulesList} />
           </Group>
         )}
         {groups.imported.length > 0 && (
-          <Group label="Imported">
-            <Plain tags={groups.imported} label="Tags from front matter or path rules" />
-            <p className="mt-1 text-small text-muted-foreground">
-              This version was imported before ExactDocs kept which is which. Importing it again, or
-              changing a tag rule, tells them apart.
-            </p>
+          <Group label={t.imported}>
+            <Plain tags={groups.imported} label={t.importedList} />
+            <p className="mt-1 text-small text-muted-foreground">{t.importedNote}</p>
           </Group>
         )}
-        <Group label="Added here">
-          <ul aria-label="Tags added by hand" className="flex flex-wrap items-center gap-1.5">
+        <Group label={t.addedHere}>
+          <ul aria-label={t.addedList} className="flex flex-wrap items-center gap-1.5">
             {groups.manual.map((m, index) => (
               <ManualChip
                 key={keyOf(m)}
@@ -341,8 +350,8 @@ export function TagEditor({ owner, repo, article }: TagEditorProps) {
                   }}
                   className={quiet}
                 >
-                  <Plus aria-hidden="true" className="size-3.5" />
-                  Add tag
+                  <Plus aria-hidden="true" data-icon-motion="turn" className="size-3.5" />
+                  {t.addTag}
                 </button>
               </li>
             )}
@@ -365,7 +374,7 @@ export function TagEditor({ owner, repo, article }: TagEditorProps) {
           onClose={close}
         />
       )}
-      <Status id={statusId} error={error} notice={keptNotice(article, removed)} />
+      <Status id={statusId} error={error} notice={keptNotice(article, removed, language)} />
     </section>
   );
 }

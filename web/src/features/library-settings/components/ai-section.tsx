@@ -1,18 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronRight, ShieldOff } from "lucide-react";
+import { ChevronRight, RefreshCw, ShieldOff } from "lucide-react";
 import { type FormEvent, Fragment, useState } from "react";
 import { toast } from "sonner";
 import {
   type AiProvider,
   type AiRole,
+  aiLabels,
   aiProvidersQueryOptions,
   aiRolesQueryOptions,
-  ROLE_LABEL,
-  THINKING_HINT,
-  THINKING_LABEL,
   THINKING_LEVELS,
   type ThinkingLevel,
 } from "@/shared/lib/ai-queries";
+import { useLanguage } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import { Field } from "@/shared/ui/field";
@@ -21,6 +20,9 @@ import { pill, pillTone } from "@/shared/ui/recipes";
 import { SelectField } from "@/shared/ui/select-field";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { libraryRetrievalQueryOptions, saveLibraryRetrieval } from "../api/retrieval";
+import { pageMessages } from "../messages/page";
+import { retrievalMessages } from "../messages/retrieval";
+import { sharedMessages } from "../messages/shared";
 import {
   bodyOf,
   ceilingHint,
@@ -28,7 +30,6 @@ import {
   instanceThinking,
   type LibraryRetrieval,
   MAX_RERANK_TOP_N,
-  MODE_LABEL,
   modeOptions,
   modeSource,
   OVERRIDABLE,
@@ -36,7 +37,7 @@ import {
   pipelineSteps,
   profileOptions,
   REPO_GUIDANCE,
-  RERANK_WITH_LABEL,
+  RERANK_WITH,
   type RepoGuidance,
   type RerankWith,
   type RetrievalDraft,
@@ -53,6 +54,7 @@ import {
   type Problem,
 } from "../model/settings";
 import { useReportDirty } from "./dirty";
+import { SaveRow } from "./save-row";
 import { SettingsSection } from "./settings-section";
 
 interface Props {
@@ -64,30 +66,33 @@ interface Props {
 
 /** Which pipeline answers for the library, and the settings that choose it (admins). */
 export function AiSection({ owner, repo, activity, onStart }: Props) {
+  const language = useLanguage();
+  const t = retrievalMessages[language];
   const retrieval = useQuery(libraryRetrievalQueryOptions(owner, repo));
   const providers = useQuery(aiProvidersQueryOptions());
   const roles = useQuery(aiRolesQueryOptions());
   return (
-    <SettingsSection
-      id="ai"
-      title="Retrieval and AI"
-      description="How searches of this library find their answers, which models they may use, and how much they may spend."
-    >
+    <SettingsSection id="ai" title={pageMessages[language].sections.ai} description={t.description}>
       {retrieval.isPending ? (
-        <div
-          role="status"
-          aria-label="Loading the retrieval settings"
-          className="flex flex-col gap-3"
-        >
+        <div role="status" aria-label={t.loading} className="flex flex-col gap-3">
           <Skeleton className="h-28 w-full" />
           <Skeleton className="h-9 w-full" />
           <Skeleton className="h-11 w-full" />
         </div>
       ) : retrieval.isError ? (
         <div>
-          <FormAlert id="ai-load-alert" message={explainRetrievalSave(retrieval.error).message} />
-          <Button type="button" variant="outline" onClick={() => retrieval.refetch()}>
-            Retry
+          <FormAlert
+            id="ai-load-alert"
+            message={explainRetrievalSave(retrieval.error, language).message}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            aria-busy={retrieval.isFetching}
+            onClick={() => retrieval.refetch()}
+          >
+            <RefreshCw aria-hidden="true" data-icon-motion="refresh" />
+            {sharedMessages[language].retry}
           </Button>
         </div>
       ) : (
@@ -99,7 +104,9 @@ export function AiSection({ owner, repo, activity, onStart }: Props) {
             r={retrieval.data}
             roles={roles.data}
             providers={providers.data}
-            providersError={providers.isError ? explainProfilesError(providers.error) : undefined}
+            providersError={
+              providers.isError ? explainProfilesError(providers.error, language) : undefined
+            }
             activity={activity}
             onStart={onStart}
           />
@@ -132,18 +139,21 @@ function PipelineSummary({
   r: LibraryRetrieval;
   roles: readonly AiRole[] | undefined;
 }) {
+  const language = useLanguage();
+  const t = retrievalMessages[language];
+  const ai = aiLabels[language];
   const used = rolesInUse(r, roles);
   return (
     <section aria-labelledby="pipeline-heading" className="mb-6 rounded-lg bg-raised p-4">
       <h3 id="pipeline-heading" className="text-body font-medium text-muted-foreground">
-        Effective pipeline
+        {t.effectivePipeline}
       </h3>
       <p className="mt-0.5 text-section font-semibold" data-testid="effective-mode">
-        {MODE_LABEL[r.effective_mode]}
+        {t.modes[r.effective_mode]}
       </p>
-      <p className="mt-0.5 text-body text-muted-foreground">{modeSource(r)}</p>
+      <p className="mt-0.5 text-body text-muted-foreground">{modeSource(r, language)}</p>
       <ol className="mt-3 flex flex-wrap gap-x-2 gap-y-1 text-body [&>li:not(:last-child)]:after:ml-2 [&>li:not(:last-child)]:after:text-muted-foreground [&>li:not(:last-child)]:after:content-['→']">
-        {pipelineSteps(r).map((step) => (
+        {pipelineSteps(r, language).map((step) => (
           <li key={step}>{step}</li>
         ))}
       </ol>
@@ -152,11 +162,11 @@ function PipelineSummary({
           <dl className="mt-3 grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 text-body">
             {used.map((u) => (
               <div key={u.role} className="contents">
-                <dt className="text-muted-foreground">{ROLE_LABEL[u.role]}</dt>
+                <dt className="text-muted-foreground">{ai.roles[u.role]}</dt>
                 <dd className="[overflow-wrap:anywhere]">
-                  <span className="font-mono">{u.model ?? "configured"}</span>
+                  <span className="font-mono">{u.model ?? t.configured}</span>
                   <span className="text-muted-foreground">
-                    {u.from === "library" ? " (this library)" : " (instance)"}
+                    {u.from === "library" ? t.fromLibrary : t.fromInstance}
                   </span>
                 </dd>
               </div>
@@ -166,7 +176,7 @@ function PipelineSummary({
       ) : (
         <p className="mt-3 flex items-start gap-2 text-body">
           <ShieldOff aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
-          <span>No content of this library is sent to any AI provider.</span>
+          <span>{t.noContentSent}</span>
         </p>
       )}
     </section>
@@ -197,6 +207,9 @@ function AiForm({
   activity,
   onStart,
 }: FormProps) {
+  const language = useLanguage();
+  const t = retrievalMessages[language];
+  const ai = aiLabels[language];
   const queryClient = useQueryClient();
   const saved = retrievalDraftOf(r);
   const [draft, setDraft] = useState<RetrievalDraft>(saved);
@@ -212,12 +225,12 @@ function AiForm({
       // The fields show what was stored: the server may have normalised it.
       setDraft(retrievalDraftOf(data));
       setDone(true);
-      toast.success("Saved the AI settings");
+      toast.success(t.savedToast);
       setProblem(undefined);
       queryClient.setQueryData(libraryRetrievalQueryOptions(owner, repo).queryKey, data);
     },
     onError: (error) => {
-      const p = explainRetrievalSave(error);
+      const p = explainRetrievalSave(error, language);
       if (p.field === "mode") {
         setErrors({ mode: p.message });
         document.getElementById("ai-mode")?.focus();
@@ -240,7 +253,7 @@ function AiForm({
   function submit(event: FormEvent) {
     event.preventDefault();
     if (save.isPending || unchanged) return;
-    const found = validateRetrieval(draft, r.budget_ceilings, r.budgets);
+    const found = validateRetrieval(draft, r.budget_ceilings, r.budgets, language);
     setErrors(found);
     setProblem(undefined);
     const first = Object.keys(found)[0];
@@ -275,28 +288,21 @@ function AiForm({
             }
             className="size-4 cursor-pointer accent-primary"
           />
-          Use AI providers for this library
+          {t.useAi}
         </label>
-        {off && (
-          <p className="fade-in -mt-3 text-body text-muted-foreground">
-            Off: no chunk, query or file of this library is sent to any provider, and its searches
-            use BM25.
-          </p>
-        )}
+        {off && <p className="fade-in -mt-3 text-body text-muted-foreground">{t.offNote}</p>}
         <SelectField
           id="ai-mode"
-          label="Retrieval mode"
+          label={t.mode}
           value={draft.mode}
           error={errors.mode}
-          hint="A search can still ask for another mode. Only modes that can run now are listed."
+          hint={t.modeHint}
           onChange={(e) => edit({ mode: e.target.value })}
         >
           <option value="">
-            {r.instance_mode
-              ? `The instance's default (${MODE_LABEL[r.instance_mode]})`
-              : "The best mode available"}
+            {r.instance_mode ? t.instanceDefault(t.modes[r.instance_mode]) : t.bestAvailable}
           </option>
-          {modeOptions(r, draft).map((o) => (
+          {modeOptions(r, draft, language).map((o) => (
             <option key={o.value} value={o.value} disabled={o.disabled}>
               {o.label}
             </option>
@@ -312,24 +318,23 @@ function AiForm({
               aria-hidden="true"
               className="size-4 text-muted-foreground transition-transform duration-(--dur) ease-(--ease-out) group-open:rotate-90 motion-reduce:transition-none"
             />
-            Advanced: models, reranking and spend limits
-            {customised && <span className={cn(pill, pillTone.route, "ml-auto")}>Customised</span>}
+            {t.advanced}
+            {customised && (
+              <span className={cn(pill, pillTone.route, "ml-auto")}>{t.customised}</span>
+            )}
           </summary>
           <div className="flex flex-col gap-5 border-t border-rule p-4">
             {/* A legend is no flex item: the fieldset stays a block and the fields get their own box. */}
             <fieldset disabled={off} className="disabled:opacity-60">
-              <legend className="mb-1 text-body font-medium">Models</legend>
-              <p className="text-body text-muted-foreground">
-                Use another profile's model than the instance's. The embedding model is the same for
-                every library.
-              </p>
+              <legend className="mb-1 text-body font-medium">{t.models}</legend>
+              <p className="text-body text-muted-foreground">{t.modelsNote}</p>
               <div className="mt-5 flex flex-col gap-5">
                 {providersError ? (
                   <p role="alert" className="text-body font-medium text-destructive">
                     {providersError}
                   </p>
                 ) : providers === undefined ? (
-                  <p className="text-body text-muted-foreground">Loading the profiles…</p>
+                  <p className="text-body text-muted-foreground">{t.loadingProfiles}</p>
                 ) : null}
                 {OVERRIDABLE.map((role) => {
                   const thinking = THINKING_ROLES.find(([r]) => r === role);
@@ -345,19 +350,19 @@ function AiForm({
                       {thinking && (
                         <SelectField
                           id={`ai-${thinking[1]}`}
-                          label={`${ROLE_LABEL[thinking[0]]} thinking`}
+                          label={t.thinking(ai.roles[thinking[0]])}
                           value={draft[thinking[1]]}
-                          hint={THINKING_HINT}
+                          hint={ai.thinkingHint}
                           onChange={(e) =>
                             edit({ [thinking[1]]: e.target.value as "" | ThinkingLevel })
                           }
                         >
                           <option value="">
-                            {instanceThinking(thinking[0], roles, (l) => THINKING_LABEL[l])}
+                            {instanceThinking(thinking[0], roles, (l) => ai.thinking[l], language)}
                           </option>
                           {THINKING_LEVELS.map((level) => (
                             <option key={level} value={level}>
-                              {THINKING_LABEL[level]}
+                              {ai.thinking[level]}
                             </option>
                           ))}
                         </SelectField>
@@ -367,27 +372,27 @@ function AiForm({
                 })}
                 <Field
                   id="ai-rerankTopN"
-                  label="Candidates to rerank"
+                  label={t.rerankTopN}
                   inputMode="numeric"
                   value={draft.rerankTopN}
                   placeholder={String(r.effective_rerank_top_n)}
                   error={errors.rerankTopN}
-                  hint={`1 to ${MAX_RERANK_TOP_N}. Empty: the instance's number.`}
+                  hint={t.rerankTopNHint(MAX_RERANK_TOP_N)}
                   onChange={(e) => edit({ rerankTopN: e.target.value })}
                 />
                 <SelectField
                   id="ai-rerankWith"
-                  label="Rerank with"
+                  label={t.rerankWith}
                   value={draft.rerankWith}
-                  hint="The LLM judge rates every candidate in one call, counted against the spend limits. It reranks only where it is chosen and its model (else the LLM) is configured."
+                  hint={t.rerankWithHint}
                   onChange={(e) => edit({ rerankWith: e.target.value as "" | RerankWith })}
                 >
                   <option value="">
-                    {`The instance's choice (${RERANK_WITH_LABEL[r.instance_rerank_with]})`}
+                    {t.instanceChoice(t.rerankWithLabel[r.instance_rerank_with])}
                   </option>
-                  {(Object.keys(RERANK_WITH_LABEL) as RerankWith[]).map((value) => (
+                  {RERANK_WITH.map((value) => (
                     <option key={value} value={value}>
-                      {RERANK_WITH_LABEL[value]}
+                      {t.rerankWithLabel[value]}
                     </option>
                   ))}
                 </SelectField>
@@ -395,83 +400,80 @@ function AiForm({
             </fieldset>
             <SelectField
               id="ai-repoGuidance"
-              label="Repository guidance (AGENTS.md / CLAUDE.md)"
+              label={t.repoGuidance}
               value={draft.repoGuidance}
               disabled={off}
-              hint={`${REPO_GUIDANCE.find((g) => g.value === draft.repoGuidance)?.hint ?? ""} Turning it on re-imports this library's versions.`}
+              hint={t.guidanceHint(t.guidance[draft.repoGuidance]?.hint ?? "")}
               onChange={(e) => edit({ repoGuidance: e.target.value as RepoGuidance })}
             >
               {REPO_GUIDANCE.map((g) => (
-                <option key={g.value} value={g.value}>
-                  {g.label}
+                <option key={g} value={g}>
+                  {t.guidance[g].label}
                 </option>
               ))}
             </SelectField>
             <fieldset>
-              <legend className="mb-1 text-body font-medium">Spend limits</legend>
-              <p className="text-body text-muted-foreground">
-                Per UTC day and month. Once one is used up, searches skip the paid step and say why.
-                Empty: only the instance's limits apply.
-              </p>
+              <legend className="mb-1 text-body font-medium">{t.spendLimits}</legend>
+              <p className="text-body text-muted-foreground">{t.spendNote}</p>
               <div className="mt-5 grid gap-5 sm:grid-cols-2">
                 <Field
                   id="ai-dailyUsd"
-                  label="US dollars per day"
+                  label={t.dailyUsd}
                   inputMode="decimal"
                   value={draft.dailyUsd}
                   error={errors.dailyUsd}
-                  hint={ceilingHint(r.budget_ceilings, "daily_usd", "USD", r.budgets)}
+                  hint={ceilingHint(r.budget_ceilings, "daily_usd", "USD", r.budgets, language)}
                   onChange={(e) => edit({ dailyUsd: e.target.value })}
                 />
                 <Field
                   id="ai-monthlyUsd"
-                  label="US dollars per month"
+                  label={t.monthlyUsd}
                   inputMode="decimal"
                   value={draft.monthlyUsd}
                   error={errors.monthlyUsd}
-                  hint={ceilingHint(r.budget_ceilings, "monthly_usd", "USD", r.budgets)}
+                  hint={ceilingHint(r.budget_ceilings, "monthly_usd", "USD", r.budgets, language)}
                   onChange={(e) => edit({ monthlyUsd: e.target.value })}
                 />
                 <Field
                   id="ai-dailyTokens"
-                  label="Tokens per day"
+                  label={t.dailyTokens}
                   inputMode="numeric"
                   value={draft.dailyTokens}
                   error={errors.dailyTokens}
-                  hint={ceilingHint(r.budget_ceilings, "daily_tokens", "tokens", r.budgets)}
+                  hint={ceilingHint(
+                    r.budget_ceilings,
+                    "daily_tokens",
+                    "tokens",
+                    r.budgets,
+                    language,
+                  )}
                   onChange={(e) => edit({ dailyTokens: e.target.value })}
                 />
                 <Field
                   id="ai-monthlyTokens"
-                  label="Tokens per month"
+                  label={t.monthlyTokens}
                   inputMode="numeric"
                   value={draft.monthlyTokens}
                   error={errors.monthlyTokens}
-                  hint={ceilingHint(r.budget_ceilings, "monthly_tokens", "tokens", r.budgets)}
+                  hint={ceilingHint(
+                    r.budget_ceilings,
+                    "monthly_tokens",
+                    "tokens",
+                    r.budgets,
+                    language,
+                  )}
                   onChange={(e) => edit({ monthlyTokens: e.target.value })}
                 />
               </div>
             </fieldset>
           </div>
         </details>
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-          <Button
-            type="submit"
-            pending={save.isPending}
-            aria-disabled={save.isPending || unchanged}
-            className="min-w-32 aria-disabled:cursor-default"
-          >
-            {save.isPending ? "Saving" : "Save AI settings"}
-          </Button>
-          <p role="status" className="min-h-5 text-body">
-            {done && unchanged && activity.by === "ai" && (
-              <span className="fade-in inline-flex items-center gap-1.5">
-                <Check aria-hidden="true" className="size-4 text-route" />
-                Saved.
-              </span>
-            )}
-          </p>
-        </div>
+        <SaveRow
+          label={t.save}
+          pending={save.isPending}
+          blocked={save.isPending || unchanged}
+          saved={done && unchanged && activity.by === "ai"}
+        />
       </div>
     </form>
   );
@@ -490,22 +492,22 @@ function RoleOverride({
   error: string | undefined;
   onChange: (value: RetrievalDraft[OverridableRole]) => void;
 }) {
+  const language = useLanguage();
+  const t = retrievalMessages[language];
   const value = draft[role];
-  const label = ROLE_LABEL[role];
+  const label = aiLabels[language].roles[role];
   return (
     <div className="grid gap-3 sm:grid-cols-2">
       <SelectField
         id={`ai-${role}-profile`}
-        label={`${label} profile`}
+        label={t.profile(label)}
         value={value.profile}
         // Until the profiles are read only the stored one is offered, never marked missing.
         disabled={providers === undefined}
         onChange={(e) => onChange({ profile: e.target.value, model: value.model })}
       >
-        <option value="">
-          {role === "judge" ? "The instance's (else the LLM)" : "The instance's"}
-        </option>
-        {profileOptions(providers, value.profile).map((p) => (
+        <option value="">{role === "judge" ? t.instanceProfileJudge : t.instanceProfile}</option>
+        {profileOptions(providers, value.profile, language).map((p) => (
           <option key={p.value} value={p.value}>
             {p.value}
             {p.note}
@@ -515,7 +517,7 @@ function RoleOverride({
       {value.profile ? (
         <Field
           id={`ai-${role}`}
-          label={`${label} model`}
+          label={t.model(label)}
           autoComplete="off"
           value={value.model}
           error={error}

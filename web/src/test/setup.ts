@@ -13,3 +13,12 @@ afterEach(() => {
 
 // jsdom has no layout: scrolling is a no-op there.
 Element.prototype.scrollIntoView = () => {};
+
+// jsdom has no ResizeObserver; cmdk (the Command list in pickers and filters) measures with it.
+if (typeof globalThis.ResizeObserver !== "function") {
+  globalThis.ResizeObserver = class {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  };
+}

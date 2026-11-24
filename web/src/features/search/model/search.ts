@@ -1,12 +1,10 @@
 import type { components } from "@/shared/lib/api-schema";
+import { currentLanguage, type Language, messagesFor } from "@/shared/lib/i18n";
+import { messages } from "../messages";
 
 export type SearchResults = components["schemas"]["SearchDocsResult"];
 export type SearchHit = components["schemas"]["SearchResultOut"];
 export type TagMatch = "any" | "all";
-
-/** "3 results" / "Top 20 results": the count as one phrase. */
-export const resultsNoun = (count: number, complete: boolean) =>
-  `${complete ? "" : "Top "}${count} ${count === 1 ? "result" : "results"}`;
 
 export interface Piece {
   /** Where it starts in the snippet (in characters): a stable key. */
@@ -50,7 +48,12 @@ export function highlightPieces(
 }
 
 /** The count and where it was found, as one sentence for the live region. */
-export function countLabel(count: number, q: string, ref: string, complete: boolean): string {
-  if (count === 0) return `No results for “${q}” in ${ref}`;
-  return `${resultsNoun(count, complete)} for “${q}” in ${ref}`;
+export function countLabel(
+  count: number,
+  q: string,
+  ref: string,
+  complete: boolean,
+  language: Language = currentLanguage(),
+): string {
+  return messagesFor(messages, language).status.version(count, q, ref, complete);
 }

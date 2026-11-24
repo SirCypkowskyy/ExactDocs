@@ -1,5 +1,6 @@
 // The file selection and tag rules of a library, as the add form and the settings page show them.
 import { Plus, X } from "lucide-react";
+import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import {
   badPathBox,
   MAX_TAG_RULES,
@@ -7,8 +8,9 @@ import {
   validateRule,
 } from "@/shared/lib/path-selection";
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
-import { Button } from "./button";
+import { Button, IconButton } from "./button";
 import { Input } from "./input";
+import { messages } from "./messages";
 import { control } from "./recipes";
 
 const textarea = `${control} min-h-24 scroll-mt-6 px-3 py-2 font-mono leading-6`;
@@ -32,6 +34,7 @@ function PathError({ id, message }: { id: string; message: string | undefined })
 
 /** The include and exclude boxes: one pattern per line. */
 export function PathFields({ include, exclude, error, onInclude, onExclude }: PathsProps) {
+  const t = useMessages(messages).paths;
   // A local mistake sits under the box it is in. A server refusal cannot say which box, so its
   // message goes under the last one and marks both.
   const box = error ? badPathBox(include, exclude) : undefined;
@@ -44,7 +47,7 @@ export function PathFields({ include, exclude, error, onInclude, onExclude }: Pa
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
         <label htmlFor="include" className="text-body font-medium">
-          Only these paths
+          {t.include}
         </label>
         <textarea
           id="include"
@@ -62,7 +65,7 @@ export function PathFields({ include, exclude, error, onInclude, onExclude }: Pa
       </div>
       <div className="flex flex-col gap-1.5">
         <label htmlFor="exclude" className="text-body font-medium">
-          Leave out
+          {t.exclude}
         </label>
         <textarea
           id="exclude"
@@ -79,9 +82,7 @@ export function PathFields({ include, exclude, error, onInclude, onExclude }: Pa
         <PathError id="exclude-error" message={own("exclude")} />
         <PathError id="paths-error" message={shared} />
         <p id="paths-hint" className="text-body text-muted-foreground">
-          One per line, relative to the repository root: a folder (<code>docs/</code>), a file or a
-          glob (<code>**/*.mdx</code>). Empty means every Markdown and reStructuredText (.rst) file.
-          A .txt file needs a path that names .txt. Leaving a path out always wins.
+          {t.hint(<code>docs/</code>, <code>**/*.mdx</code>)}
         </p>
       </div>
     </div>
@@ -100,17 +101,18 @@ const label = "mb-1 block text-body text-muted-foreground md:sr-only";
 
 /** Tag rules as rows of path and tag, added and removed one at a time. */
 export function TagRules({ rules, showErrors, error, onChange }: RulesProps) {
+  const language = useLanguage();
+  const t = useMessages(messages).rules;
   const set = (key: number, patch: Partial<TagRuleDraft>) =>
     onChange(rules.map((r) => (r.key === key ? { ...r, ...patch } : r)));
   const full = rules.length >= MAX_TAG_RULES;
   const focusAfterRender = useFocusAfterRender();
   return (
     <fieldset className="flex flex-col gap-2">
-      <legend className="mb-1.5 text-body font-medium">Tags by path</legend>
+      <legend className="mb-1.5 text-body font-medium">{t.legend}</legend>
       <p id="tags-hint" className="text-body text-muted-foreground">
-        Give articles a tag by where they live, so agents can filter by it. Added to the tags in
-        each article's front matter.
-        {full && ` You can have up to ${MAX_TAG_RULES} rules.`}
+        {t.hint}
+        {full && t.full(MAX_TAG_RULES)}
       </p>
       {rules.length > 0 && (
         <>
@@ -118,18 +120,18 @@ export function TagRules({ rules, showErrors, error, onChange }: RulesProps) {
             aria-hidden="true"
             className="hidden gap-2 pr-[3.25rem] text-body text-muted-foreground md:grid md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]"
           >
-            <span>Path</span>
-            <span>Tag</span>
+            <span>{t.path}</span>
+            <span>{t.tag}</span>
           </div>
           <ul className="flex flex-col gap-5 md:gap-3">
             {rules.map((rule, i) => {
-              const problem = showErrors ? validateRule(rule) : {};
+              const problem = showErrors ? validateRule(rule, language) : {};
               return (
                 <li key={rule.key} className="flex items-start gap-2">
                   <div className="grid min-w-0 flex-1 gap-x-2 gap-y-2 md:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
                     <div>
                       <label htmlFor={`rule-path-${rule.key}`} className={label}>
-                        Path for tag rule {i + 1}
+                        {t.pathFor(i + 1)}
                       </label>
                       <Input
                         id={`rule-path-${rule.key}`}
@@ -147,7 +149,7 @@ export function TagRules({ rules, showErrors, error, onChange }: RulesProps) {
                     </div>
                     <div>
                       <label htmlFor={`rule-tag-${rule.key}`} className={label}>
-                        Tag for rule {i + 1}
+                        {t.tagFor(i + 1)}
                       </label>
                       <Input
                         id={`rule-tag-${rule.key}`}
@@ -177,15 +179,14 @@ export function TagRules({ rules, showErrors, error, onChange }: RulesProps) {
                       </div>
                     )}
                   </div>
-                  <button
-                    type="button"
-                    aria-label={`Remove tag rule ${i + 1}`}
-                    title={`Remove tag rule ${i + 1}`}
+                  <IconButton
+                    label={t.remove(i + 1)}
+                    motion="turn"
                     onClick={() => onChange(rules.filter((r) => r.key !== rule.key))}
-                    className="grid size-11 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition-colors duration-(--dur-fast) hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] max-md:mt-6"
+                    className="text-muted-foreground hover:text-foreground max-md:mt-6"
                   >
-                    <X aria-hidden="true" className="size-4" />
-                  </button>
+                    <X aria-hidden="true" />
+                  </IconButton>
                 </li>
               );
             })}
@@ -213,7 +214,7 @@ export function TagRules({ rules, showErrors, error, onChange }: RulesProps) {
           }}
         >
           <Plus aria-hidden="true" className="size-4" />
-          Add a tag rule
+          {t.add}
         </Button>
       </div>
     </fieldset>

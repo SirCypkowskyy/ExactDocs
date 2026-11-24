@@ -1,7 +1,9 @@
-import { infiniteQueryOptions, keepPreviousData } from "@tanstack/react-query";
+import { queryOptions } from "@tanstack/react-query";
 import { getJson, sendJson } from "@/shared/lib/http";
-import type { GrantList, GrantRequest, GrantsNow, SubjectKind } from "../model/grant";
-import { grantsParams, type SharingView } from "../model/grants-view";
+import { pageQueryOptions, type ServerSource } from "@/shared/ui/data-table/server-pages";
+import { pageOf } from "@/shared/ui/data-table/table-search";
+import type { Grant, GrantList, GrantRequest, GrantsNow, SubjectKind } from "../model/grant";
+import { GRANTS_TABLE, grantsFilters, grantsParams, type SharingView } from "../model/grants-view";
 
 const seg = encodeURIComponent;
 const lib = (owner: string, repo: string) => `/v1/libraries/${seg(owner)}/${seg(repo)}` as const;
@@ -9,20 +11,37 @@ const lib = (owner: string, repo: string) => `/v1/libraries/${seg(owner)}/${seg(
 /** The root of one library's sharing queries: every change invalidates it. */
 export const sharingKey = (owner: string, repo: string) => ["sharing", owner, repo] as const;
 
-/** The grants a view asks for, a page at a time, sorted and filtered by the server. */
-export const grantsQueryOptions = (owner: string, repo: string, view: SharingView) =>
-  infiniteQueryOptions({
-    queryKey: [...sharingKey(owner, repo), "grants", view] as const,
-    queryFn: ({ signal, pageParam }) =>
-      getJson<GrantList>(`${lib(owner, repo)}/grants?${grantsParams(view, pageParam)}`, {
-        signal,
-      }),
-    initialPageParam: null as string | null,
-    getNextPageParam: (last) => last.next_cursor,
-    placeholderData: keepPreviousData,
-    // A 403 (not an admin of the library) or a 404 will not change by asking again.
+/**
+ * Who the caller is on the library, who created it and how many grants it has, whatever the
+ * table's filters: one unfiltered grant is enough to learn them. A 403 (not an admin of the
+ * library) or a 404 will not change by asking again.
+ */
+export const sharingSummaryQueryOptions = (owner: string, repo: string) =>
+  queryOptions({
+    queryKey: [...sharingKey(owner, repo), "summary"] as const,
+    queryFn: ({ signal }) => getJson<GrantList>(`${lib(owner, repo)}/grants?limit=1`, { signal }),
     retry: false,
   });
+
+/** The grants a view asks for, sorted, filtered and paged (by offset) by the server (DataTable v2). */
+export function grantsSource(owner: string, repo: string, view: SharingView): ServerSource<Grant> {
+  const filters = grantsFilters(view);
+  return {
+    key: [...sharingKey(owner, repo), "grants", filters],
+    paging: "offset",
+    fetchPage: ({ limit, cursor, offset, signal }) =>
+      getJson<GrantList>(
+        `${lib(owner, repo)}/grants?${grantsParams(filters, limit, cursor, offset)}`,
+        { signal },
+      ).then((list) => ({ rows: list.grants, total: list.total, nextCursor: list.next_cursor })),
+  };
+}
+
+/** The page of grants a view shows (its page and size from the URL, else this browser's size). */
+export const grantsPageQueryOptions = (owner: string, repo: string, view: SharingView) => {
+  const { page, size } = pageOf(view, GRANTS_TABLE);
+  return pageQueryOptions(grantsSource(owner, repo, view), page, size);
+};
 
 /** Give a user or a group a role, replacing the one they had. */
 export const putGrant = (owner: string, repo: string, grant: GrantRequest) =>

@@ -28,13 +28,17 @@ from exactdocs.ingestion.models import (
     IncludeRefused,
     InstructionPolicy,
     Job,
+    JobDayCount,
     JobFilter,
     JobId,
+    JobState,
     KnownLibrary,
     NewLibrary,
     ParsedArticle,
     PathSelection,
+    Person,
     ProblemCode,
+    ProjectLogo,
     ProposedId,
     RemoteRefs,
     Removed,
@@ -166,6 +170,7 @@ class JobRepository(Protocol):
         sort: Sort,
         after: tuple[SortValue, str] | None,
         limit: int,
+        offset: int = 0,
     ) -> Sequence[Job]:
         """Return up to ``limit`` of the jobs that pass the filter, in ``sort`` order.
 
@@ -177,6 +182,7 @@ class JobRepository(Protocol):
             sort: The order.
             after: The sort value and ID of the last job of the previous page; ``None`` starts.
             limit: At most this many jobs.
+            offset: How many of the jobs in order (after ``after``) to skip first.
 
         Returns:
             The jobs in order, with their problems.
@@ -209,6 +215,26 @@ class JobRepository(Protocol):
 
         Returns:
             One job per pair; the jobs without a version count as one pair per library.
+        """
+        ...
+
+    async def sync_states(self) -> Mapping[str, JobState]:
+        """Return the state of every library's newest ``import`` or ``refresh`` job, in one query.
+
+        Returns:
+            The state by library, as spelled in the jobs; a library without such a job is left out.
+        """
+        ...
+
+    async def daily_counts(self, *, start: datetime, end: datetime) -> Sequence[JobDayCount]:
+        """Count the jobs queued in ``[start, end)`` by UTC day, current state and kind, at once.
+
+        Args:
+            start: The first moment counted (UTC midnight of the first day).
+            end: The first moment no longer counted (UTC midnight after the last day).
+
+        Returns:
+            One count per (day, state, kind) that has jobs, in no particular order.
         """
         ...
 
@@ -248,6 +274,19 @@ class JobRepository(Protocol):
 
         Returns:
             The started job, or ``None``.
+        """
+        ...
+
+
+class Requester(Protocol):
+    """Names the person whose request is being served, to record who queued a job."""
+
+    async def __call__(self) -> Person | None:
+        """Name the person of the current request.
+
+        Returns:
+            Their account, or ``None`` when no person asked (the instance's own work, a webhook,
+            the command line).
         """
         ...
 
@@ -881,6 +920,38 @@ class GuidancePolicy(Protocol):
 
         Returns:
             ``KEEP`` when the library's repo guidance is on; ``DROP`` (the default) otherwise.
+        """
+        ...
+
+
+class LibraryLogos(Protocol):
+    """Where a library's logo is kept (the catalog, in ingestion's words, #504)."""
+
+    async def wants_logo(self, library: str, ref: str) -> bool:
+        """Tell whether a logo found in this version would be kept: it is the default version.
+
+        An import asks before it looks for a logo, so only the default version's import reads
+        the files. Raises ``NotFoundError`` for a library that is gone.
+
+        Args:
+            library: The library ID.
+            ref: The activated version.
+
+        Returns:
+            True when the version is the library's default version now.
+        """
+        ...
+
+    async def offer_logo(self, *, library: str, ref: str, logo: ProjectLogo | None) -> None:
+        """Offer the logo an activated version has, or that it has none the importer can use.
+
+        The catalog takes only the default version's (it checks again), and ``None`` then
+        removes the library's logo: a logo never outlives the default version that had it.
+
+        Args:
+            library: The library ID.
+            ref: The activated version.
+            logo: The logo found, checked and cleaned; ``None`` when there is none.
         """
         ...
 

@@ -11,6 +11,7 @@ from exactdocs.catalog.models import (
     ImportedTags,
     Library,
     LibraryId,
+    LibraryLogo,
     LibrarySettings,
     Manifest,
     ManifestEntry,
@@ -154,6 +155,42 @@ class LibraryRepository(Protocol):
         Args:
             library_id: The library.
             tags: The path and its new tags.
+        """
+        ...
+
+
+class LibraryLogos(Protocol):
+    """Where each library's logo is kept (#504): one per library, gone with the library.
+
+    ``LibraryRepository`` reads its ``digest`` into ``Library.logo``, so a repository and this
+    store of one composition share their data.
+    """
+
+    async def get(self, library_id: LibraryId) -> LibraryLogo | None:
+        """Return the library's logo.
+
+        Args:
+            library_id: The library.
+
+        Returns:
+            The logo; ``None`` when the library has none, or is not stored.
+        """
+        ...
+
+    async def put(self, library_id: LibraryId, logo: LibraryLogo) -> None:
+        """Make ``logo`` the library's logo, replacing any; nothing happens for an unknown library.
+
+        Args:
+            library_id: The library.
+            logo: Its new logo.
+        """
+        ...
+
+    async def remove(self, library_id: LibraryId) -> None:
+        """Forget the library's logo, if it has one.
+
+        Args:
+            library_id: The library.
         """
         ...
 
@@ -486,6 +523,30 @@ class ManifestRepository(Protocol):
         ...
 
 
+class ArticleCounts(Protocol):
+    """Counts the articles of many versions at once, for the version and library lists.
+
+    A read of the same tables as ``ManifestRepository``, split from it for ``PLR0904``.
+    """
+
+    async def count_articles(
+        self, versions: Sequence[tuple[LibraryId, VersionRef]]
+    ) -> Mapping[tuple[LibraryId, VersionRef], int]:
+        """Count the entries of these versions' active manifests, by (library, ref).
+
+        Versions without an active manifest are left out. Batched like
+        ``ManifestRepository.get_active_many``: a page of versions costs one query, not one
+        per version.
+
+        Args:
+            versions: The versions, as ``(library, ref)``.
+
+        Returns:
+            The number of entries of each version's active manifest.
+        """
+        ...
+
+
 class ImportedTagWriter(Protocol):
     """Rewrites the imported tags of manifest entries (after a library's tag rules changed).
 
@@ -689,6 +750,7 @@ class EntrySearch(Protocol):
         sort: Sort,
         after: tuple[SortValue, str] | None,
         limit: int,
+        offset: int = 0,
     ) -> Sequence[ManifestEntry]:
         """Return up to ``limit`` filtered entries in ``sort`` order, after the ``after`` key.
 
@@ -704,6 +766,7 @@ class EntrySearch(Protocol):
             sort: The order.
             after: The sort value and path of the last entry of the previous page.
             limit: The most entries returned.
+            offset: How many of the entries in order (after ``after``) to skip first.
 
         Returns:
             The entries in order.

@@ -10,19 +10,27 @@ from contextvars import ContextVar, Token
 from fastmcp.server.dependencies import get_access_token
 
 from exactdocs.identity.dtos import ApiTokenIdentity, ExternalTokenIdentity
+from exactdocs.ingestion.models import Person
 
 _caller: ContextVar[str | None] = ContextVar("exactdocs_caller", default=None)
 _api_caller: ContextVar[ApiTokenIdentity | None] = ContextVar("exactdocs_api_caller", default=None)
+_caller_name: ContextVar[str | None] = ContextVar("exactdocs_caller_name", default=None)
+
+type CallerBinding = tuple[Token[str | None], Token[ApiTokenIdentity | None], Token[str | None]]
 
 
 def bind_caller(
-    account_id: str, *, api_identity: ApiTokenIdentity | None = None
-) -> tuple[Token[str | None], Token[ApiTokenIdentity | None]]:
+    account_id: str,
+    *,
+    api_identity: ApiTokenIdentity | None = None,
+    username: str | None = None,
+) -> CallerBinding:
     """Name the account of the HTTP request being served (until its task ends).
 
     Args:
         account_id: The account the request's session or API token resolved to.
         api_identity: The verified API principal; ``None`` for a browser session.
+        username: The account's user name, recorded as who queued a job; ``None``: unknown.
 
     Returns:
         Context bindings to restore once this request ends.
@@ -31,7 +39,8 @@ def bind_caller(
     identity_token = _api_caller.set(
         api_identity if api_identity is not None and api_identity.id == account_id else None
     )
-    return account_token, identity_token
+    name_token = _caller_name.set(username)
+    return account_token, identity_token, name_token
 
 
 def current_account_id() -> str | None:
@@ -47,6 +56,38 @@ def current_account_id() -> str | None:
     token = get_access_token()
     # MultiAuth qualifies client_id with its trust source; identity stores the original ID.
     return None if token is None else (token.original_client_id or token.client_id)
+
+
+def current_account_name() -> str | None:
+    """Name the user name of the current request's account, over REST or over MCP.
+
+    Returns:
+        The user name the request's session, API token or OAuth token carries; ``None`` when no
+        person made the request, or the binding named none.
+    """
+    if _caller.get() is not None:
+        return _caller_name.get()
+    token = get_access_token()
+    if token is None:
+        return None
+    name = token.claims.get("username")  # every MCP verifier puts the account's user name here
+    return name if isinstance(name, str) else None
+
+
+async def current_person() -> Person | None:
+    """Name the person of the current request, as ingestion records who queued a job.
+
+    Implements ``ingestion.ports.driven.Requester``. Only the account's ID and user name: never
+    a token, its ID or any other credential.
+
+    Returns:
+        The account, named by its ID when the request carries no user name; ``None`` for the
+        instance's own work (no account bound).
+    """
+    account = current_account_id()
+    if account is None:
+        return None
+    return Person(id=account, username=current_account_name() or account)
 
 
 def current_external_identity() -> ExternalTokenIdentity | None:
@@ -90,12 +131,13 @@ def current_api_identity() -> ApiTokenIdentity | None:
     return identity
 
 
-def reset_caller(binding: tuple[Token[str | None], Token[ApiTokenIdentity | None]]) -> None:
+def reset_caller(binding: CallerBinding) -> None:
     """Restore the parent context after a REST request.
 
     Args:
         binding: The context tokens returned by bind_caller.
     """
-    account_token, identity_token = binding
+    account_token, identity_token, name_token = binding
+    _caller_name.reset(name_token)
     _api_caller.reset(identity_token)
     _caller.reset(account_token)

@@ -369,6 +369,112 @@ async def test_expired_attempts_are_pruned_by_the_next_one(stores: Stores) -> No
     assert await stores.attempts.take("new") == attempt("new")
 
 
+async def test_a_link_attempt_keeps_its_session(stores: Stores) -> None:
+    started = replace(attempt("b1"), link_session_hash="session-hash")
+    await stores.attempts.add(started, expired_before=NOW - timedelta(minutes=10))
+
+    assert await stores.attempts.take("b1") == started
+
+
+# ---------------------------------------------------------------- identities linked by people
+
+
+def linked(subject: str, account_id: str, provider: str, **changes: Any) -> ExternalIdentity:
+    """An identity linked from Account settings: no tokens, ``linked_at`` set."""
+    return link(
+        subject,
+        account_id,
+        provider=provider,
+        sealed_tokens=None,
+        linked_at=NOW + timedelta(minutes=1),
+        **changes,
+    )
+
+
+async def test_people_link_one_identity_per_provider(stores: Stores) -> None:
+    alice = account("alice")
+    await stores.externals.create_linked_account(alice, link("u-1", alice.id), frozenset({"a"}))
+    other = linked("g-1", alice.id, "google", issuer="https://accounts.google.com")
+    discord = linked("d-1", alice.id, "discord", issuer="https://discord.com")
+
+    assert await stores.externals.link(other) == "linked"
+    assert await stores.externals.link(discord) == "linked"
+
+    assert await stores.externals.list_for_account(alice.id) == [
+        link("u-1", alice.id),  # the origin first, then by provider
+        discord,
+        other,
+    ]
+    assert await stores.externals.get("https://accounts.google.com", "g-1") == other
+    assert await stores.externals.get_for_account(alice.id) == link("u-1", alice.id)
+    assert await stores.externals.groups_by_account() == {alice.id: ("corp", ["a"])}
+    assert await stores.externals.list_for_account(AccountId("nobody")) == []
+
+
+async def test_a_second_identity_of_a_provider_or_a_taken_identity_is_refused(
+    stores: Stores,
+) -> None:
+    alice, bob = account("alice"), account("bob", password_hash="$argon2id$x")
+    await stores.externals.create_linked_account(alice, link("u-1", alice.id), frozenset())
+    await stores.accounts.add(bob)
+    await stores.externals.link(linked("g-1", bob.id, "google"))
+
+    # bob already has an identity of google; u-1 is alice's origin, g-1 bob's.
+    assert await stores.externals.link(linked("g-2", bob.id, "google")) == "provider_taken"
+    assert await stores.externals.link(linked("u-1", bob.id, "other")) == "identity_taken"
+    assert await stores.externals.link(linked("g-1", alice.id, "google")) == "identity_taken"
+    # The origin's provider counts too.
+    assert await stores.externals.link(linked("u-9", alice.id, "corp")) == "provider_taken"
+    assert [ln.subject for ln in await stores.externals.list_for_account(bob.id)] == ["g-1"]
+    assert await stores.externals.get(ISSUER, "g-2") is None
+
+
+async def test_unlinking_removes_a_linked_identity_never_the_origin(stores: Stores) -> None:
+    alice = account("alice")
+    await stores.externals.create_linked_account(alice, link("u-1", alice.id), frozenset())
+    await stores.externals.link(linked("g-1", alice.id, "google"))
+
+    assert await stores.externals.unlink(alice.id, "corp") is False  # the origin stays
+    assert await stores.externals.unlink(alice.id, "google") is True
+    assert await stores.externals.unlink(alice.id, "google") is False
+
+    assert await stores.externals.list_for_account(alice.id) == [link("u-1", alice.id)]
+    assert await stores.externals.get(ISSUER, "g-1") is None
+
+
+async def test_a_linked_identity_only_records_its_sign_ins(stores: Stores) -> None:
+    bob = account("bob", password_hash="$argon2id$x")
+    await stores.accounts.add(bob)
+    identity = linked("g-1", bob.id, "google")
+    await stores.externals.link(identity)
+    later = NOW + timedelta(hours=3)
+
+    await stores.externals.record_linked_sign_in(identity, later)
+
+    assert await stores.externals.get(ISSUER, "g-1") == replace(
+        identity, signed_in_at=later, checked_at=later
+    )
+    assert await stores.externals.get_for_account(bob.id) is None  # bob has no origin
+    assert await stores.externals.groups_by_account() == {}
+
+
+async def test_revoking_and_claiming_touch_the_origin_only(stores: Stores) -> None:
+    alice = account("alice")
+    origin = link("u-1", alice.id, next_check_at=NOW - timedelta(minutes=1))
+    await stores.externals.create_linked_account(alice, origin, frozenset({"a"}))
+    other = linked("g-1", alice.id, "google", next_check_at=NOW - timedelta(minutes=1))
+    await stores.externals.link(replace(other, sealed_tokens="never-kept-but-say-so"))
+
+    claimed = await stores.externals.claim_due(NOW, lease_until=NOW, limit=10)
+    await stores.externals.revoke(alice.id, NOW)
+    await stores.externals.forget_tokens(alice.id)
+
+    assert [ln.subject for ln in claimed] == ["u-1"]
+    assert await stores.externals.get(ISSUER, "g-1") == replace(
+        other, sealed_tokens="never-kept-but-say-so"
+    )
+
+
 @integration.POSTGRES
 async def test_two_processes_never_claim_one_link_twice(on_postgres: None) -> None:
     """Two engines (two processes' pools) share the work through ``FOR UPDATE SKIP LOCKED``."""
