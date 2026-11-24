@@ -81,17 +81,17 @@ export const Route = createFileRoute("/_app/account")({
               {t.interface}
             </TabsTrigger>
           </TabsList>
-          <TabsContent value="sign-in" className="pt-8 outline-none">
+          <TabsContent value="sign-in" className="mt-8">
             <SignInSettings
               linked={linked}
               linkError={link_error}
               onLinkResultSeen={forgetLinkResult}
             />
           </TabsContent>
-          <TabsContent value="tokens" className="pt-8 outline-none">
+          <TabsContent value="tokens" className="mt-8">
             <TokensSection />
           </TabsContent>
-          <TabsContent value="interface" className="pt-8 outline-none">
+          <TabsContent value="interface" className="mt-8">
             <InterfaceSettings status={status}>
               <LeaderboardOptIn />
             </InterfaceSettings>

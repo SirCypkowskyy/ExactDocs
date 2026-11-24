@@ -75,7 +75,7 @@ function Choice<T extends string | number>({
             key={String(option.value)}
             value={String(option.value)}
             lang={option.lang}
-            className="group flex min-h-11 cursor-pointer flex-col items-start justify-center gap-0.5 rounded-md border border-input bg-background px-3 py-2 text-left outline-none transition-[border-color,background-color,box-shadow,transform] duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.98] data-[state=checked]:border-selection data-[state=checked]:bg-selection-soft data-[state=checked]:shadow-[inset_0_0_0_1px_var(--selection)] can-hover:hover:border-muted-foreground/50"
+            className="group flex min-h-11 cursor-pointer flex-col items-start justify-center gap-0.5 rounded-md border border-input bg-background px-3 py-2 text-left outline-none transition-[border-color,background-color,box-shadow,transform] duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.98] data-[state=checked]:border-selection data-[state=checked]:bg-selection-soft data-[state=checked]:shadow-[inset_0_0_0_1px_var(--route)] can-hover:hover:border-muted-foreground/50"
           >
             {preview?.(option)}
             <span className="text-body font-medium">{option.label}</span>

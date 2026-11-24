@@ -18,7 +18,10 @@ import { card } from "./chart-card";
 
 type Status = "pending" | "error" | "success";
 
-/** One stat tile: a label, the figure (`text-figure`, no colour unless something is wrong), a line. */
+/**
+ * One stat tile: a label, the figure (`text-figure`, no colour unless something is wrong), a line.
+ * The figure stands alone, so its figures are proportional: tabular ones widen this face's full stop.
+ */
 function Tile({
   label,
   status,
@@ -47,7 +50,7 @@ function Tile({
       )}
       {status === "success" && (
         <>
-          <p className="num text-figure">{figure}</p>
+          <p className="text-figure">{figure}</p>
           <div className="text-small text-muted-foreground">{children}</div>
         </>
       )}
