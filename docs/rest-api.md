@@ -77,6 +77,19 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Pagination**: list endpoints take `limit` (1 to 200, default 50) and an opaque `cursor`, and
   return `next_cursor` (`null` on the last page). Pass it back unchanged; a malformed cursor is a
   422 `invalid_cursor`. Helper: `exactdocs_kernel.paginate`.
+- **Jumping to a page**: the lists of libraries, versions, jobs (global and per library), articles,
+  users, API tokens, a library's grants and both access logs (global and per library) also take
+  `offset` (0 to 10000), which skips that many matches and starts the page there: page *n* of
+  size `limit` is `offset=(n-1)*limit`, and the last one (`total` > 0) is
+  `offset=⌊(total-1)/limit⌋*limit` (233 jobs, 20 a page: `offset=220`, 13 jobs). The
+  order, the filters and `total` are those of the cursor walk with the same `sort` and filters, and
+  the page's `next_cursor` goes on from its last item, so a client can jump and then walk on.
+  An offset past the last match is an empty page with `next_cursor: null` and the same `total`.
+  `offset` and `cursor` are exclusive: sending both is a 422 `cursor_with_offset`; an offset below
+  0 or above 10000 is a 422 `validation_error` naming `offset`. The bound keeps a deep page cheap
+  (a database skips rows by reading them); past it, walk on with `next_cursor` from the page at
+  10000, or reverse the `sort` to reach the end of a longer list. Helpers:
+  `exactdocs_kernel.page_offset`, `MAX_OFFSET`.
 - **Sort, filter and total**: the lists of libraries, versions, jobs (global and per library),
   articles, users, API tokens and a library's grants also take `sort` (one whitelisted field,
   `-field` for descending) and filters such as `q` (text, any case), `state`, `kind`, `role`,

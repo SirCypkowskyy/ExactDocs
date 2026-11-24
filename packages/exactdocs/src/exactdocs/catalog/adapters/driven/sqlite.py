@@ -1516,11 +1516,13 @@ class SqliteEntrySearch:
         sort: Sort,
         after: tuple[SortValue, str] | None,
         limit: int,
+        offset: int = 0,
     ) -> Sequence[ManifestEntry]:
         """Return up to ``limit`` filtered entries in ``sort`` order, after the ``after`` key.
 
         A keyset query: ``(sort value, path)`` compares as a row, in the sort's direction.
-        Titles sort lower-cased and, on PostgreSQL, by code point, as Python compares str.
+        Titles sort lower-cased and, on PostgreSQL, by code point, as Python compares str. An
+        offset is the database's ``OFFSET`` over the same order.
 
         Args:
             manifest_id: The manifest.
@@ -1530,6 +1532,7 @@ class SqliteEntrySearch:
             sort: The order.
             after: The sort value and path of the last entry of the previous page.
             limit: The most entries returned.
+            offset: How many of the entries in order (after ``after``) to skip first.
 
         Returns:
             The entries in order.
@@ -1548,8 +1551,11 @@ class SqliteEntrySearch:
             bound = tuple_(*after)
             query = query.where(row < bound if sort.descending else row > bound)
         order = (column.desc(), path.desc()) if sort.descending else (column, path)
+        query = query.order_by(*order).limit(limit)
+        if offset:
+            query = query.offset(offset)
         async with self.engine.connect() as connection:
-            rows = (await connection.execute(query.order_by(*order).limit(limit))).all()
+            rows = (await connection.execute(query)).all()
         return tuple(_entry(row) for row in rows)
 
     async def count(

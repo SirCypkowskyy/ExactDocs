@@ -1,11 +1,15 @@
-"""Keyset pagination shared by every list endpoint: ``limit`` plus an opaque ``cursor``."""
+"""Keyset pagination shared by every list endpoint: ``limit`` plus an opaque ``cursor``.
+
+A page may instead start at a position, ``offset`` matches in (at most ``MAX_OFFSET``), so a
+client can jump to any page; it is never both.
+"""
 
 from base64 import b64decode, urlsafe_b64encode
 from binascii import Error as Base64Error
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from exactdocs_kernel.constants import MAX_LIMIT
+from exactdocs_kernel.constants import MAX_LIMIT, MAX_OFFSET
 from exactdocs_kernel.errors import ValidationError
 
 
@@ -17,6 +21,40 @@ class InvalidCursorError(ValidationError):
     def __init__(self) -> None:
         """Create the error with its fixed message."""
         super().__init__("cursor is not valid")
+
+
+class CursorWithOffsetError(ValidationError):
+    """A page was asked to start both after a cursor and at an offset."""
+
+    code = "cursor_with_offset"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__("send cursor or offset, not both")
+
+
+def page_offset(*, cursor: str | None, offset: int | None) -> int:
+    """Return how many matches a page skips: ``offset``, or none after a cursor or on page one.
+
+    Args:
+        cursor: The ``next_cursor`` of the previous page, if one was sent.
+        offset: How many matches to skip, if it was sent; 0 to ``MAX_OFFSET``.
+
+    Returns:
+        The number of matches before the page, in the list's order.
+
+    Raises:
+        CursorWithOffsetError: Both were sent.
+        ValueError: ``offset`` is out of range (the boundary validates it first).
+    """
+    if offset is None:
+        return 0
+    if cursor is not None:
+        raise CursorWithOffsetError
+    if not 0 <= offset <= MAX_OFFSET:
+        msg = f"offset must be between 0 and {MAX_OFFSET}, got {offset}"
+        raise ValueError(msg)
+    return offset
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

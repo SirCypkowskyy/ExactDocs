@@ -17,6 +17,7 @@ from exactdocs_kernel.pagination import (
     Page,
     decode_cursor,
     encode_cursor,
+    page_offset,
 )
 
 type SortValue = str | int | float
@@ -173,10 +174,13 @@ def sorted_page[T](
     key: Callable[[T], str],
     limit: int,
     cursor: str | None,
+    offset: int | None = None,
 ) -> Page[T]:
-    """Sort ``items`` and return the page after ``cursor``, counting every item.
+    """Sort ``items`` and return the page after ``cursor`` (or at ``offset``), counting every item.
 
     For lists that are small enough to hold in memory (apply any authorization filter first).
+    A page at an offset is the slice a walk with cursors reaches, and its ``next_cursor`` goes on
+    from its last item.
 
     Args:
         items: Every item of the list that passed the filters.
@@ -186,21 +190,24 @@ def sorted_page[T](
         key: The unique key of an item (the tie-breaker, sorted in the same direction).
         limit: Most items on the page, between 1 and ``MAX_LIMIT``.
         cursor: The ``next_cursor`` of the previous page; ``None`` for the first page.
+        offset: How many items to skip instead of a cursor, 0 to ``MAX_OFFSET``; ``None``: none.
 
     Returns:
         The page, with ``total`` set to the number of ``items``.
 
     Raises:
-        ValueError: ``limit`` is out of range.
+        ValueError: ``limit`` or ``offset`` is out of range.
     """
     if not 1 <= limit <= MAX_LIMIT:
         msg = f"limit must be between 1 and {MAX_LIMIT}, got {limit}"
         raise ValueError(msg)
+    skip = page_offset(cursor=cursor, offset=offset)
     value_of = values[sort.field]
     ordered = sorted(items, key=lambda i: (value_of(i), key(i)), reverse=sort.descending)
     if cursor is not None:
         after = decode_sort_cursor(cursor, sort, key_field=key_field)
         ordered = [i for i in ordered if is_after((value_of(i), key(i)), after, sort=sort)]
+    ordered = ordered[skip:]
     page, more = ordered[:limit], len(ordered) > limit
     last = page[-1] if page else None
     return Page(
