@@ -44,6 +44,8 @@ class FakeUser:
     username: str | None
     email: str | None = None
     groups: list[str] = field(default_factory=list)
+    tenant: str | None = None
+    """The person's directory (``tid``) at a multi-tenant issuer."""
 
 
 @dataclass(slots=True)
@@ -70,6 +72,9 @@ class FakeIssuer:
     down: bool = False
     algorithms: list[str] = field(default_factory=lambda: ["RS256"])
     discovered_issuer: str | None = None
+    token_issuer: str | None = None
+    """A multi-tenant issuer's template: tokens' ``iss`` is it with ``{tenantid}`` replaced by
+    the user's tenant, and they carry ``tid`` (Microsoft's ``common``)."""
     userinfo_subject: str | None = None
     """Userinfo answers with this ``sub`` instead of the token owner's (a confused issuer)."""
     tamper: Callable[[dict[str, Any], dict[str, Any]], str | None] | None = None
@@ -93,8 +98,11 @@ class FakeIssuer:
         *,
         email: str | None = None,
         groups: list[str] | None = None,
+        tenant: str | None = None,
     ) -> FakeUser:
-        user = FakeUser(subject=subject, username=username, email=email, groups=groups or [])
+        user = FakeUser(
+            subject=subject, username=username, email=email, groups=groups or [], tenant=tenant
+        )
         self.users[subject] = user
         return user
 
@@ -141,6 +149,10 @@ class FakeIssuer:
         }
         if nonce is not None:
             claims["nonce"] = nonce
+        if self.token_issuer is not None:
+            claims["iss"] = self.token_issuer.replace("{tenantid}", user.tenant or "")
+            if user.tenant is not None:
+                claims["tid"] = user.tenant
         if user.username is not None:
             claims["preferred_username"] = user.username
         if user.email is not None:
@@ -159,12 +171,13 @@ class FakeIssuer:
 
     @property
     def app(self) -> Starlette:
+        base = urlsplit(self.issuer).path.rstrip("/")  # an issuer may have a path (Microsoft's)
         return Starlette(
             routes=[
-                Route("/.well-known/openid-configuration", self._discovery),
-                Route("/jwks", self._jwks),
-                Route("/token", self._token, methods=["POST"]),
-                Route("/userinfo", self._userinfo),
+                Route(f"{base}/.well-known/openid-configuration", self._discovery),
+                Route(f"{base}/jwks", self._jwks),
+                Route(f"{base}/token", self._token, methods=["POST"]),
+                Route(f"{base}/userinfo", self._userinfo),
             ]
         )
 

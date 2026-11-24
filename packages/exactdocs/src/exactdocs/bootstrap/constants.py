@@ -305,7 +305,13 @@ MIGRATION_TURN_NOTICE_SECONDS: Final[float] = 5.0
 MIGRATION_TURN_REPEAT_SECONDS: Final[float] = 60.0
 """While the wait for another process's migration goes on, it is logged again this often, so a
 start stuck behind a hung migration stays visible in the logs."""
-COLLATED_PREFIXES: Final[tuple[str, ...]] = ("catalog_", "identity_", "ingestion_", "retrieval_")
+COLLATED_PREFIXES: Final[tuple[str, ...]] = (
+    "catalog_",
+    "identity_",
+    "ingestion_",
+    "retrieval_",
+    "usage_",
+)
 """Tables whose text columns get the "C" collation on PostgreSQL, so text compares and sorts by
 code point, as SQLite's BINARY collation does, whatever the database's locale."""
 
@@ -440,6 +446,49 @@ _OWNER_ONLY: Final[int] = 0o600
 # ---------------------------------------------------------------- settings
 LOCAL_HOSTS: Final[tuple[str, ...]] = ("localhost", "127.0.0.1", "::1")
 """Hosts every instance accepts; anything else must be listed in EXACTDOCS_ALLOWED_HOSTS."""
+SIGN_IN_PRESETS: Final[Mapping[str, Mapping[str, object]]] = MappingProxyType(
+    {
+        "discord": MappingProxyType(
+            {
+                "display_name": "Discord",
+                "issuer": "https://discord.com",
+                "authorization_url": "https://discord.com/oauth2/authorize",
+                "token_url": "https://discord.com/api/oauth2/token",
+                "userinfo_url": "https://discord.com/api/users/@me",
+                "subject_claim": "id",
+                "username_claim": "username",
+                "scopes": ("identify", "email"),
+            }
+        ),
+        "google": MappingProxyType(
+            {
+                "display_name": "Google",
+                "issuer": "https://accounts.google.com",
+                "scopes": ("openid", "email", "profile"),
+            }
+        ),
+        "microsoft": MappingProxyType({"display_name": "Microsoft"}),
+    }
+)
+"""What the provider presets (``kind = "discord"``, ``"google"``, ``"microsoft"``) set: an
+operator gives only the client ID and secret (and Microsoft's ``tenant``). Discord is OAuth2
+(its user ID is the subject); Google and Microsoft are OpenID Connect."""
+PRESET_FIXED_FIELDS: Final[frozenset[str]] = frozenset(
+    {"issuer", "authorization_url", "token_url", "userinfo_url", "base_url", "api_url"}
+)
+"""Fields a preset sets itself: a provider of a preset kind that sets one is refused."""
+MICROSOFT_LOGIN: Final[str] = "https://login.microsoftonline.com"
+"""Microsoft Entra ID's sign-in host: tenants' issuers are ``<this>/<tenant ID>/v2.0``."""
+MICROSOFT_MULTI_TENANTS: Final[frozenset[str]] = frozenset({"common", "organizations"})
+"""Microsoft tenants that stand for many directories: tokens come from each person's own one,
+whose ID (``tid``) is in the issuer."""
+MICROSOFT_CONSUMERS: Final[str] = "consumers"
+"""Microsoft's tenant of personal accounts (Outlook.com, Xbox)."""
+MICROSOFT_CONSUMERS_TENANT_ID: Final[str] = "9188040d-6c67-4c5b-b112-36a304b66dad"
+"""The directory ID of Microsoft's personal accounts: the ``consumers`` issuer names it."""
+GOOGLE_AUTHORIZATION_PARAMS: Final[Mapping[str, str]] = MappingProxyType({"access_type": "offline"})
+"""Google sends a refresh token only when asked this way (OIDC's ``offline_access`` scope is
+refused there), and only at the person's first consent."""
 
 # ---------------------------------------------------------------- index_backends (#352)
 DATABASE_BACKEND: Final[str] = "database"
@@ -785,6 +834,13 @@ WINDOW_RESET_GRACE_SECONDS: Final[float] = 5.0
 REQUEUE_JITTER_SECONDS: Final[float] = 300.0
 """At most this many seconds more, at random, before the midnight re-queue: processes and
 instances sharing a provider do not all wake together."""
+USAGE_FLUSH_SECONDS: Final[float] = 10.0
+"""How often a serving process writes the usage counts it added up in memory (#510), so a
+request never waits for the database; a stop writes what is left. On PostgreSQL another
+process's counts reach the reports within this time."""
+USAGE_STOP_SECONDS: Final[float] = 3.0
+"""How long a stopping process waits for its last write of the usage counts; then it logs what
+it lost and stops."""
 UPKEEP_STOP_SECONDS: Final[float] = 5.0
 """How long a stopping server waits for its cancelled nightly upkeep (embedding queueing and
 cache pruning) to end; then it logs a warning and cancels it again (#308). Well under the 10 s

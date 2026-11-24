@@ -553,11 +553,14 @@ async def test_branches_are_re_synced_when_asked(
     await module.run_scheduled_checks()
 
     [job] = jobs.jobs.values()
-    assert (job.kind, job.version, job.commit_sha, job.origin) == (
+    # The scheduled check queued it: automatic, naming no person (#512). The version keeps the
+    # origin it was created with; a refresh never changes it.
+    assert (job.kind, job.version, job.commit_sha, job.origin, job.created_by) == (
         REFRESH_JOB,
         "main",
         NEW,
-        VersionOrigin.MANUAL,
+        VersionOrigin.AUTO,
+        None,
     )
 
 

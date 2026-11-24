@@ -64,6 +64,8 @@ It appears in URLs (``/api/v1/auth/<name>/...``) and in the ``<username>@<name>`
 ACCESS_PROVIDER: Final[str] = "cloudflare-access"
 """The provider name an account created by Cloudflare Access is linked under (the users page shows
 it, and ``<email>@cloudflare-access`` is its fallback username)."""
+ACCESS_DISPLAY_NAME: Final[str] = "Cloudflare Access"
+"""What Account settings call the identity an account created by Cloudflare Access is linked to."""
 ACCESS_CERTS_PATH: Final[str] = "/cdn-cgi/access/certs"
 """Where a Cloudflare Access team publishes the keys its application tokens are signed with."""
 ACCESS_LOGOUT_PATH: Final[str] = "/cdn-cgi/access/logout"
@@ -98,12 +100,30 @@ TOKEN_NAME_DESCRIPTION: Final[str] = (
     "refused with `invalid_token_name` (422)."
 )
 """OpenAPI description of a new token's name, built from the limits so they cannot drift."""
-USER_SORT_FIELDS: Final[tuple[str, ...]] = ("created_at", "username", "role")
+USER_SORT_FIELDS: Final[tuple[str, ...]] = (
+    "created_at",
+    "username",
+    "role",
+    "last_active_at",
+    "token_count",
+)
 """What the users list can be sorted by; `created_at` (oldest first) is the default."""
+LOCAL_SIGN_IN: Final[str] = "password"
+"""The users list's `provider` filter value of a local account (it signs in with a password); no
+identity provider may take this name."""
 TOKEN_SORT_FIELDS: Final[tuple[str, ...]] = ("created_at", "name", "expires_at", "last_used_at")
 """What the token list can be sorted by; `-created_at` (newest first) is the default."""
+ALL_TOKENS_SORT_FIELDS: Final[tuple[str, ...]] = (*TOKEN_SORT_FIELDS, "owner")
+"""What the list of every account's tokens can be sorted by; `-created_at` is the default."""
+ALL_TOKENS_ACTION: Final[str] = "lists the API tokens of every account"
+"""What only an instance operator does, for the 403 of the list of every token."""
 GRANT_SORT_FIELDS: Final[tuple[str, ...]] = ("kind", "subject", "role")
 """What a library's grants can be sorted by; `kind` (users, then groups, by name) is the default."""
+ACCESS_LOG_SORT_FIELDS: Final[tuple[str, ...]] = ("at", "library", "change")
+"""What the access log can be sorted by; `-at` (newest first) is the default. Ties go by the
+event's ID, in the same direction."""
+ACCESS_LOG_DEFAULT_SORT: Final[str] = "-at"
+"""The access log's order without a ``sort``: newest first."""
 ACCESS_LOG_ACTION: Final[str] = "reads the access log of every library"
 """What only an instance operator does, for the 403 of the instance-wide access log."""
 
@@ -169,6 +189,13 @@ first two letters (a token without a ``kid`` is tried with the keys of that type
 NUMERIC_DATE_CLAIMS: Final[tuple[str, ...]] = ("exp", "iat", "nbf")
 """The ID token's times: when present, each must be an integer (JSON booleans, fractions,
 ``NaN`` and infinities are refused)."""
+TENANT_PLACEHOLDER: Final[str] = "{tenantid}"
+"""Stands for the token's own ``tid`` in a multi-tenant issuer (Microsoft's ``common`` and
+``organizations`` discovery name ``https://login.microsoftonline.com/{tenantid}/v2.0``)."""
+TENANT_ID_PATTERN: Final[str] = (
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
+"""What a token's ``tid`` must look like before it is put in a multi-tenant issuer: a GUID."""
 OIDC_TIMEOUT: Final[float] = 10.0
 """Seconds one call to an identity provider may take (discovery, JWKS, token, userinfo)."""
 MAX_PROVIDER_RESPONSE_BYTES: Final[int] = 1 * 2**20
@@ -195,6 +222,65 @@ MAX_ACCESS_CERTS_BYTES: Final[int] = 256 * 2**10
 """The team's certs above this size are refused unread to the end."""
 MAX_ACCESS_TOKEN_LENGTH: Final[int] = 16 * 2**10
 """An assertion longer than this is refused without being parsed."""
+
+# ---------------------------------------------------------------- adapters.driven.icons
+MAX_ICON_BYTES: Final[int] = 64 * 2**10
+"""Largest icon file a sign-in provider may have; a bigger one stops the server at start."""
+MAX_ICON_PIXELS: Final[int] = 512
+"""Widest and highest an icon may be, in pixels (an SVG only when it states an absolute size): a
+button shows it at a few dozen pixels, and a browser decodes a raster image whole."""
+MAX_ICON_SVG_DEPTH: Final[int] = 32
+"""How deep an SVG icon's elements may nest."""
+ICON_PNG_SIGNATURE: Final[bytes] = b"\x89PNG\r\n\x1a\n"
+"""What every PNG file starts with."""
+_PNG_HEADER_END: Final[int] = 24
+"""A PNG's width and height end here (signature, then the ``IHDR`` chunk's length and type)."""
+_WEBP_VP8_END: Final[int] = 30
+"""A lossy WebP's width and height (``VP8 ``) end here."""
+_WEBP_VP8L_END: Final[int] = 25
+"""A lossless WebP's width and height (``VP8L``) end here."""
+_WEBP_VP8X_END: Final[int] = 30
+"""An extended WebP's canvas size (``VP8X``) ends here."""
+_VP8_START_CODE: Final[bytes] = b"\x9d\x01\x2a"
+"""The start code of a lossy WebP frame, before its size."""
+_VP8L_SIGNATURE: Final[int] = 0x2F
+"""The first byte of a lossless WebP bitstream."""
+ICON_SVG_NAMESPACE: Final[str] = "http://www.w3.org/2000/svg"
+"""SVG's namespace: an SVG icon's root must be in it, and every element kept is."""
+ICON_XLINK_NAMESPACE: Final[str] = "http://www.w3.org/1999/xlink"
+"""Where SVG 1.1 puts ``href``; an icon keeps it as SVG 2's plain ``href``."""
+ICON_ALLOWED_SVG_ELEMENTS: Final[frozenset[str]] = frozenset(
+    {
+        "svg", "g", "defs", "symbol", "use", "path", "rect", "circle", "ellipse", "line",
+        "polyline", "polygon", "linearGradient", "radialGradient", "stop", "clipPath", "mask",
+        "title", "desc",
+    }
+)  # fmt: skip
+"""The SVG elements an icon keeps: shapes, groups, gradients, clips and masks. Anything else
+(``script``, ``foreignObject``, ``style``, ``image``, ``a``, animation, text) is dropped with its
+children."""
+ICON_KEPT_TEXT_ELEMENTS: Final[frozenset[str]] = frozenset({"title", "desc"})
+"""The only elements of an SVG icon whose text is kept."""
+ICON_ALLOWED_PROPERTIES: Final[frozenset[str]] = frozenset(
+    {
+        "id", "class", "viewBox", "preserveAspectRatio", "version", "width", "height", "x", "y",
+        "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry", "fx", "fy", "d", "points",
+        "transform", "fill", "fill-opacity", "fill-rule", "stroke", "stroke-width",
+        "stroke-opacity", "stroke-linecap", "stroke-linejoin", "stroke-miterlimit",
+        "stroke-dasharray", "stroke-dashoffset", "opacity", "clip-path", "clip-rule", "mask",
+        "gradientUnits", "gradientTransform", "spreadMethod", "offset", "stop-color",
+        "stop-opacity", "color", "display", "visibility", "clipPathUnits", "maskUnits",
+        "maskContentUnits", "vector-effect", "shape-rendering", "paint-order",
+    }
+)  # fmt: skip
+"""The attributes (and ``style`` properties) an SVG icon keeps: geometry and presentation only.
+Event handlers (``on*``) and anything in another namespace are never among them."""
+ICON_LOCAL_REFERENCE: Final[str] = r"#[A-Za-z_][\w.:-]*"
+"""A reference into the SVG itself (``#id``): the only kind an icon's ``href`` and ``url()``
+may hold."""
+ICON_UNSAFE_VALUE: Final[str] = r"\\|javascript\s*:|vbscript\s*:|data\s*:|expression\s*\(|@"
+"""What drops an SVG icon's attribute or ``style`` property: a CSS escape, a script or data URL,
+an old IE expression or an at-rule."""
 
 # ---------------------------------------------------------------- adapters.driven.sqlite
 MAX_CONCURRENT_SIGN_IN_TURNS: Final[int] = 4
@@ -233,6 +319,40 @@ SIGN_IN_COOKIE_PATH: Final[str] = "/api/v1/auth"
 """The binding cookie is only sent to the external sign-in routes (start and callback)."""
 SIGN_IN_PAGE: Final[str] = "/sign-in"
 """The web UI's sign-in page: a refused external sign-in comes back here with ``?error=<code>``."""
+ACCOUNT_PAGE: Final[str] = "/account"
+"""The web UI's Account settings: where a link to a provider returns when it names no other path
+(``?linked=<provider>``, or ``?link_error=<code>`` when it is refused)."""
+ICON_PATH: Final[str] = "/api/v1/auth/{name}/icon"
+"""Where ExactDocs serves a provider's own icon (its ``icon_url``, with ``?v=<version>``)."""
+ICON_CACHE_SECONDS: Final[int] = 86_400
+"""How long a browser may keep a provider's icon (its URL changes with the icon anyway)."""
+ICON_SECURITY_POLICY: Final[str] = "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+"""The ``Content-Security-Policy`` of a served icon: an SVG opened on its own runs nothing and
+loads nothing (it is sanitised already; this is the second line)."""
+LINK_PROVIDER_DESCRIPTION: Final[str] = (
+    "Start linking an identity of this provider to the signed-in account. Answers "
+    "`redirect_url`, where the browser goes next (the provider's sign-in), and sets the "
+    "`exactdocs_sign_in` binding cookie, exactly as `GET /auth/{provider}/start` does; the "
+    "attempt is also bound to this session. The provider then comes back to "
+    "`GET /auth/{provider}/callback`, which links the identity to this account (no new session) "
+    "and redirects to `return_to` with `?linked=<provider>`, or `?link_error=<code>`: "
+    "`identity_linked_elsewhere`, `provider_linked`, `not_allowed`, `sign_in_failed`, "
+    "`sign_in_cancelled`, `unauthenticated` (the session ended meanwhile) or "
+    "`provider_unavailable`. Refused at once with `provider_linked` (409) when the account has "
+    "an identity of the provider already, `unknown_provider` (404) for a provider not "
+    "configured, and `provider_unavailable` (429) when it cannot be reached. Needs a session "
+    "cookie (401 otherwise, an API token included)."
+)
+"""OpenAPI description of ``POST /account/providers/{provider}/link``."""
+UNLINK_PROVIDER_DESCRIPTION: Final[str] = (
+    "Unlink the signed-in account's identity of this provider: it no longer signs the account in. "
+    "Answers the account's providers as `GET /account/providers` does. Refused with "
+    "`last_sign_in_method` (409) for the provider an account without a password was created "
+    "through (its role, groups and access follow it, and it is the account's way in), and with "
+    "`provider_not_linked` (404) when the account has no identity of this provider. Needs a "
+    "session cookie."
+)
+"""OpenAPI description of ``DELETE /account/providers/{provider}``."""
 COOKIE_PATH: Final[str] = "/api"
 """Only `/api` needs the cookie (the UI itself is static), so the browser never sends it to `/mcp`.
 """
@@ -309,3 +429,11 @@ OAUTH_CLIENT_BASIC: Final[str] = "client_secret_basic"
 
 OAUTH_CLIENT_POST: Final[str] = "client_secret_post"
 """OAuth client authentication using token form fields (GitHub OAuth Apps)."""
+
+TEXT_SCALES: Final[tuple[int, ...]] = (90, 100, 110, 125, 150)
+"""The text sizes the interface offers, in percent of its default size (#487); the same as
+``models.TextScale``, which types them."""
+
+ACCOUNTS_PER_QUERY: Final[int] = 500
+"""How many account IDs one ``IN (...)`` list holds when the leaderboard asks who opted in
+(#510); longer lists are asked in turns, within every database's limit on bound parameters."""

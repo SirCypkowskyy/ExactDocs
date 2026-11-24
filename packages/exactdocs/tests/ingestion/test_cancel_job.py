@@ -197,8 +197,8 @@ class _Cancelling:
         self.cancel = cancel
         self.calls = 0
 
-    async def __call__(self, command: object) -> None:  # SyncLibrary
-        del command
+    async def __call__(self, command: object, **options: object) -> None:  # SyncLibraryFromRefs
+        del command, options
         self.calls += 1
         await self.cancel()
 

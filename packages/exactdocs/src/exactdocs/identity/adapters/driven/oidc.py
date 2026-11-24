@@ -9,7 +9,10 @@ What an ID token must satisfy before its claims are believed:
 
 - signed by a key of the issuer's JWKS, with an asymmetric algorithm the issuer advertises
   (``none`` and ``HS*`` never pass, whatever the token's header says);
-- ``iss`` equal to the configured issuer (discovery's ``issuer`` must equal it too);
+- ``iss`` equal to the configured issuer (discovery's ``issuer`` must equal it too). A
+  multi-tenant issuer (Microsoft's ``common`` and ``organizations``) holds ``{tenantid}``, which
+  stands for the token's own ``tid`` (a GUID): ``iss`` must equal the issuer with it put in, and
+  that tenant's issuer is the identity's (each tenant's people are told apart);
 - ``aud`` holding the client ID, and ``azp`` equal to it when present or when ``aud`` names
   several audiences;
 - ``exp`` not passed, ``iat`` not in the future and ``nbf`` reached, with ``ID_TOKEN_LEEWAY``,
@@ -27,6 +30,7 @@ import base64
 import ipaddress
 import json
 import logging
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -50,6 +54,8 @@ from exactdocs.identity.constants import (
     MAX_PROVIDER_RESPONSE_BYTES,
     NUMERIC_DATE_CLAIMS,
     SIGNING_KEY_TYPES,
+    TENANT_ID_PATTERN,
+    TENANT_PLACEHOLDER,
 )
 from exactdocs.identity.errors import (
     ExternalSignInFailedError,
@@ -99,7 +105,8 @@ class OidcProvider:
     """Implements ``ports.driven.SignInProvider`` for one OpenID Connect issuer."""
 
     issuer: str
-    """The configured issuer, compared exactly with discovery's ``issuer`` and tokens' ``iss``."""
+    """The configured issuer, compared exactly with discovery's ``issuer`` and tokens' ``iss``
+    (with ``{tenantid}`` standing for the token's ``tid`` in a multi-tenant one)."""
     client_id: str
     """The client ID registered at the issuer."""
     client_secret: Callable[[], str | None] = field(repr=False)
@@ -114,6 +121,11 @@ class OidcProvider:
     """The HTTP client (bootstrap's, with its timeout; tests hand in a fake issuer's)."""
     clock: Clock
     """The current time: cache ages and the ID token's times."""
+    discovery_url: str | None = None
+    """Where the discovery document is; default ``<issuer>/.well-known/openid-configuration``
+    (a multi-tenant issuer has none of its own: Microsoft's ``common`` names it)."""
+    authorization_params: Mapping[str, str] = field(default_factory=dict)
+    """Added to the authorization URL (Google: ``access_type=offline``, for a refresh token)."""
     _discovery: _Discovery | None = field(default=None, init=False, repr=False)
     """The cached discovery document."""
     _keys: KeySet | None = field(default=None, init=False, repr=False)
@@ -146,6 +158,7 @@ class OidcProvider:
             "code_challenge": create_s256_code_challenge(code_verifier),
             "code_challenge_method": "S256",
         }
+        params = {**self.authorization_params, **params}  # never in place of the flow's own
         separator = "&" if urlsplit(discovery.authorization_endpoint).query else "?"
         return f"{discovery.authorization_endpoint}{separator}{urlencode(params)}"
 
@@ -229,8 +242,9 @@ class OidcProvider:
         claims: dict[str, Any] = {}
         if isinstance(id_token := body.get("id_token"), str):
             claims = await self._validate(id_token, discovery, nonce=None)
-        elif discovery.userinfo_endpoint is None:
-            logger.warning("OIDC %s sent no ID token on refresh and has no userinfo", self.issuer)
+        elif discovery.userinfo_endpoint is None or self._multi_tenant:
+            # Userinfo names no tenant: a multi-tenant issuer's claims need the ID token.
+            logger.warning("OIDC %s sent no ID token on refresh to read again", self.issuer)
             raise ProviderUnavailableError
         claims = await self._with_userinfo(
             claims or {"sub": subject}, discovery, body.get("access_token"), force=not claims
@@ -258,7 +272,7 @@ class OidcProvider:
         username = _claim(claims, self.claims.username)
         email = _claim(claims, self.claims.email)
         return ExternalClaims(
-            issuer=self.issuer,
+            issuer=str(claims["iss"]) if self._multi_tenant else self.issuer,
             subject=str(claims["sub"]),
             username=username if isinstance(username, str) and username.strip() else None,
             email=email if isinstance(email, str) and email.strip() else None,
@@ -340,7 +354,7 @@ class OidcProvider:
                 logger.info("OIDC %s: ID token refused (%s is not an integer)", self.issuer, name)
                 raise ExternalSignInFailedError
         options: dict[str, Any] = {
-            "iss": {"essential": True, "value": self.issuer},
+            "iss": {"essential": True, "value": self._expected_issuer(claims)},
             "sub": {"essential": True},
             "aud": {"essential": True, "value": self.client_id},
             "exp": {"essential": True},
@@ -365,6 +379,35 @@ class OidcProvider:
             logger.info("OIDC %s: ID token refused (azp is not this client)", self.issuer)
             raise ExternalSignInFailedError
         return claims
+
+    @property
+    def _multi_tenant(self) -> bool:
+        """Whether the issuer stands for every tenant (it holds ``{tenantid}``).
+
+        Returns:
+            ``True`` for a multi-tenant issuer.
+        """
+        return TENANT_PLACEHOLDER in self.issuer
+
+    def _expected_issuer(self, claims: Mapping[str, Any]) -> str:
+        """Return the ``iss`` a token must have: the issuer, its tenant put in when multi-tenant.
+
+        Args:
+            claims: The token's claims (its ``tid``).
+
+        Returns:
+            The issuer to compare ``iss`` with.
+
+        Raises:
+            ExternalSignInFailedError: A multi-tenant issuer's token has no GUID ``tid``.
+        """
+        if not self._multi_tenant:
+            return self.issuer
+        tenant = claims.get("tid")
+        if not isinstance(tenant, str) or not re.fullmatch(TENANT_ID_PATTERN, tenant):
+            logger.info("OIDC %s: ID token refused (no tenant ID)", self.issuer)
+            raise ExternalSignInFailedError
+        return self.issuer.replace(TENANT_PLACEHOLDER, tenant)
 
     async def _decode(self, token: str, algorithms: list[str]) -> dict[str, Any]:
         """Check the ID token's signature against the issuer's keys and return its claims.
@@ -466,7 +509,7 @@ class OidcProvider:
                 an endpoint, points to an endpoint that is not HTTPS, or advertises no
                 asymmetric ID token algorithm.
         """
-        url = f"{self.issuer.rstrip('/')}/.well-known/openid-configuration"
+        url = self.discovery_url or f"{self.issuer.rstrip('/')}/.well-known/openid-configuration"
         status, body = await self._request("GET", url)
         if status not in _SUCCESS:
             logger.warning("OIDC %s: discovery answered %s", self.issuer, status)

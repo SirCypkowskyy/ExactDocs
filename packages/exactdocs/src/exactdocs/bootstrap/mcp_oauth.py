@@ -78,8 +78,8 @@ def build_mcp_auth(settings: Settings, identity: IdentityModule) -> AuthProvider
     signing_key = derive_jwt_key(
         high_entropy_material=secret, salt="exactdocs-mcp-oauth-jwt-signing-key"
     )
-    if provider.kind != "oidc":
-        github = provider.kind == "github"
+    if provider.protocol != "oidc":
+        github = provider.protocol == "github"
         base = provider.base_url.rstrip("/")
         proxy = OAuthProxy(
             upstream_authorization_endpoint=(
@@ -100,9 +100,8 @@ def build_mcp_auth(settings: Settings, identity: IdentityModule) -> AuthProvider
             jwt_signing_key=signing_key,
         )
         return MultiAuth(server=proxy, verifiers=verifiers)
-    config_url = f"{provider.issuer.rstrip('/')}/.well-known/openid-configuration"
     proxy = OIDCProxy(
-        config_url=config_url,
+        config_url=provider.discovery_url,
         strict=False,  # the web sign-in does not insist on every optional metadata field either
         client_id=provider.client_id,
         client_secret=secret,
