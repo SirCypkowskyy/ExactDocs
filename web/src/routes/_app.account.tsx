@@ -1,6 +1,11 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { KeyRound, LogIn, SlidersHorizontal } from "lucide-react";
-import { AccountPanel, SignInSettings, usePreferencesStatus } from "@/features/auth";
+import {
+  AccountPanel,
+  LeaderboardOptIn,
+  SignInSettings,
+  usePreferencesStatus,
+} from "@/features/auth";
 import { parseTokensView, TokensSection } from "@/features/tokens";
 import { useMessages } from "@/shared/lib/i18n";
 import { InterfaceSettings } from "@/shared/ui/interface-settings";
@@ -59,7 +64,9 @@ export const Route = createFileRoute("/_app/account")({
             <TokensSection />
           </TabsContent>
           <TabsContent value="interface" className="pt-8 outline-none">
-            <InterfaceSettings status={status} />
+            <InterfaceSettings status={status}>
+              <LeaderboardOptIn />
+            </InterfaceSettings>
           </TabsContent>
         </Tabs>
       </AccountPanel>
