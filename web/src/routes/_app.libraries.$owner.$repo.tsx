@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { RouteError } from "@/features/auth";
 import {
   BrowsePage,
+  BrowseSkeleton,
   LibraryNotFound,
   libraryQueryOptions,
   parseSearch,
@@ -14,6 +15,8 @@ export const Route = createFileRoute("/_app/libraries/$owner/$repo")({
   validateSearch: parseSearch,
   loader: ({ context, params }) =>
     context.queryClient.ensureQueryData(libraryQueryOptions(params.owner, params.repo)),
+  pendingMs: 150,
+  pendingComponent: BrowseSkeleton,
   errorComponent: function BrowseError(props) {
     const { owner, repo } = Route.useParams();
     if (props.error instanceof HttpError && props.error.status === 404) {

@@ -1,12 +1,16 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { CircleAlert, LogOut } from "lucide-react";
 import { useState } from "react";
+import { useMessages } from "@/shared/lib/i18n";
 import { Button, buttonVariants } from "@/shared/ui/button";
 import { signOut } from "../api/session-query";
 import { useSession } from "../hooks/use-session";
+import { messages } from "../messages";
 
 export function SignOutButton({ onSignedOut }: { onSignedOut: () => void }) {
   const queryClient = useQueryClient();
   const session = useSession();
+  const t = useMessages(messages);
   const [pending, setPending] = useState(false);
   const [failed, setFailed] = useState(false);
 
@@ -17,9 +21,10 @@ export function SignOutButton({ onSignedOut }: { onSignedOut: () => void }) {
       <a
         href={session.sign_out_url}
         className={buttonVariants({ variant: "ghost" })}
-        title="Signs you out of Cloudflare Access"
+        title={t.signOut.accessHint}
       >
-        Sign out
+        <LogOut aria-hidden="true" data-icon-motion="forward" />
+        {t.signOut.action}
       </a>
     );
   }
@@ -46,7 +51,8 @@ export function SignOutButton({ onSignedOut }: { onSignedOut: () => void }) {
         aria-busy={pending}
         aria-describedby={failed ? "sign-out-error" : undefined}
       >
-        {pending ? "Signing out" : "Sign out"}
+        <LogOut aria-hidden="true" data-icon-motion="forward" />
+        {pending ? t.signOut.pending : t.signOut.action}
       </Button>
       {/* Hangs below the button so a failure never moves the layout. From sm up the button sits at
           the header's right edge, so the message opens leftwards; on a phone it sits at the left of
@@ -54,9 +60,14 @@ export function SignOutButton({ onSignedOut }: { onSignedOut: () => void }) {
       <p
         id="sign-out-error"
         role="alert"
-        className="absolute top-full left-0 z-10 sm:right-0 sm:left-auto mt-1 whitespace-nowrap rounded-md bg-card px-3 py-1.5 text-body font-medium text-destructive shadow-md empty:hidden"
+        className="absolute top-full left-0 z-10 sm:right-0 sm:left-auto mt-1 flex items-center gap-2 whitespace-nowrap rounded-md bg-card px-3 py-1.5 text-body font-medium text-destructive shadow-float empty:hidden"
       >
-        {failed && "Couldn't sign out. Try again."}
+        {failed && (
+          <>
+            <CircleAlert aria-hidden="true" data-icon-motion="alert" className="size-4 shrink-0" />
+            {t.signOut.failed}
+          </>
+        )}
       </p>
     </div>
   );

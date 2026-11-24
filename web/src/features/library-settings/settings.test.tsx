@@ -1,12 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
+import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { BROWSE_KEY, LIBRARIES_KEY } from "@/shared/lib/query-keys";
 import { TestRouter } from "@/shared/lib/test-router";
-import { LibrarySettingsPage } from "./index";
+import { LibrarySettingsPage, LibrarySettingsSkeleton } from "./index";
 import {
   changedFields,
   explainAddVersion,
@@ -14,6 +15,7 @@ import {
   explainRemove,
   explainSync,
   failureWords,
+  statusWords,
   syncHeadline,
   validateDetails,
 } from "./model/settings";
@@ -36,6 +38,9 @@ const library = {
       commit_sha: SHA,
       imported_at: "2026-11-01T10:00:00Z",
       is_default: true,
+      articles: 12,
+      chunks: 40,
+      embedded_chunks: 40,
     },
     {
       ref: "main",
@@ -43,6 +48,9 @@ const library = {
       commit_sha: SHA,
       imported_at: "2026-11-01T10:00:00Z",
       is_default: false,
+      articles: 12,
+      chunks: 40,
+      embedded_chunks: 0,
     },
   ],
 };
@@ -187,7 +195,7 @@ const jobs = {
   Preview: () => null,
 };
 
-function renderPage(lib = library) {
+function renderPage(lib: object = library, start = "/libraries/acme/payments/settings") {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
@@ -199,7 +207,7 @@ function renderPage(lib = library) {
             <LibrarySettingsPage owner="acme" repo="payments" library={lib as never} jobs={jobs} />
           ),
         }}
-        start="/libraries/acme/payments/settings"
+        start={start}
       />
     </QueryClientProvider>,
   );
@@ -209,7 +217,14 @@ function renderPage(lib = library) {
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  localStorage.clear();
 });
+
+/** Opens a version's row menu and asks to remove it. */
+async function removeFromMenu(ref: string) {
+  await userEvent.click(await screen.findByRole("button", { name: `More actions for ${ref}` }));
+  await userEvent.click(await screen.findByRole("menuitem", { name: "Remove version…" }));
+}
 
 describe("settings model", () => {
   it("validates the title and the description", () => {
@@ -301,6 +316,19 @@ describe("sharing section", () => {
       "/libraries/acme/payments/access-log",
     );
     expect(screen.getAllByRole("link", { name: "Access log" })).toHaveLength(1);
+  });
+});
+
+describe("header", () => {
+  it("names the library with its logo beside the title", async () => {
+    serve();
+    renderPage({ ...library, logo: "0123456789abcdef" });
+    const header = (await screen.findByRole("heading", { level: 1 })).closest("header");
+    expect(header?.querySelector("img")).toHaveAttribute(
+      "src",
+      "/api/v1/libraries/acme/payments/logo?v=0123456789abcdef",
+    );
+    expect(screen.getByRole("navigation", { name: "Breadcrumb" }).querySelector("img")).toBeNull();
   });
 });
 
@@ -633,9 +661,10 @@ describe("re-sync", () => {
 });
 
 describe("removing a version", () => {
-  async function ask(name = "Remove version main") {
-    const trigger = await screen.findByRole("button", { name });
+  async function ask(ref = "main") {
+    const trigger = await screen.findByRole("button", { name: `More actions for ${ref}` });
     await userEvent.click(trigger);
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Remove version…" }));
     return { trigger, dialog: await screen.findByRole("alertdialog") };
   }
 
@@ -653,7 +682,7 @@ describe("removing a version", () => {
     await userEvent.click(confirm);
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
     await userEvent.type(input, "n");
-    expect(confirm).toHaveAttribute("aria-disabled", "false");
+    expect(confirm).not.toHaveAttribute("aria-disabled");
     await userEvent.click(confirm);
     expect(
       await screen.findByText(/Removed main\. The default version is now main\./),
@@ -663,7 +692,7 @@ describe("removing a version", () => {
     expect(screen.getByRole("heading", { name: "Versions" })).toHaveFocus();
   });
 
-  it("returns focus to the button it came from on cancel", async () => {
+  it("returns focus to the row's menu button it came from on cancel", async () => {
     serve();
     renderPage();
     const { trigger, dialog } = await ask();
@@ -727,6 +756,31 @@ describe("the page", () => {
     expect(screen.getByText("Library settings")).toBeInTheDocument();
   });
 
+  it("leads back through the shared breadcrumb", async () => {
+    serve();
+    renderPage();
+    const crumbs = within(await screen.findByRole("navigation", { name: "Breadcrumb" }));
+    expect(crumbs.getByRole("link", { name: "Libraries" })).toHaveAttribute("href", "/");
+    expect(crumbs.getByRole("link", { name: "/acme/payments" })).toHaveAttribute(
+      "href",
+      "/libraries/acme/payments",
+    );
+    expect(crumbs.getByText("Settings")).toHaveAttribute("aria-current", "page");
+  });
+
+  it("shows its layout with bars while the library loads", async () => {
+    render(
+      <TestRouter
+        pages={{ "/libraries/$owner/$repo/settings": LibrarySettingsSkeleton }}
+        start="/libraries/acme/payments/settings"
+      />,
+    );
+    expect(await screen.findByRole("status")).toHaveTextContent("Loading the library settings");
+    expect(screen.getByRole("main")).toHaveAttribute("aria-busy", "true");
+    expect(screen.getByRole("link", { name: "/acme/payments" })).toBeInTheDocument();
+    expect(screen.getByText("Remove library", { selector: "h2" })).toBeInTheDocument();
+  });
+
   it("falls back to the ID when the library has no title", async () => {
     serve();
     renderPage({ ...library, title: "" });
@@ -768,7 +822,7 @@ describe("the page", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Re-sync now" }));
     expect(await screen.findByText(/Everything is up to date/)).toBeInTheDocument();
     expect(screen.getByText(/Checked/)).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Remove version main" }));
+    await removeFromMenu("main");
     await waitFor(() =>
       expect(screen.queryByText(/Everything is up to date/)).not.toBeInTheDocument(),
     );
@@ -783,7 +837,7 @@ describe("removal while a request is in flight", () => {
     });
     serve({ gate });
     renderPage();
-    await userEvent.click(await screen.findByRole("button", { name: "Remove version main" }));
+    await removeFromMenu("main");
     const dialog = await screen.findByRole("alertdialog");
     await userEvent.type(within(dialog).getByLabelText(/Type main/), "main");
     await userEvent.click(within(dialog).getByRole("button", { name: "Remove version" }));
@@ -814,7 +868,7 @@ describe("removal while a request is in flight", () => {
   it("arms the confirm button only when the phrase matches", async () => {
     serve();
     renderPage();
-    await userEvent.click(await screen.findByRole("button", { name: "Remove version main" }));
+    await removeFromMenu("main");
     const dialog = await screen.findByRole("alertdialog");
     const confirm = within(dialog).getByRole("button", { name: "Remove version" });
     expect(confirm).toHaveClass("aria-disabled:cursor-not-allowed");
@@ -930,25 +984,273 @@ describe("adding a version of a private library", () => {
 });
 
 describe("the versions table", () => {
-  it("lists the versions from the API and filters and sorts them on the server", async () => {
+  const version = (n: number) => ({
+    ref: `v1.${n}.0`,
+    kind: n % 5 === 0 ? "branch" : "tag",
+    commit_sha: SHA,
+    imported_at: "2026-11-01T10:00:00Z",
+    is_default: n === 1,
+    origin: n % 2 ? "manual" : "auto",
+    articles: n,
+    chunks: 4 * n,
+    embedded_chunks: 2 * n,
+  });
+
+  /**
+   * A versions API over `count` versions that honours `limit`, an `offset` (or a cursor, `o<n>`)
+   * and the repeatable `kind` filter; everything else as `serve` answers it.
+   */
+  function serveVersions(count: number) {
     const calls = serve();
+    const all = Array.from({ length: count }, (_, i) => version(i + 1));
+    const real = globalThis.fetch;
+    vi.stubGlobal("fetch", (input: string, init?: RequestInit) => {
+      if (!String(input).includes("/versions?")) return real(input, init);
+      calls.push({ method: "GET", url: String(input), body: undefined });
+      const url = new URL(String(input), "http://x");
+      const kinds = url.searchParams.getAll("kind");
+      const rows = kinds.length ? all.filter((v) => kinds.includes(v.kind)) : all;
+      const start = Number(
+        url.searchParams.get("offset") ?? url.searchParams.get("cursor")?.slice(1) ?? 0,
+      );
+      const limit = Number(url.searchParams.get("limit"));
+      return Promise.resolve(
+        Response.json({
+          library: library.id,
+          versions: rows.slice(start, start + limit),
+          next_cursor: start + limit < rows.length ? `o${start + limit}` : null,
+          total: rows.length,
+        }),
+      );
+    });
+    return calls;
+  }
+
+  const listed = (calls: ReturnType<typeof serve>) =>
+    calls.map((c) => c.url).filter((u) => u.includes("/versions?"));
+
+  it("pages the versions, and filters and sorts them on the server", async () => {
+    const calls = serveVersions(45);
     renderPage();
     const table = await screen.findByRole("table", { name: "Imported versions" });
-    expect(await within(table).findByRole("button", { name: "Remove version main" })).toBeVisible();
-    expect(screen.getByText("Showing 2 of 2")).toBeInTheDocument();
+    expect(await screen.findByText("1–20 of 45")).toBeInTheDocument();
+    expect(within(table).getByText("v1.1.0")).toBeInTheDocument();
+    expect(within(table).getByText("default")).toBeInTheDocument();
+    expect(listed(calls)[0]).toBe("/api/v1/libraries/acme/payments/versions?limit=20&offset=0");
 
-    await userEvent.selectOptions(screen.getByLabelText("Kind"), "tag");
+    await userEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("21–40 of 45")).toBeInTheDocument();
+    expect(within(table).getByText("v1.21.0")).toBeInTheDocument();
+    expect(listed(calls)).toContain("/api/v1/libraries/acme/payments/versions?limit=20&offset=20");
+
+    await userEvent.click(screen.getByRole("button", { name: "Last page" }));
+    expect(await screen.findByText("41–45 of 45")).toBeInTheDocument();
+    expect(listed(calls)).toContain("/api/v1/libraries/acme/payments/versions?limit=20&offset=40");
+    expect(listed(calls).every((u) => !u.includes("cursor="))).toBe(true);
+
+    await userEvent.click(screen.getByRole("button", { name: "Kind" }));
+    await userEvent.click(await screen.findByRole("option", { name: "branch" }));
+    await userEvent.keyboard("{Escape}");
     await waitFor(() =>
-      expect(calls.map((c) => c.url)).toContain(
-        "/api/v1/libraries/acme/payments/versions?limit=50&kind=tag",
+      expect(listed(calls)).toContain(
+        "/api/v1/libraries/acme/payments/versions?limit=20&kind=branch&offset=0",
       ),
     );
+    // A new filter starts again at page 1.
+    expect(await screen.findByText("1–9 of 9")).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Sort by Imported" }));
     await waitFor(() =>
-      expect(calls.map((c) => c.url)).toContain(
-        "/api/v1/libraries/acme/payments/versions?limit=50&kind=tag&sort=-imported_at",
+      expect(listed(calls)).toContain(
+        "/api/v1/libraries/acme/payments/versions?limit=20&kind=branch&sort=-imported_at&offset=0",
       ),
     );
+  });
+
+  it("reads its view from the settings URL and shows the active filters", async () => {
+    const calls = serveVersions(3);
+    renderPage(
+      library,
+      "/libraries/acme/payments/settings?kind=tag,branch&origin=auto&sort=-origin",
+    );
+    await screen.findByRole("table", { name: "Imported versions" });
+    expect(listed(calls)[0]).toBe(
+      "/api/v1/libraries/acme/payments/versions?limit=20&kind=tag&kind=branch&origin=auto&sort=-origin&offset=0",
+    );
+    const chips = screen.getByRole("list", { name: "Active filters" });
+    expect(
+      within(chips).getByRole("button", { name: "Remove filter Origin: auto" }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers the same actions in the row's menu and its context menu", async () => {
+    serveVersions(3);
+    renderPage();
+    const table = await screen.findByRole("table", { name: "Imported versions" });
+    await userEvent.click(
+      await within(table).findByRole("button", { name: "More actions for v1.2.0" }),
+    );
+    const names = (menu: HTMLElement) =>
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((item) => item.textContent);
+    const visible = names(await screen.findByRole("menu"));
+    expect(visible).toEqual(["Browse this version", "Copy commit SHA", "Remove version…"]);
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
+
+    const row = within(table).getByText("v1.2.0").closest("tr");
+    fireEvent.contextMenu(row as HTMLElement);
+    expect(names(await screen.findByRole("menu"))).toEqual(visible);
+    await userEvent.click(screen.getByRole("menuitem", { name: "Browse this version" }));
+    expect(await screen.findByText("Browse")).toBeInTheDocument();
+  });
+
+  it("says what to do when the library has no versions yet", async () => {
+    serveVersions(0);
+    renderPage({ ...library, versions: [] });
+    expect(
+      await screen.findByText("No versions yet. Add one, or wait for the first import to finish."),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("in Polish", () => {
+  const synced = (versions: unknown[]) => ({
+    status: 202,
+    body: { library_id: "/acme/payments", versions },
+  });
+  const row = (over: Record<string, unknown>) => ({
+    ref: "main",
+    ref_kind: "branch",
+    status: "queued",
+    previous_commit_sha: SHA,
+    commit_sha: SHA2,
+    job_id: "j5",
+    error_code: null,
+    ...over,
+  });
+
+  afterEach(() => resetPreferences());
+
+  it("names the page, its sections and the versions table in Polish", async () => {
+    setPreferences({ language: "pl" });
+    serve();
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Szczegóły" })).toBeInTheDocument();
+    await waitFor(() => expect(document.title).toBe("Ustawienia: Payments - ExactDocs"));
+    expect(screen.getByRole("navigation", { name: "Na tej stronie" })).toBeInTheDocument();
+    for (const name of ["Pliki i tagi", "Wersje", "Udostępnianie", "Usuń bibliotekę"]) {
+      expect(screen.getByRole("region", { name })).toBeInTheDocument();
+    }
+    expect(screen.getByRole("link", { name: "Zarządzaj udostępnianiem" })).toBeInTheDocument();
+    const crumbs = within(screen.getByRole("navigation", { name: "Ścieżka nawigacji" }));
+    expect(crumbs.getByRole("link", { name: "Biblioteki" })).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText("Tytuł"), "!");
+    expect(await screen.findByText("1 sekcja ma niezapisane zmiany.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Zapisz zmiany" })).toBeInTheDocument();
+
+    const table = await screen.findByRole("table", { name: "Zaimportowane wersje" });
+    expect(await within(table).findByText("gałąź")).toBeInTheDocument();
+    expect(within(table).getByText("domyślna")).toBeInTheDocument();
+    expect(within(table).getByRole("button", { name: "Więcej opcji: main" })).toBeVisible();
+    expect(screen.getByLabelText("Znajdź wersję")).toHaveAttribute("placeholder", "Ref lub commit");
+    expect(screen.getByRole("button", { name: "Pochodzenie" })).toBeInTheDocument();
+    await userEvent.click(within(table).getByRole("button", { name: "Więcej opcji: main" }));
+    const menu = within(await screen.findByRole("menu"));
+    expect(menu.getAllByRole("menuitem").map((i) => i.textContent)).toEqual([
+      "Przeglądaj tę wersję",
+      "Kopiuj SHA commita",
+      "Usuń wersję…",
+    ]);
+  });
+
+  it("asks for the version typed, and says why it stays while an import runs", async () => {
+    setPreferences({ language: "pl" });
+    serve({ removeVersion: () => failure(409, "import_in_progress") });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Więcej opcji: main" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Usuń wersję…" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Usunąć main?" });
+    await userEvent.type(within(dialog).getByLabelText("Wpisz main, aby potwierdzić"), "main");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Usuń wersję" }));
+    expect(
+      await within(dialog).findByText(/^Import wersji main wciąż trwa\. Usuwanie nigdy/),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "Anuluj" })).toBeInTheDocument();
+  });
+
+  it("says what removing the library takes, with the right plural", async () => {
+    setPreferences({ language: "pl" });
+    serve();
+    renderPage();
+    const danger = within(await screen.findByRole("region", { name: "Usuń bibliotekę" }));
+    expect(danger.getByText(/wraz z jej 2 wersjami\. Zniknie z przeglądania/)).toHaveTextContent(
+      /^Usuń bibliotekę \/acme\/payments wraz z jej 2 wersjami\./,
+    );
+    await userEvent.click(danger.getByRole("button", { name: "Usuń bibliotekę…" }));
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("Wszystkie 2 wersje (v1.2.0, main) i ich artykuły");
+  });
+
+  it("reports a re-sync in Polish", async () => {
+    setPreferences({ language: "pl" });
+    serve({
+      sync: () =>
+        synced([
+          row({}),
+          row({ ref: "next", status: "failed", job_id: null, error_code: "ref_deleted" }),
+          row({ ref: "v1.2.0", ref_kind: "tag", status: "pinned", job_id: null }),
+        ]),
+    });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Synchronizuj teraz" }));
+    expect(
+      await screen.findByText("1 wersja jest aktualizowana, nie udało się sprawdzić 1 wersji."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Sprawdzono", { exact: false })).toHaveTextContent(
+      "Sprawdzono przed chwilą.",
+    );
+    expect(screen.getByText("Błąd")).toBeInTheDocument();
+    expect(screen.getByText(/^Gałęzi nie ma już w repozytorium\./)).toBeInTheDocument();
+    expect(screen.getByText("v1.2.0 jest przypięta i nigdy się nie zmienia.")).toBeInTheDocument();
+  });
+
+  it("words plurals and refusals in Polish", () => {
+    const versions = (n: number, status: string) =>
+      Array.from({ length: n }, (_, i) => row({ ref: `v${i}`, status }));
+    const headline = (...v: unknown[][]) =>
+      syncHeadline({ library_id: "x", versions: v.flat() } as never, "pl");
+    expect(headline(versions(2, "queued"))).toBe("2 wersje są aktualizowane.");
+    expect(headline(versions(5, "queued"))).toBe("5 wersji jest aktualizowanych.");
+    expect(headline(versions(22, "queued"))).toBe("22 wersje są aktualizowane.");
+    expect(headline(versions(3, "failed"))).toBe("Nie udało się sprawdzić 3 wersji.");
+    expect(headline(versions(1, "up_to_date"))).toBe("Wszystko jest aktualne.");
+    expect(statusWords("up_to_date", "pl")).toBe("Aktualna");
+    expect(validateDetails({ title: "x".repeat(201), description: "" }, "pl").title).toBe(
+      "Tytuł może mieć najwyżej 200 znaków.",
+    );
+    expect(explainSync(new TypeError("offline"), "pl").message).toMatch(/^Nie można połączyć/);
+    expect(
+      explainRemove(
+        new HttpError(401, "/v1/x", { error: "unauthenticated", detail: "d", fields: [] }),
+        "z",
+        "pl",
+      ),
+    ).toMatchObject({
+      message: "Twoja sesja wygasła.",
+      link: { href: "/sign-in", label: "Zaloguj się" },
+    });
+    expect(
+      explainAddVersion(
+        new HttpError(409, "/v1/x", { error: "version_exists", detail: "d", fields: [] }),
+        "v1",
+        undefined,
+        "pl",
+      ),
+    ).toMatchObject({
+      message: "„v1” jest już wersją tej biblioteki.",
+    });
   });
 });

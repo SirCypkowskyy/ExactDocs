@@ -1,5 +1,6 @@
 import { createFileRoute, Navigate, Outlet, redirect, useLocation } from "@tanstack/react-router";
 import { AppShell, guard, resolveGuard, useSession } from "@/features/auth";
+import { InstanceBanner } from "@/features/instance-status";
 import { GlobalSearchBox } from "@/features/search";
 
 // Everything behind sign-in lives under this pathless layout.
@@ -17,7 +18,10 @@ export const Route = createFileRoute("/_app")({
     // Mid-transition this layout still renders once at the destination; do not redirect twice.
     if (target && target.to !== pathname) return <Navigate {...target} replace />;
     return (
-      <AppShell search={<GlobalSearchBox />}>
+      <AppShell
+        search={<GlobalSearchBox />}
+        banner={<InstanceBanner operator={session?.account?.role === "admin"} />}
+      >
         <Outlet />
       </AppShell>
     );

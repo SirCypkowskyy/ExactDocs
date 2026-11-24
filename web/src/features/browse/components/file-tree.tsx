@@ -1,9 +1,14 @@
 import { Link } from "@tanstack/react-router";
 import { ChevronDown, ChevronRight, CircleAlert } from "lucide-react";
 import { type KeyboardEvent, memo, useCallback, useEffect, useRef, useState } from "react";
+import { useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { Spinner } from "@/shared/ui/spinner";
+import { messages } from "../messages";
 import { type Row, showFileName } from "../model/browse";
+
+/** The tree's strings: passed down, so a row stays a cheap memoized function of its props. */
+type Texts = (typeof messages)["en"]["tree"];
 
 type ScopeState = "idle" | "paging" | "error";
 
@@ -27,7 +32,7 @@ const INDENT = 12;
 const MAX_INDENT_LEVELS = 6;
 const rowBase =
   "flex min-h-11 w-full cursor-pointer items-center gap-1.5 rounded-md pr-2 text-left text-body outline-none transition-colors duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring lg:min-h-8 lg:text-body";
-const hoverable = "[@media(hover:hover)]:hover:bg-accent";
+const hoverable = "can-hover:hover:bg-accent";
 
 const indent = (depth: number) => ({
   paddingLeft: `${Math.min(depth, MAX_INDENT_LEVELS) * INDENT + 8}px`,
@@ -50,6 +55,7 @@ interface TreeRowProps {
   repo: string;
   version: string;
   tags: string | undefined;
+  t: Texts;
   onToggle: (folder: string, open?: boolean) => void;
   onMore: (scope: string) => void;
   onOpen: () => void;
@@ -103,20 +109,21 @@ function Folder({
   );
 }
 
-function pagerText(row: PagerRow, state: ScopeState, bad: boolean): string {
-  const where = row.scope ? row.scope.split("/").pop() : "";
-  if (bad) return `Couldn't load ${where || "more files"}. Try again`;
-  if (state === "paging") return "Loading more";
-  return where ? `Show more in ${where}` : "Show more files";
+function pagerText(row: PagerRow, state: ScopeState, bad: boolean, t: Texts): string {
+  const where = (row.scope ? row.scope.split("/").pop() : "") ?? "";
+  if (bad) return t.moreFailed(where);
+  if (state === "paging") return t.loadingMore;
+  return t.showMore(where);
 }
 
 function Pager({
   row,
   stop,
   state,
+  t,
   onMore,
   onFocusRow,
-}: Pick<TreeRowProps, "stop" | "state" | "onMore" | "onFocusRow"> & { row: PagerRow }) {
+}: Pick<TreeRowProps, "stop" | "state" | "t" | "onMore" | "onFocusRow"> & { row: PagerRow }) {
   const bad = row.kind === "failed" || state === "error";
   return (
     // biome-ignore lint/a11y/useKeyWithClickEvents: keys are handled once, on the tree
@@ -141,7 +148,7 @@ function Pager({
       ) : (
         <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-route" />
       )}
-      <span className="truncate">{pagerText(row, state, bad)}</span>
+      <span className="truncate">{pagerText(row, state, bad, t)}</span>
     </div>
   );
 }
@@ -154,6 +161,7 @@ function File({
   repo,
   version,
   tags,
+  t,
   onOpen,
   onFocusRow,
 }: Omit<TreeRowProps, "row" | "state" | "onToggle" | "onMore"> & { row: FileRow }) {
@@ -178,7 +186,7 @@ function File({
         <span className="block truncate leading-snug">{row.title}</span>
         {showFileName(row.title, row.name) && (
           <span className="block truncate font-mono text-small leading-snug text-muted-foreground">
-            <span className="sr-only">File </span>
+            <span className="sr-only">{t.file} </span>
             {row.name}
           </span>
         )}
@@ -187,7 +195,7 @@ function File({
   );
 }
 
-function Loading({ depth }: { depth: number }) {
+function Loading({ depth, t }: { depth: number; t: Texts }) {
   return (
     <div
       role="treeitem"
@@ -199,7 +207,7 @@ function Loading({ depth }: { depth: number }) {
       className="flex min-h-9 items-center gap-2 text-body text-muted-foreground"
     >
       <Spinner className="ml-[18px] size-3.5" />
-      Loading
+      {t.loading}
     </div>
   );
 }
@@ -208,7 +216,7 @@ function Loading({ depth }: { depth: number }) {
 const TreeRow = memo(
   function TreeRow(props: TreeRowProps) {
     const { row } = props;
-    if (row.kind === "loading") return <Loading depth={row.depth} />;
+    if (row.kind === "loading") return <Loading depth={row.depth} t={props.t} />;
     if (row.kind === "folder") return <Folder {...props} row={row} />;
     if (row.kind === "file") return <File {...props} row={row} />;
     return <Pager {...props} row={row} />;
@@ -220,6 +228,7 @@ const TreeRow = memo(
     a.state === b.state &&
     a.version === b.version &&
     a.tags === b.tags &&
+    a.t === b.t &&
     a.onToggle === b.onToggle &&
     a.onMore === b.onMore &&
     a.onOpen === b.onOpen,
@@ -255,6 +264,7 @@ export function FileTree({
   onMore,
   onOpen,
 }: FileTreeProps) {
+  const t = useMessages(messages).tree;
   const tree = useRef<HTMLDivElement>(null);
   const [active, setActive] = useState<string | undefined>();
   const focusable = rows.filter((r) => r.kind !== "loading");
@@ -398,6 +408,7 @@ export function FileTree({
           repo={repo}
           version={version}
           tags={tags}
+          t={t}
           onToggle={onToggle}
           onMore={more}
           onOpen={onOpen}

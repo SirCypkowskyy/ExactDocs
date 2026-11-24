@@ -16,6 +16,9 @@ const ALLOWED_IN_JS = [
   // browse/render/urls.ts builds links and image URLs from the library's own source URL
   /^https:\/\/github\.com\/$/,
   /^https:\/\/raw\.githubusercontent\.com\/\$\{/,
+  // Recharts' state libraries (the overview's lazy chart chunk): text of a thrown error, never fetched
+  /^https:\/\/redux(-toolkit)?\.js\.org\/Errors\?code=\$\{/,
+  /^https:\/\/bit\.ly\/3cXEKWf$/,
 ];
 // A host starts with a letter or digit: `"https://" + x` and `https://${x}` build one at run time.
 const ABSOLUTE = /https?:\/\/[A-Za-z0-9][^\s"'`)\\<>]+/g;

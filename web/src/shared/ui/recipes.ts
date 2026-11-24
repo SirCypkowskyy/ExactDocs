@@ -6,17 +6,17 @@
 
 /** Text inputs, textareas and native selects: white on the sheet, a control border, a soft ring on focus. */
 export const control =
-  "w-full rounded-md border border-input bg-background text-section outline-none transition-[border-color,box-shadow] duration-(--dur-fast) hover:border-muted-foreground/45 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/25 aria-invalid:border-destructive aria-invalid:ring-destructive/20 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground [@media(pointer:fine)]:text-body";
+  "w-full rounded-md border border-input bg-background text-section outline-none transition-[border-color,box-shadow] duration-(--dur-fast) hover:border-muted-foreground/45 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/25 aria-invalid:border-destructive aria-invalid:ring-destructive/20 disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground fine:text-body";
 
 /** Single-line control height: 44px on touch, 36px with a fine pointer. */
-export const controlHeight = "h-11 [@media(pointer:fine)]:h-9";
+export const controlHeight = "h-11 fine:h-9";
 
 /** A native <select>: the control plus room for its chevron (render <SelectChevron/> beside it). */
 export const select = `${control} ${controlHeight} cursor-pointer appearance-none pr-9 pl-3`;
 
 /** A button that opens a picker (version, files): looks like a control, acts like a button. */
 export const trigger =
-  "flex h-11 min-w-0 cursor-pointer items-center justify-between gap-2 rounded-md border border-input bg-background px-3 text-body outline-none transition-[border-color,background-color,transform] duration-(--dur-fast) hover:border-muted-foreground/45 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.99] aria-expanded:border-ring [@media(pointer:fine)]:h-9";
+  "flex h-11 min-w-0 cursor-pointer items-center justify-between gap-2 rounded-md border border-input bg-background px-3 text-body outline-none transition-[border-color,background-color,transform] duration-(--dur-fast) hover:border-muted-foreground/45 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.99] aria-expanded:border-ring fine:h-9";
 
 /** Monospace text shown as it is: a token, a config snippet, server output. */
 export const codeWell =
@@ -40,3 +40,14 @@ export const pillTone = {
 
 /** A section of a page: its heading, then its content. */
 export const sectionHeading = "text-section font-semibold [scroll-margin-top:5rem]";
+
+/** The scrim behind a dialog or confirmation: fades in 180 ms, out faster. */
+export const dialogOverlay =
+  "fixed inset-0 z-50 bg-overlay transition-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:duration-(--dur) data-[state=open]:ease-(--ease-out) data-[state=closed]:duration-(--dur-fast)";
+
+/**
+ * A dialog's panel, centred (a modal is not anchored to a trigger): 12 px corners, fades and zooms
+ * from 0.95 in 180 ms, leaves faster; reduced motion keeps only the fade.
+ */
+export const dialogPanel =
+  "fixed top-1/2 left-1/2 z-50 max-sm:top-4 max-sm:translate-y-0 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-border bg-card p-6 text-card-foreground shadow-float outline-none transition-none data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-safe:data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 motion-safe:data-[state=closed]:zoom-out-95 data-[state=open]:duration-(--dur) data-[state=open]:ease-(--ease-out) data-[state=closed]:duration-(--dur-fast)";

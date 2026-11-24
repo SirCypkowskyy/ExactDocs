@@ -1,8 +1,9 @@
 <p align="center">
   <a href="https://sircypkowskyy.github.io/ExactDocs/">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo/exactdocs-wordmark-dark.svg">
-      <img src="docs/assets/logo/exactdocs-wordmark-light.svg" alt="ExactDocs" width="300">
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo/exactdocs-lockup-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo/exactdocs-lockup-light.svg">
+      <img src="docs/assets/logo/exactdocs-lockup-light.svg" alt="ExactDocs" width="320">
     </picture>
   </a>
 </p>
@@ -15,12 +16,12 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/exactdocs/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/exactdocs?label=pypi&color=0b6677"></a>
+  <a href="https://pypi.org/project/exactdocs/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/exactdocs?label=pypi&color=17171a"></a>
   <a href="https://github.com/SirCypkowskyy/ExactDocs/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/SirCypkowskyy/ExactDocs/actions/workflows/ci.yml/badge.svg?branch=develop"></a>
-  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-0b6677"></a>
-  <a href="https://www.python.org/"><img alt="Python 3.14" src="https://img.shields.io/badge/python-3.14-0b6677?logo=python&logoColor=white"></a>
-  <a href="docs/deployment.md"><img alt="Docker image on ghcr.io" src="https://img.shields.io/badge/docker-ghcr.io%2Fsircypkowskyy%2Fexactdocs-0b6677?logo=docker&logoColor=white"></a>
-  <a href="https://sircypkowskyy.github.io/ExactDocs/"><img alt="Documentation" src="https://img.shields.io/badge/docs-sircypkowskyy.github.io%2FExactDocs-0b6677"></a>
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-17171a"></a>
+  <a href="https://www.python.org/"><img alt="Python 3.14" src="https://img.shields.io/badge/python-3.14-17171a?logo=python&logoColor=white"></a>
+  <a href="docs/deployment.md"><img alt="Docker image on ghcr.io" src="https://img.shields.io/badge/docker-ghcr.io%2Fsircypkowskyy%2Fexactdocs-17171a?logo=docker&logoColor=white"></a>
+  <a href="https://sircypkowskyy.github.io/ExactDocs/"><img alt="Documentation" src="https://img.shields.io/badge/docs-sircypkowskyy.github.io%2FExactDocs-17171a"></a>
 </p>
 
 <p align="center">

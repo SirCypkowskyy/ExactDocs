@@ -1,16 +1,19 @@
 import { pickSort, textParam } from "@/shared/lib/list-sort";
 import { normalizeQuery } from "@/shared/lib/search-query";
 import { parseTags } from "@/shared/lib/tags";
+import { parsePage, parseSize } from "@/shared/ui/data-table/table-search";
+import { ARTICLE_SORTS } from "./articles-view";
 import type { BrowseSearch } from "./browse";
-
-/** The fields the articles API sorts by. */
-const ARTICLE_SORTS = ["path", "title", "size"];
 
 const text = (value: unknown): string | undefined => {
   // The router parses `?version=2` as the number 2: keep what the user wrote, as text.
   if (typeof value === "number") return String(value);
   return typeof value === "string" && value !== "" ? value : undefined;
 };
+
+/** A folder as `path_prefix` takes it: no slash at either end. */
+const folder = (value: unknown): string | undefined =>
+  textParam(value)?.replace(/^\/+|\/+$/g, "") || undefined;
 
 /** Reads the URL's search: unknown keys are dropped, anything but text is ignored. */
 export function parseSearch(raw: Record<string, unknown>): BrowseSearch {
@@ -23,5 +26,8 @@ export function parseSearch(raw: Record<string, unknown>): BrowseSearch {
     match: raw.match === "all" ? "all" : undefined,
     filter: textParam(raw.filter),
     sort: pickSort(raw.sort, ARTICLE_SORTS),
+    prefix: folder(raw.prefix),
+    page: parsePage(raw.page),
+    size: parseSize(raw.size),
   };
 }

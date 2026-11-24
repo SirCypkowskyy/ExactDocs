@@ -1,34 +1,17 @@
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef } from "react";
 import { BROWSE_KEY } from "@/shared/lib/query-keys";
-import { usePrefetchedPages } from "@/shared/lib/use-prefetched-pages";
-import {
-  latestJobsQueryOptions,
-  librariesKeys,
-  librariesQueryOptions,
-} from "../api/libraries-query";
-import { type LatestJob, type Library, type Sync, syncOf } from "../model/library";
-import type { ListView } from "../model/list-view";
-
-/**
- * The pages shown so far, flattened, with the server's total for the current filters. The next
- * page is fetched ahead, so "Load more" shows it at once.
- */
-export function useLibraries(view: ListView) {
-  const query = useInfiniteQuery(librariesQueryOptions(view));
-  const paged = usePrefetchedPages(query, view);
-  return {
-    query,
-    ...paged,
-    libraries: paged.pages.flatMap((p) => p.libraries),
-    total: paged.pages.at(-1)?.total ?? 0,
-  };
-}
+import { latestJobsQueryOptions, librariesKeys } from "../api/libraries-query";
+import { type LatestJob, type Sync, syncOf } from "../model/library";
 
 export type SyncState = { status: "pending" } | { status: "error" } | Sync;
 
 export interface SyncStates {
-  syncs: ReadonlyMap<string, SyncState>;
+  /** A library's sync, from the newest job of each of its versions. */
+  syncOf: (library: string) => SyncState;
+  /** Libraries whose sync failed, and those importing now, across every library (not one page). */
+  failed: number;
+  running: number;
   /** True when the jobs could not be loaded; the list itself is fine. */
   failedToLoad: boolean;
   /** True until the first answer; counts of failures are not known before. */
@@ -42,7 +25,7 @@ const isLive = (j: LatestJob) => j.state === "queued" || j.state === "running";
  * One request for every library's sync state (the catalog list carries no job state).
  * When a library stops importing, the list is refetched so its "last imported" is fresh.
  */
-export function useSyncStates(libraries: readonly Library[]): SyncStates {
+export function useSyncStates(): SyncStates {
   const queryClient = useQueryClient();
   const query = useQuery(latestJobsQueryOptions());
   const importing = useRef(new Set<string>());
@@ -59,31 +42,20 @@ export function useSyncStates(libraries: readonly Library[]): SyncStates {
   const syncs = useMemo(() => {
     const byLibrary = new Map<string, LatestJob[]>();
     for (const j of data ?? []) byLibrary.set(j.library, [...(byLibrary.get(j.library) ?? []), j]);
-    return new Map<string, SyncState>(
-      libraries.map((l) => [
-        l.id,
-        isError && !data
-          ? { status: "error" }
-          : data
-            ? syncOf(byLibrary.get(l.id) ?? [])
-            : { status: "pending" },
-      ]),
-    );
-  }, [libraries, data, isError]);
+    return new Map([...byLibrary].map(([id, jobs]) => [id, syncOf(jobs)]));
+  }, [data]);
+  const kinds = [...syncs.values()].map((s) => s.kind);
   return {
-    syncs,
+    syncOf: (library) =>
+      data
+        ? (syncs.get(library) ?? { kind: "none" })
+        : isError
+          ? { status: "error" }
+          : { status: "pending" },
+    failed: kinds.filter((k) => k === "failed").length,
+    running: kinds.filter((k) => k === "running").length,
     failedToLoad: isError && !data,
     loading: !data && !isError,
     retry: () => void refetch(),
   };
-}
-
-/** The clock, refreshed every minute so "3 minutes ago" stays true on a page left open. */
-export function useNow(): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 60_000);
-    return () => clearInterval(id);
-  }, []);
-  return now;
 }

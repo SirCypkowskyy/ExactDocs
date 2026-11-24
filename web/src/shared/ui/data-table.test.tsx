@@ -1,7 +1,8 @@
 import { act, render, screen } from "@testing-library/react";
 import { useState } from "react";
-import { describe, expect, it } from "vitest";
-import { DataTable, useServerTable } from "./data-table";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
+import { DataTable, ListFooter, useServerTable } from "./data-table";
 
 interface Row {
   id: string;
@@ -38,5 +39,44 @@ describe("a server-side table", () => {
     await act(async () => bump());
     await act(async () => await new Promise((r) => setTimeout(r, 50)));
     expect(renders).toBeLessThan(5);
+  });
+});
+
+function Sorted() {
+  const table = useServerTable({
+    data: [{ id: "a" }],
+    columns: [{ accessorKey: "id", header: "Nazwa" }],
+    getRowId: (r) => r.id,
+    sort: "-id",
+    onSort: () => {},
+  });
+  return <DataTable table={table} label="Wiersze" loadingMore={false} />;
+}
+
+describe("a server-side table in Polish", () => {
+  afterEach(() => resetPreferences());
+
+  it("says how a column is sorted and how many rows are shown, in Polish", () => {
+    setPreferences({ language: "pl" });
+    render(
+      <>
+        <Sorted />
+        <ListFooter shown={50} total={12345} hasMore loadingMore={false} onLoadMore={vi.fn()} />
+      </>,
+    );
+    expect(
+      screen.getByRole("button", { name: "Sortuj według: Nazwa, sortowanie malejące" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/^Wyświetlono 50 z 12\s345$/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Wczytaj więcej" })).toBeInTheDocument();
+  });
+
+  it("keeps the English words and plain numbers in English", () => {
+    setPreferences({ language: "en" });
+    render(
+      <ListFooter shown={50} total={12345} hasMore loadingMore={false} onLoadMore={vi.fn()} />,
+    );
+    expect(screen.getByText("Showing 50 of 12345")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Load more" })).toBeInTheDocument();
   });
 });

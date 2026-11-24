@@ -1,8 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
 import { type HistoryState, Link, Navigate, useRouterState } from "@tanstack/react-router";
-import { ArrowUpRight, ChevronRight } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  ArrowUpRight,
+  ChevronRight,
+  Code,
+  Eye,
+  RotateCcw,
+} from "lucide-react";
 import { Component, Fragment, lazy, type ReactNode, Suspense, useRef, useState } from "react";
 import { HttpError } from "@/shared/lib/http";
+import { common, useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { Button, buttonVariants } from "@/shared/ui/button";
 import { trigger } from "@/shared/ui/recipes";
@@ -13,6 +22,7 @@ import {
   articleQueryOptions,
   renamedInVersionQueryOptions,
 } from "../api/browse-queries";
+import { messages } from "../messages";
 import {
   type Article,
   commitUrl,
@@ -75,6 +85,7 @@ export function CommitLinks({
   version: Version;
   fileUrl?: string | null | undefined;
 }) {
+  const t = useMessages(messages).article;
   const host = hostName(library.host);
   const file = safeHref(fileUrl);
   const commit = commitUrl(library.host, library.source_url, version.commit_sha);
@@ -82,25 +93,24 @@ export function CommitLinks({
     <div className="-ml-1 flex flex-wrap items-center gap-x-4 gap-y-0">
       {file && (
         <a href={file} target="_blank" rel="noopener noreferrer" className={external}>
-          <span className={underline}>View file on {host}</span>
-          <ArrowUpRight aria-hidden="true" className="size-3.5" />
-          <span className="sr-only">
-            at commit {shortSha(version.commit_sha)} (opens a new tab)
-          </span>
+          <span className={underline}>{t.viewFileOn(host)}</span>
+          <ArrowUpRight aria-hidden="true" data-icon-motion="out" className="size-3.5" />
+          <span className="sr-only">{t.atCommit(shortSha(version.commit_sha))}</span>
         </a>
       )}
       {commit ? (
         <a href={commit} target="_blank" rel="noopener noreferrer" className={external}>
           <span className={underline}>
-            Commit <code className="font-mono">{shortSha(version.commit_sha)}</code>
+            {t.commit} <code className="font-mono">{shortSha(version.commit_sha)}</code>
           </span>
-          <ArrowUpRight aria-hidden="true" className="size-3.5" />
-          <span className="sr-only">(opens a new tab)</span>
+          <ArrowUpRight aria-hidden="true" data-icon-motion="out" className="size-3.5" />
+          <span className="sr-only">{t.opensNewTab}</span>
         </a>
       ) : (
         // A host ExactDocs has no link pattern for: the commit, without a link.
         <p className="px-1 text-body text-muted-foreground" title={version.commit_sha}>
-          Commit <code className="font-mono text-foreground">{shortSha(version.commit_sha)}</code>
+          {t.commit}{" "}
+          <code className="font-mono text-foreground">{shortSha(version.commit_sha)}</code>
         </p>
       )}
     </div>
@@ -133,6 +143,7 @@ function NotInVersion({
   tags,
   suggestions,
 }: ArticleViewProps & { suggestions: readonly string[] }) {
+  const t = useMessages(messages).article;
   const newest = library.default_version;
   // A link to a file the import left out: the host has it at this commit.
   const onHost = blobUrl(library.host, library.source_url, version.commit_sha, path);
@@ -140,18 +151,19 @@ function NotInVersion({
   return (
     <div className="fade-in max-w-[72ch]">
       <h2 className="text-title font-semibold">
-        Not in <span className="font-mono">{version.ref}</span>
+        {t.notIn(<span className="font-mono">{version.ref}</span>)}
       </h2>
       <p className="mt-2 text-body text-pretty text-muted-foreground">
-        {version.ref} has no{" "}
-        <code className="font-mono text-body text-foreground [overflow-wrap:anywhere]">
-          <PathText path={path} />
-        </code>
-        . It may have been added later, moved or removed.
+        {t.hasNo(
+          version.ref,
+          <code className="font-mono text-body text-foreground [overflow-wrap:anywhere]">
+            <PathText path={path} />
+          </code>,
+        )}
       </p>
       {suggestions.length > 0 && (
         <div className="mt-6">
-          <h3 className="text-body font-medium">Close matches in {version.ref}</h3>
+          <h3 className="text-body font-medium">{t.closeMatches(version.ref)}</h3>
           <ul className="mt-2 space-y-1.5">
             {suggestions.map((s) => (
               <li key={s}>
@@ -166,6 +178,7 @@ function NotInVersion({
                   </span>
                   <ChevronRight
                     aria-hidden="true"
+                    data-icon-motion="forward"
                     className="size-4 shrink-0 text-muted-foreground"
                   />
                 </Link>
@@ -181,7 +194,8 @@ function NotInVersion({
           search={{ version: version.ref, tags }}
           className={secondary}
         >
-          Show the root of {version.ref}
+          <ArrowLeft aria-hidden="true" data-icon-motion="back" />
+          {t.showRoot(version.ref)}
         </Link>
         {newest && newest !== version.ref && (
           <Link
@@ -190,17 +204,15 @@ function NotInVersion({
             search={{ version: newest, path, tags }}
             className={secondary}
           >
-            Open this path in {newest}
+            <ArrowRight aria-hidden="true" data-icon-motion="forward" />
+            {t.openPathIn(newest)}
           </Link>
         )}
         {onHost && (
           <a href={onHost} target="_blank" rel="noopener noreferrer" className={secondary}>
-            View on {hostName(library.host)}
-            <ArrowUpRight aria-hidden="true" className="ml-1 size-4" />
-            <span className="sr-only">
-              {" "}
-              at commit {shortSha(version.commit_sha)} (opens a new tab)
-            </span>
+            {t.viewOn(hostName(library.host))}
+            <ArrowUpRight aria-hidden="true" data-icon-motion="out" />
+            <span className="sr-only"> {t.atCommit(shortSha(version.commit_sha))}</span>
           </a>
         )}
       </div>
@@ -209,16 +221,16 @@ function NotInVersion({
 }
 
 const toggle =
-  "inline-flex h-11 min-w-20 items-center justify-center rounded-[5px] px-3 text-body font-medium outline-none transition-[background-color,color] duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring lg:h-7";
-const quiet = buttonVariants({ variant: "outline" });
+  "inline-flex h-11 min-w-20 items-center justify-center gap-1.5 rounded-[5px] px-3 text-body font-medium outline-none transition-[background-color,color] duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring lg:h-7";
 
 type View = "rendered" | "source";
 
 /** Rendered text or the file as stored: the source is always one click away. */
 function ViewToggle({ view, onChange }: { view: View; onChange: (view: View) => void }) {
+  const t = useMessages(messages).article;
   return (
     <fieldset className="m-0 inline-flex min-w-0 rounded-md border-0 bg-secondary p-0.5">
-      <legend className="sr-only">View</legend>
+      <legend className="sr-only">{t.view}</legend>
       {(["rendered", "source"] as const).map((v) => (
         <button
           key={v}
@@ -228,10 +240,15 @@ function ViewToggle({ view, onChange }: { view: View; onChange: (view: View) => 
           className={`${toggle} cursor-pointer ${
             view === v
               ? "bg-background text-foreground shadow-xs ring-1 ring-border"
-              : "text-muted-foreground [@media(hover:hover)]:hover:text-foreground"
+              : "text-muted-foreground can-hover:hover:text-foreground"
           }`}
         >
-          {v === "rendered" ? "Rendered" : "Source"}
+          {v === "rendered" ? (
+            <Eye aria-hidden="true" data-icon-motion="pop" className="size-4" />
+          ) : (
+            <Code aria-hidden="true" data-icon-motion="pop" className="size-4" />
+          )}
+          {t[v]}
         </button>
       ))}
     </fieldset>
@@ -281,6 +298,8 @@ function RenderedText({
   tags: string | undefined;
   onSource: () => void;
 }) {
+  const t = useMessages(messages).article;
+  const c = useMessages(common);
   const access = useQuery(accessQueryOptions(owner, repo));
   const hash = useRouterState({ select: (s) => s.location.hash });
   // A new lazy component on retry: React keeps a failed one failed.
@@ -296,30 +315,27 @@ function RenderedText({
   });
   return (
     <>
-      {mdx && (
-        <p className="doc-notice">MDX: imports and components are shown as source, not run.</p>
-      )}
+      {mdx && <p className="doc-notice">{t.mdxNotice}</p>}
       <RenderBoundary
         fallback={(retry) => (
           <div role="alert" className="rounded-lg bg-raised p-4">
-            <p className="text-body font-medium">Couldn't load the article renderer.</p>
-            <p className="mt-1 text-body text-muted-foreground">
-              Your connection may have dropped, or ExactDocs was updated. The file itself is fine.
-            </p>
+            <p className="text-body font-medium">{t.rendererFailed}</p>
+            <p className="mt-1 text-body text-muted-foreground">{t.rendererFailedHint}</p>
             <div className="mt-3 flex flex-wrap gap-2">
-              <button type="button" onClick={onSource} className={quiet}>
-                View source
-              </button>
-              <button
-                type="button"
+              <Button variant="outline" onClick={onSource}>
+                <Code aria-hidden="true" data-icon-motion="pop" />
+                {t.viewSource}
+              </Button>
+              <Button
+                variant="outline"
                 onClick={() => {
                   setMarkdown(loadMarkdown());
                   retry();
                 }}
-                className={quiet}
               >
-                Try again
-              </button>
+                <RotateCcw aria-hidden="true" data-icon-motion="refresh" />
+                {c.retry}
+              </Button>
             </div>
           </div>
         )}
@@ -358,18 +374,19 @@ function SourceView({
   large: boolean;
   onRender: () => void;
 }) {
+  const t = useMessages(messages).article;
   const pre = useRef<HTMLPreElement>(null);
   return (
-    <section aria-label="Source text" className="mt-5">
+    <section aria-label={t.sourceText} className="mt-5">
       {large && (
         <p className="doc-notice">
-          This file is {Math.round(text.length / 1000)} kB, so it opens as source.{" "}
+          {t.largeFile(Math.round(text.length / 1000))}{" "}
           <button
             type="button"
             onClick={onRender}
             className="cursor-pointer underline underline-offset-4"
           >
-            Render it anyway
+            {t.renderAnyway}
           </button>
         </p>
       )}
@@ -408,6 +425,7 @@ function Body({
   /** The path a link asked for, when it led here through a rename. */
   movedFrom: string | undefined;
 }) {
+  const t = useMessages(messages).article;
   const large = article.content.length > LARGE;
   const [view, setView] = useState<View>(large ? "source" : "rendered");
   const text = useRef<HTMLElement>(null);
@@ -424,11 +442,12 @@ function Body({
       <article className="min-w-0 max-w-[72ch]">
         {movedFrom && (
           <p className="mb-3 text-body text-pretty text-muted-foreground">
-            Moved from{" "}
-            <code className="font-mono text-foreground [overflow-wrap:anywhere]">
-              <PathText path={movedFrom} />
-            </code>{" "}
-            in {version.ref}
+            {t.movedFrom(
+              <code className="font-mono text-foreground [overflow-wrap:anywhere]">
+                <PathText path={movedFrom} />
+              </code>,
+              version.ref,
+            )}
           </p>
         )}
         <header>
@@ -462,7 +481,7 @@ function Body({
           {view === "rendered" && <ContentsDisclosure {...contents} />}
         </header>
         {view === "rendered" ? (
-          <section ref={text} aria-label="Article text" className="mt-8 border-t border-rule pt-6">
+          <section ref={text} aria-label={t.articleText} className="mt-8 border-t border-rule pt-6">
             <RenderedText
               article={article}
               owner={owner}
@@ -478,7 +497,7 @@ function Body({
         )}
       </article>
       {view === "rendered" && (
-        <aside aria-label="Contents" className="hidden xl:block">
+        <aside aria-label={t.contents} className="hidden xl:block">
           <ContentsRail {...contents} />
         </aside>
       )}
@@ -493,6 +512,8 @@ function Body({
  */
 export function ArticleView(props: ArticleViewProps) {
   const { owner, repo, library, version, path, tags } = props;
+  const t = useMessages(messages).article;
+  const c = useMessages(common);
   const at = { owner, repo, ref: version.ref, sha: version.commit_sha };
   const query = useQuery(articleQueryOptions(at, path));
   const missing = query.error instanceof HttpError && query.error.status === 404;
@@ -519,7 +540,7 @@ export function ArticleView(props: ArticleViewProps) {
   if (query.isPending || (missing && renamed.isPending)) {
     return (
       <div role="status" aria-busy="true">
-        <span className="sr-only">Loading {path}</span>
+        <span className="sr-only">{t.loading(path)}</span>
         <ArticleSkeleton />
       </div>
     );
@@ -531,14 +552,13 @@ export function ArticleView(props: ArticleViewProps) {
     }
     return (
       <div role="alert" className="max-w-[72ch]">
-        <h2 className="text-title font-semibold">Couldn't load this article</h2>
+        <h2 className="text-title font-semibold">{t.loadFailed}</h2>
         <p className="mt-2 text-body text-muted-foreground">
-          {error instanceof HttpError && error.code
-            ? error.message
-            : "ExactDocs didn't answer. Check that it is running, then try again."}
+          {error instanceof HttpError && error.code ? error.message : t.noAnswer}
         </p>
         <Button className="mt-4" onClick={() => query.refetch()}>
-          Try again
+          <RotateCcw aria-hidden="true" data-icon-motion="refresh" />
+          {c.retry}
         </Button>
       </div>
     );

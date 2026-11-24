@@ -19,6 +19,7 @@ from exactdocs.catalog.models import (
     ImportedTags,
     Library,
     LibraryId,
+    LibraryLogo,
     LibrarySettings,
     Manifest,
     ManifestEntry,
@@ -45,6 +46,8 @@ class InMemoryLibraryRepository:
     """The libraries, by ID."""
     manual_tags: dict[LibraryId, dict[str, tuple[str, ...]]] = field(default_factory=dict)
     """Each library's manual tags, by the path they were set on."""
+    logos: dict[LibraryId, LibraryLogo] = field(default_factory=dict)
+    """Each library's logo (``InMemoryLibraryLogos`` writes them; reads give their digest)."""
 
     @classmethod
     def of(cls, libraries: Iterable[Library]) -> Self:
@@ -64,7 +67,7 @@ class InMemoryLibraryRepository:
         Returns:
             The libraries with their versions.
         """
-        return tuple(self.libraries.values())
+        return tuple(self._shown(library) for library in self.libraries.values())
 
     async def get(self, library_id: LibraryId) -> Library | None:
         """Return the library with this ID, or ``None``.
@@ -75,7 +78,20 @@ class InMemoryLibraryRepository:
         Returns:
             The library with its versions, or ``None``.
         """
-        return self.libraries.get(library_id)
+        library = self.libraries.get(library_id)
+        return None if library is None else self._shown(library)
+
+    def _shown(self, library: Library) -> Library:
+        """Give a stored library the digest of its logo now, as the SQL adapter's join does.
+
+        Args:
+            library: The library as stored.
+
+        Returns:
+            The library with ``logo`` set from ``logos``.
+        """
+        logo = self.logos.get(library.id)
+        return replace(library, logo=None if logo is None else logo.digest)
 
     async def add(self, library: Library) -> None:
         """Store a new library; raises ``LibraryAlreadyExistsError`` if the ID is taken.
@@ -99,6 +115,7 @@ class InMemoryLibraryRepository:
         """
         self.libraries.pop(library_id, None)
         self.manual_tags.pop(library_id, None)
+        self.logos.pop(library_id, None)
 
     async def get_manual_tags(self, library_id: LibraryId) -> Mapping[str, tuple[str, ...]]:
         """Return the library's manual tags by path.
@@ -206,6 +223,43 @@ class InMemoryLibraryRepository:
             description=stored.description if stored.description_edited else description,
             rules=tuple(rules),
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryLibraryLogos:
+    """Implements ``ports.driven.LibraryLogos`` over an ``InMemoryLibraryRepository``. For tests."""
+
+    libraries: InMemoryLibraryRepository
+    """The libraries; their ``logos`` hold what this store keeps."""
+
+    async def get(self, library_id: LibraryId) -> LibraryLogo | None:
+        """Return the library's logo.
+
+        Args:
+            library_id: The library.
+
+        Returns:
+            The logo, or ``None``.
+        """
+        return self.libraries.logos.get(library_id)
+
+    async def put(self, library_id: LibraryId, logo: LibraryLogo) -> None:
+        """Make ``logo`` the library's logo; nothing happens for an unknown library.
+
+        Args:
+            library_id: The library.
+            logo: Its new logo.
+        """
+        if library_id in self.libraries.libraries:
+            self.libraries.logos[library_id] = logo
+
+    async def remove(self, library_id: LibraryId) -> None:
+        """Forget the library's logo.
+
+        Args:
+            library_id: The library.
+        """
+        self.libraries.logos.pop(library_id, None)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -665,6 +719,7 @@ class InMemoryManifestRepository:
             del self.manifests[doomed_id]
         del self.libraries.libraries[library_id]
         self.libraries.manual_tags.pop(library_id, None)
+        self.libraries.logos.pop(library_id, None)
         return doomed
 
     def _active(self, library_id: LibraryId, ref: VersionRef) -> Manifest | None:
