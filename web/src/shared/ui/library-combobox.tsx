@@ -73,8 +73,13 @@ interface BaseProps {
   placeholder?: string | undefined;
   /** Help under a field. */
   hint?: ReactNode;
-  /** The libraries, when the feature already has them. */
+  /** The libraries, when the feature already has them (with its query's `loading` and `failed`). */
   options?: readonly LibraryOption[] | undefined;
+  /** `options` are still on their way. */
+  loading?: boolean | undefined;
+  /** `options` could not be loaded; `onRetry` asks again. */
+  failed?: boolean | undefined;
+  onRetry?: (() => void) | undefined;
   /** Or the feature's query for the libraries matching some text (debounced). */
   query?: ((text: string) => LibraryChoicesQuery) | undefined;
   /** Offer the typed text itself when it passes (e.g. a removed library's `/owner/repo`). */
@@ -148,9 +153,9 @@ const ownerOf = (id: string) => id.split("/").filter(Boolean)[0] ?? id;
 const repoOf = (id: string) => id.split("/").filter(Boolean)[1] ?? id;
 
 /** The title, when it says more than the repository's name. */
-const titleOf = (option: LibraryOption) =>
-  option.title && option.title.toLowerCase() !== repoOf(option.id).toLowerCase()
-    ? option.title
+const titleOf = ({ id, title }: LibraryOption) =>
+  title && ![id, repoOf(id)].some((same) => same.toLowerCase() === title.toLowerCase())
+    ? title
     : undefined;
 
 const matches = (option: LibraryOption, text: string) => {
@@ -185,6 +190,9 @@ export function LibraryCombobox(props: LibraryComboboxProps) {
     placeholder,
     hint,
     options: given,
+    loading = false,
+    failed = false,
+    onRetry,
     query,
     custom,
     children,
@@ -247,24 +255,28 @@ export function LibraryCombobox(props: LibraryComboboxProps) {
   }, []);
 
   const typed = text.trim();
-  const status: "pending" | "error" | "ready" = given
-    ? "ready"
+  const status: "pending" | "error" | "ready" = !query
+    ? failed
+      ? "error"
+      : loading || !given
+        ? "pending"
+        : "ready"
     : fetched.isError
       ? "error"
       : fetched.data
         ? "ready"
         : "pending";
   // While a new text is asked for, the last answer is filtered here so the list follows the keys.
-  const stale = !given && (fetched.isPlaceholderData || rested !== typed);
+  // Static options are filtered here; a query's are, too, while its answer is for older text.
+  const local = !query || fetched.isPlaceholderData || rested !== typed;
   const all = useMemo(() => {
-    const list = given ?? fetched.data?.options ?? [];
-    return given || stale ? (typed ? list.filter((o) => matches(o, typed)) : list) : list;
-  }, [given, fetched.data, stale, typed]);
-  const total = given || stale ? undefined : fetched.data?.total;
+    const list = (query ? fetched.data?.options : given) ?? [];
+    return local && typed ? list.filter((o) => matches(o, typed)) : list;
+  }, [query, given, fetched.data, local, typed]);
+  const total = local ? undefined : fetched.data?.total;
   const known = useMemo(() => new Map(all.map((o) => [o.id, o])), [all]);
   // Every library is in the list: a recent one missing from it is gone (or not offered here).
-  const complete =
-    !typed && status === "ready" && (given !== undefined || (!stale && (total ?? 0) <= all.length));
+  const complete = !typed && status === "ready" && (!query || (total ?? 0) <= all.length);
   const recents = typed
     ? []
     : recent.filter((r) => !complete || known.has(r.id)).map((r) => known.get(r.id) ?? r);
@@ -404,7 +416,11 @@ export function LibraryCombobox(props: LibraryComboboxProps) {
             <CircleAlert aria-hidden="true" data-icon-motion="alert" className="size-4" />
             {t.failed}
           </p>
-          <Button variant="outline" size="sm" onClick={() => void fetched.refetch()}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => (query ? void fetched.refetch() : onRetry?.())}
+          >
             {c.retry}
           </Button>
         </div>
@@ -413,7 +429,7 @@ export function LibraryCombobox(props: LibraryComboboxProps) {
         <CommandList
           label={label}
           aria-multiselectable={props.multiple || undefined}
-          aria-busy={(!given && fetched.isFetching) || undefined}
+          aria-busy={(query && fetched.isFetching) || undefined}
         >
           {offerTyped && (
             <CommandGroup>
