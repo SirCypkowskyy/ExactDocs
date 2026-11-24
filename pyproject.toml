@@ -140,6 +140,10 @@ ignore = [
 # The eval runner script sits beside its package, outside any package, like e2e/run.py.
 "packages/exactdocs/evals/run_retrieval_eval.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_golden.py" = ["implicit-namespace-package"]
+"packages/exactdocs/evals/run_golden_review.py" = ["implicit-namespace-package"]
+# The golden-set review sample is drawn with random.Random(seed) on purpose: a seeded, reproducible
+# draw (#490), not a secret, so the non-cryptographic generator is the right one.
+"packages/exactdocs/evals/retrieval_eval/golden_review.py" = ["suspicious-non-cryptographic-random-usage"]
 "packages/exactdocs/evals/run_ingestion_bench.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_retrieval_bench.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_agent_bench.py" = ["implicit-namespace-package"]

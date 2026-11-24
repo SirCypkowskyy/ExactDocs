@@ -27,6 +27,7 @@ from exactdocs.retrieval.adapters.driven.sqlite import (
     SqliteSpendLedger,
     ai_spend,
 )
+from exactdocs.retrieval.constants import SPEND_HISTORY_MAX_DAYS
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ChunkIn,
@@ -39,6 +40,7 @@ from exactdocs.retrieval.errors import (
 from exactdocs.retrieval.models import (
     EmbeddingSource,
     SpendEntry,
+    SpendHistorySpan,
     SpendKey,
     SpendWindow,
     embedding_spend,
@@ -290,6 +292,41 @@ async def test_the_sql_ledger_reads_rows_and_counts_a_replayed_entry_once(
             (SpendWindow.DAY, day.window_start),
             (SpendWindow.MONTH, month.window_start),
         ], type(ledger)
+
+
+async def test_a_spend_historys_longest_span_is_read_in_one_call_on_every_ledger(
+    engine: AsyncEngine,
+) -> None:
+    span = SpendHistorySpan(
+        scope_kind="library",
+        scope_id="/acme/x",
+        window=SpendWindow.DAY,
+        first=date(2025, 11, 7),
+        last=T0.date(),
+    )
+    keys = span.keys()
+    assert len(keys) == SPEND_HISTORY_MAX_DAYS
+    spent = [date(2025, 11, 6), date(2025, 11, 7), date(2026, 2, 28), T0.date()]
+    for ledger in (SqliteSpendLedger(engine=engine), InMemorySpendLedger()):
+        await ledger.add(
+            [
+                SpendEntry(
+                    scope_kind="library",
+                    scope_id="/acme/x",
+                    window=SpendWindow.DAY,
+                    window_start=day,
+                    requests=1,
+                    usd_micros=day.day,
+                )
+                for day in spent
+            ]
+        )
+
+        rows = await ledger.get(keys)
+
+        assert {k.window_start: r.usd_micros for k, r in rows.items()} == {
+            day: day.day for day in spent[1:]
+        }, type(ledger)
 
 
 async def test_the_sql_ledger_adds_up_across_concurrent_writers(engine: AsyncEngine) -> None:

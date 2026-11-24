@@ -13,6 +13,7 @@ from exactdocs.identity.ports.driven import (
 )
 from exactdocs.identity.ports.driving import (
     Authenticate,
+    ChangePassword,
     ClaimLibrary,
     CreateFirstAdmin,
     CreateToken,
@@ -47,6 +48,7 @@ __all__ = [
     "AccessLog",
     "AccountRepository",
     "Authenticate",
+    "ChangePassword",
     "ClaimLibrary",
     "CreateFirstAdmin",
     "CreateToken",

@@ -26,6 +26,7 @@ from exactdocs.identity.ports.driven import (
 from exactdocs.identity.ports.driving import (
     Authenticate,
     CanCreateLibrary,
+    ChangePassword,
     ClaimLibrary,
     CreateFirstAdmin,
     CreateToken,
@@ -60,6 +61,7 @@ from exactdocs.identity.ports.driving import (
 from exactdocs.identity.use_cases import (
     AuthenticateUseCase,
     CanCreateLibraryUseCase,
+    ChangePasswordUseCase,
     ClaimLibraryUseCase,
     CreateFirstAdminUseCase,
     CreateTokenUseCase,
@@ -117,6 +119,8 @@ class IdentityModule:
     """Tell the UI whether setup is due and who is signed in."""
     reset_password: ResetPassword
     """Set a new password for an account (operators only)."""
+    change_password: ChangePassword
+    """A signed-in person changes their own password (the current one checked, throttled)."""
     list_users: ListUsers
     """List every local account (operators only)."""
     create_user: CreateUser
@@ -263,6 +267,14 @@ class IdentityModule:
                 tokens=tokens,
                 hasher=hasher,
                 failures=failures,
+            ),
+            change_password=ChangePasswordUseCase(
+                accounts=repository,
+                sessions=sessions,
+                hasher=hasher,
+                authenticate=authenticate,
+                failures=failures,
+                clock=clock,
             ),
             list_users=ListUsersUseCase(
                 accounts=repository, externals=externals, tokens=tokens, clock=clock

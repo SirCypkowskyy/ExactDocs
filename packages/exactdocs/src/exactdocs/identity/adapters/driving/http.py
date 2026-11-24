@@ -15,6 +15,7 @@ from exactdocs.identity.constants import (
     ACCESS_COOKIE,
     ACCESS_LOG_ACTION,
     ALL_TOKENS_ACTION,
+    CHANGE_PASSWORD_DESCRIPTION,
     COOKIE_ATTRS,
     CREATE_TOKEN_DESCRIPTION,
     LOGIN_FOR_TOKEN_DESCRIPTION,
@@ -31,6 +32,7 @@ from exactdocs.identity.dtos import (
     AllTokensList,
     AllTokensQuery,
     AuthenticateQuery,
+    ChangePasswordCommand,
     CreateFirstAdminCommand,
     CreateTokenCommand,
     CreateUserCommand,
@@ -69,6 +71,7 @@ from exactdocs.identity.errors import (
 )
 from exactdocs.identity.models import Role
 from exactdocs.identity.ports.driving import (
+    ChangePassword,
     CreateFirstAdmin,
     CreateToken,
     CreateUser,
@@ -308,6 +311,50 @@ def build_tokens_router(
             account: The signed-in account.
         """
         await revoke_token(account, token_id)
+
+    return router
+
+
+def build_account_router(
+    *, change_password: ChangePassword, session_caller: CurrentCaller
+) -> APIRouter:
+    """Expose ``/account``: what a signed-in person does with their own account.
+
+    Every route needs a signed-in session (an API token is refused with 401, as for ``/tokens``:
+    a leaked token must not change the password of the account it acts as).
+
+    Args:
+        change_password: The driving port that changes the caller's own password.
+        session_caller: The dependency that requires a signed-in session.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["identity"], dependencies=[Depends(session_caller)])
+    caller = Annotated[AccountSummary, Depends(session_caller)]
+
+    @router.put(
+        "/account/password",
+        status_code=204,
+        responses=_THROTTLED,
+        description=CHANGE_PASSWORD_DESCRIPTION,
+    )
+    async def put_password(
+        command: ChangePasswordCommand, account: caller, request: Request
+    ) -> None:
+        """Change the signed-in account's own password.
+
+        Args:
+            command: The current password and the new one.
+            account: The signed-in account.
+            request: The HTTP request, for the session cookie and the client address.
+        """
+        await change_password(
+            account,
+            command,
+            session_token=request.cookies.get(SESSION_COOKIE),
+            client=client_address(request),
+        )
 
     return router
 

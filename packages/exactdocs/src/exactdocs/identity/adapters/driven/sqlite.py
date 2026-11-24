@@ -490,6 +490,19 @@ class SqliteSessionRepository:
         async with self.engine.begin() as connection:
             await connection.execute(delete(sessions).where(sessions.c.account_id == account_id))
 
+    async def delete_others(self, account_id: AccountId, *, keep: str | None) -> None:
+        """Remove every session of the account but the one with the token hash ``keep``.
+
+        Args:
+            account_id: The account's id.
+            keep: The hash of the session token that stays; ``None`` removes them all.
+        """
+        statement = delete(sessions).where(sessions.c.account_id == account_id)
+        if keep is not None:
+            statement = statement.where(sessions.c.token_hash != keep)
+        async with self.engine.begin() as connection:
+            await connection.execute(statement)
+
     async def delete_expired(self, *, idle_before: datetime, created_before: datetime) -> None:
         """Remove sessions last used before ``idle_before`` or created before ``created_before``.
 

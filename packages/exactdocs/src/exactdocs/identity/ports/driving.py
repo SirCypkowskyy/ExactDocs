@@ -9,6 +9,7 @@ from exactdocs.identity.dtos import (
     AllTokensQuery,
     ApiTokenIdentity,
     AuthenticateQuery,
+    ChangePasswordCommand,
     ClaimLibraryCommand,
     CreateFirstAdminCommand,
     CreateTokenCommand,
@@ -247,6 +248,34 @@ class ResetPassword(Protocol):
         Returns:
             The account, and whether its username's sign-in throttle count and remembered
             sign-ins were cleared.
+        """
+        ...
+
+
+class ChangePassword(Protocol):
+    """A signed-in person changes their own password, proving the current one first.
+
+    The current password is checked under the sign-in throttle: a wrong one is refused with
+    ``WrongPasswordError`` and counted like a failed sign-in, and too many of them are refused with
+    ``SignInThrottledError`` without being checked. An account without a password (it signs in
+    through an identity provider) is refused with ``ExternalAccountError``.
+    """
+
+    async def __call__(
+        self,
+        account: AccountSummary,
+        command: ChangePasswordCommand,
+        *,
+        session_token: str | None = None,
+        client: str | None = None,
+    ) -> None:
+        """Run the use case: every other session of the account ends, ``session_token``'s stays.
+
+        Args:
+            account: The signed-in account.
+            command: The current password and the new one.
+            session_token: The session the change is made from, which stays signed in.
+            client: The caller's address, for the sign-in throttle.
         """
         ...
 

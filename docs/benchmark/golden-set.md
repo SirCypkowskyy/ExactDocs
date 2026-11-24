@@ -32,10 +32,10 @@ pages, one long README, a large API reference, framework variants of the same pa
 | Kind | starlette | pydantic | tanstack-query | zod | electron | All | Example |
 |---|---|---|---|---|---|---|---|
 | `identifier-lookup` | 10 | 10 | 11 | 11 | 10 | 52 | starlette 0.52.1: What is the default max_age of SessionMiddleware? |
-| `how-to` | 11 | 11 | 10 | 11 | 10 | 53 | pydantic v2.14.3: How do I add a check that runs after Pydantic has validated a field? |
-| `conceptual` | 11 | 11 | 10 | 10 | 10 | 52 | tanstack-query v5.90.3: Why does my query refetch every time the window gets focus? |
-| `version-change` | 11 | 12 | 11 | 11 | 12 | 57 | zod v4.0.17: What should I use instead of .strict() and .passthrough() on objects? |
-| `cross-page` | 11 | 11 | 10 | 10 | 11 | 53 | electron v30.0.0: BrowserView is deprecated. What do I replace it with and how do I place the new view in a window? |
+| `how-to` | 12 | 12 | 11 | 13 | 10 | 58 | pydantic v2.14.3: How do I add a check that runs after Pydantic has validated a field? |
+| `conceptual` | 11 | 11 | 10 | 11 | 10 | 53 | tanstack-query v5.90.3: Why does my query refetch every time the window gets focus? |
+| `version-change` | 11 | 12 | 11 | 10 | 12 | 56 | zod v4.0.17: What should I use instead of .strict() and .passthrough() on objects? |
+| `cross-page` | 10 | 10 | 9 | 8 | 11 | 48 | electron v30.0.0: BrowserView is deprecated. What do I replace it with and how do I place the new view in a window? |
 | `unanswerable` | 10 | 11 | 11 | 10 | 12 | 54 | starlette 0.27.0: How do I send a 103 Early Hints response? |
 | all | 64 | 66 | 63 | 63 | 65 | 321 | |
 <!-- /bench -->
@@ -58,9 +58,7 @@ The table above counts the cases per kind and project, with one example question
 
 Every case was written by an agent from the source at its pinned commit: the facts are taken from
 that version's text, and each `unanswerable` case was searched for (`git grep`) in that version's
-whole docs tree. The same agent then checked each case against the source. **No person has
-reviewed the cases yet**, so the set may hold mistakes a reader would catch; a spot check is
-welcome, and a wrong case is fixed like any other bug.
+whole docs tree. The same agent then checked each case against the source.
 
 What a machine checks, on every case, with `just golden-validate`:
 
@@ -74,6 +72,113 @@ What a machine checks, on every case, with `just golden-validate`:
 CI checks the rules on every pull request; the section check needs the corpus cache, so it runs
 locally and wherever the cache is present. Details are in
 [What `golden-validate` checks](../evals.md#what-golden-validate-checks).
+
+## The independent review
+
+No person has reviewed the cases. A second agent did (#490), with a brief to find what is wrong
+rather than to confirm it, and it is not the agent or the prompt that wrote them. It reviewed a
+random sample: `just golden-review sample` drew three cases of each kind in each project, 90 in all,
+with a fixed seed, from the set as it was before any fix. For each case it read the docs at the
+pinned commit and checked:
+
+- that the expected sections state every fact, not merely imply it;
+- that the reference answer is right for that version;
+- that no other section of that version answers the question as well without being listed;
+- the kind (a `cross-page` case is wrong when one article states every fact);
+- for `unanswerable` cases, that no page of that version answers it, searching the whole docs tree
+  for the question's words, synonyms and API names;
+- for `version-change` cases, the neighbouring versions.
+
+Each verdict is in
+[`evals/golden/review.yaml`](https://github.com/SirCypkowskyy/ExactDocs/tree/develop/packages/exactdocs/evals/golden/review.yaml):
+correct, fixed or removed, the problems, and a note quoting the source that proves each one.
+`just golden-validate` checks the file against the cases. How the review works and what each
+problem means: [Reviewing the golden set](../evals.md#reviewing-the-golden-set).
+
+<!-- bench:golden-review -->
+- Sample: 90 cases, 3 per kind and project, seed 490, drawn from golden set `sha256:39f6f9d5e909d128`.
+- Reviewed by: independent review agent (adversarial brief; not the agent that wrote the cases), 2026-11-23.
+- Verdicts: 67 correct, 23 fixed, 0 removed.
+- Wrong cases: 23 of 90, 25.6% (95% Wilson interval 17.7% to 35.4%).
+
+| Problem | Cases |
+|---|---|
+| `unsupported-fact` | 3 |
+| `missing-section` | 17 |
+| `wrong-kind` | 6 |
+
+| Kind | Wrong / reviewed |
+|---|---|
+| `identifier-lookup` | 3 / 15 |
+| `how-to` | 3 / 15 |
+| `conceptual` | 4 / 15 |
+| `version-change` | 8 / 15 |
+| `cross-page` | 5 / 15 |
+| `unanswerable` | 0 / 15 |
+
+| Project | Wrong / reviewed |
+|---|---|
+| electron | 3 / 18 |
+| pydantic | 3 / 18 |
+| starlette | 4 / 18 |
+| tanstack-query | 9 / 18 |
+| zod | 4 / 18 |
+<!-- /bench -->
+
+The sample is a stratified one with 10 to 12 cases per stratum, so the plain share of wrong cases
+above is within half a point of the share weighted by stratum size (25.3%). What the review found
+(three cases had two problems each):
+
+- **No case was wrong at its core.** No reference answer was wrong for its version, every expected
+  section answers its question, and all 15 `unanswerable` cases held: none is answered anywhere in
+  its version's docs.
+- **Missing sections, 17 cases.** Another section of the same version answers the question as
+  well: the API reference page next to the guide the case names (`useMutation`'s `scope`,
+  `useQuery`'s `keepPreviousData`, `refetchOnWindowFocus`), a tutorial that repeats the table of a
+  guide, the ESLint rule page that says not to put a query result in a dependency array, a release
+  note for a "since when" question, a deprecation note in the breaking changes. Each section was
+  added to its case.
+- **Wrong kind, 6 cases.** Five `cross-page` cases have every fact in one article (the second
+  article adds nothing), and one `version-change` case asks about no change. They are now `how-to`
+  and `conceptual`.
+- **Unsupported facts, 3 cases.** A fact stated only in a neighbouring section (a codemod, the
+  mutation variant of a util) or only implied (that `lifespan` replaces `on_startup`). The facts
+  and reference answers were narrowed to what the sections state.
+- **By kind**, `version-change` cases were wrong most often (8 of 15), then `cross-page`; by project,
+  TanStack Query (9 of 18), whose guides and API reference pages often say the same thing.
+
+The 23 wrong cases of the sample are fixed; the other 231 cases were not reviewed. If the sample is
+representative, about 59 of them (41 to 82 at the interval's ends) have problems of the same kinds,
+mostly missing sections.
+
+What this means for the results: recall@k counts a case as found when its **first** expected
+section is in the top k. The review added sections after the first one, so they count for nDCG@10
+and section recall but not for recall@k: a configuration or tool that returns the other answering
+section (often an API reference page) is still scored a miss there. Comparisons with tools that
+favour reference pages should report nDCG@10 and section recall next to recall@k.
+
+The fixes changed the golden set's fingerprint (`sha256:39f6f9d5e909d128` to
+`sha256:7dd51c59057c279a`). The [ingestion run](ingestion.md) and the
+[retrieval run](retrieval.md) were both recorded again on the reviewed set.
+
+### Wording
+
+`just golden-review checks` measures how the questions are worded against the docs of their
+version (on 2026-11-23, after the fixes):
+
+- Over the 267 answerable cases, the expected section holds on average 60.7% of a question's
+  content words (weighted by how rare each word is in that version) and the best other section
+  59.3%. The expected section is the best match on words for 58.8% of the questions.
+- 6 questions (2%) share a run of five words or more with their section, two of them because they
+  quote an error message.
+- `identifier-lookup` and `version-change` questions lean towards their section (it is the best
+  match for 69% and 64% of them), as they name the API or the change. `how-to` and `conceptual`
+  questions are worded closer to other sections than to their own (by 0.6 and 3.0 points).
+- No two questions of the same version are near-duplicates; 4 pairs ask the same thing of two
+  versions, by design.
+
+The questions were paraphrased, not copied from their sections, so their wording does not favour
+keyword search (BM25) over embeddings.
 
 ## Adding a case
 

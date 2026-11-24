@@ -2111,6 +2111,32 @@ class EmbeddingProgressOut(_Dto):
     """Every space that is not retired, oldest first; none without a vector store."""
 
 
+class CountVersionChunksQuery(_Dto):
+    """Count the chunks of some versions of one library, and those embedded (#513)."""
+
+    library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
+    refs: list[str]
+    """The exact refs; a ref with no indexed active manifest counts 0."""
+
+
+class VersionChunksOut(_Dto):
+    """How many chunks one version has in the search index, and how many are embedded."""
+
+    chunks: int
+    """The chunk rows of its active manifest (one per article path holding the chunk)."""
+    embedded_chunks: int
+    """Of those, the ones with a vector in the configured embedding model's space; 0 while no
+    model or no vector store is configured, or the space does not exist yet."""
+
+
+class VersionChunkCounts(_Dto):
+    """The chunk counts of the versions asked for."""
+
+    versions: dict[str, VersionChunksOut]
+    """By ref; every ref asked for is present (0 and 0 for one that is not indexed)."""
+
+
 class SpentOut(_Dto):
     """What one scope spent in one window, as the providers reported it."""
 
@@ -2245,6 +2271,66 @@ class AiUsageOut(_Dto):
     scopes: list[ScopeUsageOut]
     """The instance and the embedding budget first, then each library and user that spent
     something this month."""
+
+
+SpendScope = Literal["instance", "embedding", "library", "user"]
+"""A spend ledger scope kind (``SPEND_SCOPE_KINDS``), as the usage and its history name it."""
+
+
+class SpendHistoryQuery(_Dto):
+    """Which scope's spend to show per UTC day or month, over which range."""
+
+    scope: SpendScope = "instance"
+    """`instance`, `embedding` (embedding runs, instance-wide), `library` or `user`."""
+    id: Annotated[str, StringConstraints(max_length=MAX_NAME)] = ""
+    """The library ID (any letter case) or the account ID; empty for `instance` and
+    `embedding`."""
+    window: SpendWindow = SpendWindow.DAY
+    """`day` or `month`."""
+    first: date | None = None
+    """A day of the first window (any day of a month stands for the month); default: 30 days or
+    12 months before `last`, that one included."""
+    last: date | None = None
+    """A day of the last window; default: today (UTC)."""
+
+
+class SpendHistoryEntryOut(SpentOut):
+    """What the scope spent in one window; zero for a window it spent nothing in."""
+
+    window_start: date
+    """The window's first day (UTC)."""
+
+    @classmethod
+    def from_model(cls, spent: SpendEntry) -> Self:
+        """Show a ledger row's totals with the window they are of.
+
+        Args:
+            spent: The row.
+
+        Returns:
+            The DTO.
+        """
+        return cls(
+            window_start=spent.window_start,
+            **SpentOut.from_model(spent).model_dump(),
+        )
+
+
+class SpendHistoryOut(_Dto):
+    """What one scope spent per UTC day or month: one entry per window, oldest first."""
+
+    scope: SpendScope
+    """The scope kind."""
+    id: str
+    """The library ID (case-folded) or the account ID; empty for `instance` and `embedding`."""
+    window: SpendWindow
+    """`day` or `month`."""
+    first: date
+    """The first window's first day."""
+    last: date
+    """The last window's first day."""
+    entries: list[SpendHistoryEntryOut]
+    """Every window from `first` to `last`, both included, each once."""
 
 
 class PrunedHypothesesOut(_Dto):

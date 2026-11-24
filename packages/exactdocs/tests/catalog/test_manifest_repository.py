@@ -13,6 +13,7 @@ from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.catalog.adapters.driven.memory import (
+    InMemoryArticleCounts,
     InMemoryImportedTags,
     InMemoryInstructionFiles,
     InMemoryLibraryRepository,
@@ -21,6 +22,7 @@ from exactdocs.catalog.adapters.driven.memory import (
     InMemoryStoredArticles,
 )
 from exactdocs.catalog.adapters.driven.sqlite import (
+    SqliteArticleCounts,
     SqliteImportedTags,
     SqliteInstructionFiles,
     SqliteLibraryRepository,
@@ -65,6 +67,7 @@ from exactdocs.catalog.models import (
     VersionRef,
 )
 from exactdocs.catalog.ports import (
+    ArticleCounts,
     ImportedTagWriter,
     InstructionFileReader,
     LibraryRepository,
@@ -138,6 +141,7 @@ class Stores:
     copier: ManifestCopier
     stored_articles: StoredArticleFinder
     instructions: InstructionFileReader
+    article_counts: ArticleCounts
 
 
 @pytest.fixture(params=["memory", *SQL_BACKENDS])
@@ -157,6 +161,7 @@ async def stores(request: pytest.FixtureRequest) -> AsyncIterator[Stores]:
             InMemoryManifestCopier(repository=manifests),
             InMemoryStoredArticles(repository=manifests),
             InMemoryInstructionFiles(repository=manifests),
+            InMemoryArticleCounts(manifests=manifests),
         )
     else:
         if request.param == "postgres":
@@ -177,6 +182,7 @@ async def stores(request: pytest.FixtureRequest) -> AsyncIterator[Stores]:
                 SqliteManifestCopier(engine=container.engine),
                 SqliteStoredArticles(engine=container.engine),
                 SqliteInstructionFiles(engine=container.engine),
+                SqliteArticleCounts(engine=container.engine),
             )
             await found.libraries.save(PAYMENTS)
             yield found
@@ -291,6 +297,30 @@ async def test_get_active_many_returns_active_manifests_only_and_copes_with_many
     assert {k: m.id for k, m in found.items()} == {(PAYMENTS.id, VersionRef("main")): "m1"}
     assert all(m.entries == () for m in found.values())
     assert await stores.manifests.get_active_many([]) == {}
+
+
+async def test_article_counts_are_the_active_manifests_entries_for_many_versions(
+    stores: Stores,
+) -> None:
+    await store(stores, manifest("m1", "main", "aaa111", entry("a.md", "b1"), entry("b.md", "b2")))
+    await store(stores, manifest("m2", "main", "bbb222", *(entry(f"{n}.md", "b3") for n in "cde")))
+    await store(stores, manifest("m3", "v1", "ccc333", entry("a.md", "b1"), kind=RefKind.TAG))
+    await store(stores, manifest("m4", "dev", "ddd444", entry("a.md", "b1")))
+    await stores.manifests.activate(ManifestId("m1"), at=T0)
+    await stores.manifests.activate(ManifestId("m3"), at=T0)  # m2 and "dev" stay pending
+    asked = [
+        (PAYMENTS.id, VersionRef("main")),
+        (PAYMENTS.id, VersionRef("v1")),
+        (PAYMENTS.id, VersionRef("dev")),
+        *((PAYMENTS.id, VersionRef(f"ghost{i}")) for i in range(900)),  # more than one batch
+    ]
+
+    found = await stores.article_counts.count_articles(asked)
+
+    assert found == {(PAYMENTS.id, VersionRef("main")): 2, (PAYMENTS.id, VersionRef("v1")): 1}
+    assert await stores.article_counts.count_articles([]) == {}
+    await stores.manifests.activate(ManifestId("m2"), at=T0 + timedelta(hours=1))
+    assert await stores.article_counts.count_articles(asked[:1]) == {asked[0]: 3}
 
 
 async def test_a_pending_manifest_is_invisible_until_it_is_activated(stores: Stores) -> None:

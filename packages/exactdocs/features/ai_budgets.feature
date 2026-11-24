@@ -37,3 +37,18 @@ Feature: LLM usage is limited by budgets and rate limits
     When the HTTP server reads the AI usage
     Then the spend of the stdio process is included
     And the instance's budget is reduced by it for every process
+
+  Scenario: Operators read the spend history per day, zero-filled
+    Given the instance spent on November 3 and twice on November 20
+    When the admin reads the instance's daily spend history from November 1 to November 23
+    Then there is one entry per day with tokens, calls and US dollars
+    And the days without spend show nothing spent
+
+  Scenario: Operators read the spend history per month
+    Given the instance spent on November 3 and twice on November 20
+    When the admin reads the instance's monthly spend history from September to November
+    Then November shows the month's spend and the earlier months nothing
+
+  Scenario: A spend history longer than the bound is refused
+    When the admin reads the instance's daily spend history over 367 days
+    Then the request is refused as an invalid spend history
