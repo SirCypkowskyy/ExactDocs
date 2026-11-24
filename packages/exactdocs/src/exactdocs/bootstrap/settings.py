@@ -42,7 +42,7 @@ from exactdocs.bootstrap.constants import (
     SETTINGS_FILE_VARIABLE,
 )
 from exactdocs.identity.adapters.driven.oidc import secure_url
-from exactdocs.identity.constants import PROVIDER_NAME_PATTERN
+from exactdocs.identity.constants import LOCAL_SIGN_IN, PROVIDER_NAME_PATTERN
 from exactdocs.identity.errors import InvalidUsernameError
 from exactdocs.identity.models import Username
 from exactdocs.retrieval.constants import (
@@ -777,7 +777,7 @@ class AuthSettings(BaseModel):
     @field_validator("providers")
     @classmethod
     def _names(cls, value: dict[str, SignInProviderSettings]) -> dict[str, SignInProviderSettings]:
-        """Refuse provider names that cannot go in a URL or a username.
+        """Refuse provider names that cannot go in a URL or a username, or that name local accounts.
 
         Args:
             value: The providers, by name.
@@ -786,11 +786,15 @@ class AuthSettings(BaseModel):
             The providers, unchanged.
 
         Raises:
-            ValueError: A name is not lower-case ``[a-z0-9-]``.
+            ValueError: A name is not lower-case ``[a-z0-9-]``, or is ``LOCAL_SIGN_IN`` (the users
+                list's filter value for local accounts).
         """
         for name in value:
             if not re.fullmatch(PROVIDER_NAME_PATTERN, name):
                 message = f"provider name {name!r} must be lower-case letters, digits and hyphens"
+                raise ValueError(message)
+            if name == LOCAL_SIGN_IN:
+                message = f"provider name {name!r} is taken: it names local (password) accounts"
                 raise ValueError(message)
         return value
 

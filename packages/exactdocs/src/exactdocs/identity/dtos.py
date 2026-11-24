@@ -15,7 +15,9 @@ from pydantic import (
 )
 
 from exactdocs.identity.constants import (
+    ALL_TOKENS_SORT_FIELDS,
     GRANT_SORT_FIELDS,
+    LOCAL_SIGN_IN,
     MAX_PASSWORD_LENGTH,
     MAX_RETURN_TO_LENGTH,
     MAX_TOKEN_NAME_INPUT,
@@ -35,6 +37,7 @@ from exactdocs.identity.models import (
     LibraryGrant,
     LibraryRole,
     SignInPolicy,
+    activity_hour,
 )
 from exactdocs_kernel import (
     DEFAULT_LIMIT,
@@ -262,14 +265,25 @@ class UserSummary(AccountSummary):
     """`true` while the account is disabled: it cannot sign in, and its sessions and tokens are
     refused."""
     provider: str | None = None
-    """The sign-in provider the account signs in through; `null` for a local account (password)."""
+    """The sign-in provider the account signs in through; `null` for a local account (password).
+    An account created through a provider keeps that provider here."""
     groups: list[str] = Field(default_factory=list)
     """The account's groups at its identity provider, as of its latest sign-in or revalidation
     (with the provider's `group_prefix`); empty for a local account."""
+    last_active_at: datetime | None = None
+    """The hour (UTC, minutes always zero) of the account's latest sign-in or request with one
+    of its sessions or API tokens; `null` while it has not been active since this was recorded."""
+    token_count: int = 0
+    """How many API tokens the account holds that have not expired."""
 
     @classmethod
     def from_model(
-        cls, account: Account, *, provider: str | None = None, groups: list[str] | None = None
+        cls,
+        account: Account,
+        *,
+        provider: str | None = None,
+        groups: list[str] | None = None,
+        token_count: int = 0,
     ) -> Self:
         """Map a domain entity to its boundary representation.
 
@@ -277,11 +291,13 @@ class UserSummary(AccountSummary):
             account: The account.
             provider: The provider of an external account.
             groups: The groups of an external account.
+            token_count: How many live API tokens the account holds.
 
         Returns:
-            Its summary, with when it was created, whether it is disabled, and where it signs
-            in.
+            Its summary, with when it was created, whether it is disabled, where it signs in,
+            when it was last active (to the hour) and how many tokens it holds.
         """
+        active = account.last_active_at
         return cls(
             id=account.id,
             username=account.username.value,
@@ -290,6 +306,8 @@ class UserSummary(AccountSummary):
             disabled=account.is_disabled,
             provider=provider,
             groups=groups or [],
+            last_active_at=None if active is None else activity_hour(active),
+            token_count=token_count,
         )
 
 
@@ -311,6 +329,15 @@ class UserListQuery(_PageQuery):
     """Only accounts with one of these roles."""
     disabled: bool | None = None
     """`true`: only disabled accounts; `false`: only enabled ones."""
+    provider: list[Annotated[str, Field(max_length=MAX_NAME)]] | None = Field(
+        default=None,
+        description=(
+            f"Only accounts that sign in through one of these: `{LOCAL_SIGN_IN}` for a local "
+            "account, else the provider's name, as `provider` shows it (the provider the account "
+            "was created through); repeat for several."
+        ),
+    )
+    """Only accounts with one of these sign-in providers (``LOCAL_SIGN_IN`` for a local one)."""
 
 
 class UserList(_Dto):
@@ -536,6 +563,76 @@ class TokenList(_Dto):
 
     @classmethod
     def from_page(cls, page: Page[TokenSummary]) -> Self:
+        """Wrap a page of tokens.
+
+        Args:
+            page: The tokens and the cursor of the next page.
+
+        Returns:
+            The page at the boundary.
+        """
+        return cls(tokens=list(page.items), next_cursor=page.next_cursor, total=page.total or 0)
+
+
+class AccountTokenSummary(TokenSummary):
+    """A token as an operator sees it in the list of every token: with its owner, no secret."""
+
+    owner_id: str
+    """The id of the account that holds the token."""
+    owner: str
+    """The username of the account that holds the token."""
+
+    @classmethod
+    def of(cls, token: ApiToken, owner: str) -> Self:
+        """Map a token and its owner's username to their boundary representation.
+
+        Args:
+            token: The token.
+            owner: The username of its account.
+
+        Returns:
+            Its summary, with its owner, without the secret.
+        """
+        return cls(
+            **TokenSummary.from_model(token).model_dump(), owner_id=token.account_id, owner=owner
+        )
+
+
+class AllTokensQuery(_PageQuery):
+    """How the list of every account's tokens is filtered, sorted and paged."""
+
+    sort: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description=(
+            f"Sort by one of {', '.join(ALL_TOKENS_SORT_FIELDS)}; prefix `-` for descending. "
+            "Default: `-created_at`. A token that never expires or was never used sorts first "
+            "by `expires_at` or `last_used_at`; `owner` sorts by username. An unknown field is "
+            "a 422."
+        ),
+    )
+    """The sort field; its schema description names ``ALL_TOKENS_SORT_FIELDS``."""
+    owner_id: str | None = Field(default=None, max_length=MAX_NAME)
+    """Only the tokens of the account with this id."""
+    expired: bool | None = None
+    """`true`: only tokens whose expiry has passed (they no longer work); `false`: only the
+    others."""
+    unused: bool | None = None
+    """`true`: only tokens that never authenticated a request; `false`: only used ones."""
+
+
+class AllTokensList(_Dto):
+    """A page of every account's tokens, newest first unless sorted otherwise."""
+
+    tokens: list[AccountTokenSummary]
+    """The tokens of this page."""
+    next_cursor: str | None
+    """Pass as `cursor` to get the next page; null on the last page."""
+    total: int
+    """How many tokens match the filters, across every page."""
+
+    @classmethod
+    def from_page(cls, page: Page[AccountTokenSummary]) -> Self:
         """Wrap a page of tokens.
 
         Args:

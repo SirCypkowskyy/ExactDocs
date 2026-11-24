@@ -6,7 +6,7 @@ import re
 import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import NewType
 from urllib.parse import urlsplit
@@ -101,6 +101,9 @@ class Account:
     """When the account was created."""
     disabled_at: datetime | None = None
     """When an operator disabled the account; ``None`` while it may sign in."""
+    last_active_at: datetime | None = None
+    """The hour (UTC, see ``activity_hour``) of the account's latest sign-in or authenticated
+    request; ``None`` while it was never active (or not since activity was recorded)."""
 
     @property
     def is_disabled(self) -> bool:
@@ -120,6 +123,17 @@ class Account:
         """
         return self.password_hash is None
 
+    def activity_due(self, now: datetime) -> bool:
+        """Whether activity at ``now`` moves the recorded hour forward (once per hour at most).
+
+        Args:
+            now: When the account was active.
+
+        Returns:
+            ``True`` when ``now`` falls in a later hour than the recorded one, or none is.
+        """
+        return self.last_active_at is None or self.last_active_at < activity_hour(now)
+
     @property
     def is_operator(self) -> bool:
         """Whether the account manages the instance's local accounts.
@@ -128,6 +142,18 @@ class Account:
             ``True`` for an ``admin``.
         """
         return self.role is Role.ADMIN
+
+
+def activity_hour(moment: datetime) -> datetime:
+    """Return the hour an account's activity is recorded as: kept to the hour, for privacy.
+
+    Args:
+        moment: A timezone-aware time.
+
+    Returns:
+        The start of its hour, in UTC.
+    """
+    return moment.astimezone(UTC).replace(minute=0, second=0, microsecond=0)
 
 
 def hash_token(token: str) -> str:

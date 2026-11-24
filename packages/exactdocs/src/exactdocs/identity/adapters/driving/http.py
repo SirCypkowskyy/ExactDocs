@@ -14,6 +14,7 @@ from exactdocs.identity.constants import (
     ACCESS_ASSERTION_HEADER,
     ACCESS_COOKIE,
     ACCESS_LOG_ACTION,
+    ALL_TOKENS_ACTION,
     COOKIE_ATTRS,
     CREATE_TOKEN_DESCRIPTION,
     LOGIN_FOR_TOKEN_DESCRIPTION,
@@ -27,6 +28,8 @@ from exactdocs.identity.dtos import (
     AccessLogPage,
     AccessLogQuery,
     AccountSummary,
+    AllTokensList,
+    AllTokensQuery,
     AuthenticateQuery,
     CreateFirstAdminCommand,
     CreateTokenCommand,
@@ -76,6 +79,7 @@ from exactdocs.identity.ports.driving import (
     IdentifyCaller,
     IdentifyToken,
     ListAccessLog,
+    ListAllTokens,
     ListLibraryAccessLog,
     ListLibraryGrants,
     ListTokens,
@@ -363,8 +367,10 @@ def build_users_router(
     @router.get(
         "/users",
         description=f"List the local accounts, disabled ones included, oldest first unless "
-        f"`sort` says otherwise, a page at a time. Filter with `q`, `role` and `disabled`; "
-        f"`total` counts every match. {USERS_DESCRIPTION}",
+        f"`sort` says otherwise, a page at a time. Filter with `q`, `role`, `disabled` and "
+        f"`provider`; `total` counts every match. Each account shows when it was last active "
+        f"(to the hour), where it signs in and how many live API tokens it holds; every "
+        f"account's tokens are at `GET /users/tokens`. {USERS_DESCRIPTION}",
     )
     async def get_users(query: Annotated[UserListQuery, Query()]) -> UserList:
         """List a page of the local accounts, disabled ones included.
@@ -436,6 +442,44 @@ def build_users_router(
             The account, and what became of its sign-in throttle count.
         """
         return await reset_password(ResetPasswordCommand(id=user_id, password=body.password))
+
+    return router
+
+
+def build_all_tokens_router(
+    *, list_all_tokens: ListAllTokens, session_caller: CurrentCaller
+) -> APIRouter:
+    """Expose ``GET /users/tokens``: every account's API tokens, for an operator to tidy up.
+
+    It needs a signed-in session of an ``admin`` (an API token is refused with 401, as for
+    ``/users``); anyone else gets 403.
+
+    Args:
+        list_all_tokens: The driving port that lists every token.
+        session_caller: The dependency that requires a signed-in session.
+
+    Returns:
+        The router.
+    """
+    operator = build_operator(caller=session_caller, action=ALL_TOKENS_ACTION)
+    router = APIRouter(tags=["identity"], dependencies=[Depends(operator)])
+
+    @router.get("/users/tokens", name="list_all_tokens")
+    async def get_all_tokens(query: Annotated[AllTokensQuery, Query()]) -> AllTokensList:
+        """List the API tokens of every account, newest first, never their secrets. Operators only.
+
+        Each token comes with its owner (`owner_id`, `owner`), its prefix, its expiry and its
+        last use, expired ones not yet removed included. Filter with `q` (the token's name),
+        `owner_id`, `expired` and `unused`; order with `sort`; `total` counts every match. Needs
+        a signed-in session; an API token is refused (401).
+
+        Args:
+            query: The filters, the sort, the page size and the cursor or offset.
+
+        Returns:
+            The page of tokens, its next cursor and the total.
+        """
+        return await list_all_tokens(query)
 
     return router
 

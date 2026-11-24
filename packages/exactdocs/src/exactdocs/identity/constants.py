@@ -98,10 +98,23 @@ TOKEN_NAME_DESCRIPTION: Final[str] = (
     "refused with `invalid_token_name` (422)."
 )
 """OpenAPI description of a new token's name, built from the limits so they cannot drift."""
-USER_SORT_FIELDS: Final[tuple[str, ...]] = ("created_at", "username", "role")
+USER_SORT_FIELDS: Final[tuple[str, ...]] = (
+    "created_at",
+    "username",
+    "role",
+    "last_active_at",
+    "token_count",
+)
 """What the users list can be sorted by; `created_at` (oldest first) is the default."""
+LOCAL_SIGN_IN: Final[str] = "password"
+"""The users list's `provider` filter value of a local account (it signs in with a password); no
+identity provider may take this name."""
 TOKEN_SORT_FIELDS: Final[tuple[str, ...]] = ("created_at", "name", "expires_at", "last_used_at")
 """What the token list can be sorted by; `-created_at` (newest first) is the default."""
+ALL_TOKENS_SORT_FIELDS: Final[tuple[str, ...]] = (*TOKEN_SORT_FIELDS, "owner")
+"""What the list of every account's tokens can be sorted by; `-created_at` is the default."""
+ALL_TOKENS_ACTION: Final[str] = "lists the API tokens of every account"
+"""What only an instance operator does, for the 403 of the list of every token."""
 GRANT_SORT_FIELDS: Final[tuple[str, ...]] = ("kind", "subject", "role")
 """What a library's grants can be sorted by; `kind` (users, then groups, by name) is the default."""
 ACCESS_LOG_ACTION: Final[str] = "reads the access log of every library"

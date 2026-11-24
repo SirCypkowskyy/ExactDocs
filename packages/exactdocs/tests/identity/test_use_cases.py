@@ -74,6 +74,9 @@ class RacedRepository:
     async def set_disabled_at(self, account_id: AccountId, disabled_at: datetime | None) -> bool:
         return await self.inner.set_disabled_at(account_id, disabled_at)
 
+    async def record_activity(self, account_id: AccountId, hour: datetime) -> None:
+        await self.inner.record_activity(account_id, hour)
+
 
 @pytest.fixture
 def hasher() -> FakeHasher:

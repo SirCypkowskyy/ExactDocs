@@ -97,6 +97,11 @@ def _include_session_routers(v1: APIRouter, container: Container) -> identity_ht
         )
     )
     v1.include_router(
+        identity_http.build_all_tokens_router(
+            list_all_tokens=container.identity.list_all_tokens, session_caller=session_caller
+        )
+    )
+    v1.include_router(
         identity_http.build_access_log_router(
             list_access_log=container.identity.list_access_log, session_caller=session_caller
         )

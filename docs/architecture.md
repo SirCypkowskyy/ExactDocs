@@ -606,6 +606,7 @@ erDiagram
         text username UK
         text password_hash "argon2id"
         text role
+        text last_active_at "to the hour"
     }
     identity_sessions {
         text token_hash PK "SHA-256 of the cookie"
@@ -766,7 +767,10 @@ once one does.
 goes to the browser in an HttpOnly, SameSite=Lax cookie (`Path=/api`, `Secure` over HTTPS), and
 only its SHA-256 is stored, so a leaked database holds no usable token. A session ends after
 7 days without use or 30 days in all (`models.IDLE_TIMEOUT`/`ABSOLUTE_TIMEOUT`, checked against the
-kernel `Clock`); using it writes `last_used_at` at most once an hour. Signing out deletes the row,
+kernel `Clock`); using it writes `last_used_at` at most once an hour. The account's own
+`last_active_at` (the users page, #515) is kept to the hour and moved forward by the request that
+reads the account anyway (a sign-in, a session, an API token, a provider's ID token, Cloudflare
+Access), only when the hour changed: at most one write per account and hour. Signing out deletes the row,
 so a copied cookie dies too, and a password reset (`exactdocs admin|user reset-password`, or
 `PUT /api/v1/users/{id}/password` by an operator) changes the hash first and then
 deletes all the account's sessions, then drops the username's throttle count
