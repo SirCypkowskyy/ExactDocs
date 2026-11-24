@@ -110,11 +110,14 @@ async def test_429_is_part_of_the_typed_error_shape(container: Container) -> Non
         for method, operation in operations.items()
         if "429" in operation.get("responses", {})
     }
-    # Besides the credential routes, only the import preview (busy slots, #62) and adding a
-    # library without paths (its context7.json is read under a preview slot, #63) answer 429.
+    # Besides the credential routes (and a person's own password change, which counts wrong
+    # current passwords like failed sign-ins, #505), only the import preview (busy slots, #62)
+    # and adding a library without paths (its context7.json is read under a preview slot, #63)
+    # answer 429.
     assert throttled == {
         (SESSION, "post"),
         (TOKEN_LOGIN, "post"),
+        ("/api/v1/account/password", "put"),
         ("/api/v1/repositories/preview", "post"),
         ("/api/v1/libraries", "post"),
     }

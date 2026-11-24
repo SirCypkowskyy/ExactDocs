@@ -14,6 +14,7 @@ from exactdocs.identity.ports.driven import (
 )
 from exactdocs.identity.ports.driving import (
     Authenticate,
+    ChangePassword,
     ClaimLibrary,
     CreateFirstAdmin,
     CreateToken,
@@ -21,6 +22,7 @@ from exactdocs.identity.ports.driving import (
     DropLibraryGrants,
     FinishExternalSignIn,
     GetPreferences,
+    GetProviderIcon,
     GetSessionState,
     GetSetupState,
     GrantLibraryRole,
@@ -28,6 +30,7 @@ from exactdocs.identity.ports.driving import (
     IdentifyExternalToken,
     IdentifyToken,
     ListAccessLog,
+    ListAccountProviders,
     ListLibraryAccessLog,
     ListLibraryGrants,
     ListTokens,
@@ -41,14 +44,17 @@ from exactdocs.identity.ports.driving import (
     SetUserDisabled,
     SignIn,
     SignOut,
+    StartAccountLink,
     StartExternalSignIn,
     TransferLibrary,
+    UnlinkProvider,
 )
 
 __all__ = [
     "AccessLog",
     "AccountRepository",
     "Authenticate",
+    "ChangePassword",
     "ClaimLibrary",
     "CreateFirstAdmin",
     "CreateToken",
@@ -58,6 +64,7 @@ __all__ = [
     "FailedSignInLog",
     "FinishExternalSignIn",
     "GetPreferences",
+    "GetProviderIcon",
     "GetSessionState",
     "GetSetupState",
     "GrantLibraryRole",
@@ -66,6 +73,7 @@ __all__ = [
     "IdentifyToken",
     "LibraryGrantRepository",
     "ListAccessLog",
+    "ListAccountProviders",
     "ListLibraryAccessLog",
     "ListLibraryGrants",
     "ListTokens",
@@ -85,7 +93,9 @@ __all__ = [
     "SignInAttemptRepository",
     "SignInProvider",
     "SignOut",
+    "StartAccountLink",
     "StartExternalSignIn",
     "TokenRepository",
     "TransferLibrary",
+    "UnlinkProvider",
 ]

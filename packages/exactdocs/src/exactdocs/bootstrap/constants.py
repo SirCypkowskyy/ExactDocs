@@ -430,6 +430,49 @@ _OWNER_ONLY: Final[int] = 0o600
 # ---------------------------------------------------------------- settings
 LOCAL_HOSTS: Final[tuple[str, ...]] = ("localhost", "127.0.0.1", "::1")
 """Hosts every instance accepts; anything else must be listed in EXACTDOCS_ALLOWED_HOSTS."""
+SIGN_IN_PRESETS: Final[Mapping[str, Mapping[str, object]]] = MappingProxyType(
+    {
+        "discord": MappingProxyType(
+            {
+                "display_name": "Discord",
+                "issuer": "https://discord.com",
+                "authorization_url": "https://discord.com/oauth2/authorize",
+                "token_url": "https://discord.com/api/oauth2/token",
+                "userinfo_url": "https://discord.com/api/users/@me",
+                "subject_claim": "id",
+                "username_claim": "username",
+                "scopes": ("identify", "email"),
+            }
+        ),
+        "google": MappingProxyType(
+            {
+                "display_name": "Google",
+                "issuer": "https://accounts.google.com",
+                "scopes": ("openid", "email", "profile"),
+            }
+        ),
+        "microsoft": MappingProxyType({"display_name": "Microsoft"}),
+    }
+)
+"""What the provider presets (``kind = "discord"``, ``"google"``, ``"microsoft"``) set: an
+operator gives only the client ID and secret (and Microsoft's ``tenant``). Discord is OAuth2
+(its user ID is the subject); Google and Microsoft are OpenID Connect."""
+PRESET_FIXED_FIELDS: Final[frozenset[str]] = frozenset(
+    {"issuer", "authorization_url", "token_url", "userinfo_url", "base_url", "api_url"}
+)
+"""Fields a preset sets itself: a provider of a preset kind that sets one is refused."""
+MICROSOFT_LOGIN: Final[str] = "https://login.microsoftonline.com"
+"""Microsoft Entra ID's sign-in host: tenants' issuers are ``<this>/<tenant ID>/v2.0``."""
+MICROSOFT_MULTI_TENANTS: Final[frozenset[str]] = frozenset({"common", "organizations"})
+"""Microsoft tenants that stand for many directories: tokens come from each person's own one,
+whose ID (``tid``) is in the issuer."""
+MICROSOFT_CONSUMERS: Final[str] = "consumers"
+"""Microsoft's tenant of personal accounts (Outlook.com, Xbox)."""
+MICROSOFT_CONSUMERS_TENANT_ID: Final[str] = "9188040d-6c67-4c5b-b112-36a304b66dad"
+"""The directory ID of Microsoft's personal accounts: the ``consumers`` issuer names it."""
+GOOGLE_AUTHORIZATION_PARAMS: Final[Mapping[str, str]] = MappingProxyType({"access_type": "offline"})
+"""Google sends a refresh token only when asked this way (OIDC's ``offline_access`` scope is
+refused there), and only at the person's first consent."""
 
 # ---------------------------------------------------------------- index_backends (#352)
 DATABASE_BACKEND: Final[str] = "database"

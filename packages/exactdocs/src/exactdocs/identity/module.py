@@ -27,6 +27,7 @@ from exactdocs.identity.ports.driven import (
 from exactdocs.identity.ports.driving import (
     Authenticate,
     CanCreateLibrary,
+    ChangePassword,
     ClaimLibrary,
     CreateFirstAdmin,
     CreateToken,
@@ -34,6 +35,7 @@ from exactdocs.identity.ports.driving import (
     DropLibraryGrants,
     FinishExternalSignIn,
     GetPreferences,
+    GetProviderIcon,
     GetSessionState,
     GetSetupState,
     GrantLibraryRole,
@@ -42,6 +44,7 @@ from exactdocs.identity.ports.driving import (
     IdentifyExternalToken,
     IdentifyToken,
     ListAccessLog,
+    ListAccountProviders,
     ListLibraryAccessLog,
     ListLibraryGrants,
     ListTokens,
@@ -56,12 +59,15 @@ from exactdocs.identity.ports.driving import (
     SetUserDisabled,
     SignIn,
     SignOut,
+    StartAccountLink,
     StartExternalSignIn,
     TransferLibrary,
+    UnlinkProvider,
 )
 from exactdocs.identity.use_cases import (
     AuthenticateUseCase,
     CanCreateLibraryUseCase,
+    ChangePasswordUseCase,
     ClaimLibraryUseCase,
     CreateFirstAdminUseCase,
     CreateTokenUseCase,
@@ -69,6 +75,7 @@ from exactdocs.identity.use_cases import (
     DropLibraryGrantsUseCase,
     FinishExternalSignInUseCase,
     GetPreferencesUseCase,
+    GetProviderIconUseCase,
     GetSessionStateUseCase,
     GetSetupStateUseCase,
     GrantLibraryRoleUseCase,
@@ -77,6 +84,7 @@ from exactdocs.identity.use_cases import (
     IdentifyExternalTokenUseCase,
     IdentifyTokenUseCase,
     ListAccessLogUseCase,
+    ListAccountProvidersUseCase,
     ListLibraryAccessLogUseCase,
     ListLibraryGrantsUseCase,
     ListTokensUseCase,
@@ -92,8 +100,10 @@ from exactdocs.identity.use_cases import (
     Sharing,
     SignInUseCase,
     SignOutUseCase,
+    StartAccountLinkUseCase,
     StartExternalSignInUseCase,
     TransferLibraryUseCase,
+    UnlinkProviderUseCase,
 )
 from exactdocs_kernel import Clock
 
@@ -120,6 +130,8 @@ class IdentityModule:
     """Tell the UI whether setup is due and who is signed in."""
     reset_password: ResetPassword
     """Set a new password for an account (operators only)."""
+    change_password: ChangePassword
+    """A signed-in person changes their own password (the current one checked, throttled)."""
     list_users: ListUsers
     """List every local account (operators only)."""
     create_user: CreateUser
@@ -141,7 +153,15 @@ class IdentityModule:
     start_external_sign_in: StartExternalSignIn
     """Start a sign-in through a configured identity provider."""
     finish_external_sign_in: FinishExternalSignIn
-    """Finish an external sign-in (the provider's callback) and start a session."""
+    """Finish an external sign-in (the provider's callback) and start a session, or a link."""
+    get_provider_icon: GetProviderIcon
+    """Return a provider's own icon, for ExactDocs to serve."""
+    list_account_providers: ListAccountProviders
+    """List the signed-in account's providers, linked or not."""
+    start_account_link: StartAccountLink
+    """Start linking an identity of a provider to the signed-in account."""
+    unlink_provider: UnlinkProvider
+    """Unlink the signed-in account's identity of a provider (never its last way in)."""
     revalidate_external_accounts: RevalidateExternalAccounts
     """Check again the memberships of the external identities that are due."""
     can_create_library: CanCreateLibrary
@@ -271,6 +291,14 @@ class IdentityModule:
                 hasher=hasher,
                 failures=failures,
             ),
+            change_password=ChangePasswordUseCase(
+                accounts=repository,
+                sessions=sessions,
+                hasher=hasher,
+                authenticate=authenticate,
+                failures=failures,
+                clock=clock,
+            ),
             list_users=ListUsersUseCase(accounts=repository, externals=externals),
             create_user=CreateUserUseCase(
                 accounts=repository, hasher=hasher, failures=failures, clock=clock
@@ -304,8 +332,23 @@ class IdentityModule:
                 accounts=repository,
                 externals=externals,
                 sessions=sessions,
+                identify_caller=identify_caller,
                 box=box,
                 clock=clock,
+            ),
+            get_provider_icon=GetProviderIconUseCase(policies=policies),
+            list_account_providers=ListAccountProvidersUseCase(
+                policies=policies, accounts=repository, externals=externals
+            ),
+            start_account_link=StartAccountLinkUseCase(
+                providers=providers,
+                policies=policies,
+                attempts=attempts,
+                externals=externals,
+                clock=clock,
+            ),
+            unlink_provider=UnlinkProviderUseCase(
+                policies=policies, accounts=repository, externals=externals
             ),
             revalidate_external_accounts=RevalidateExternalAccountsUseCase(
                 providers=providers,

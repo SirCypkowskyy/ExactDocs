@@ -3,6 +3,7 @@ from collections.abc import Sequence
 from exactdocs_kernel import (
     BusyError,
     ConflictError,
+    DomainError,
     ForbiddenError,
     NotFoundError,
     RateLimitedError,
@@ -46,6 +47,19 @@ class InvalidCredentialsError(UnauthenticatedError):
     def __init__(self) -> None:
         """Create the error with its fixed message."""
         super().__init__("invalid username or password")
+
+
+class WrongPasswordError(ForbiddenError):
+    """A signed-in person gave a wrong current password while changing it.
+
+    Not ``InvalidCredentialsError``: the caller stays signed in (a 401 would read as signed out).
+    """
+
+    code = "wrong_password"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__("the current password is wrong")
 
 
 class NotSignedInError(UnauthenticatedError):
@@ -385,3 +399,93 @@ class InvalidPreferencesError(ValidationError):
             reason: Which preference is wrong, and what it may be.
         """
         super().__init__(reason)
+
+
+class NoLinkedAccountError(ForbiddenError):
+    """A provider that creates no accounts vouched for an identity no account has linked."""
+
+    code = "not_linked"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__(
+            "no account is linked to this identity: sign in another way and link it under "
+            "Account settings"
+        )
+
+
+class IdentityLinkedElsewhereError(ConflictError):
+    """The identity a person tried to link to their account is linked to another account."""
+
+    code = "identity_linked_elsewhere"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__("this identity is linked to another account")
+
+
+class ProviderAlreadyLinkedError(ConflictError):
+    """The account has an identity of this provider already (one per provider)."""
+
+    code = "provider_linked"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__("an identity of this provider is linked to the account already")
+
+
+class ProviderNotLinkedError(NotFoundError):
+    """The account has no identity of this provider to unlink."""
+
+    code = "provider_not_linked"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__("no identity of this provider is linked to the account")
+
+
+class LastSignInMethodError(ConflictError):
+    """Unlinking would take away the account's way in: the provider it was created through.
+
+    An account without a password follows that provider (its role, groups and access), so it
+    stays linked whatever else is.
+    """
+
+    code = "last_sign_in_method"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__(
+            "the account has no password and was created through this provider, which it signs "
+            "in with and follows: it cannot be unlinked"
+        )
+
+
+class NoProviderIconError(NotFoundError):
+    """The provider has no icon of its own for ExactDocs to serve (none, or a built-in one)."""
+
+    code = "no_icon"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__("this sign-in provider has no icon of its own")
+
+
+class LinkRefusedError(DomainError):
+    """A link from Account settings came back from the provider and was refused.
+
+    Carries where the browser goes back to (the link's ``return_to``) and why (``refusal``);
+    the error's own code is the refusal's.
+    """
+
+    def __init__(self, refusal: DomainError, return_to: str) -> None:
+        """Wrap the refusal.
+
+        Args:
+            refusal: Why the link was refused.
+            return_to: The same-origin path the link was started from.
+        """
+        super().__init__(str(refusal))
+        self.code = refusal.code
+        self.refusal = refusal
+        self.return_to = return_to

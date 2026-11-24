@@ -2,9 +2,9 @@
 
 from collections.abc import Awaitable, Callable
 from typing import Annotated, Literal
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit, urlunsplit
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import SecretStr
@@ -14,24 +14,33 @@ from exactdocs.identity.constants import (
     ACCESS_ASSERTION_HEADER,
     ACCESS_COOKIE,
     ACCESS_LOG_ACTION,
+    CHANGE_PASSWORD_DESCRIPTION,
     COOKIE_ATTRS,
     CREATE_TOKEN_DESCRIPTION,
+    ICON_CACHE_SECONDS,
+    ICON_SECURITY_POLICY,
+    LINK_PROVIDER_DESCRIPTION,
     LOGIN_FOR_TOKEN_DESCRIPTION,
     SESSION_COOKIE,
     SIGN_IN_COOKIE,
     SIGN_IN_COOKIE_PATH,
     SIGN_IN_PAGE,
+    UNLINK_PROVIDER_DESCRIPTION,
     USERS_DESCRIPTION,
 )
 from exactdocs.identity.dtos import (
     AccessLogPage,
     AccessLogQuery,
+    AccountLinkStart,
     AccountPreferences,
+    AccountProviders,
     AccountSummary,
     AuthenticateQuery,
+    ChangePasswordCommand,
     CreateFirstAdminCommand,
     CreateTokenCommand,
     CreateUserCommand,
+    ExternalSignInResult,
     FinishExternalSignInCommand,
     GetPreferencesQuery,
     GrantLibraryRoleCommand,
@@ -53,6 +62,8 @@ from exactdocs.identity.dtos import (
     SavePreferencesCommand,
     SessionState,
     SetUserDisabledCommand,
+    StartAccountLinkCommand,
+    StartAccountLinkRequest,
     StartExternalSignInCommand,
     TokenGrant,
     TokenList,
@@ -64,23 +75,27 @@ from exactdocs.identity.dtos import (
 )
 from exactdocs.identity.errors import (
     InvalidTokenError,
+    LinkRefusedError,
     NotAnOperatorError,
     NotSignedInError,
     UnknownSignInProviderError,
 )
 from exactdocs.identity.models import Role
 from exactdocs.identity.ports.driving import (
+    ChangePassword,
     CreateFirstAdmin,
     CreateToken,
     CreateUser,
     FinishExternalSignIn,
     GetPreferences,
+    GetProviderIcon,
     GetSessionState,
     GrantLibraryRole,
     IdentifyAccessCaller,
     IdentifyCaller,
     IdentifyToken,
     ListAccessLog,
+    ListAccountProviders,
     ListLibraryAccessLog,
     ListLibraryGrants,
     ListTokens,
@@ -93,8 +108,10 @@ from exactdocs.identity.ports.driving import (
     SetUserDisabled,
     SignIn,
     SignOut,
+    StartAccountLink,
     StartExternalSignIn,
     TransferLibrary,
+    UnlinkProvider,
 )
 from exactdocs_kernel import DomainError
 
@@ -310,6 +327,126 @@ def build_tokens_router(
             account: The signed-in account.
         """
         await revoke_token(account, token_id)
+
+    return router
+
+
+def build_account_router(
+    *,
+    change_password: ChangePassword,
+    list_account_providers: ListAccountProviders,
+    start_account_link: StartAccountLink,
+    unlink_provider: UnlinkProvider,
+    session_caller: CurrentCaller,
+    secure_cookies: bool,
+) -> APIRouter:
+    """Expose ``/account``: what a signed-in person does with their own account.
+
+    Every route needs a signed-in session (an API token is refused with 401, as for ``/tokens``:
+    a leaked token must not change the password of the account it acts as, nor link an identity
+    that signs in as it).
+
+    Args:
+        change_password: The driving port that changes the caller's own password.
+        list_account_providers: The driving port that lists the caller's sign-in providers.
+        start_account_link: The driving port that starts linking a provider.
+        unlink_provider: The driving port that unlinks a provider.
+        session_caller: The dependency that requires a signed-in session.
+        secure_cookies: Whether the link's binding cookie is always ``Secure``.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["identity"], dependencies=[Depends(session_caller)])
+    caller = Annotated[AccountSummary, Depends(session_caller)]
+
+    @router.get("/account/providers")
+    async def get_providers(account: caller) -> AccountProviders:
+        """List the signed-in account's ways to sign in: its password and every provider.
+
+        Each configured provider says whether an identity of it is linked and whether it may
+        be linked or unlinked now; an identity of a provider no longer configured is listed
+        last, to be unlinked.
+
+        Args:
+            account: The signed-in account.
+
+        Returns:
+            Whether the account has a password, and its providers.
+        """
+        return await list_account_providers(account)
+
+    @router.post("/account/providers/{provider}/link", description=LINK_PROVIDER_DESCRIPTION)
+    async def link_provider(
+        provider: str,
+        account: caller,
+        request: Request,
+        response: Response,
+        body: StartAccountLinkRequest | None = None,
+    ) -> AccountLinkStart:
+        """Start linking an identity of a provider to the signed-in account.
+
+        Args:
+            provider: The provider's name.
+            account: The signed-in account.
+            request: The HTTP request, for the session cookie and the scheme.
+            response: The HTTP response, for the binding cookie.
+            body: Where to come back to (default: Account settings).
+
+        Returns:
+            Where the browser goes next.
+        """
+        command = StartAccountLinkCommand(
+            provider=provider, return_to=None if body is None else body.return_to
+        )
+        begun = await start_account_link(account, command, request.cookies.get(SESSION_COOKIE))
+        response.headers["Cache-Control"] = "no-store"
+        response.set_cookie(
+            SIGN_IN_COOKIE,
+            begun.binding.get_secret_value(),
+            max_age=begun.max_age,
+            path=SIGN_IN_COOKIE_PATH,
+            httponly=True,
+            samesite="lax",
+            secure=secure_cookies or request.url.scheme == "https",
+        )
+        return AccountLinkStart(redirect_url=begun.redirect_url)
+
+    @router.delete("/account/providers/{provider}", description=UNLINK_PROVIDER_DESCRIPTION)
+    async def delete_provider(provider: str, account: caller) -> AccountProviders:
+        """Unlink the signed-in account's identity of a provider.
+
+        Args:
+            provider: The provider's name.
+            account: The signed-in account.
+
+        Returns:
+            The account's providers afterwards.
+        """
+        return await unlink_provider(account, provider)
+
+    @router.put(
+        "/account/password",
+        status_code=204,
+        responses=_THROTTLED,
+        description=CHANGE_PASSWORD_DESCRIPTION,
+    )
+    async def put_password(
+        command: ChangePasswordCommand, account: caller, request: Request
+    ) -> None:
+        """Change the signed-in account's own password.
+
+        Args:
+            command: The current password and the new one.
+            account: The signed-in account.
+            request: The HTTP request, for the session cookie and the client address.
+        """
+        await change_password(
+            account,
+            command,
+            session_token=request.cookies.get(SESSION_COOKIE),
+            client=client_address(request),
+        )
 
     return router
 
@@ -639,7 +776,9 @@ def build_external_sign_in_router(
     callback another browser started (login CSRF) or one already used is refused. A refusal
     redirects to the sign-in page with ``?error=<code>``; a success sets the session cookie
     (exactly as a password sign-in does) and redirects to the path the sign-in was started
-    for. An unknown provider is a 404.
+    for. A link started from Account settings comes back to the same callback: it sets no
+    cookie and redirects to where it was started from, with ``?linked=<provider>`` or
+    ``?link_error=<code>``. An unknown provider is a 404.
 
     Args:
         start_external_sign_in: The driving port that starts the sign-in.
@@ -661,22 +800,6 @@ def build_external_sign_in_router(
             ``True`` when forced, or when the request came over HTTPS.
         """
         return secure_cookies or request.url.scheme == "https"
-
-    def refused(error: DomainError) -> RedirectResponse:
-        """Send the browser back to the sign-in page, naming the refusal by its code.
-
-        Only the code travels (never a message), so nobody can craft a link that shows the
-        sign-in page saying something else.
-
-        Args:
-            error: Why the sign-in was refused.
-
-        Returns:
-            The redirect.
-        """
-        return _no_store(
-            RedirectResponse(f"{SIGN_IN_PAGE}?{urlencode({'error': error.code})}", status_code=303)
-        )
 
     @router.get(
         "/auth/{provider}/start",
@@ -712,7 +835,7 @@ def build_external_sign_in_router(
         except UnknownSignInProviderError:
             raise
         except DomainError as error:
-            return refused(error)
+            return _refused(error)
         response = _no_store(RedirectResponse(begun.redirect_url, status_code=303))
         response.set_cookie(
             SIGN_IN_COOKIE,
@@ -729,7 +852,12 @@ def build_external_sign_in_router(
         "/auth/{provider}/callback",
         status_code=303,
         response_class=RedirectResponse,
-        responses={303: {"description": "Signed in, or back to the sign-in page with `?error=`"}},
+        responses={
+            303: {
+                "description": "Signed in, or back to the sign-in page with `?error=`; after a "
+                "link, back to where it started, with `?linked=` or `?link_error=`"
+            }
+        },
     )
     async def callback(
         provider: str,
@@ -738,12 +866,15 @@ def build_external_sign_in_router(
         state: Annotated[str | None, Query(max_length=512)] = None,
         error: Annotated[str | None, Query(max_length=256)] = None,
     ) -> RedirectResponse:
-        """Finish signing in: the identity provider sends the browser here.
+        """Finish signing in (or linking): the identity provider sends the browser here.
 
         The binding cookie is cleared whatever happens. Refusals go back to the sign-in page
         with `?error=` and one of `sign_in_failed`, `sign_in_cancelled`, `not_allowed`,
-        `account_disabled`, `username_unavailable` or `provider_unavailable`; no session is
-        created then.
+        `not_linked` (the provider creates no accounts, and nobody linked this identity),
+        `account_disabled`, `username_unavailable`, `provider_access_revoked` or
+        `provider_unavailable`; no session is created then. A link started from Account
+        settings goes back to where it started, with `?linked=<provider>` or
+        `?link_error=<code>`, and leaves the session as it was.
 
         Args:
             provider: The provider's name.
@@ -771,16 +902,9 @@ def build_external_sign_in_router(
         except UnknownSignInProviderError:
             raise
         except DomainError as refusal:
-            response = refused(refusal)
+            response = _refused(refusal)
         else:
-            response = _no_store(RedirectResponse(result.return_to, status_code=303))
-            response.set_cookie(
-                SESSION_COOKIE,
-                result.session.token.get_secret_value(),
-                max_age=result.session.max_age,
-                secure=secure(request),
-                **COOKIE_ATTRS,
-            )
+            response = _finished(result, secure=secure(request))
         response.delete_cookie(
             SIGN_IN_COOKIE,
             path=SIGN_IN_COOKIE_PATH,
@@ -791,6 +915,120 @@ def build_external_sign_in_router(
         return response
 
     return router
+
+
+def build_provider_icon_router(*, get_provider_icon: GetProviderIcon) -> APIRouter:
+    """Expose ``/auth/{provider}/icon``: a provider's own icon, for the sign-in page.
+
+    Reachable without a caller (the sign-in page shows it to people not signed in yet).
+
+    Args:
+        get_provider_icon: The driving port that returns a provider's own icon.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["identity"])
+
+    @router.get(
+        "/auth/{provider}/icon",
+        response_class=Response,
+        responses={
+            200: {
+                "description": "The icon (PNG, WebP or a sanitised SVG)",
+                "content": {"image/png": {}, "image/webp": {}, "image/svg+xml": {}},
+            },
+            304: {"description": "The browser's copy is current (`If-None-Match`)"},
+        },
+    )
+    async def icon(
+        provider: str, if_none_match: Annotated[str | None, Header(max_length=256)] = None
+    ) -> Response:
+        """Serve a provider's own icon, from this server (never from the provider's).
+
+        Only for a provider with an operator's `icon_file` (its `icon_url`); a built-in icon
+        (`icon`) is the web UI's own, and anything else is `no_icon` (404). The response may be
+        cached: its URL carries the icon's version, which is also its ETag.
+
+        Args:
+            provider: The provider's name.
+            if_none_match: The ETag of the browser's copy, if any.
+
+        Returns:
+            The icon, or 304 when the browser has it already.
+        """
+        found = await get_provider_icon(provider)
+        etag = f'"{found.version}"'
+        headers = {
+            "Cache-Control": f"public, max-age={ICON_CACHE_SECONDS}",
+            "ETag": etag,
+            "Content-Security-Policy": ICON_SECURITY_POLICY,
+            "X-Content-Type-Options": "nosniff",
+            "Cross-Origin-Resource-Policy": "same-origin",
+        }
+        if if_none_match is not None and etag in {t.strip() for t in if_none_match.split(",")}:
+            return Response(status_code=304, headers=headers)
+        return Response(content=found.content, media_type=found.media_type, headers=headers)
+
+    return router
+
+
+def _refused(error: DomainError) -> RedirectResponse:
+    """Send the browser back to the sign-in page, or a refused link to where it started.
+
+    Only the code travels (never a message), so nobody can craft a link that shows the
+    sign-in page saying something else.
+
+    Args:
+        error: Why the sign-in (or the link: ``LinkRefusedError``) was refused.
+
+    Returns:
+        The redirect: ``/sign-in?error=<code>``, or ``<return_to>?link_error=<code>``.
+    """
+    if isinstance(error, LinkRefusedError):
+        location = _with_query(error.return_to, link_error=error.code)
+    else:
+        location = f"{SIGN_IN_PAGE}?{urlencode({'error': error.code})}"
+    return _no_store(RedirectResponse(location, status_code=303))
+
+
+def _finished(result: ExternalSignInResult, *, secure: bool) -> RedirectResponse:
+    """Answer a finished sign-in (with its session cookie) or link (with ``?linked=``).
+
+    Args:
+        result: What the callback came to.
+        secure: Whether the session cookie gets the ``Secure`` attribute.
+
+    Returns:
+        The redirect.
+    """
+    if result.session is None:
+        location = _with_query(result.return_to, linked=result.linked or "")
+        return _no_store(RedirectResponse(location, status_code=303))
+    response = _no_store(RedirectResponse(result.return_to, status_code=303))
+    response.set_cookie(
+        SESSION_COOKIE,
+        result.session.token.get_secret_value(),
+        max_age=result.session.max_age,
+        secure=secure,
+        **COOKIE_ATTRS,
+    )
+    return response
+
+
+def _with_query(path: str, **params: str) -> str:
+    """Add query parameters to a same-origin path that may have a query already.
+
+    Args:
+        path: The path (``safe_return_to`` checked it when the link started).
+        **params: The parameters to add.
+
+    Returns:
+        The path with the parameters.
+    """
+    parts = urlsplit(path)
+    query = "&".join(q for q in (parts.query, urlencode(params)) if q)
+    return urlunsplit(("", "", parts.path, query, parts.fragment))
 
 
 def _no_store(response: RedirectResponse) -> RedirectResponse:

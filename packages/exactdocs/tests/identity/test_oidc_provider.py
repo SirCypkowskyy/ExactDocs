@@ -520,3 +520,84 @@ async def test_an_answer_over_the_size_limit_is_refused_while_it_streams(
     if length is not None:
         assert body.sent == 0
     assert body.closed
+
+
+# ---------------------------------------------------------------- multi-tenant issuers
+
+TENANT = "11111111-2222-3333-4444-555555555555"
+OTHER_TENANT = "99999999-8888-7777-6666-555555555555"
+TEMPLATE = f"{ISSUER}/{{tenantid}}/v2.0"
+
+
+@pytest.fixture
+async def tenants() -> AsyncIterator[Setup]:
+    clock = Clock()
+    issuer = FakeIssuer(now=clock.now, discovered_issuer=TEMPLATE, token_issuer=TEMPLATE)
+    issuer.add_user("u-1", "alice@contoso.com", tenant=TENANT)
+    issuer.add_user("u-2", "bob@fabrikam.com", tenant=OTHER_TENANT)
+    async with httpx2.AsyncClient(transport=issuer.transport()) as client:
+        provider = OidcProvider(
+            issuer=TEMPLATE,
+            discovery_url=f"{ISSUER}/.well-known/openid-configuration",
+            client_id=CLIENT_ID,
+            client_secret=lambda: CLIENT_SECRET,
+            redirect_uri=REDIRECT,
+            scopes=("openid", "profile", "email", "offline_access"),
+            client=client,
+            clock=clock,
+        )
+        yield Setup(issuer=issuer, provider=provider, clock=clock)
+
+
+async def test_a_multi_tenant_issuer_names_each_persons_tenant(tenants: Setup) -> None:
+    alice = await sign_in(tenants, "u-1")
+    bob = await sign_in(tenants, "u-2")
+
+    assert alice.claims.issuer == f"{ISSUER}/{TENANT}/v2.0"
+    assert bob.claims.issuer == f"{ISSUER}/{OTHER_TENANT}/v2.0"
+    assert tenants.issuer.discovery_fetches == 1
+
+
+async def test_a_token_whose_issuer_is_not_its_tenants_is_refused(tenants: Setup) -> None:
+    def other_tid(_: dict[str, Any], claims: dict[str, Any]) -> None:
+        claims["tid"] = OTHER_TENANT  # iss still names TENANT
+
+    tenants.issuer.tamper = other_tid
+    with pytest.raises(ExternalSignInFailedError):
+        await sign_in(tenants, "u-1")
+
+
+@pytest.mark.parametrize("tid", [None, "contoso.onmicrosoft.com", "../evil", 7])
+async def test_a_multi_tenant_token_without_a_tenant_id_is_refused(
+    tenants: Setup, tid: object
+) -> None:
+    def set_tid(_: dict[str, Any], claims: dict[str, Any]) -> None:
+        claims["iss"] = TEMPLATE.replace("{tenantid}", str(tid))
+        if tid is None:
+            claims.pop("tid", None)
+        else:
+            claims["tid"] = tid
+
+    tenants.issuer.tamper = set_tid
+    with pytest.raises(ExternalSignInFailedError):
+        await sign_in(tenants, "u-1")
+
+
+async def test_a_multi_tenant_refresh_needs_an_id_token(tenants: Setup) -> None:
+    grant = await sign_in(tenants, "u-1")
+    again = await tenants.provider.refresh(grant.refresh_token, subject="u-1")
+    assert again.claims.issuer == f"{ISSUER}/{TENANT}/v2.0"
+
+    tenants.issuer.refresh_id_token = False  # userinfo names no tenant
+    with pytest.raises(ProviderUnavailableError):
+        await tenants.provider.refresh(grant.refresh_token, subject="u-1")
+
+
+async def test_extra_authorization_params_never_replace_the_flows_own(setup: Setup) -> None:
+    provider = setup.provider
+    provider.authorization_params = {"access_type": "offline", "state": "forged"}
+
+    url = await provider.authorization_url(state="s-1", nonce="n-1", code_verifier="v" * 64)
+
+    query = {k: v[0] for k, v in parse_qs(urlsplit(url).query).items()}
+    assert (query["access_type"], query["state"]) == ("offline", "s-1")
