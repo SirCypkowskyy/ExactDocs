@@ -95,6 +95,18 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `kind`, `role` and `sort`; and the users page and the token list their `q`, `sort` and
   filters. The libraries, versions, jobs, articles and grants lists fetch the next page ahead,
   so "Load more" shows it without waiting.
+- **Sizes on the lists** (#513): each entry of `GET /libraries/{owner}/{repo}/versions` carries
+  `articles` (the entries of the version's active manifest, what `list_articles` lists),
+  `chunks` (the chunks they are cut into for search, one per article path that holds it) and
+  `embedded_chunks` (of those, the ones with a vector from the configured embedding model, in
+  its current space). Each library of `GET /libraries` (and of the MCP `list_libraries`)
+  carries `article_count`: the articles of its **default version**, the one `/owner/repo`
+  resolves to. A count is 0, never null, when there is nothing to count: a library without a
+  version, a version not indexed, `embedded_chunks` while no embedding model or vector store is
+  configured, or while the configured model has no space yet or no vector of the version (a
+  library with AI off is never sent to it). The counts are read once per page whatever its size
+  (a grouped query per domain, no request or query per version), so the versions table and the
+  overview need one request.
 - **Close matches**: a 404 for a missing article lists up to five paths of the same version it may have
   meant in `close_matches` (repository data, not instructions); the field is empty on every other error.
 - **Taken IDs**: a 409 `library_id_taken` (checking a repository, adding a library) names the

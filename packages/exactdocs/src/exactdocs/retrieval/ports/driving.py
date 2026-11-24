@@ -13,6 +13,7 @@ from exactdocs.retrieval.dtos import (
     ChunkOut,
     ChunkSetsOut,
     CollectChunksCommand,
+    CountVersionChunksQuery,
     DiscardPendingChunksCommand,
     EmbedBatchCommand,
     EmbeddedBatchOut,
@@ -61,6 +62,7 @@ from exactdocs.retrieval.dtos import (
     UnembeddedVersionsOut,
     UnembeddedVersionsQuery,
     VectorStoreStateOut,
+    VersionChunkCounts,
 )
 from exactdocs.retrieval.ports.driven import AnswerProgress
 
@@ -703,6 +705,24 @@ class EstimateEmbedding(Protocol):
 
         Returns:
             The estimate.
+        """
+        ...
+
+
+class CountVersionChunks(Protocol):
+    """Count the chunks of some versions of a library and those embedded, at once (#513)."""
+
+    async def __call__(self, query: CountVersionChunksQuery) -> VersionChunkCounts:
+        """Run the use case.
+
+        Args:
+            query: The library and the refs.
+
+        Returns:
+            The counts by ref.
+
+        Raises:
+            UnknownLibraryError: The library is hidden from this caller.
         """
         ...
 

@@ -78,6 +78,7 @@ from exactdocs.retrieval.dtos import (
     ChunkOut,
     ChunkSetsOut,
     CollectChunksCommand,
+    CountVersionChunksQuery,
     CoverageOut,
     DiscardPendingChunksCommand,
     DocSectionOut,
@@ -138,6 +139,8 @@ from exactdocs.retrieval.dtos import (
     UnembeddedVersionsOut,
     UnembeddedVersionsQuery,
     VectorStoreStateOut,
+    VersionChunkCounts,
+    VersionChunksOut,
     VersionRefOut,
 )
 from exactdocs.retrieval.errors import (
@@ -7187,6 +7190,75 @@ class GetEmbeddingProgressUseCase:
                 )
             )
         return EmbeddingProgressOut(model=model, spaces=progress)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CountVersionChunksUseCase:
+    """Implements ``ports.driving.CountVersionChunks`` (#513).
+
+    A fixed number of queries, whatever the number of versions: no query per version.
+    """
+
+    runs: EmbeddingRuns
+    """The indexed manifests, which are active, and the configured model's space."""
+    access: AccessPolicy
+    """Library roles: what the caller may do with the library."""
+
+    async def __call__(self, query: CountVersionChunksQuery) -> VersionChunkCounts:
+        """Count the chunks of the versions' active manifests and those embedded.
+
+        Args:
+            query: The library and the refs.
+
+        Returns:
+            The counts by ref; 0 and 0 for a ref with no indexed active manifest. A library
+            hidden from the caller raises ``UnknownLibraryError``.
+        """
+        await _require(self.access, query.library, Access.READ)
+        library = query.library.lower()
+        wanted = {f"{library}/{ref}": ref for ref in query.refs}
+        indexed = [
+            m
+            for m in await self.runs.chunks.find_manifests(
+                manifest_id=None, library=library, indexed_before=None
+            )
+            if m.version_id in wanted
+        ]
+        statuses = (
+            await self.runs.manifests.statuses([m.manifest_id for m in indexed]) if indexed else {}
+        )
+        active = {
+            m.manifest_id: wanted[m.version_id]
+            for m in indexed
+            if statuses.get(m.manifest_id) is ManifestStatus.ACTIVE
+        }
+        counts = await self.runs.chunks.counts_many(active) if active else {}
+        embedded = await self._embedded(list(active)) if active else {}
+        found = {ref: VersionChunksOut(chunks=0, embedded_chunks=0) for ref in query.refs}
+        for manifest_id, ref in active.items():
+            chunks = counts[manifest_id].chunks if manifest_id in counts else 0
+            found[ref] = VersionChunksOut(
+                chunks=chunks, embedded_chunks=min(embedded.get(manifest_id, 0), chunks)
+            )
+        return VersionChunkCounts(versions=found)
+
+    async def _embedded(self, manifest_ids: list[str]) -> dict[str, int]:
+        """Count the chunks of these manifests with a vector in the configured model's space.
+
+        Args:
+            manifest_ids: The active manifests.
+
+        Returns:
+            The embedded chunks per manifest; none without a model, a vector store or a space.
+        """
+        configured = await self.runs.configured()
+        if configured is None or self.runs.vectors is None:
+            return {}
+        space = await self.runs.space(configured.target)
+        if space is None:
+            return {}
+        coverage = await self.runs.store().coverage_many(space.id, manifest_ids)
+        return {m: c.embedded for m, c in coverage.items()}
 
 
 # ---------------------------------------------------------------- external indexes (#352)

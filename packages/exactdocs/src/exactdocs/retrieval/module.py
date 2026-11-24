@@ -70,6 +70,7 @@ from exactdocs.retrieval.ports.driving import (
     CheckProvider,
     CheckRoles,
     CollectChunks,
+    CountVersionChunks,
     DeleteProvider,
     DiscardPendingChunks,
     EmbedBatch,
@@ -116,6 +117,7 @@ from exactdocs.retrieval.use_cases import (
     CheckProviderUseCase,
     CheckRolesUseCase,
     CollectChunksUseCase,
+    CountVersionChunksUseCase,
     DeleteProviderUseCase,
     DiscardPendingChunksUseCase,
     EmbedBatchUseCase,
@@ -368,6 +370,8 @@ class RetrievalModule:
     """Chunks, tokens and US dollars of embedding what is not embedded yet."""
     get_embedding_progress: GetEmbeddingProgress
     """How far each embedding space has got (``GET /api/v1/ai/embedding``)."""
+    count_version_chunks: CountVersionChunks
+    """Chunks and embedded chunks of a page of versions, for the catalog's version list."""
     get_ai_usage: GetAiUsage
     """Spend and budget left per scope (``GET /api/v1/ai/usage``)."""
     prune_hypotheses: PruneHypotheses
@@ -772,5 +776,6 @@ class RetrievalModule:
             list_unembedded_versions=ListUnembeddedVersionsUseCase(runs=runs),
             estimate_embedding=EstimateEmbeddingUseCase(runs=runs),
             get_embedding_progress=GetEmbeddingProgressUseCase(runs=runs),
+            count_version_chunks=CountVersionChunksUseCase(runs=runs, access=access),
             get_ai_usage=GetAiUsageUseCase(spend=ai_spend),
         )

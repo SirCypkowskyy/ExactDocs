@@ -2111,6 +2111,32 @@ class EmbeddingProgressOut(_Dto):
     """Every space that is not retired, oldest first; none without a vector store."""
 
 
+class CountVersionChunksQuery(_Dto):
+    """Count the chunks of some versions of one library, and those embedded (#513)."""
+
+    library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
+    refs: list[str]
+    """The exact refs; a ref with no indexed active manifest counts 0."""
+
+
+class VersionChunksOut(_Dto):
+    """How many chunks one version has in the search index, and how many are embedded."""
+
+    chunks: int
+    """The chunk rows of its active manifest (one per article path holding the chunk)."""
+    embedded_chunks: int
+    """Of those, the ones with a vector in the configured embedding model's space; 0 while no
+    model or no vector store is configured, or the space does not exist yet."""
+
+
+class VersionChunkCounts(_Dto):
+    """The chunk counts of the versions asked for."""
+
+    versions: dict[str, VersionChunksOut]
+    """By ref; every ref asked for is present (0 and 0 for one that is not indexed)."""
+
+
 class SpentOut(_Dto):
     """What one scope spent in one window, as the providers reported it."""
 
