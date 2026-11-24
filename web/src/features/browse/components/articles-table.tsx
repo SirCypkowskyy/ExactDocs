@@ -24,7 +24,6 @@ import type { RowAction } from "@/shared/ui/data-table/row-actions";
 import { TableMessage } from "@/shared/ui/data-table/states";
 import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
 import {
-  type DataTableModel,
   type TableFilter,
   type TableParam,
   useDataTable,
@@ -157,19 +156,6 @@ function useTagsFilter(
   }, [counted.data, picked, t]);
 }
 
-/** Writes the table's own part of the library page's URL, back on page 1. */
-function useWriteView(owner: string, repo: string) {
-  const navigate = useNavigate();
-  return (patch: Pick<BrowseSearch, "filter" | "tags" | "prefix">) =>
-    void navigate({
-      to: "/libraries/$owner/$repo",
-      params: { owner, repo },
-      search: (prev) => ({ ...prev, ...patch, page: undefined }),
-      replace: true,
-      resetScroll: false,
-    });
-}
-
 function copy(text: string, done: string) {
   void navigator.clipboard?.writeText(text).then(
     () => toast.success(done),
@@ -182,7 +168,6 @@ export function ArticlesTable({ owner, repo, library, version, search }: Props) 
   const id = useId();
   const router = useRouter();
   const navigate = useNavigate();
-  const write = useWriteView(owner, repo);
   const view = useMemo(() => articlesView(search), [search]);
   const at = { owner, repo, ref: version.ref, sha: version.commit_sha };
   const columns = useMemo(
@@ -192,22 +177,18 @@ export function ArticlesTable({ owner, repo, library, version, search }: Props) 
   const tagsFilter = useTagsFilter(t, at, view.tags);
   const filters = useMemo(() => [tagsFilter], [tagsFilter]);
   const params = useMemo<TableParam[]>(() => [{ id: "prefix", title: t.folder, mono: true }], [t]);
-  const shown = useDataTable({
+  const model = useDataTable({
     config: ARTICLES_TABLE,
     search: view,
+    // The page's `q` is the version's search (its results replace this table), so the table's
+    // text filter is `filter` in the URL.
+    qParam: "filter",
     columns,
     getRowId: (a) => a.path,
     filters,
     params,
     source: articlesSource(at, articleFilters(view)),
   });
-  // The page's `q` is the version's search (its results replace this table), so the table's text
-  // filter is `filter` in the URL: its setters write that instead of `q`.
-  const model: DataTableModel<ArticleSummary> = {
-    ...shown,
-    setQ: (filter) => write({ filter }),
-    clearFilters: () => write({ filter: undefined, tags: undefined, prefix: undefined }),
-  };
 
   const host = hostName(library.host);
   const actions = (article: ArticleSummary): RowAction<ArticleSummary>[] => {
@@ -267,7 +248,7 @@ export function ArticlesTable({ owner, repo, library, version, search }: Props) 
               icon: FolderOpen,
               motion: "tilt" as const,
               group: true,
-              onSelect: () => write({ prefix: folder }),
+              onSelect: () => model.setParam("prefix", folder),
             },
           ]
         : []),

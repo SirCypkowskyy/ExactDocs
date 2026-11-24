@@ -25,8 +25,6 @@ import { Person, RelativeTime } from "@/shared/ui/data-table/cells";
 import { DataTable } from "@/shared/ui/data-table/data-table";
 import { DataTablePagination } from "@/shared/ui/data-table/pagination";
 import { type RowAction, restoreRowFocus } from "@/shared/ui/data-table/row-actions";
-import { pageQueryOptions } from "@/shared/ui/data-table/server-pages";
-import { pageOf } from "@/shared/ui/data-table/table-search";
 import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
 import { type TableFilter, useDataTable } from "@/shared/ui/data-table/use-data-table";
 import { FormAlert } from "@/shared/ui/form-alert";
@@ -174,9 +172,6 @@ export function UsersPage({ currentUserId }: { currentUserId: string }) {
     filters,
     source,
   });
-  // The failure of the shown page, to say why in words (a non-operator is refused, 403).
-  const { page, size } = pageOf(view, USERS_TABLE);
-  const failure = queryClient.getQueryState(pageQueryOptions(source, page, size).queryKey)?.error;
   const [creating, setCreating] = useState(false);
   const [disabling, setDisabling] = useState<User>();
   const [resetting, setResetting] = useState<User>();
@@ -296,7 +291,8 @@ export function UsersPage({ currentUserId }: { currentUserId: string }) {
           ),
         }}
         noMatch={{ title: m.list.noMatchTitle, body: m.list.noMatch }}
-        errorMessage={failure ? explainUserError(failure, language) : t.loadFailed}
+        // Why the shown page failed, in words (a non-operator is refused, 403).
+        errorMessage={model.error ? explainUserError(model.error, language) : t.loadFailed}
       />
       <DataTablePagination model={model} />
 

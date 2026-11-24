@@ -1,4 +1,3 @@
-import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
@@ -23,8 +22,8 @@ import { LibraryCell, Person, RelativeTime } from "@/shared/ui/data-table/cells"
 import { DataTable } from "@/shared/ui/data-table/data-table";
 import { DataTablePagination } from "@/shared/ui/data-table/pagination";
 import type { RowAction } from "@/shared/ui/data-table/row-actions";
-import { pageQueryOptions, type ServerSource } from "@/shared/ui/data-table/server-pages";
-import { pageOf, type TableConfig } from "@/shared/ui/data-table/table-search";
+import type { ServerSource } from "@/shared/ui/data-table/server-pages";
+import type { TableConfig } from "@/shared/ui/data-table/table-search";
 import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
 import {
   type DataTableModel,
@@ -269,15 +268,6 @@ function LibraryFilter<T>({ model }: { model: DataTableModel<T> }) {
   );
 }
 
-/** Why the shown page failed, in one sentence (the table's own query, read from the cache). */
-function useLoadError(source: ServerSource<AccessEvent>, view: AccessLogView, config: TableConfig) {
-  const client = useQueryClient();
-  const language = useLanguage();
-  const { page, size } = pageOf(view, config);
-  const error = client.getQueryState(pageQueryOptions(source, page, size).queryKey)?.error;
-  return error ? explainAccessLogError(error, language) : undefined;
-}
-
 interface Props {
   view: AccessLogView;
   config: TableConfig;
@@ -303,7 +293,6 @@ export function AccessLogTable({ view, config, source, everyLibrary = false }: P
     params,
     source,
   });
-  const loadError = useLoadError(source, view, config);
 
   const actions = (event: AccessEvent): RowAction<AccessEvent>[] => {
     if (!everyLibrary) return [];
@@ -343,7 +332,9 @@ export function AccessLogTable({ view, config, source, everyLibrary = false }: P
         rowLabel={(event) => t.list.row(sentenceOf(event, language), event.library)}
         empty={{ icon: ScrollText, title: t.list.emptyTitle, body: t.list.emptyBody }}
         noMatch={{ title: t.list.noMatchTitle, body: t.list.noMatch }}
-        errorMessage={loadError ?? t.list.loadFailed}
+        errorMessage={
+          model.error ? explainAccessLogError(model.error, language) : t.list.loadFailed
+        }
       />
       <DataTablePagination model={model} />
     </>
