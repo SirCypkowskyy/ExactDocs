@@ -3,7 +3,7 @@
 Kept up to date by the overnight session that continues `HANDOFF.md`. Newest state first in each
 section. Read `HANDOFF.md` for the plan, the owner's decisions and the rules.
 
-_Last updated: 2026-11-24 08:00 UTC._
+_Last updated: 2026-11-24 10:40 UTC._
 
 ## Frontend (`feature/486-design-system`)
 
@@ -75,17 +75,19 @@ FormAlert's alert reaction. Then the local workarounds go.
 The owner asked to merge every PR into develop, then #486 and #530 once section C is done, then
 develop -> main and release v0.6.0.
 
-- Merged into develop (squash, after green CI): #509 (#524), #505 (#526), #511 (#521), #513 (#522).
-- **Blocked:** since 07:41 UTC every GitHub-hosted Actions job fails within 3 s without a runner
-  (likely the Actions spending limit or a failed payment). Merges wait for green CI. The owner
-  fixes billing, or sets `RUNNER_MODE=self-hosted`.
-- Next, in order: #504 (#518, develop merged at 935e7d9, conflicts with #513 resolved), #506
-  (#528), #487 (#525), #510 (#527), #512 (#520), #514 (#519), #515 (#523), re-pointing each
-  migration onto develop's head; then #486 and #530; release dry run; develop -> main; `v0.6.0`.
-- Section C on this branch: #505 Account → Sign-in → Password done (`d822c00`); #509 offset paging
-  in progress; #513 counts next.
-- #530 (docs site and READMEs in the new theme and logo) is filed and in progress on
-  `docs/530-docs-brand`.
+- **Backend: all in develop** (squash): #509, #505, #511, #513, #504, #506, #487, #512 (carrying
+  #510), #514, #515. #527 (#510) closed as already merged; issue #510 closed.
+- **Docs site live** with the new theme and logo (#535 into `main`, deployed 09:14); the full
+  #530 change is #531 (draft, after #486).
+- **CI:** GitHub-hosted runners stopped starting jobs at 07:41 (likely the Actions spending
+  limit); `RUNNER_MODE=self-hosted` moves every job to the two GB10 runners. #537 (owner) would
+  move everything back to hosted runners.
+- **This branch** has develop merged (`7928bcc`): backend identical to develop, one Alembic head.
+  Section C done: #504 logos, #505 own password, #509 offset paging, #513 counts. In progress
+  (three agents): #506 linked providers + brand sign-in buttons + #487 cast + #510 opt-in;
+  Overview and Leaderboard (#510-#513, Recharts lazy); table filters (#512 jobs/libraries,
+  #514 access log, #515 users and all tokens).
+- Then: #486 PR (ready) and #531, release dry run, develop -> main, `v0.6.0`.
 
 ## Backend: every issue has a draft PR
 
