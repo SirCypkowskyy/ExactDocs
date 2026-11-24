@@ -10,6 +10,7 @@ import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Badge } from "@/shared/ui/badge";
 import {
   LibraryCell,
+  Person,
   Progress,
   RelativeTime,
   STATE_LOOKS,
@@ -31,6 +32,7 @@ import { jobsSource } from "../api/libraries-query";
 import { jobsMessages } from "../messages/jobs";
 import {
   JOB_KINDS,
+  JOB_ORIGINS,
   JOB_STATES,
   JOBS_TABLE,
   parseJobsView,
@@ -104,6 +106,21 @@ function ProgressCell({ job }: { job: Job }) {
         <span className="text-small text-muted-foreground">{t.skipped(skipped)}</span>
       )}
     </span>
+  );
+}
+
+/** The person whose request queued the job; the instance's own work, or nobody recorded, muted. */
+function StartedBy({ job }: { job: Job }) {
+  const t = useMessages(jobsMessages);
+  if (job.created_by) return <Person name={job.created_by.username} />;
+  if (job.origin === "auto") return <span className="text-muted-foreground">{t.automatic}</span>;
+  return (
+    <Tooltip label={t.notRecordedHint}>
+      <span className="text-muted-foreground">
+        {t.notRecorded}
+        <span className="sr-only">: {t.notRecordedHint}</span>
+      </span>
+    </Tooltip>
   );
 }
 
@@ -192,6 +209,13 @@ const columnsOf = (t: JobsMessages): ColumnDef<Job>[] => [
     ),
   },
   {
+    id: "created_by",
+    header: t.columns.startedBy,
+    enableSorting: false,
+    meta: { skeleton: "avatar", className: "max-lg:hidden" },
+    cell: ({ row }) => <StartedBy job={row.original} />,
+  },
+  {
     accessorKey: "created_at",
     header: t.columns.queued,
     sortDescFirst: true,
@@ -221,6 +245,11 @@ const filtersOf = (t: JobsMessages): TableFilter[] => [
     id: "kind",
     title: t.kind,
     options: JOB_KINDS.map((k) => ({ value: k, label: t.kinds[k] })),
+  },
+  {
+    id: "origin",
+    title: t.columns.origin,
+    options: JOB_ORIGINS.map((o) => ({ value: o, label: nameOf(t.origins, o) })),
   },
   {
     id: "created",

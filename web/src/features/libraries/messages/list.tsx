@@ -42,6 +42,14 @@ export const listMessages = defineMessages(
         "30d": "Last 30 days",
         older: "More than 30 days ago",
       },
+      /** The sync filter: the state of each library's latest import or refresh. */
+      syncStates: {
+        queued: "Queued",
+        running: "Importing",
+        succeeded: "Synced",
+        failed: "Sync failed",
+        cancelled: "Sync cancelled",
+      },
       sortBy: "Sort by",
       sortDefault: "Default",
       nameAsc: "Name, A to Z",
@@ -173,6 +181,13 @@ export const listMessages = defineMessages(
         "7d": "Ostatnie 7 dni",
         "30d": "Ostatnie 30 dni",
         older: "Ponad 30 dni temu",
+      },
+      syncStates: {
+        queued: "W kolejce",
+        running: "Importowanie",
+        succeeded: "Zsynchronizowano",
+        failed: "Synchronizacja nieudana",
+        cancelled: "Synchronizacja anulowana",
       },
       sortBy: "Sortuj według",
       sortDefault: "Domyślnie",

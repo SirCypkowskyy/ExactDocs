@@ -16,13 +16,18 @@ const rowsOf = (page: AccessLogPage) => ({
   nextCursor: page.next_cursor,
 });
 
-/** One library's access log, newest first, a page at a time (library admins and operators). */
+/**
+ * One library's access log, a page at a time (library admins and operators), newest first unless
+ * the view sorts it otherwise.
+ */
 export function libraryAccessLogSource(
   owner: string,
   repo: string,
   view: AccessLogView,
+  now: number = Date.now(),
 ): ServerSource<AccessEvent> {
-  const filters = accessLogFilters({ change: view.change });
+  // A library's own log has no library filter.
+  const filters = accessLogFilters({ ...view, library: undefined }, now);
   const lib = `/v1/libraries/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}` as const;
   return {
     key: [...accessLogKey, "library", owner, repo, filters],
@@ -35,9 +40,15 @@ export function libraryAccessLogSource(
   };
 }
 
-/** Every library's access log, removed ones included (operators). */
-export function accessLogSource(view: AccessLogView): ServerSource<AccessEvent> {
-  const filters = accessLogFilters(view);
+/**
+ * Every library's access log, removed ones included (operators). `now` anchors a "within" preset
+ * (see `whenBounds`).
+ */
+export function accessLogSource(
+  view: AccessLogView,
+  now: number = Date.now(),
+): ServerSource<AccessEvent> {
+  const filters = accessLogFilters(view, now);
   return {
     key: [...accessLogKey, "all", filters],
     paging: "offset",

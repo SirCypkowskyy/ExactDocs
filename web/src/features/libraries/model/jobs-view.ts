@@ -19,11 +19,14 @@ export const JOB_KINDS = [
   "embed",
   "push",
 ] as const;
+/** Who queued a job: the instance on its own (`auto`) or a request (`manual`). */
+export const JOB_ORIGINS = ["manual", "auto"] as const;
 /** "Queued within" presets of the date filter. */
 export const QUEUED_WITHIN = ["24h", "7d", "30d"] as const;
 
 export type JobState = (typeof JOB_STATES)[number];
 export type JobKind = (typeof JOB_KINDS)[number];
+export type JobOrigin = (typeof JOB_ORIGINS)[number];
 export type QueuedWithin = (typeof QUEUED_WITHIN)[number];
 
 /** The jobs table (DataTable v2): sortable by the API's fields, newest first by default. */
@@ -36,6 +39,7 @@ export const JOBS_TABLE: TableConfig = {
 export interface JobsView extends TableSearch {
   state?: JobState[] | undefined;
   kind?: JobKind[] | undefined;
+  origin?: JobOrigin[] | undefined;
   created?: QueuedWithin | undefined;
   /** A library ID, `/owner/repo`. */
   library?: string | undefined;
@@ -50,6 +54,7 @@ export function parseJobsView(search: Record<string, unknown>): JobsView {
     ...parseTableSearch(search, JOBS_TABLE),
     state: parseFacet(search.state, JOB_STATES),
     kind: parseFacet(search.kind, JOB_KINDS),
+    origin: parseFacet(search.origin, JOB_ORIGINS),
     created: parseChoice(search.created, QUEUED_WITHIN),
     library: library && /^\/[^/]+\/[^/]+$/.test(library) ? library : undefined,
     version: textParam(search.version),
@@ -67,6 +72,7 @@ export interface JobsFilters {
   q?: string;
   state?: readonly string[];
   kind?: readonly string[];
+  origin?: readonly string[];
   library?: string;
   version?: string;
   created_after?: string;
@@ -83,6 +89,8 @@ export function jobsFilters(view: JobsView, now: number): JobsFilters {
     ...(view.q && { q: view.q }),
     ...(view.state && { state: view.state }),
     ...(view.kind && { kind: view.kind }),
+    // Both origins are every job: no filter at all.
+    ...(view.origin && view.origin.length < JOB_ORIGINS.length && { origin: view.origin }),
     ...(view.library && { library: view.library }),
     ...(view.version && { version: view.version }),
     ...(view.created && {
@@ -103,6 +111,7 @@ export function jobsParams(
   if (filters.q) p.set("q", filters.q);
   for (const state of filters.state ?? []) p.append("state", state);
   for (const kind of filters.kind ?? []) p.append("kind", kind);
+  for (const origin of filters.origin ?? []) p.append("origin", origin);
   if (filters.library) p.set("library", filters.library);
   if (filters.version) p.set("version", filters.version);
   if (filters.created_after) p.set("created_after", filters.created_after);

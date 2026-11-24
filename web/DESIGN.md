@@ -662,7 +662,11 @@ shadcn/ui's data-table guide) is the one way to show a list with many rows.
 - **Filterable and sortable** only where the server filters and sorts (never a client filter over
   one server page). Enum filters are faceted multi-selects (an outline button with a count pill,
   a Popover with a Command list, counts per value in client mode); date filters are single presets.
-  Active filters show as chips (`pill-neutral` with a remove `IconButton`) and Clear all.
+  Active filters show as chips (`pill-neutral` with a remove `IconButton`) and Clear all. A
+  narrowing parameter (`TableParam`: a library, a version, an owner) shows its value as is, in mono
+  with `mono`; `format` names it instead when the URL holds an ID the page can put in words (the
+  all-tokens owner chip shows the username once a row names it). The chip still removes the
+  parameter itself.
 - **Pagination bar:** "21–40 of 233", Rows per page, "Page 2 of 12", then First and Previous
   (`icon-sm` IconButtons), the numbered pages (at most seven slots: both ends, the shown page and
   its neighbours, "…" for the gaps; the shown one outlined with `aria-current="page"`, each named

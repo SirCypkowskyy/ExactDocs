@@ -185,6 +185,38 @@ describe("the libraries list view", () => {
     expect(history.location.search).toContain("versions=none");
   });
 
+  it("filters by the latest sync's state on the server, from a facet and from a link", async () => {
+    expect(parseListView({ sync: "failed,lost,running" }).sync).toEqual(["running", "failed"]);
+    expect(listParams(listFilters({ sync: ["running", "failed"] }, 0), 20)).toBe(
+      "limit=20&sync_state=running&sync_state=failed",
+    );
+    const fetchMock = serve();
+    const history = renderPage();
+    await screen.findByText("Library 1");
+
+    await userEvent.click(screen.getByRole("button", { name: "Sync" }));
+    await userEvent.click(await screen.findByRole("option", { name: "Sync failed" }));
+    await userEvent.click(screen.getByRole("option", { name: "Importing" }));
+    await userEvent.keyboard("{Escape}");
+
+    await waitFor(() =>
+      expect(urls(fetchMock)).toContain(
+        "/api/v1/libraries?limit=20&sync_state=running&sync_state=failed&offset=0",
+      ),
+    );
+    expect(history.location.search).toContain("sync=running%2Cfailed");
+    const chips = screen.getByRole("list", { name: "Active filters" });
+    expect(within(chips).getByText("Sync failed")).toBeInTheDocument();
+  });
+
+  it("reads the sync filter from a shared link", async () => {
+    const fetchMock = serve();
+    renderPage("/?sync=failed");
+    await screen.findByText("Library 1");
+    expect(urls(fetchMock)[0]).toBe("/api/v1/libraries?limit=20&sync_state=failed&offset=0");
+    expect(screen.getByRole("button", { name: "Sync, 1 selected" })).toBeInTheDocument();
+  });
+
   it("filters on the server and says when nothing matches", async () => {
     const fetchMock = serve();
     const history = renderPage();

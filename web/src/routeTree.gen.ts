@@ -21,6 +21,7 @@ import { Route as AppPlaygroundRouteImport } from './routes/_app.playground'
 import { Route as AppSearchRouteImport } from './routes/_app.search'
 import { Route as AppUsersRouteImport } from './routes/_app.users'
 import { Route as AppLibrariesNewRouteImport } from './routes/_app.libraries.new'
+import { Route as AppUsersTokensRouteImport } from './routes/_app.users_.tokens'
 import { Route as AppLibrariesOwnerRepoRouteImport } from './routes/_app.libraries.$owner.$repo'
 import { Route as AppLibrariesOwnerRepoAccessLogRouteImport } from './routes/_app.libraries.$owner.$repo_.access-log'
 import { Route as AppLibrariesOwnerRepoSettingsRouteImport } from './routes/_app.libraries.$owner.$repo_.settings'
@@ -85,6 +86,11 @@ const AppLibrariesNewRoute = AppLibrariesNewRouteImport.update({
   path: '/libraries/new',
   getParentRoute: () => AppRoute,
 } as any)
+const AppUsersTokensRoute = AppUsersTokensRouteImport.update({
+  id: '/users_/tokens',
+  path: '/users/tokens',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppLibrariesOwnerRepoRoute = AppLibrariesOwnerRepoRouteImport.update({
   id: '/libraries/$owner/$repo',
   path: '/libraries/$owner/$repo',
@@ -121,6 +127,7 @@ export interface FileRoutesByFullPath {
   '/search': typeof AppSearchRoute
   '/users': typeof AppUsersRoute
   '/libraries/new': typeof AppLibrariesNewRoute
+  '/users/tokens': typeof AppUsersTokensRoute
   '/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
   '/libraries/$owner/$repo/access-log': typeof AppLibrariesOwnerRepoAccessLogRoute
   '/libraries/$owner/$repo/settings': typeof AppLibrariesOwnerRepoSettingsRoute
@@ -138,6 +145,7 @@ export interface FileRoutesByTo {
   '/users': typeof AppUsersRoute
   '/': typeof AppIndexRoute
   '/libraries/new': typeof AppLibrariesNewRoute
+  '/users/tokens': typeof AppUsersTokensRoute
   '/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
   '/libraries/$owner/$repo/access-log': typeof AppLibrariesOwnerRepoAccessLogRoute
   '/libraries/$owner/$repo/settings': typeof AppLibrariesOwnerRepoSettingsRoute
@@ -157,6 +165,7 @@ export interface FileRoutesById {
   '/_app/users': typeof AppUsersRoute
   '/_app/': typeof AppIndexRoute
   '/_app/libraries/new': typeof AppLibrariesNewRoute
+  '/_app/users_/tokens': typeof AppUsersTokensRoute
   '/_app/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
   '/_app/libraries/$owner/$repo_/access-log': typeof AppLibrariesOwnerRepoAccessLogRoute
   '/_app/libraries/$owner/$repo_/settings': typeof AppLibrariesOwnerRepoSettingsRoute
@@ -176,6 +185,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/users'
     | '/libraries/new'
+    | '/users/tokens'
     | '/libraries/$owner/$repo'
     | '/libraries/$owner/$repo/access-log'
     | '/libraries/$owner/$repo/settings'
@@ -193,6 +203,7 @@ export interface FileRouteTypes {
     | '/users'
     | '/'
     | '/libraries/new'
+    | '/users/tokens'
     | '/libraries/$owner/$repo'
     | '/libraries/$owner/$repo/access-log'
     | '/libraries/$owner/$repo/settings'
@@ -211,6 +222,7 @@ export interface FileRouteTypes {
     | '/_app/users'
     | '/_app/'
     | '/_app/libraries/new'
+    | '/_app/users_/tokens'
     | '/_app/libraries/$owner/$repo'
     | '/_app/libraries/$owner/$repo_/access-log'
     | '/_app/libraries/$owner/$repo_/settings'
@@ -309,6 +321,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppLibrariesNewRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/users_/tokens': {
+      id: '/_app/users_/tokens'
+      path: '/users/tokens'
+      fullPath: '/users/tokens'
+      preLoaderRoute: typeof AppUsersTokensRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/libraries/$owner/$repo': {
       id: '/_app/libraries/$owner/$repo'
       path: '/libraries/$owner/$repo'
@@ -350,6 +369,7 @@ interface AppRouteChildren {
   AppUsersRoute: typeof AppUsersRoute
   AppIndexRoute: typeof AppIndexRoute
   AppLibrariesNewRoute: typeof AppLibrariesNewRoute
+  AppUsersTokensRoute: typeof AppUsersTokensRoute
   AppLibrariesOwnerRepoRoute: typeof AppLibrariesOwnerRepoRoute
   AppLibrariesOwnerRepoAccessLogRoute: typeof AppLibrariesOwnerRepoAccessLogRoute
   AppLibrariesOwnerRepoSettingsRoute: typeof AppLibrariesOwnerRepoSettingsRoute
@@ -366,6 +386,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppUsersRoute: AppUsersRoute,
   AppIndexRoute: AppIndexRoute,
   AppLibrariesNewRoute: AppLibrariesNewRoute,
+  AppUsersTokensRoute: AppUsersTokensRoute,
   AppLibrariesOwnerRepoRoute: AppLibrariesOwnerRepoRoute,
   AppLibrariesOwnerRepoAccessLogRoute: AppLibrariesOwnerRepoAccessLogRoute,
   AppLibrariesOwnerRepoSettingsRoute: AppLibrariesOwnerRepoSettingsRoute,

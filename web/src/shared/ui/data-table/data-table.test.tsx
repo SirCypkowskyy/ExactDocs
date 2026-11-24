@@ -553,6 +553,20 @@ function FailingThings({ query }: { query?: ClientQuery<Thing> }) {
   );
 }
 
+/** A table narrowed by an owner's ID, whose chip names the owner. */
+function OwnerThings() {
+  const raw = useSearch({ strict: false }) as Record<string, unknown>;
+  const model = useDataTable({
+    config: CLIENT,
+    search: { ...parseTableSearch(raw, CLIENT), owner: raw.owner } as never,
+    columns,
+    getRowId: (t) => t.id,
+    params: [{ id: "owner", title: "Owner", format: (id) => (id === "u1" ? "alice" : id) }],
+    query: ready(THINGS),
+  });
+  return <DataTableToolbar model={model} columns={false} />;
+}
+
 describe("DataTable v2's view options", () => {
   it("keeps the URL's hash when it writes the view", async () => {
     const history = renderAt("/things#versions", () => <ClientThings query={ready(THINGS)} />);
@@ -595,6 +609,18 @@ describe("DataTable v2's view options", () => {
 
     expect(await screen.findByText("1–7 of 7")).toBeInTheDocument();
     expect(history.location.search).toBe("?q=page%20search");
+  });
+
+  it("names a narrowing parameter's value in its chip when the page says how", async () => {
+    const history = renderAt("/things?owner=u1", () => <OwnerThings />);
+    const chips = await screen.findByRole("list", { name: "Active filters" });
+    expect(within(chips).getByText("alice")).toBeInTheDocument();
+    expect(within(chips).queryByText("u1")).not.toBeInTheDocument();
+    // The chip removes the parameter itself, whatever it shows.
+    await userEvent.click(
+      within(chips).getByRole("button", { name: "Remove filter Owner: alice" }),
+    );
+    await waitFor(() => expect(params(history).get("owner")).toBeNull());
   });
 
   it("hands the page why a client list failed", async () => {
