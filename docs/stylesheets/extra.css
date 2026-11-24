@@ -7,6 +7,9 @@
  * page's hero and feature grid are the .xd-* classes at the end.
  */
 
+/* Zensical loads 400, 500 and 700 of the text face; the UI's headings are 600. */
+@import url("https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@600&display=fallback");
+
 /* ------------------------------------------------------------- tokens: light */
 
 :root,
