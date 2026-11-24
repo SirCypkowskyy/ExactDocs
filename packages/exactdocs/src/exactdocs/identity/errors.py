@@ -48,6 +48,19 @@ class InvalidCredentialsError(UnauthenticatedError):
         super().__init__("invalid username or password")
 
 
+class WrongPasswordError(ForbiddenError):
+    """A signed-in person gave a wrong current password while changing it.
+
+    Not ``InvalidCredentialsError``: the caller stays signed in (a 401 would read as signed out).
+    """
+
+    code = "wrong_password"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__("the current password is wrong")
+
+
 class NotSignedInError(UnauthenticatedError):
     """No session, or one that is unknown, expired or ended; deliberately not told apart."""
 

@@ -1885,6 +1885,114 @@
         }
       }
     },
+    "/api/v1/account/password": {
+      "put": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Put Password",
+        "description": "Change the signed-in account's own password: give the current one and the new one (12 to 1024 characters, as at setup). The current password is checked like a sign-in and counts against the same throttle: a wrong one is refused with `wrong_password` (403), and after too many failures from the address or for the username the change is refused unchecked with `rate_limited` (429, `Retry-After`). An account that signs in through an identity provider has no password (`has_password` is `false` in `GET /api/v1/session`) and is refused with `external_account` (409). On success (204) every other session of the account ends, this one stays signed in; API tokens keep working. The addresses that signed in with the old password lose their remembered sign-in, as after an operator's reset. Needs a signed-in session; an API token is refused (401).",
+        "operationId": "identity-put_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordCommand"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds.",
+            "headers": {
+              "Retry-After": {
+                "description": "Seconds to wait before the next attempt.",
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/libraries/{owner}/{repo}/grants": {
       "get": {
         "tags": [
@@ -10948,6 +11056,12 @@
             "type": "string",
             "title": "Role",
             "description": "What the account may do: `admin` (an operator, who also manages accounts) or `user`."
+          },
+          "has_password": {
+            "type": "boolean",
+            "title": "Has Password",
+            "description": "Whether the account has a local password: it signs in with it and may change it\n(`PUT /api/v1/account/password`). `false` for an account that only signs in through an\nidentity provider (or Cloudflare Access), which has no password to change.",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -12494,6 +12608,35 @@
         ],
         "title": "C7SearchResponse",
         "description": "context7's ``/v2/libs/search`` response, plus the untrusted-content notice."
+      },
+      "ChangePasswordCommand": {
+        "properties": {
+          "current_password": {
+            "type": "string",
+            "maxLength": 1024,
+            "format": "password",
+            "title": "Current Password",
+            "description": "The account's password now; a wrong one is refused with `wrong_password` (403) and\ncounts against the sign-in throttle like a failed sign-in.",
+            "writeOnly": true
+          },
+          "new_password": {
+            "type": "string",
+            "maxLength": 1024,
+            "minLength": 12,
+            "format": "password",
+            "title": "New Password",
+            "description": "The new password, 12 to 1024 characters.",
+            "writeOnly": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "current_password",
+          "new_password"
+        ],
+        "title": "ChangePasswordCommand",
+        "description": "A signed-in person's own password change: the current password, then the new one."
       },
       "CheckRepositoryCommand": {
         "properties": {
@@ -18638,6 +18781,12 @@
             "type": "string",
             "title": "Role",
             "description": "What the account may do: `admin` (an operator, who also manages accounts) or `user`."
+          },
+          "has_password": {
+            "type": "boolean",
+            "title": "Has Password",
+            "description": "Whether the account has a local password: it signs in with it and may change it\n(`PUT /api/v1/account/password`). `false` for an account that only signs in through an\nidentity provider (or Cloudflare Access), which has no password to change.",
+            "default": false
           },
           "created_at": {
             "type": "string",

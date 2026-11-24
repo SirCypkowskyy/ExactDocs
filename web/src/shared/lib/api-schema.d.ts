@@ -285,6 +285,26 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/account/password": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Put Password
+         * @description Change the signed-in account's own password: give the current one and the new one (12 to 1024 characters, as at setup). The current password is checked like a sign-in and counts against the same throttle: a wrong one is refused with `wrong_password` (403), and after too many failures from the address or for the username the change is refused unchecked with `rate_limited` (429, `Retry-After`). An account that signs in through an identity provider has no password (`has_password` is `false` in `GET /api/v1/session`) and is refused with `external_account` (409). On success (204) every other session of the account ends, this one stays signed in; API tokens keep working. The addresses that signed in with the old password lose their remembered sign-in, as after an operator's reset. Needs a signed-in session; an API token is refused (401).
+         */
+        readonly put: operations["identity-put_password"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries/{owner}/{repo}/grants": {
         readonly parameters: {
             readonly query?: never;
@@ -1668,6 +1688,14 @@ export interface components {
              * @description What the account may do: `admin` (an operator, who also manages accounts) or `user`.
              */
             readonly role: string;
+            /**
+             * Has Password
+             * @description Whether the account has a local password: it signs in with it and may change it
+             *     (`PUT /api/v1/account/password`). `false` for an account that only signs in through an
+             *     identity provider (or Cloudflare Access), which has no password to change.
+             * @default false
+             */
+            readonly has_password: boolean;
         };
         /**
          * AddLibraryCommand
@@ -2615,6 +2643,25 @@ export interface components {
              * @default false
              */
             readonly searchFilterApplied: boolean;
+        };
+        /**
+         * ChangePasswordCommand
+         * @description A signed-in person's own password change: the current password, then the new one.
+         */
+        readonly ChangePasswordCommand: {
+            /**
+             * Current Password
+             * Format: password
+             * @description The account's password now; a wrong one is refused with `wrong_password` (403) and
+             *     counts against the sign-in throttle like a failed sign-in.
+             */
+            readonly current_password: string;
+            /**
+             * New Password
+             * Format: password
+             * @description The new password, 12 to 1024 characters.
+             */
+            readonly new_password: string;
         };
         /**
          * CheckRepositoryCommand
@@ -6128,6 +6175,14 @@ export interface components {
              */
             readonly role: string;
             /**
+             * Has Password
+             * @description Whether the account has a local password: it signs in with it and may change it
+             *     (`PUT /api/v1/account/password`). `false` for an account that only signs in through an
+             *     identity provider (or Cloudflare Access), which has no password to change.
+             * @default false
+             */
+            readonly has_password: boolean;
+            /**
              * Created At
              * Format: date-time
              * @description When the account was created.
@@ -7636,6 +7691,93 @@ export interface operations {
             /** @description A field is invalid (`fields` names them) or a business rule is violated. */
             readonly 422: {
                 headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-put_password": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ChangePasswordCommand"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    /** @description Seconds to wait before the next attempt. */
+                    readonly "Retry-After"?: number;
                     readonly [name: string]: unknown;
                 };
                 content: {
