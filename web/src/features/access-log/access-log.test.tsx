@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory } from "@tanstack/react-router";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
@@ -19,6 +19,7 @@ import {
   accessLogParams,
   describeEvent,
   explainAccessLogError,
+  whenBounds,
 } from "./model/access-log";
 
 const event = (extra: Partial<AccessEvent>): AccessEvent => ({
@@ -40,8 +41,9 @@ const sentence = (e: AccessEvent) =>
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 
 /**
- * An access log API over `events` that filters by `change` (repeatable) and `library`, and pages
- * with `limit` and an `offset` (or a cursor, `o<n>`); or one that refuses with `status`.
+ * An access log API over `events` that filters by `change` (repeatable), `library`, `actor` and
+ * `subject`, sorts by `change`, and pages with `limit` and an `offset` (or a cursor, `o<n>`); or
+ * one that refuses with `status`.
  */
 function stubApi(events: AccessEvent[], status = 200) {
   const fetchMock = vi.fn(async (url: string) => {
@@ -49,10 +51,16 @@ function stubApi(events: AccessEvent[], status = 200) {
     const params = new URL(url, "http://x").searchParams;
     const changes = params.getAll("change");
     const library = params.get("library");
+    const actor = params.get("actor")?.toLowerCase();
+    const subject = params.get("subject");
     const shown = events.filter(
       (e) =>
-        (changes.length === 0 || changes.includes(e.change)) && (!library || e.library === library),
+        (changes.length === 0 || changes.includes(e.change)) &&
+        (!library || e.library === library) &&
+        (!actor || e.actor?.toLowerCase() === actor) &&
+        (!subject || e.subject === subject),
     );
+    if (params.get("sort") === "change") shown.sort((a, b) => a.change.localeCompare(b.change));
     const start = Number(params.get("offset") ?? params.get("cursor")?.slice(1) ?? 0);
     const limit = Number(params.get("limit"));
     return json({
@@ -141,12 +149,19 @@ describe("access log view", () => {
         size: 50,
         q: "x",
         sort: "at",
+        actor: " Alice ",
+        subject: "corp:docs",
+        when: "7d",
       }),
     ).toEqual({
       change: ["granted", "revoked"],
       library: "/acme/payments",
       page: 2,
       size: 50,
+      sort: "at",
+      actor: "Alice",
+      subject: "corp:docs",
+      when: "7d",
     });
     expect(parseAccessLogView({ change: "nuked", library: "acme", size: 7 })).toEqual({
       change: undefined,
@@ -154,11 +169,25 @@ describe("access log view", () => {
       page: undefined,
       size: undefined,
     });
-    expect(parseLibraryAccessLogView({ change: "granted", library: "/acme/payments" })).toEqual({
-      change: ["granted"],
-      page: undefined,
-      size: undefined,
-    });
+    expect(
+      parseLibraryAccessLogView({
+        change: "granted",
+        library: "/acme/payments",
+        sort: "-library",
+        actor: 42,
+      }),
+    ).toEqual({ change: ["granted"], actor: "42" });
+    // Dates: a preset, or real days with at least one end, the start not after the end.
+    const when = (value: unknown) => parseAccessLogView({ when: value }).when;
+    expect(when("30d")).toBe("30d");
+    expect(when("2026-11-01..2026-11-20")).toBe("2026-11-01..2026-11-20");
+    expect(when("2026-11-01..")).toBe("2026-11-01..");
+    expect(when("..2026-11-20")).toBe("..2026-11-20");
+    for (const bad of ["1y", "..", "2026-11-20..2026-11-01", "2026-11-31..", "x..y", 7]) {
+      expect(when(bad)).toBeUndefined();
+    }
+    expect(parseAccessLogView({ sort: "-change" }).sort).toBe("-change");
+    expect(parseAccessLogView({ sort: "actor" }).sort).toBeUndefined();
     expect(
       accessLogParams(
         accessLogFilters({ change: ["granted", "revoked"], library: "/a/b" }),
@@ -167,6 +196,30 @@ describe("access log view", () => {
       ),
     ).toBe("limit=20&change=granted&change=revoked&library=%2Fa%2Fb&cursor=c1");
     expect(accessLogParams({}, 20, null, 40)).toBe("limit=20&offset=40");
+    expect(
+      accessLogParams(
+        accessLogFilters({ sort: "-change", actor: "alice", subject: "corp:docs" }),
+        20,
+        null,
+        0,
+      ),
+    ).toBe("limit=20&sort=-change&actor=alice&subject=corp%3Adocs&offset=0");
+  });
+
+  it("turns a preset or custom days into the API's time bounds", () => {
+    // A preset counts back from the minute, so the loader and the page ask for the same thing.
+    expect(whenBounds("24h", Date.parse("2026-11-23T12:00:30Z"))).toEqual({
+      at_after: "2026-11-22T12:00:00.000Z",
+    });
+    // Days run from the start of the first to the start of the day after the last, locally.
+    expect(whenBounds("2026-11-01..2026-11-20", 0)).toEqual({
+      at_after: new Date(2026, 10, 1).toISOString(),
+      at_before: new Date(2026, 10, 21).toISOString(),
+    });
+    expect(whenBounds("..2026-11-30", 0)).toEqual({
+      at_before: new Date(2026, 11, 1).toISOString(),
+    });
+    expect(whenBounds(undefined, 0)).toEqual({});
   });
 
   it("explains a refusal", () => {
@@ -235,6 +288,164 @@ describe("operators' access log", () => {
     );
     expect(await screen.findByText("1–2 of 2")).toBeInTheDocument();
     expect(screen.getByLabelText("Library")).toHaveValue("");
+  });
+
+  it("sorts by a header on the server, back to the first page with no cursor", async () => {
+    const fetchMock = stubApi(
+      Array.from({ length: 25 }, (_, i) =>
+        event({ id: `e${i + 1}`, change: i % 2 ? "revoked" : "granted" }),
+      ),
+    );
+    const history = renderAt("all", "?page=2");
+    expect(await screen.findByText("21–25 of 25")).toBeInTheDocument();
+    // Newest first by default, shown on the When header.
+    expect(screen.getByRole("columnheader", { name: /When/ })).toHaveAttribute(
+      "aria-sort",
+      "descending",
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Sort by Change" }));
+
+    // A cursor belongs to one sort (422 `invalid_cursor` with another): page 1 by offset.
+    await waitFor(() =>
+      expect(asked(fetchMock)).toContain("/api/v1/access-log?limit=20&sort=change&offset=0"),
+    );
+    expect(await screen.findByText("1–20 of 25")).toBeInTheDocument();
+    expect(history.location.search).toContain("sort=change");
+    expect(history.location.search).not.toContain("page=");
+    expect(screen.getByRole("columnheader", { name: /Change/ })).toHaveAttribute(
+      "aria-sort",
+      "ascending",
+    );
+    expect(asked(fetchMock).every((u) => !u.includes("cursor="))).toBe(true);
+
+    await userEvent.click(screen.getByRole("button", { name: "Sort by Library" }));
+    await waitFor(() =>
+      expect(asked(fetchMock)).toContain("/api/v1/access-log?limit=20&sort=library&offset=0"),
+    );
+  });
+
+  it("filters by who made a change and whom it was about, as typed", async () => {
+    const fetchMock = stubApi([
+      event({ id: "1" }),
+      event({ id: "2", actor: "carol", subject: "corp:docs", kind: "group" }),
+    ]);
+    const history = renderAt("all");
+    await rowsOf();
+    expect(screen.getByLabelText("Changed by")).toHaveAttribute(
+      "placeholder",
+      "Username or account ID",
+    );
+    expect(screen.getByLabelText("Person or group")).toHaveAttribute(
+      "placeholder",
+      "Username, account ID or group name",
+    );
+
+    await userEvent.type(screen.getByLabelText("Changed by"), "Carol");
+    await waitFor(() =>
+      expect(asked(fetchMock)).toContain("/api/v1/access-log?limit=20&actor=Carol&offset=0"),
+    );
+    expect(await screen.findByText("1–1 of 1")).toBeInTheDocument();
+    expect(history.location.search).toContain("actor=Carol");
+
+    await userEvent.type(screen.getByLabelText("Person or group"), "corp:docs");
+    await waitFor(() =>
+      expect(asked(fetchMock)).toContain(
+        "/api/v1/access-log?limit=20&actor=Carol&subject=corp%3Adocs&offset=0",
+      ),
+    );
+    const chips = screen.getByRole("list", { name: "Active filters" });
+    expect(within(chips).getByText("Carol")).toBeInTheDocument();
+    expect(within(chips).getByText("corp:docs")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear all" }));
+    expect(await screen.findByText("1–2 of 2")).toBeInTheDocument();
+    expect(screen.getByLabelText("Changed by")).toHaveValue("");
+    expect(history.location.search).toBe("");
+  });
+
+  it("shows one person's or one group's entries from a row's menu", async () => {
+    stubApi([
+      event({ id: "1" }),
+      event({ id: "2", actor: "carol", subject: "corp:docs", kind: "group" }),
+    ]);
+    const history = renderAt("all");
+    await rowsOf();
+
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "More actions for carol gave the group corp:docs the viewer role (/acme/payments)",
+      }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Show entries about this group" }),
+    ).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("menuitem", { name: "Show this person's entries" }));
+
+    expect(await screen.findByText("1–1 of 1")).toBeInTheDocument();
+    expect(history.location.search).toContain("actor=carol");
+    expect(screen.getByLabelText("Changed by")).toHaveValue("carol");
+
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "More actions for carol gave the group corp:docs the viewer role (/acme/payments)",
+      }),
+    );
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Show entries about this group" }),
+    );
+    await waitFor(() => expect(history.location.search).toContain("subject=corp%3Adocs"));
+    expect(screen.getByLabelText("Person or group")).toHaveValue("corp:docs");
+  });
+
+  it("filters by a date preset or custom days, in the URL", async () => {
+    const fetchMock = stubApi([event({})]);
+    const history = renderAt("all");
+    await rowsOf();
+
+    await userEvent.click(screen.getByRole("button", { name: "When" }));
+    await userEvent.click(
+      (await facetOptions()).find((o) => o.textContent === "Last 7 days") as HTMLElement,
+    );
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(asked(fetchMock).at(-1)).toMatch(/&at_after=[^&]+&offset=0$/));
+    expect(history.location.search).toContain("when=7d");
+
+    await userEvent.click(screen.getByRole("button", { name: "Custom dates" }));
+    const form = await screen.findByRole("form", { name: "Changes between two days" });
+    // Nothing picked: say so instead of applying nothing.
+    fireEvent.change(within(form).getByLabelText("From"), { target: { value: "" } });
+    await userEvent.click(within(form).getByRole("button", { name: "Apply" }));
+    expect(within(form).getByRole("alert")).toHaveTextContent("Pick a start, an end or both.");
+    fireEvent.change(within(form).getByLabelText("From"), { target: { value: "2026-11-20" } });
+    fireEvent.change(within(form).getByLabelText("To (included)"), {
+      target: { value: "2026-11-01" },
+    });
+    await userEvent.click(within(form).getByRole("button", { name: "Apply" }));
+    expect(within(form).getByRole("alert")).toHaveTextContent(
+      "The start must not come after the end.",
+    );
+    fireEvent.change(within(form).getByLabelText("From"), { target: { value: "2026-11-01" } });
+    fireEvent.change(within(form).getByLabelText("To (included)"), {
+      target: { value: "2026-11-20" },
+    });
+    await userEvent.click(within(form).getByRole("button", { name: "Apply" }));
+
+    const after = encodeURIComponent(new Date(2026, 10, 1).toISOString());
+    const before = encodeURIComponent(new Date(2026, 10, 21).toISOString());
+    await waitFor(() =>
+      expect(asked(fetchMock)).toContain(
+        `/api/v1/access-log?limit=20&at_after=${after}&at_before=${before}&offset=0`,
+      ),
+    );
+    expect(history.location.search).toContain("when=2026-11-01..2026-11-20");
+    const chips = screen.getByRole("list", { name: "Active filters" });
+    expect(within(chips).getByText("Nov 1, 2026 – Nov 20, 2026")).toBeInTheDocument();
+    // The When facet lists the custom days as its pick, so its Clear removes them too.
+    await userEvent.click(screen.getByRole("button", { name: "When, 1 selected" }));
+    expect((await facetOptions()).map((o) => o.textContent)).toContain(
+      "Nov 1, 2026 – Nov 20, 2026",
+    );
   });
 
   it("narrows to one library from a row's menu", async () => {
@@ -308,7 +519,28 @@ describe("a library's access log", () => {
     expect(screen.queryByLabelText("Library")).not.toBeInTheDocument();
     // One library's events need no library column, and no way to narrow to it.
     expect(screen.queryByRole("columnheader", { name: "Library" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /More actions/ })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /More actions/ }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Show this person's entries" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("menuitem", { name: "Show this library's entries" }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("menuitem", { name: "Open library" })).not.toBeInTheDocument();
+  });
+
+  it("filters one library's log by who and when, and sorts it, in the URL", async () => {
+    const fetchMock = stubApi([event({})]);
+    const history = renderAt("library", "?actor=alice&when=7d&sort=change");
+    await rowsOf();
+    const [first] = asked(fetchMock);
+    expect(first).toMatch(
+      /^\/api\/v1\/libraries\/acme\/payments\/access-log\?limit=20&sort=change&actor=alice&at_after=[^&]+&offset=0$/,
+    );
+    expect(screen.getByLabelText("Changed by")).toHaveValue("alice");
+    expect(screen.queryByRole("button", { name: "Sort by Library" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Sort by When" }));
+    await waitFor(() => expect(history.location.search).not.toContain("sort=change"));
   });
 
   it("shows the library's logo in the header when the route knows it", async () => {
@@ -395,6 +627,31 @@ describe("access log in Polish", () => {
     await userEvent.type(screen.getByLabelText("Biblioteka"), "nie-id");
     expect(
       screen.getByText("Wpisz identyfikator biblioteki w postaci /owner/repo."),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Autor zmiany")).toHaveAttribute(
+      "placeholder",
+      "Nazwa użytkownika lub ID konta",
+    );
+    expect(screen.getByLabelText("Osoba lub grupa")).toHaveAttribute(
+      "placeholder",
+      "Nazwa użytkownika, ID konta lub nazwa grupy",
+    );
+    expect(screen.getByRole("button", { name: "Sortuj według: Zmiana" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Kiedy" }));
+    expect((await facetOptions()).map((o) => o.textContent)).toContain("Ostatnie 7 dni");
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "Wybrane dni" }));
+    const form = await screen.findByRole("form", { name: "Zmiany z wybranych dni" });
+    fireEvent.change(within(form).getByLabelText("Od"), { target: { value: "2026-11-01" } });
+    await userEvent.click(within(form).getByRole("button", { name: "Zastosuj" }));
+    const chips = await screen.findByRole("list", { name: "Aktywne filtry" });
+    expect(within(chips).getByText("Od 1 lis 2026")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^Więcej opcji/ }));
+    expect(
+      await screen.findByRole("menuitem", { name: "Pokaż zmiany wprowadzone przez tę osobę" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: "Pokaż wpisy dotyczące tej osoby" }),
     ).toBeInTheDocument();
   });
 
