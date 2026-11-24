@@ -15422,6 +15422,13 @@
             ],
             "title": "Last Imported At",
             "description": "When any version was last imported; null while none is."
+          },
+          "article_count": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Article Count",
+            "description": "The articles of the default version (its active manifest's entries); 0 while none is\nimported.",
+            "default": 0
           }
         },
         "additionalProperties": false,
@@ -15436,7 +15443,8 @@
           "refs",
           "version_count",
           "tags",
-          "last_imported_at"
+          "last_imported_at",
+          "article_count"
         ],
         "title": "LibrarySummary",
         "description": "A library and its imported versions."
@@ -15639,6 +15647,76 @@
         ],
         "title": "ListRepositoryRefsQuery",
         "description": "Ask a repository for its tags and branches (a private one with a credential)."
+      },
+      "ListedVersion": {
+        "properties": {
+          "ref": {
+            "type": "string",
+            "title": "Ref",
+            "description": "The ref as imported, e.g. `v1.4.0`, `main` or a commit SHA; case-sensitive."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/exactdocs__catalog__models__RefKind",
+            "description": "Whether the ref is a tag, a branch or a commit."
+          },
+          "commit_sha": {
+            "type": "string",
+            "title": "Commit Sha",
+            "description": "The full commit SHA the ref resolved to at its last import."
+          },
+          "imported_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Imported At",
+            "description": "When the version was last imported."
+          },
+          "is_default": {
+            "type": "boolean",
+            "title": "Is Default",
+            "description": "True for the version `/owner/repo` resolves to."
+          },
+          "origin": {
+            "$ref": "#/components/schemas/exactdocs__catalog__models__VersionOrigin",
+            "description": "`auto` when the library's scheduled check imported it (retention may remove it), `manual`\nwhen someone added it.",
+            "default": "manual"
+          },
+          "articles": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Articles",
+            "description": "The articles the version serves: the entries of its active manifest.",
+            "default": 0
+          },
+          "chunks": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Chunks",
+            "description": "The chunks its articles are cut into for search; 0 until it is indexed.",
+            "default": 0
+          },
+          "embedded_chunks": {
+            "type": "integer",
+            "minimum": 0.0,
+            "title": "Embedded Chunks",
+            "description": "Of `chunks`, those with a vector from the configured embedding model; 0 while no model\nis configured or nothing is embedded yet.",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "ref",
+          "kind",
+          "commit_sha",
+          "imported_at",
+          "is_default",
+          "origin",
+          "articles",
+          "chunks",
+          "embedded_chunks"
+        ],
+        "title": "ListedVersion",
+        "description": "A version as a library's version list shows it: with its size and embedding progress."
       },
       "LoginForTokenCommand": {
         "properties": {
@@ -19124,11 +19202,11 @@
           },
           "versions": {
             "items": {
-              "$ref": "#/components/schemas/VersionOut"
+              "$ref": "#/components/schemas/ListedVersion"
             },
             "type": "array",
             "title": "Versions",
-            "description": "The versions of this page, in the requested order (by ref by default)."
+            "description": "The versions of this page, in the requested order (by ref by default), each with its\narticle, chunk and embedded-chunk counts."
           },
           "next_cursor": {
             "anyOf": [

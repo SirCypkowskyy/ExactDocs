@@ -4231,6 +4231,13 @@ export interface components {
              * @description When any version was last imported; null while none is.
              */
             readonly last_imported_at: string | null;
+            /**
+             * Article Count
+             * @description The articles of the default version (its active manifest's entries); 0 while none is
+             *     imported.
+             * @default 0
+             */
+            readonly article_count: number;
         };
         /**
          * LibraryTransferRequest
@@ -4303,6 +4310,60 @@ export interface components {
              * @description A token (https URL) or deploy key (ssh URL) for a private repository. It is stored encrypted, offered only to the repository's own host and never returned.
              */
             readonly credential?: (components["schemas"]["AccessTokenIn"] | components["schemas"]["DeployKeyIn"]) | null;
+        };
+        /**
+         * ListedVersion
+         * @description A version as a library's version list shows it: with its size and embedding progress.
+         */
+        readonly ListedVersion: {
+            /**
+             * Ref
+             * @description The ref as imported, e.g. `v1.4.0`, `main` or a commit SHA; case-sensitive.
+             */
+            readonly ref: string;
+            /** @description Whether the ref is a tag, a branch or a commit. */
+            readonly kind: components["schemas"]["exactdocs__catalog__models__RefKind"];
+            /**
+             * Commit Sha
+             * @description The full commit SHA the ref resolved to at its last import.
+             */
+            readonly commit_sha: string;
+            /**
+             * Imported At
+             * Format: date-time
+             * @description When the version was last imported.
+             */
+            readonly imported_at: string;
+            /**
+             * Is Default
+             * @description True for the version `/owner/repo` resolves to.
+             */
+            readonly is_default: boolean;
+            /**
+             * @description `auto` when the library's scheduled check imported it (retention may remove it), `manual`
+             *     when someone added it.
+             * @default manual
+             */
+            readonly origin: components["schemas"]["exactdocs__catalog__models__VersionOrigin"];
+            /**
+             * Articles
+             * @description The articles the version serves: the entries of its active manifest.
+             * @default 0
+             */
+            readonly articles: number;
+            /**
+             * Chunks
+             * @description The chunks its articles are cut into for search; 0 until it is indexed.
+             * @default 0
+             */
+            readonly chunks: number;
+            /**
+             * Embedded Chunks
+             * @description Of `chunks`, those with a vector from the configured embedding model; 0 while no model
+             *     is configured or nothing is embedded yet.
+             * @default 0
+             */
+            readonly embedded_chunks: number;
         };
         /**
          * LoginForTokenCommand
@@ -6328,9 +6389,10 @@ export interface components {
             readonly library: string;
             /**
              * Versions
-             * @description The versions of this page, in the requested order (by ref by default).
+             * @description The versions of this page, in the requested order (by ref by default), each with its
+             *     article, chunk and embedded-chunk counts.
              */
-            readonly versions: readonly components["schemas"]["VersionOut"][];
+            readonly versions: readonly components["schemas"]["ListedVersion"][];
             /**
              * Next Cursor
              * @description Pass as `cursor` to get the next page; null on the last page.

@@ -304,7 +304,7 @@ def create_app(container: Container) -> FastAPI:
             list_libraries=container.list_libraries,
             get_library=container.catalog.get_library,
             resolve_version=container.catalog.resolve_version,
-            list_versions=container.catalog.list_versions,
+            list_versions=container.list_versions,
             list_articles=container.catalog.list_articles,
             list_tags=container.catalog.list_tags,
             get_article=container.catalog.get_article,

@@ -27,6 +27,7 @@ from exactdocs.retrieval.dtos import (
     ChunkHeadingIn,
     ChunkIn,
     CollectChunksCommand,
+    CountVersionChunksQuery,
     DiscardPendingChunksCommand,
     GetChunkSetsQuery,
     IndexedManifestOut,
@@ -1039,6 +1040,43 @@ async def test_a_manifest_counts_its_articles_and_chunks(world: World) -> None:
 
     assert await world.chunks.counts("m1") == VersionCounts(articles=2, chunks=4)
     assert await world.chunks.counts("unknown") == VersionCounts(articles=0, chunks=0)
+
+
+async def test_many_manifests_are_counted_at_once_and_unknown_ones_are_left_out(
+    world: World,
+) -> None:
+    await world.index("m1", "main", {"guide/a.md": "a1", "guide/b.md": "b1"})
+    await world.index("m2", "v1", {"guide/a.md": "a1"})
+    asked = ["m1", "m2", *(f"ghost{i}" for i in range(1200))]  # more than one batch
+
+    counts = await world.chunks.counts_many(asked)
+
+    assert counts == {
+        "m1": VersionCounts(articles=2, chunks=4),
+        "m2": VersionCounts(articles=1, chunks=2),
+    }
+    assert counts["m1"] == await world.chunks.counts("m1")
+    assert await world.chunks.counts_many([]) == {}
+
+
+async def test_a_page_of_versions_counts_the_chunks_of_their_active_manifests(
+    world: World,
+) -> None:
+    await world.index("m1", "main", {"a.md": "a1", "b.md": "b1"}, status=ManifestStatus.ACTIVE)
+    await world.index("m2", "main", {"a.md": "a2"}, status=ManifestStatus.PENDING)  # not served
+    await world.index("m3", "v1", {"a.md": "a1"}, status=ManifestStatus.ACTIVE)
+    await world.index("m4", "v0", {"a.md": "a0"}, status=ManifestStatus.SUPERSEDED)
+
+    counted = await world.retrieval.count_version_chunks(
+        CountVersionChunksQuery(library="/ACME/Payments", refs=["main", "v1", "v0", "ghost"])
+    )
+
+    assert {ref: (v.chunks, v.embedded_chunks) for ref, v in counted.versions.items()} == {
+        "main": (4, 0),
+        "v1": (2, 0),
+        "v0": (0, 0),  # no active manifest
+        "ghost": (0, 0),
+    }
 
 
 async def test_retagging_changes_one_articles_chunk_tags_in_one_manifest_only(

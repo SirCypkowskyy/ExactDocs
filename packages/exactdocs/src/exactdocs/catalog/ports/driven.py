@@ -486,6 +486,30 @@ class ManifestRepository(Protocol):
         ...
 
 
+class ArticleCounts(Protocol):
+    """Counts the articles of many versions at once, for the version and library lists.
+
+    A read of the same tables as ``ManifestRepository``, split from it for ``PLR0904``.
+    """
+
+    async def count_articles(
+        self, versions: Sequence[tuple[LibraryId, VersionRef]]
+    ) -> Mapping[tuple[LibraryId, VersionRef], int]:
+        """Count the entries of these versions' active manifests, by (library, ref).
+
+        Versions without an active manifest are left out. Batched like
+        ``ManifestRepository.get_active_many``: a page of versions costs one query, not one
+        per version.
+
+        Args:
+            versions: The versions, as ``(library, ref)``.
+
+        Returns:
+            The number of entries of each version's active manifest.
+        """
+        ...
+
+
 class ImportedTagWriter(Protocol):
     """Rewrites the imported tags of manifest entries (after a library's tag rules changed).
 
