@@ -176,8 +176,8 @@ describe("users page", () => {
     const fetchMock = stubApi();
     renderPage();
     const kebab = await screen.findByRole("button", { name: "More actions for bob" });
-    kebab.focus();
-    await userEvent.keyboard("{Enter}");
+    // With the mouse: the kebab never has focus while its menu is open.
+    await userEvent.click(kebab);
     await userEvent.click(await screen.findByRole("menuitem", { name: "Disable…" }));
     const confirm = await screen.findByRole("alertdialog", { name: "Disable “bob”?" });
     expect(confirm).toHaveTextContent(/signed out at once/);

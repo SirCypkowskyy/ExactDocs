@@ -12,13 +12,16 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ArrowRight, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { TestRouter } from "@/shared/lib/test-router";
+import { ConfirmDialog } from "../confirm-dialog";
 import { TooltipProvider } from "../tooltip";
 import { DataTable } from "./data-table";
 import { DataTablePagination } from "./pagination";
 import type { RowAction } from "./row-actions";
+import { restoreRowFocus } from "./row-actions";
 import type { ServerSource } from "./server-pages";
 import { parseFacet, parseTableSearch, stringifySearch, type TableConfig } from "./table-search";
 import { DataTableToolbar } from "./toolbar";
@@ -362,6 +365,60 @@ describe("DataTable v2's row actions", () => {
     ).toEqual(visible);
     await userEvent.click(within(context).getByRole("menuitem", { name: "Open thing" }));
     expect(picked.map((t) => t.id)).toEqual(["t2"]);
+  });
+});
+
+/** Things whose Remove asks first, focus going back to the row's kebab on Cancel. */
+function ConfirmingThings() {
+  const raw = useSearch({ strict: false }) as Record<string, unknown>;
+  const model = useDataTable({
+    config: CLIENT,
+    search: parseTableSearch(raw, CLIENT),
+    columns,
+    getRowId: (t) => t.id,
+    query: ready(THINGS),
+  });
+  const [removing, setRemoving] = useState<Thing>();
+  return (
+    <>
+      <h1 tabIndex={-1}>Things</h1>
+      <DataTable
+        model={model}
+        label="Things"
+        rowLabel={(t) => t.name}
+        rowActions={() => [
+          { id: "remove", label: "Remove thing", icon: Trash2, onSelect: setRemoving },
+        ]}
+      />
+      <ConfirmDialog
+        open={removing !== undefined}
+        onOpenChange={(open) => {
+          if (!open) setRemoving(undefined);
+        }}
+        title={`Remove ${removing?.name ?? ""}?`}
+        confirmLabel="Remove"
+        onConfirm={() => setRemoving(undefined)}
+        onCloseAutoFocus={restoreRowFocus}
+      />
+    </>
+  );
+}
+
+describe("DataTable v2's row actions and focus", () => {
+  it("gives focus back to the row's kebab after a dialog its mouse-opened menu asked for", async () => {
+    const user = userEvent.setup();
+    renderAt("/things", () => <ConfirmingThings />);
+    const kebab = await screen.findByRole("button", { name: "More actions for Thing 03" });
+    // Something else had focus before (the page's heading after navigation).
+    screen.getByRole("heading", { name: "Things" }).focus();
+
+    await user.pointer({ keys: "[MouseLeft]", target: kebab });
+    await user.click(await screen.findByRole("menuitem", { name: "Remove thing" }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Remove Thing 03?" });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    await waitFor(() => expect(kebab).toHaveFocus());
   });
 });
 

@@ -1,5 +1,5 @@
 import { type LucideIcon, MoreHorizontal } from "lucide-react";
-import type { KeyboardEvent, ReactElement } from "react";
+import { type KeyboardEvent, type ReactElement, useRef } from "react";
 import { useMessages } from "@/shared/lib/i18n";
 import { IconButton, type IconMotion } from "../button";
 import {
@@ -99,21 +99,22 @@ export function RowActionsMenu<T>({
   rowLabel: string;
 }) {
   const t = useMessages(messages).dataTable;
+  const trigger = useRef<HTMLButtonElement>(null);
   if (actions.length === 0) return null;
   return (
     <DropdownMenu
       onOpenChange={(open) => {
-        if (open && document.activeElement instanceof HTMLElement) opener = document.activeElement;
+        // Always the kebab: opened with the mouse it never had focus (Radix keeps focus where it
+        // was on pointerdown), so what has focus now is something else on the page.
+        if (open && trigger.current) opener = trigger.current;
       }}
     >
       <DropdownMenuTrigger asChild>
         <IconButton
+          ref={trigger}
           label={t.moreActions(rowLabel)}
           size="icon-sm"
           className="-my-1.5 text-muted-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground"
-          onPointerDown={(e) => {
-            opener = e.currentTarget;
-          }}
         >
           <MoreHorizontal aria-hidden="true" />
         </IconButton>

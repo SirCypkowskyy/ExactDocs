@@ -68,11 +68,10 @@ async function rowOf(name: string): Promise<HTMLElement> {
   return cell.closest("tr") as HTMLElement;
 }
 
-/** Opens a token's "More actions" menu from the keyboard, so focus can come back to it. */
+/** Opens a token's "More actions" menu with the mouse; focus comes back to the kebab after. */
 async function openMenu(name: string, label = `More actions for ${name}`) {
   const kebab = await screen.findByRole("button", { name: label });
-  kebab.focus();
-  await userEvent.keyboard("{Enter}");
+  await userEvent.click(kebab);
   return { kebab, menu: await screen.findByRole("menu") };
 }
 

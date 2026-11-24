@@ -257,12 +257,6 @@ function AddVersionForm({
   );
 }
 
-/** A version's row (or card) in the table, while it is on the page. */
-const rowOf = (ref: string | undefined) =>
-  [...document.querySelectorAll<HTMLElement>("[data-row-id]")].find(
-    (el) => el.dataset.rowId === ref,
-  );
-
 /** The imported versions, an add form, and a typed-confirmation remove per version. */
 export function VersionsSection(props: Props) {
   const { owner, repo, activity, onStart } = props;
@@ -277,8 +271,6 @@ export function VersionsSection(props: Props) {
   const heading = useRef<HTMLHeadingElement>(null);
   const addButton = useRef<HTMLButtonElement>(null);
   const removedOk = useRef(false);
-  // The version last asked about: the dialog's state is gone by the time focus moves.
-  const asked = useRef<string>(undefined);
   const focusAfterRender = useFocusAfterRender();
 
   const remove = useMutation({
@@ -368,7 +360,6 @@ export function VersionsSection(props: Props) {
           repo={repo}
           pinned={props.library.default_pinned}
           onRemove={(version) => {
-            asked.current = version.ref;
             removedOk.current = false;
             remove.reset();
             setProblem(undefined);
@@ -399,16 +390,9 @@ export function VersionsSection(props: Props) {
         onConfirm={() => removing && remove.mutate(removing)}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          // A removed row is gone: land on the heading. Otherwise back where the row's menu was
-          // opened, or on its menu button (a menu opened by mouse never had focus).
+          // A removed row is gone: land on the heading. Otherwise back to the row's menu.
           if (removedOk.current) heading.current?.focus();
-          else {
-            restoreRowFocus(event);
-            const row = rowOf(asked.current);
-            if (row && !row.contains(document.activeElement)) {
-              (row.querySelector<HTMLElement>('[aria-haspopup="menu"]') ?? row).focus();
-            }
-          }
+          else restoreRowFocus(event);
         }}
       >
         <p className="mt-1.5">{t.safe(removing?.is_default ? t.defaultNote : "")}</p>
