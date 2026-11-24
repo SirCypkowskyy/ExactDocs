@@ -1,0 +1,66 @@
+name: Grounded Docs benchmark
+
+# Manual only, never on a push or a pull request: Grounded Docs (arabold/docs-mcp-server, a pinned
+# npm release) indexes the golden corpus and answers the golden set, scored with the text scorer
+# next to ExactDocs' BM25 (docs/evals.md#grounded-docs, `just grounded-bench`). It downloads the
+# package from npm, the corpus from GitHub and the embedding model from Hugging Face, calls no
+# hosted model and needs no secret. About an hour on the runner, most of it embedding the corpus
+# for the vector configuration; `--configs full-text` takes a few minutes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      args:
+        description: Extra arguments (e.g. --configs full-text, --projects starlette)
+        required: false
+        default: ""
+
+concurrency:
+  group: grounded-bench
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_COLOR: "1"
+
+# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing.md "CI/CD and
+# runners"); it uses none of the GitHub-hosted minutes.
+jobs:
+  bench:
+    name: Grounded Docs on the golden set
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    timeout-minutes: 180
+    env:
+      EXACTDOCS_MODELS_DIR: ${{ github.workspace }}/.models
+      EXTRA_ARGS: ${{ inputs.args }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install
+        run: uv sync --locked
+      - uses: actions/cache@v6
+        with:
+          path: .models
+          key: grounded-bench-models-${{ hashFiles('packages/exactdocs/evals/retrieval_eval/grounded_docs.py') }}
+      - name: Pull the embedding model (skipped when the cache has it)
+        run: uv run exactdocs models pull BAAI/bge-small-en-v1.5
+      - name: Grounded Docs benchmark (just grounded-bench)
+        run: |
+          # shellcheck disable=SC2086 # EXTRA_ARGS is a list of arguments
+          uv run python packages/exactdocs/evals/run_grounded_bench.py \
+            --home "$RUNNER_TEMP/grounded-docs" --out reports/evals $EXTRA_ARGS
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: grounded-bench
+          path: reports/evals/
+          retention-days: 30

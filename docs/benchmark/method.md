@@ -113,6 +113,7 @@ ways: at the `default` chunking it takes 99.5% of the hit and miss decisions (ea
 section's rank in the top 10, or a miss) as chunk-ID scoring does, against a criterion of 98%.
 The threshold, the sweep that chose it and every disagreement are in
 [Scoring text results](../evals.md#scoring-text-results).
+[Comparison with other tools](comparison.md) scores other tools with it.
 
 ## Ingestion metrics
 
@@ -174,6 +175,7 @@ budgets; between chunkings of one budget the best one wins outright.
 | retrieval benchmark with local models | by hand (`just retrieval-bench --offline`) | local, pulled with `exactdocs models pull` |
 | retrieval benchmark, hosted configurations | by hand: the manual *Retrieval eval (real providers)* workflow (`eval-providers.yml`) with the `benchmark` input ticked | hosted |
 | text scorer calibration | by hand (`just text-bench --offline`), when the matcher or the chunker changes | none |
+| Grounded Docs on the golden set | by hand (`just grounded-bench --offline`), or the manual *Grounded Docs benchmark* workflow (`grounded-bench.yml`); quick tests replay recorded responses on every pull request | local, `BAAI/bge-small-en-v1.5` pulled with `exactdocs models pull` |
 | agent benchmark | by hand: the manual *Agent benchmark (real providers)* workflow (`agent-bench.yml`), or `just agent-bench run` locally | hosted |
 
 No CI or release run calls a hosted model or needs a secret.
@@ -200,8 +202,8 @@ The second is the recorded retrieval run ([The recorded run](../evals.md#the-rec
 
 The tables on the benchmark pages are not typed by hand. Each page holds generated blocks between
 `<!-- bench:<name> -->` and `<!-- /bench -->` markers, and `just bench-pages` refills them from
-`packages/exactdocs/evals/results/ingestion.json`, `retrieval.json` and the golden set, with the
-benchmarks' own Markdown renderers. Everything outside the markers is prose.
+`packages/exactdocs/evals/results/ingestion.json`, `retrieval.json`, `grounded-docs.json` and the
+golden set, with the benchmarks' own Markdown renderers. Everything outside the markers is prose.
 
 ```bash
 just bench-pages            # rewrite the blocks after a new recorded run
