@@ -79,23 +79,6 @@ def same_section(expected: Hit, hit: Hit) -> bool:
     )
 
 
-def rank_of(expected: Hit, answer: Answer, matches: SectionMatch = same_section) -> int | None:
-    """Return the 1-based rank of ``expected`` in the answer, or ``None`` when it is missing.
-
-    Args:
-        expected: The expected section.
-        answer: What the mode returned.
-        matches: When a hit counts as the expected section (exact by default).
-
-    Returns:
-        The rank of the first hit that matches.
-    """
-    for rank, hit in enumerate(answer.hits, start=1):
-        if matches(expected, hit):
-            return rank
-    return None
-
-
 def first_rank(
     expected: Sequence[Hit], answer: Answer, matches: SectionMatch = same_section
 ) -> int | None:
