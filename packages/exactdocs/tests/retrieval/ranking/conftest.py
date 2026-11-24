@@ -2,6 +2,8 @@
 
 To run the suite on another engine (hybrid retrieval, ParadeDB), add its name to ``ENGINES`` and
 build its ``Container`` in ``open_container``: the cases and the assertions do not change.
+The engines on a server are integration cases (#507, ``ENGINE_MARKS``): they run with
+``--integration`` and their server's variable.
 ``postgres_fts`` (PostgreSQL full-text search) runs when ``EXACTDOCS_TEST_POSTGRES_URL`` is set, and
 ``postgres_fts_c`` runs it again on a database in the ``C`` locale. ``pg_search`` (ParadeDB's BM25)
 runs with ``EXACTDOCS_TEST_PG_SEARCH=1`` (a server with the extension, as CI's ParadeDB); the app
@@ -25,7 +27,8 @@ from pathlib import Path
 
 import pytest
 
-from databases import ADMIN_URL, PG_SEARCH, SECRET_KEY, postgres_database
+import integration
+from databases import SECRET_KEY, postgres_database
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.elastic_index import ElasticSearchBackend
@@ -35,13 +38,26 @@ from fixture_repo import DocsRepo
 from index_backends import cluster_options, drop_indexes
 from offline_embedding import offline_container
 
-CLUSTERS = [name for name in ("elasticsearch", "opensearch") if cluster_options(name)]
-"""The external index backends with a test cluster (#354)."""
+CLUSTERS = ("elasticsearch", "opensearch")
+"""The external index backends on a test cluster (#354)."""
+ENGINE_MARKS = {
+    "postgres_fts": integration.POSTGRES,
+    "postgres_fts_c": integration.POSTGRES,
+    "hybrid_pg": integration.POSTGRES,
+    "pg_search": integration.POSTGRES_PG_SEARCH,
+    "elasticsearch": integration.ELASTICSEARCH,
+    "hybrid_elasticsearch": integration.ELASTICSEARCH,
+    "opensearch": integration.OPENSEARCH,
+    "hybrid_opensearch": integration.OPENSEARCH,
+}
+"""The engines on a server: integration cases, with the variable that names it."""
 ENGINES = [
     "fts5",
     "hybrid",
-    *(["postgres_fts", "postgres_fts_c", "hybrid_pg"] if ADMIN_URL else []),
-    *(["pg_search"] if PG_SEARCH else []),
+    "postgres_fts",
+    "postgres_fts_c",
+    "hybrid_pg",
+    "pg_search",
     *(engine for name in CLUSTERS for engine in (name, f"hybrid_{name}")),
 ]
 VECTOR_ENGINES = frozenset({"hybrid", "hybrid_pg", *(f"hybrid_{name}" for name in CLUSTERS)})
@@ -90,7 +106,10 @@ async def _import_all(engine: str, data_dir: Path, docs_repo: DocsRepo) -> None:
             assert await embed_fixture(container) == 3, "every version is embedded"
 
 
-@pytest.fixture(scope="session", params=ENGINES)
+@pytest.fixture(
+    scope="session",
+    params=[pytest.param(engine, marks=ENGINE_MARKS.get(engine, ())) for engine in ENGINES],
+)
 def imported(
     request: pytest.FixtureRequest, docs_repo: DocsRepo, tmp_path_factory: pytest.TempPathFactory
 ) -> Generator[tuple[str, Path]]:

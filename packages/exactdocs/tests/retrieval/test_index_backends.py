@@ -29,7 +29,7 @@ from exactdocs.retrieval.models import (
     search_terms,
 )
 from exactdocs.retrieval.ports import NativeHybrid, NativeRerank, SearchBackend, VectorBackend
-from index_backends import SEARCH_BACKEND_CASES, VECTOR_BACKEND_CASES
+from index_backends import SEARCH_BACKEND_CASES, VECTOR_BACKEND_CASES, params
 
 T0 = datetime(2026, 11, 22, 12, 0, tzinfo=UTC)
 LIB = "/acme/payments"
@@ -78,7 +78,7 @@ def space(space_id: int = 1, dimensions: int = 3) -> EmbeddingSpace:
     )
 
 
-@pytest.fixture(params=list(SEARCH_BACKEND_CASES))
+@pytest.fixture(params=params(SEARCH_BACKEND_CASES))
 async def search(request: pytest.FixtureRequest) -> AsyncIterator[SearchBackend]:
     factory = SEARCH_BACKEND_CASES[request.param].search
     assert factory is not None
@@ -86,7 +86,7 @@ async def search(request: pytest.FixtureRequest) -> AsyncIterator[SearchBackend]
         yield backend
 
 
-@pytest.fixture(params=list(VECTOR_BACKEND_CASES))
+@pytest.fixture(params=params(VECTOR_BACKEND_CASES))
 async def vectors(request: pytest.FixtureRequest) -> AsyncIterator[VectorBackend]:
     factory = VECTOR_BACKEND_CASES[request.param].vectors
     assert factory is not None

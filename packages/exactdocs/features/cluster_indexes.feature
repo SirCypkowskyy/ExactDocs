@@ -12,12 +12,12 @@ Feature: Elasticsearch and OpenSearch hold the search and vector indexes
     Then their chunks are indexed with library and version as keyword fields and their vectors in a "<vector field>" field
     And search_docs answers from the cluster, filtered to the asked version
 
-    @elasticsearch
+    @integration @elasticsearch
     Examples: Elasticsearch
       | engine        | vector field |
       | elasticsearch | dense_vector |
 
-    @opensearch
+    @integration @opensearch
     Examples: OpenSearch
       | engine     | vector field |
       | opensearch | knn_vector   |
