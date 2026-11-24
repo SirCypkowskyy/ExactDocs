@@ -66,7 +66,8 @@ def _include_session_routers(v1: APIRouter, container: Container) -> identity_ht
     """Add the routes that take a signed-in session and never an API token.
 
     ``/tokens`` (a leaked token must not mint its own successor), ``/users`` (nor create
-    accounts; operators only) and ``/access-log`` (operators only).
+    accounts; operators only), ``/access-log`` (operators only) and ``/account`` (nor change
+    the password of the account it acts as).
 
     Args:
         v1: The ``/api/v1`` router.
@@ -99,6 +100,11 @@ def _include_session_routers(v1: APIRouter, container: Container) -> identity_ht
     v1.include_router(
         identity_http.build_access_log_router(
             list_access_log=container.identity.list_access_log, session_caller=session_caller
+        )
+    )
+    v1.include_router(
+        identity_http.build_account_router(
+            change_password=container.identity.change_password, session_caller=session_caller
         )
     )
     return session_caller
@@ -309,7 +315,7 @@ def create_app(container: Container) -> FastAPI:
             list_libraries=container.list_libraries,
             get_library=container.catalog.get_library,
             resolve_version=container.catalog.resolve_version,
-            list_versions=container.catalog.list_versions,
+            list_versions=container.list_versions,
             list_articles=container.catalog.list_articles,
             list_tags=container.catalog.list_tags,
             get_article=container.catalog.get_article,
@@ -352,6 +358,7 @@ def create_app(container: Container) -> FastAPI:
             estimate_embedding=container.retrieval.estimate_embedding,
             get_embedding_progress=container.retrieval.get_embedding_progress,
             get_ai_usage=container.retrieval.get_ai_usage,
+            get_spend_history=container.retrieval.get_spend_history,
         ),
         dependencies=[
             Depends(

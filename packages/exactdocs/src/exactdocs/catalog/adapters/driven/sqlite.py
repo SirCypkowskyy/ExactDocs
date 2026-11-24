@@ -1628,6 +1628,46 @@ class SqliteImportedTags:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteArticleCounts:
+    """Implements ``ports.driven.ArticleCounts`` with grouped counts of the manifest entries."""
+
+    engine: AsyncEngine
+    """The SQLite or PostgreSQL engine."""
+
+    async def count_articles(
+        self, versions: Sequence[tuple[LibraryId, VersionRef]]
+    ) -> Mapping[tuple[LibraryId, VersionRef], int]:
+        """Count the entries of these versions' active manifests: one query per 400 versions.
+
+        Args:
+            versions: The versions, as ``(library, ref)``.
+
+        Returns:
+            The number of entries of each version's active manifest.
+        """
+        found: dict[tuple[LibraryId, VersionRef], int] = {}
+        async with self.engine.connect() as connection:
+            for start in range(0, len(versions), 400):  # two bound variables per version
+                batch = [(lib.value, ref.value) for lib, ref in versions[start : start + 400]]
+                rows = await connection.execute(
+                    select(manifests.c.library_id, manifests.c.ref, func.count())
+                    .select_from(
+                        manifests.join(
+                            manifest_entries, manifest_entries.c.manifest_id == manifests.c.id
+                        )
+                    )
+                    .where(
+                        tuple_(manifests.c.library_id, manifests.c.ref).in_(batch),
+                        manifests.c.state == ManifestState.ACTIVE.value,
+                    )
+                    .group_by(manifests.c.library_id, manifests.c.ref)
+                )
+                for library, ref, count in rows:
+                    found[LibraryId(library), VersionRef(ref)] = count
+        return found
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class SqliteArticleTitles:
     """Implements ``ports.driven.ArticleTitleFinder`` on ``catalog_manifest_entries``."""
 

@@ -447,8 +447,11 @@ other accounts neither see nor reach (403).
   tokens are refused at once. The last enabled admin cannot be disabled.
 - Enabling an account ends any session or token stored while it was disabled, so nothing that raced
   the disable comes back.
-- The Users page offers no reset of your own password, since it would sign you out. Use
-  `exactdocs user reset-password <you>` or ask another admin. A reset also clears the username's
+- The Users page offers no reset of your own password, since it would sign you out. Anyone with a
+  local account changes their own password under **Account settings** instead (the current one
+  first, checked like a sign-in and throttled the same way; `PUT /api/v1/account/password`): their
+  other sessions end, this one stays, and their API tokens keep working. A lost password still
+  needs `exactdocs user reset-password <you>` or another admin. A reset also clears the username's
   sign-in throttle, as `admin reset-password` does.
 - The Users page also lists the accounts made by a first sign-in through an identity provider,
   with their provider and groups.

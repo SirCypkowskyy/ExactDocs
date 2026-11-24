@@ -732,6 +732,32 @@ class InMemoryImportedTags:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryArticleCounts:
+    """Implements ``ports.driven.ArticleCounts`` over the in-memory manifests. For tests."""
+
+    manifests: InMemoryManifestRepository
+    """The manifests whose entries are counted."""
+
+    async def count_articles(
+        self, versions: Sequence[tuple[LibraryId, VersionRef]]
+    ) -> Mapping[tuple[LibraryId, VersionRef], int]:
+        """Count the entries of these versions' active manifests, by (library, ref).
+
+        Args:
+            versions: The versions, as ``(library, ref)``.
+
+        Returns:
+            The number of entries of each version's active manifest.
+        """
+        active = {
+            (m.library, m.ref): len(m.entries)
+            for m in self.manifests.manifests.values()
+            if m.state is ManifestState.ACTIVE
+        }
+        return {v: active[v] for v in versions if v in active}
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class InMemoryArticleTitles:
     """Implements ``ports.driven.ArticleTitleFinder`` on an ``InMemoryManifestRepository``."""
 
