@@ -131,6 +131,7 @@ class SearchDocsRetriever:
                     article=chunk.article_path,
                     heading_path=list(chunk.heading_path),
                     commit_sha=chunk.commit_sha,
+                    chunk_id=chunk.chunk_id,
                 )
             )
         return Answer(

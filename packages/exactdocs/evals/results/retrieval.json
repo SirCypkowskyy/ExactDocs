@@ -184,9 +184,9 @@
         "recall_at_5": 0.8165,
         "recall_at_10": 0.8914,
         "mrr": 0.6513,
-        "ndcg_at_10": 0.7051,
+        "ndcg_at_10": 0.7058,
         "section_recall_at_5": 0.7485,
-        "section_recall_at_10": 0.8491,
+        "section_recall_at_10": 0.851,
         "wrong_version_rate": 0.0,
         "unanswerable_clean_rate": 1.0,
         "no_answer_rate": 0.0,
@@ -213,16 +213,16 @@
             "high": 0.6979
           },
           "ndcg_at_10": {
-            "low": 0.6668,
-            "high": 0.7424
+            "low": 0.6678,
+            "high": 0.7428
           },
           "section_recall_at_5": {
             "low": 0.7056,
             "high": 0.7906
           },
           "section_recall_at_10": {
-            "low": 0.8142,
-            "high": 0.8828
+            "low": 0.8159,
+            "high": 0.8845
           },
           "wrong_version_rate": {
             "low": 0.0,
@@ -565,9 +565,9 @@
           "recall_at_5": 0.875,
           "recall_at_10": 0.9643,
           "mrr": 0.6951,
-          "ndcg_at_10": 0.7647,
+          "ndcg_at_10": 0.7682,
           "section_recall_at_5": 0.8452,
-          "section_recall_at_10": 0.9167,
+          "section_recall_at_10": 0.9256,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": null,
           "no_answer_rate": null,
@@ -594,16 +594,16 @@
               "high": 0.7847
             },
             "ndcg_at_10": {
-              "low": 0.6867,
-              "high": 0.839
+              "low": 0.6911,
+              "high": 0.8409
             },
             "section_recall_at_5": {
               "low": 0.7619,
               "high": 0.9196
             },
             "section_recall_at_10": {
-              "low": 0.8571,
-              "high": 0.9643
+              "low": 0.8661,
+              "high": 0.9732
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -781,9 +781,9 @@
           "recall_at_5": 0.8519,
           "recall_at_10": 0.9259,
           "mrr": 0.729,
-          "ndcg_at_10": 0.7598,
+          "ndcg_at_10": 0.7633,
           "section_recall_at_5": 0.8117,
-          "section_recall_at_10": 0.8889,
+          "section_recall_at_10": 0.8981,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": 1.0,
           "no_answer_rate": 0.0,
@@ -810,16 +810,16 @@
               "high": 0.8236
             },
             "ndcg_at_10": {
-              "low": 0.6759,
-              "high": 0.8382
+              "low": 0.681,
+              "high": 0.8401
             },
             "section_recall_at_5": {
               "low": 0.7191,
               "high": 0.8951
             },
             "section_recall_at_10": {
-              "low": 0.8148,
-              "high": 0.9506
+              "low": 0.8272,
+              "high": 0.9599
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -3906,10 +3906,11 @@
           "project": "starlette",
           "answerable": true,
           "rank": 7,
-          "ndcg": 0.20438239758848611,
+          "ndcg": 0.39780880120575696,
           "sections": 2,
           "section_ranks": [
-            7
+            7,
+            8
           ],
           "wrong_version": false,
           "empty": false,
@@ -6395,7 +6396,77 @@
         }
       ],
       "rows_from": null,
-      "versus_default": null
+      "versus_default": {
+        "configuration": "bm25",
+        "chunking": "h2",
+        "tests": {
+          "recall_at_1": {
+            "test": "mcnemar-mid-p",
+            "cases": 267,
+            "difference": -0.0337,
+            "interval": {
+              "low": -0.0824,
+              "high": 0.015
+            },
+            "p_value": 0.1839,
+            "significant": false,
+            "gained": 18,
+            "lost": 27
+          },
+          "recall_at_5": {
+            "test": "mcnemar-mid-p",
+            "cases": 267,
+            "difference": -0.0112,
+            "interval": {
+              "low": -0.0487,
+              "high": 0.0263
+            },
+            "p_value": 0.5847,
+            "significant": false,
+            "gained": 13,
+            "lost": 16
+          },
+          "recall_at_10": {
+            "test": "mcnemar-mid-p",
+            "cases": 267,
+            "difference": -0.0112,
+            "interval": {
+              "low": -0.0412,
+              "high": 0.0187
+            },
+            "p_value": 0.4545,
+            "significant": false,
+            "gained": 6,
+            "lost": 9
+          },
+          "mrr": {
+            "test": "permutation",
+            "cases": 267,
+            "difference": -0.026,
+            "interval": {
+              "low": -0.0576,
+              "high": 0.006
+            },
+            "p_value": 0.1102,
+            "significant": false,
+            "gained": null,
+            "lost": null
+          },
+          "ndcg_at_10": {
+            "test": "permutation",
+            "cases": 267,
+            "difference": -0.0085,
+            "interval": {
+              "low": -0.032,
+              "high": 0.0154
+            },
+            "p_value": 0.4829,
+            "significant": false,
+            "gained": null,
+            "lost": null
+          }
+        }
+      }
     },
     {
       "configuration": "bm25+ce",
@@ -12680,56 +12751,56 @@
       "rows_from": null,
       "versus_default": {
         "configuration": "bm25",
-        "chunking": "default",
+        "chunking": "h2",
         "tests": {
           "recall_at_1": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.0375,
+            "difference": 0.0037,
             "interval": {
-              "low": -0.0225,
-              "high": 0.0974
+              "low": -0.0599,
+              "high": 0.0712
             },
-            "p_value": 0.2284,
+            "p_value": 0.9111,
             "significant": false,
-            "gained": 39,
-            "lost": 29
+            "gained": 40,
+            "lost": 39
           },
           "recall_at_5": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.03,
+            "difference": 0.0187,
             "interval": {
-              "low": -0.0112,
-              "high": 0.0712
+              "low": -0.0262,
+              "high": 0.0599
             },
-            "p_value": 0.1755,
+            "p_value": 0.4177,
             "significant": false,
             "gained": 21,
-            "lost": 13
+            "lost": 16
           },
           "recall_at_10": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.015,
+            "difference": 0.0037,
             "interval": {
-              "low": -0.0262,
-              "high": 0.0562
+              "low": -0.0337,
+              "high": 0.0412
             },
-            "p_value": 0.4731,
+            "p_value": 0.8506,
             "significant": false,
-            "gained": 17,
+            "gained": 14,
             "lost": 13
           },
           "mrr": {
             "test": "permutation",
             "cases": 267,
-            "difference": 0.0286,
+            "difference": 0.0026,
             "interval": {
-              "low": -0.012,
-              "high": 0.069
+              "low": -0.0422,
+              "high": 0.0491
             },
-            "p_value": 0.165,
+            "p_value": 0.9068,
             "significant": false,
             "gained": null,
             "lost": null
@@ -12737,12 +12808,12 @@
           "ndcg_at_10": {
             "test": "permutation",
             "cases": 267,
-            "difference": 0.0181,
+            "difference": 0.0089,
             "interval": {
-              "low": -0.0139,
-              "high": 0.0509
+              "low": -0.0274,
+              "high": 0.0451
             },
-            "p_value": 0.2805,
+            "p_value": 0.6327,
             "significant": false,
             "gained": null,
             "lost": null
@@ -19037,70 +19108,70 @@
       "rows_from": null,
       "versus_default": {
         "configuration": "bm25",
-        "chunking": "default",
+        "chunking": "h2",
         "tests": {
           "recall_at_1": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.0449,
+            "difference": 0.0112,
             "interval": {
-              "low": 0.0,
-              "high": 0.0899
+              "low": -0.0487,
+              "high": 0.0712
             },
-            "p_value": 0.05958,
+            "p_value": 0.7163,
             "significant": false,
-            "gained": 26,
-            "lost": 14
+            "gained": 35,
+            "lost": 32
           },
           "recall_at_5": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.0262,
+            "difference": 0.015,
             "interval": {
-              "low": -0.0075,
-              "high": 0.0637
+              "low": -0.0262,
+              "high": 0.0562
             },
-            "p_value": 0.1516,
+            "p_value": 0.4869,
             "significant": false,
-            "gained": 15,
-            "lost": 8
+            "gained": 18,
+            "lost": 14
           },
           "recall_at_10": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.0075,
+            "difference": -0.0037,
             "interval": {
-              "low": -0.03,
-              "high": 0.0449
+              "low": -0.0412,
+              "high": 0.0337
             },
-            "p_value": 0.7111,
+            "p_value": 0.8506,
             "significant": false,
-            "gained": 15,
-            "lost": 13
+            "gained": 13,
+            "lost": 14
           },
           "mrr": {
             "test": "permutation",
             "cases": 267,
-            "difference": 0.0365,
+            "difference": 0.0105,
             "interval": {
-              "low": 0.005,
-              "high": 0.068
+              "low": -0.031,
+              "high": 0.0536
             },
-            "p_value": 0.0266,
-            "significant": true,
+            "p_value": 0.6402,
+            "significant": false,
             "gained": null,
             "lost": null
           },
           "ndcg_at_10": {
             "test": "permutation",
             "cases": 267,
-            "difference": 0.0361,
+            "difference": 0.0269,
             "interval": {
-              "low": 0.0097,
-              "high": 0.0622
+              "low": -0.0077,
+              "high": 0.062
             },
-            "p_value": 0.006199,
-            "significant": true,
+            "p_value": 0.1314,
+            "significant": false,
             "gained": null,
             "lost": null
           }
@@ -25392,56 +25463,56 @@
       "rows_from": null,
       "versus_default": {
         "configuration": "bm25",
-        "chunking": "default",
+        "chunking": "h2",
         "tests": {
           "recall_at_1": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.0337,
+            "difference": 0.0,
             "interval": {
-              "low": -0.0262,
-              "high": 0.0936
+              "low": -0.0637,
+              "high": 0.0674
             },
-            "p_value": 0.2678,
+            "p_value": 1.0,
             "significant": false,
-            "gained": 37,
-            "lost": 28
+            "gained": 39,
+            "lost": 39
           },
           "recall_at_5": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.015,
+            "difference": 0.0037,
             "interval": {
-              "low": -0.0262,
-              "high": 0.0562
+              "low": -0.0412,
+              "high": 0.0487
             },
-            "p_value": 0.4869,
+            "p_value": 0.8714,
             "significant": false,
-            "gained": 18,
-            "lost": 14
+            "gained": 19,
+            "lost": 18
           },
           "recall_at_10": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": -0.0037,
+            "difference": -0.015,
             "interval": {
-              "low": -0.0449,
-              "high": 0.0375
+              "low": -0.0562,
+              "high": 0.0225
             },
-            "p_value": 0.8601,
+            "p_value": 0.4731,
             "significant": false,
-            "gained": 15,
-            "lost": 16
+            "gained": 13,
+            "lost": 17
           },
           "mrr": {
             "test": "permutation",
             "cases": 267,
-            "difference": 0.0237,
+            "difference": -0.0023,
             "interval": {
-              "low": -0.0152,
-              "high": 0.0627
+              "low": -0.0463,
+              "high": 0.0436
             },
-            "p_value": 0.2266,
+            "p_value": 0.9241,
             "significant": false,
             "gained": null,
             "lost": null
@@ -25449,12 +25520,12 @@
           "ndcg_at_10": {
             "test": "permutation",
             "cases": 267,
-            "difference": 0.0101,
+            "difference": 0.0009,
             "interval": {
-              "low": -0.0217,
-              "high": 0.0423
+              "low": -0.0354,
+              "high": 0.037
             },
-            "p_value": 0.546,
+            "p_value": 0.9622,
             "significant": false,
             "gained": null,
             "lost": null
@@ -31714,56 +31785,56 @@
       "rows_from": null,
       "versus_default": {
         "configuration": "bm25",
-        "chunking": "default",
+        "chunking": "h2",
         "tests": {
           "recall_at_1": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": -0.0225,
+            "difference": -0.0562,
             "interval": {
-              "low": -0.0562,
-              "high": 0.0112
+              "low": -0.1124,
+              "high": 0.0
             },
-            "p_value": 0.21,
-            "significant": false,
-            "gained": 8,
-            "lost": 14
+            "p_value": 0.04794,
+            "significant": true,
+            "gained": 21,
+            "lost": 36
           },
           "recall_at_5": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": -0.0187,
+            "difference": -0.03,
             "interval": {
-              "low": -0.0375,
-              "high": 0.0
+              "low": -0.0712,
+              "high": 0.0112
             },
-            "p_value": 0.07031,
+            "p_value": 0.1628,
             "significant": false,
-            "gained": 1,
-            "lost": 6
+            "gained": 12,
+            "lost": 20
           },
           "recall_at_10": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": -0.0225,
+            "difference": -0.0337,
             "interval": {
-              "low": -0.0412,
-              "high": -0.0075
+              "low": -0.0674,
+              "high": -0.0037
             },
-            "p_value": 0.01562,
+            "p_value": 0.04139,
             "significant": true,
-            "gained": 0,
-            "lost": 6
+            "gained": 5,
+            "lost": 14
           },
           "mrr": {
             "test": "permutation",
             "cases": 267,
-            "difference": -0.0255,
+            "difference": -0.0515,
             "interval": {
-              "low": -0.0468,
-              "high": -0.0051
+              "low": -0.0879,
+              "high": -0.0142
             },
-            "p_value": 0.0167,
+            "p_value": 0.007999,
             "significant": true,
             "gained": null,
             "lost": null
@@ -31771,12 +31842,12 @@
           "ndcg_at_10": {
             "test": "permutation",
             "cases": 267,
-            "difference": -0.0223,
+            "difference": -0.0316,
             "interval": {
-              "low": -0.0373,
-              "high": -0.008
+              "low": -0.0592,
+              "high": -0.0035
             },
-            "p_value": 0.0034,
+            "p_value": 0.0307,
             "significant": true,
             "gained": null,
             "lost": null
@@ -38064,69 +38135,69 @@
       "rows_from": null,
       "versus_default": {
         "configuration": "bm25",
-        "chunking": "default",
+        "chunking": "h2",
         "tests": {
           "recall_at_1": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.0562,
+            "difference": 0.0225,
             "interval": {
-              "low": -0.0001,
-              "high": 0.1161
+              "low": -0.0412,
+              "high": 0.0899
             },
-            "p_value": 0.06402,
+            "p_value": 0.4944,
             "significant": false,
-            "gained": 40,
-            "lost": 25
+            "gained": 41,
+            "lost": 35
           },
           "recall_at_5": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.03,
+            "difference": 0.0187,
             "interval": {
-              "low": -0.0112,
-              "high": 0.0712
+              "low": -0.0262,
+              "high": 0.0599
             },
-            "p_value": 0.1628,
+            "p_value": 0.4177,
             "significant": false,
-            "gained": 20,
-            "lost": 12
+            "gained": 21,
+            "lost": 16
           },
           "recall_at_10": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.0112,
+            "difference": 0.0,
             "interval": {
-              "low": -0.03,
-              "high": 0.0524
+              "low": -0.0412,
+              "high": 0.0412
             },
-            "p_value": 0.5966,
+            "p_value": 1.0,
             "significant": false,
-            "gained": 17,
-            "lost": 14
+            "gained": 15,
+            "lost": 15
           },
           "mrr": {
             "test": "permutation",
             "cases": 267,
-            "difference": 0.0405,
+            "difference": 0.0146,
             "interval": {
-              "low": 0.0016,
-              "high": 0.0795
+              "low": -0.0295,
+              "high": 0.0603
             },
-            "p_value": 0.0455,
-            "significant": true,
+            "p_value": 0.522,
+            "significant": false,
             "gained": null,
             "lost": null
           },
           "ndcg_at_10": {
             "test": "permutation",
             "cases": 267,
-            "difference": 0.0248,
+            "difference": 0.0156,
             "interval": {
-              "low": -0.0062,
-              "high": 0.0563
+              "low": -0.0193,
+              "high": 0.0511
             },
-            "p_value": 0.1173,
+            "p_value": 0.3864,
             "significant": false,
             "gained": null,
             "lost": null
@@ -44427,56 +44498,56 @@
       "rows_from": null,
       "versus_default": {
         "configuration": "bm25",
-        "chunking": "default",
+        "chunking": "h2",
         "tests": {
           "recall_at_1": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.0262,
+            "difference": -0.0075,
             "interval": {
-              "low": -0.0262,
-              "high": 0.0787
+              "low": -0.0675,
+              "high": 0.0562
             },
-            "p_value": 0.3317,
+            "p_value": 0.8099,
             "significant": false,
-            "gained": 29,
-            "lost": 22
+            "gained": 33,
+            "lost": 35
           },
           "recall_at_5": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.03,
+            "difference": 0.0187,
             "interval": {
-              "low": -0.0037,
-              "high": 0.0674
+              "low": -0.0225,
+              "high": 0.0637
             },
-            "p_value": 0.1078,
+            "p_value": 0.405,
             "significant": false,
-            "gained": 16,
-            "lost": 8
+            "gained": 20,
+            "lost": 15
           },
           "recall_at_10": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.0225,
+            "difference": 0.0112,
             "interval": {
-              "low": -0.0187,
-              "high": 0.0637
+              "low": -0.03,
+              "high": 0.0487
             },
-            "p_value": 0.281,
+            "p_value": 0.5847,
             "significant": false,
-            "gained": 18,
-            "lost": 12
+            "gained": 16,
+            "lost": 13
           },
           "mrr": {
             "test": "permutation",
             "cases": 267,
-            "difference": 0.0249,
+            "difference": -0.0011,
             "interval": {
-              "low": -0.0102,
-              "high": 0.0601
+              "low": -0.0436,
+              "high": 0.0427
             },
-            "p_value": 0.16,
+            "p_value": 0.9592,
             "significant": false,
             "gained": null,
             "lost": null
@@ -44484,13 +44555,13 @@
           "ndcg_at_10": {
             "test": "permutation",
             "cases": 267,
-            "difference": 0.0325,
+            "difference": 0.0233,
             "interval": {
-              "low": 0.0053,
-              "high": 0.0603
+              "low": -0.0113,
+              "high": 0.0584
             },
-            "p_value": 0.0185,
-            "significant": true,
+            "p_value": 0.1836,
+            "significant": false,
             "gained": null,
             "lost": null
           }
@@ -50791,56 +50862,56 @@
       "rows_from": null,
       "versus_default": {
         "configuration": "bm25",
-        "chunking": "default",
+        "chunking": "h2",
         "tests": {
           "recall_at_1": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.0524,
+            "difference": 0.0187,
             "interval": {
-              "low": -0.0037,
-              "high": 0.1086
+              "low": -0.0449,
+              "high": 0.0825
             },
-            "p_value": 0.07693,
+            "p_value": 0.5666,
             "significant": false,
-            "gained": 38,
-            "lost": 24
+            "gained": 40,
+            "lost": 35
           },
           "recall_at_5": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.0187,
+            "difference": 0.0075,
             "interval": {
-              "low": -0.0225,
-              "high": 0.0599
+              "low": -0.0375,
+              "high": 0.0524
             },
-            "p_value": 0.3771,
+            "p_value": 0.7493,
             "significant": false,
-            "gained": 18,
-            "lost": 13
+            "gained": 20,
+            "lost": 18
           },
           "recall_at_10": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.0112,
+            "difference": 0.0,
             "interval": {
-              "low": -0.03,
-              "high": 0.0524
+              "low": -0.0412,
+              "high": 0.0412
             },
-            "p_value": 0.6076,
+            "p_value": 1.0,
             "significant": false,
-            "gained": 18,
-            "lost": 15
+            "gained": 16,
+            "lost": 16
           },
           "mrr": {
             "test": "permutation",
             "cases": 267,
-            "difference": 0.0378,
+            "difference": 0.0118,
             "interval": {
-              "low": 0.0003,
-              "high": 0.0758
+              "low": -0.0316,
+              "high": 0.0565
             },
-            "p_value": 0.05349,
+            "p_value": 0.6011,
             "significant": false,
             "gained": null,
             "lost": null
@@ -50848,12 +50919,12 @@
           "ndcg_at_10": {
             "test": "permutation",
             "cases": 267,
-            "difference": 0.0232,
+            "difference": 0.014,
             "interval": {
-              "low": -0.0076,
-              "high": 0.054
+              "low": -0.0213,
+              "high": 0.0493
             },
-            "p_value": 0.1373,
+            "p_value": 0.4414,
             "significant": false,
             "gained": null,
             "lost": null
@@ -57098,54 +57169,54 @@
       "rows_from": null,
       "versus_default": {
         "configuration": "bm25",
-        "chunking": "default",
+        "chunking": "h2",
         "tests": {
           "recall_at_1": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": -0.1199,
+            "difference": -0.1536,
             "interval": {
-              "low": -0.1873,
-              "high": -0.0524
+              "low": -0.2285,
+              "high": -0.0749
             },
-            "p_value": 0.0006103,
+            "p_value": 0.0001042,
             "significant": true,
-            "gained": 28,
-            "lost": 60
+            "gained": 36,
+            "lost": 77
           },
           "recall_at_5": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": -0.0637,
+            "difference": -0.0749,
             "interval": {
-              "low": -0.1161,
-              "high": -0.0112
+              "low": -0.1348,
+              "high": -0.0187
             },
-            "p_value": 0.01983,
+            "p_value": 0.0125,
             "significant": true,
-            "gained": 18,
-            "lost": 35
+            "gained": 22,
+            "lost": 42
           },
           "recall_at_10": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": -0.0449,
+            "difference": -0.0562,
             "interval": {
-              "low": -0.0899,
-              "high": -0.0037
+              "low": -0.1011,
+              "high": -0.0112
             },
-            "p_value": 0.05325,
-            "significant": false,
+            "p_value": 0.01952,
+            "significant": true,
             "gained": 13,
-            "lost": 25
+            "lost": 28
           },
           "mrr": {
             "test": "permutation",
             "cases": 267,
-            "difference": -0.1044,
+            "difference": -0.1303,
             "interval": {
-              "low": -0.151,
-              "high": -0.0579
+              "low": -0.184,
+              "high": -0.0756
             },
             "p_value": 0.00009999,
             "significant": true,
@@ -57155,10 +57226,10 @@
           "ndcg_at_10": {
             "test": "permutation",
             "cases": 267,
-            "difference": -0.0978,
+            "difference": -0.1071,
             "interval": {
-              "low": -0.1337,
-              "high": -0.0621
+              "low": -0.1484,
+              "high": -0.0656
             },
             "p_value": 0.00009999,
             "significant": true,
@@ -57216,13 +57287,13 @@
         "questions": 321,
         "answerable": 267,
         "unanswerable": 54,
-        "recall_at_1": 0.5169,
-        "recall_at_5": 0.7603,
-        "recall_at_10": 0.8165,
-        "mrr": 0.6258,
-        "ndcg_at_10": 0.6634,
-        "section_recall_at_5": 0.6981,
-        "section_recall_at_10": 0.772,
+        "recall_at_1": 0.5543,
+        "recall_at_5": 0.8277,
+        "recall_at_10": 0.9026,
+        "mrr": 0.6773,
+        "ndcg_at_10": 0.7143,
+        "section_recall_at_5": 0.7549,
+        "section_recall_at_10": 0.8395,
         "wrong_version_rate": 0.0,
         "unanswerable_clean_rate": 1.0,
         "no_answer_rate": 0.0,
@@ -57233,32 +57304,32 @@
         "usd_per_question": 0.0,
         "intervals": {
           "recall_at_1": {
-            "low": 0.4569,
-            "high": 0.5768
+            "low": 0.4944,
+            "high": 0.6142
           },
           "recall_at_5": {
-            "low": 0.7079,
-            "high": 0.8127
+            "low": 0.7828,
+            "high": 0.8727
           },
           "recall_at_10": {
-            "low": 0.7678,
-            "high": 0.8614
+            "low": 0.8652,
+            "high": 0.9363
           },
           "mrr": {
-            "low": 0.5762,
-            "high": 0.6767
+            "low": 0.6305,
+            "high": 0.7238
           },
           "ndcg_at_10": {
-            "low": 0.6215,
-            "high": 0.7056
+            "low": 0.6766,
+            "high": 0.7514
           },
           "section_recall_at_5": {
-            "low": 0.6519,
-            "high": 0.7449
+            "low": 0.7122,
+            "high": 0.7961
           },
           "section_recall_at_10": {
-            "low": 0.7287,
-            "high": 0.814
+            "low": 0.8031,
+            "high": 0.8744
           },
           "wrong_version_rate": {
             "low": 0.0,
@@ -57291,13 +57362,13 @@
           "questions": 53,
           "answerable": 53,
           "unanswerable": 0,
-          "recall_at_1": 0.566,
-          "recall_at_5": 0.7925,
-          "recall_at_10": 0.8868,
-          "mrr": 0.679,
-          "ndcg_at_10": 0.6972,
-          "section_recall_at_5": 0.7296,
-          "section_recall_at_10": 0.8333,
+          "recall_at_1": 0.5849,
+          "recall_at_5": 0.8113,
+          "recall_at_10": 0.9057,
+          "mrr": 0.6978,
+          "ndcg_at_10": 0.7088,
+          "section_recall_at_5": 0.739,
+          "section_recall_at_10": 0.8428,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": null,
           "no_answer_rate": null,
@@ -57308,32 +57379,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.434,
-              "high": 0.6981
+              "low": 0.4528,
+              "high": 0.717
             },
             "recall_at_5": {
-              "low": 0.6792,
-              "high": 0.8868
+              "low": 0.6981,
+              "high": 0.9057
             },
             "recall_at_10": {
-              "low": 0.7925,
-              "high": 0.9623
+              "low": 0.8302,
+              "high": 0.9811
             },
             "mrr": {
-              "low": 0.5694,
-              "high": 0.7836
+              "low": 0.5918,
+              "high": 0.8007
             },
             "ndcg_at_10": {
-              "low": 0.6053,
-              "high": 0.7823
+              "low": 0.6217,
+              "high": 0.7904
             },
             "section_recall_at_5": {
-              "low": 0.6195,
-              "high": 0.8302
+              "low": 0.6321,
+              "high": 0.8365
             },
             "section_recall_at_10": {
-              "low": 0.7453,
-              "high": 0.9119
+              "low": 0.761,
+              "high": 0.9151
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -57357,13 +57428,13 @@
           "questions": 48,
           "answerable": 48,
           "unanswerable": 0,
-          "recall_at_1": 0.375,
-          "recall_at_5": 0.6875,
-          "recall_at_10": 0.75,
-          "mrr": 0.5142,
-          "ndcg_at_10": 0.5945,
-          "section_recall_at_5": 0.5694,
-          "section_recall_at_10": 0.7014,
+          "recall_at_1": 0.4375,
+          "recall_at_5": 0.75,
+          "recall_at_10": 0.8542,
+          "mrr": 0.5837,
+          "ndcg_at_10": 0.644,
+          "section_recall_at_5": 0.6042,
+          "section_recall_at_10": 0.7535,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": null,
           "no_answer_rate": null,
@@ -57374,32 +57445,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.25,
-              "high": 0.5208
+              "low": 0.2917,
+              "high": 0.5833
             },
             "recall_at_5": {
-              "low": 0.5625,
-              "high": 0.8125
-            },
-            "recall_at_10": {
               "low": 0.625,
               "high": 0.875
             },
+            "recall_at_10": {
+              "low": 0.75,
+              "high": 0.9375
+            },
             "mrr": {
-              "low": 0.401,
-              "high": 0.6323
+              "low": 0.4729,
+              "high": 0.6962
             },
             "ndcg_at_10": {
-              "low": 0.5211,
-              "high": 0.6659
+              "low": 0.5777,
+              "high": 0.7094
             },
             "section_recall_at_5": {
-              "low": 0.4896,
-              "high": 0.6493
+              "low": 0.5278,
+              "high": 0.6806
             },
             "section_recall_at_10": {
-              "low": 0.6146,
-              "high": 0.7847
+              "low": 0.6771,
+              "high": 0.8264
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -57424,12 +57495,12 @@
           "answerable": 58,
           "unanswerable": 0,
           "recall_at_1": 0.6034,
-          "recall_at_5": 0.8276,
-          "recall_at_10": 0.8621,
-          "mrr": 0.6964,
-          "ndcg_at_10": 0.689,
-          "section_recall_at_5": 0.7195,
-          "section_recall_at_10": 0.7753,
+          "recall_at_5": 0.8621,
+          "recall_at_10": 0.8966,
+          "mrr": 0.7108,
+          "ndcg_at_10": 0.7085,
+          "section_recall_at_5": 0.754,
+          "section_recall_at_10": 0.8098,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": null,
           "no_answer_rate": null,
@@ -57444,28 +57515,28 @@
               "high": 0.7241
             },
             "recall_at_5": {
-              "low": 0.7241,
-              "high": 0.9138
-            },
-            "recall_at_10": {
               "low": 0.7759,
               "high": 0.9483
             },
+            "recall_at_10": {
+              "low": 0.8103,
+              "high": 0.9655
+            },
             "mrr": {
-              "low": 0.5934,
-              "high": 0.796
+              "low": 0.6131,
+              "high": 0.8071
             },
             "ndcg_at_10": {
-              "low": 0.5973,
-              "high": 0.7819
+              "low": 0.6207,
+              "high": 0.7963
             },
             "section_recall_at_5": {
-              "low": 0.6178,
-              "high": 0.819
+              "low": 0.6575,
+              "high": 0.846
             },
             "section_recall_at_10": {
-              "low": 0.6828,
-              "high": 0.8649
+              "low": 0.7213,
+              "high": 0.8908
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -57489,13 +57560,13 @@
           "questions": 52,
           "answerable": 52,
           "unanswerable": 0,
-          "recall_at_1": 0.6154,
-          "recall_at_5": 0.8269,
-          "recall_at_10": 0.8654,
-          "mrr": 0.7077,
-          "ndcg_at_10": 0.7581,
-          "section_recall_at_5": 0.8237,
-          "section_recall_at_10": 0.8654,
+          "recall_at_1": 0.6538,
+          "recall_at_5": 0.8654,
+          "recall_at_10": 0.9423,
+          "mrr": 0.7515,
+          "ndcg_at_10": 0.807,
+          "section_recall_at_5": 0.8622,
+          "section_recall_at_10": 0.9327,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": null,
           "no_answer_rate": null,
@@ -57506,32 +57577,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.4808,
-              "high": 0.75
+              "low": 0.5192,
+              "high": 0.7885
             },
             "recall_at_5": {
-              "low": 0.7115,
-              "high": 0.9231
+              "low": 0.7692,
+              "high": 0.9423
             },
             "recall_at_10": {
-              "low": 0.7692,
-              "high": 0.9423
+              "low": 0.8654,
+              "high": 1.0
             },
             "mrr": {
-              "low": 0.5978,
-              "high": 0.8125
+              "low": 0.6503,
+              "high": 0.8478
             },
             "ndcg_at_10": {
-              "low": 0.6621,
-              "high": 0.8468
+              "low": 0.7258,
+              "high": 0.884
             },
             "section_recall_at_5": {
-              "low": 0.7212,
-              "high": 0.9135
+              "low": 0.7724,
+              "high": 0.9423
             },
             "section_recall_at_10": {
-              "low": 0.7692,
-              "high": 0.9423
+              "low": 0.8654,
+              "high": 0.9904
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -57597,13 +57668,13 @@
           "questions": 56,
           "answerable": 56,
           "unanswerable": 0,
-          "recall_at_1": 0.4107,
-          "recall_at_5": 0.6607,
-          "recall_at_10": 0.7143,
-          "mrr": 0.5219,
-          "ndcg_at_10": 0.576,
-          "section_recall_at_5": 0.6399,
-          "section_recall_at_10": 0.6845,
+          "recall_at_1": 0.4821,
+          "recall_at_5": 0.8393,
+          "recall_at_10": 0.9107,
+          "mrr": 0.6344,
+          "ndcg_at_10": 0.6997,
+          "section_recall_at_5": 0.8006,
+          "section_recall_at_10": 0.8542,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": null,
           "no_answer_rate": null,
@@ -57614,32 +57685,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.2857,
-              "high": 0.5357
+              "low": 0.3571,
+              "high": 0.6071
             },
             "recall_at_5": {
-              "low": 0.5357,
-              "high": 0.7857
+              "low": 0.7321,
+              "high": 0.9286
             },
             "recall_at_10": {
-              "low": 0.5893,
-              "high": 0.8214
+              "low": 0.8393,
+              "high": 0.9821
             },
             "mrr": {
-              "low": 0.4103,
-              "high": 0.6354
+              "low": 0.5348,
+              "high": 0.7331
             },
             "ndcg_at_10": {
-              "low": 0.4721,
-              "high": 0.6793
+              "low": 0.614,
+              "high": 0.7847
             },
             "section_recall_at_5": {
-              "low": 0.5238,
-              "high": 0.75
+              "low": 0.7083,
+              "high": 0.8839
             },
             "section_recall_at_10": {
-              "low": 0.5714,
-              "high": 0.7917
+              "low": 0.7738,
+              "high": 0.9286
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -57665,13 +57736,13 @@
           "questions": 65,
           "answerable": 53,
           "unanswerable": 12,
-          "recall_at_1": 0.5283,
-          "recall_at_5": 0.7736,
-          "recall_at_10": 0.7925,
-          "mrr": 0.6305,
-          "ndcg_at_10": 0.6324,
-          "section_recall_at_5": 0.6855,
-          "section_recall_at_10": 0.7107,
+          "recall_at_1": 0.5472,
+          "recall_at_5": 0.8113,
+          "recall_at_10": 0.8679,
+          "mrr": 0.6609,
+          "ndcg_at_10": 0.6729,
+          "section_recall_at_5": 0.7296,
+          "section_recall_at_10": 0.7704,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": 1.0,
           "no_answer_rate": 0.0,
@@ -57682,32 +57753,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.3962,
-              "high": 0.6604
+              "low": 0.4151,
+              "high": 0.6792
             },
             "recall_at_5": {
-              "low": 0.6604,
-              "high": 0.8868
+              "low": 0.6981,
+              "high": 0.9057
             },
             "recall_at_10": {
-              "low": 0.6792,
-              "high": 0.8868
+              "low": 0.7736,
+              "high": 0.9434
             },
             "mrr": {
-              "low": 0.5142,
-              "high": 0.7406
+              "low": 0.5508,
+              "high": 0.7642
             },
             "ndcg_at_10": {
-              "low": 0.532,
-              "high": 0.7301
+              "low": 0.5779,
+              "high": 0.765
             },
             "section_recall_at_5": {
-              "low": 0.5786,
-              "high": 0.7893
+              "low": 0.6289,
+              "high": 0.8239
             },
             "section_recall_at_10": {
-              "low": 0.6038,
-              "high": 0.8114
+              "low": 0.673,
+              "high": 0.8585
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -57739,13 +57810,13 @@
           "questions": 66,
           "answerable": 55,
           "unanswerable": 11,
-          "recall_at_1": 0.4727,
-          "recall_at_5": 0.7273,
-          "recall_at_10": 0.7636,
-          "mrr": 0.5847,
-          "ndcg_at_10": 0.6161,
-          "section_recall_at_5": 0.6545,
-          "section_recall_at_10": 0.7212,
+          "recall_at_1": 0.5273,
+          "recall_at_5": 0.8364,
+          "recall_at_10": 0.8909,
+          "mrr": 0.6595,
+          "ndcg_at_10": 0.6912,
+          "section_recall_at_5": 0.7455,
+          "section_recall_at_10": 0.8212,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": 1.0,
           "no_answer_rate": 0.0,
@@ -57756,32 +57827,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.3455,
-              "high": 0.6
+              "low": 0.4,
+              "high": 0.6545
             },
             "recall_at_5": {
-              "low": 0.6,
-              "high": 0.8364
+              "low": 0.7273,
+              "high": 0.9273
             },
             "recall_at_10": {
-              "low": 0.6545,
-              "high": 0.8727
+              "low": 0.8,
+              "high": 0.9636
             },
             "mrr": {
-              "low": 0.4705,
-              "high": 0.6962
+              "low": 0.5553,
+              "high": 0.7594
             },
             "ndcg_at_10": {
-              "low": 0.5198,
-              "high": 0.7088
+              "low": 0.6125,
+              "high": 0.7697
             },
             "section_recall_at_5": {
-              "low": 0.5455,
-              "high": 0.7606
+              "low": 0.6485,
+              "high": 0.8364
             },
             "section_recall_at_10": {
-              "low": 0.6152,
-              "high": 0.8182
+              "low": 0.7424,
+              "high": 0.8939
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -57813,13 +57884,13 @@
           "questions": 64,
           "answerable": 54,
           "unanswerable": 10,
-          "recall_at_1": 0.6852,
-          "recall_at_5": 0.8519,
-          "recall_at_10": 0.9259,
-          "mrr": 0.7707,
-          "ndcg_at_10": 0.7904,
-          "section_recall_at_5": 0.8086,
-          "section_recall_at_10": 0.9043,
+          "recall_at_1": 0.7037,
+          "recall_at_5": 0.8704,
+          "recall_at_10": 0.9444,
+          "mrr": 0.7892,
+          "ndcg_at_10": 0.7991,
+          "section_recall_at_5": 0.8148,
+          "section_recall_at_10": 0.9105,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": 1.0,
           "no_answer_rate": 0.0,
@@ -57830,32 +57901,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.5556,
+              "low": 0.5741,
               "high": 0.8148
             },
             "recall_at_5": {
-              "low": 0.7593,
+              "low": 0.7778,
               "high": 0.9444
             },
             "recall_at_10": {
-              "low": 0.8519,
-              "high": 0.9815
+              "low": 0.8704,
+              "high": 1.0
             },
             "mrr": {
-              "low": 0.672,
-              "high": 0.8627
+              "low": 0.6949,
+              "high": 0.8757
             },
             "ndcg_at_10": {
-              "low": 0.7121,
-              "high": 0.863
+              "low": 0.7248,
+              "high": 0.869
             },
             "section_recall_at_5": {
-              "low": 0.7191,
-              "high": 0.8889
+              "low": 0.7284,
+              "high": 0.8951
             },
             "section_recall_at_10": {
-              "low": 0.8395,
-              "high": 0.9599
+              "low": 0.8488,
+              "high": 0.963
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -57887,13 +57958,13 @@
           "questions": 63,
           "answerable": 52,
           "unanswerable": 11,
-          "recall_at_1": 0.4231,
-          "recall_at_5": 0.6154,
-          "recall_at_10": 0.7308,
-          "mrr": 0.5096,
-          "ndcg_at_10": 0.5598,
-          "section_recall_at_5": 0.5801,
-          "section_recall_at_10": 0.6923,
+          "recall_at_1": 0.4808,
+          "recall_at_5": 0.7308,
+          "recall_at_10": 0.8462,
+          "mrr": 0.5913,
+          "ndcg_at_10": 0.638,
+          "section_recall_at_5": 0.6763,
+          "section_recall_at_10": 0.7885,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": 1.0,
           "no_answer_rate": 0.0,
@@ -57904,32 +57975,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.2885,
-              "high": 0.5577
+              "low": 0.3462,
+              "high": 0.6154
             },
             "recall_at_5": {
-              "low": 0.4808,
-              "high": 0.75
-            },
-            "recall_at_10": {
               "low": 0.6154,
               "high": 0.8462
             },
+            "recall_at_10": {
+              "low": 0.75,
+              "high": 0.9423
+            },
             "mrr": {
-              "low": 0.3894,
-              "high": 0.6292
+              "low": 0.4769,
+              "high": 0.7016
             },
             "ndcg_at_10": {
-              "low": 0.4633,
-              "high": 0.6537
+              "low": 0.5473,
+              "high": 0.7237
             },
             "section_recall_at_5": {
-              "low": 0.4744,
-              "high": 0.6859
+              "low": 0.5737,
+              "high": 0.7756
             },
             "section_recall_at_10": {
-              "low": 0.5833,
-              "high": 0.7949
+              "low": 0.6923,
+              "high": 0.875
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -57961,13 +58032,13 @@
           "questions": 63,
           "answerable": 53,
           "unanswerable": 10,
-          "recall_at_1": 0.4717,
-          "recall_at_5": 0.8302,
-          "recall_at_10": 0.8679,
-          "mrr": 0.6301,
-          "ndcg_at_10": 0.7157,
-          "section_recall_at_5": 0.7591,
-          "section_recall_at_10": 0.8296,
+          "recall_at_1": 0.5094,
+          "recall_at_5": 0.8868,
+          "recall_at_10": 0.9623,
+          "mrr": 0.6823,
+          "ndcg_at_10": 0.7681,
+          "section_recall_at_5": 0.8063,
+          "section_recall_at_10": 0.905,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": 1.0,
           "no_answer_rate": 0.0,
@@ -57978,32 +58049,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.3396,
-              "high": 0.6038
+              "low": 0.3774,
+              "high": 0.6415
             },
             "recall_at_5": {
-              "low": 0.717,
-              "high": 0.9245
+              "low": 0.7925,
+              "high": 0.9623
             },
             "recall_at_10": {
-              "low": 0.7736,
-              "high": 0.9434
+              "low": 0.9057,
+              "high": 1.0
             },
             "mrr": {
-              "low": 0.5274,
-              "high": 0.7323
+              "low": 0.5896,
+              "high": 0.7736
             },
             "ndcg_at_10": {
-              "low": 0.627,
-              "high": 0.7996
+              "low": 0.6963,
+              "high": 0.8346
             },
             "section_recall_at_5": {
-              "low": 0.6578,
-              "high": 0.8522
+              "low": 0.717,
+              "high": 0.8849
             },
             "section_recall_at_10": {
-              "low": 0.7409,
-              "high": 0.9107
+              "low": 0.8428,
+              "high": 0.9579
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -58036,7 +58107,7 @@
       "fallbacks": 0,
       "reranked": 0,
       "rerank_fallbacks": 0,
-      "misses": 49,
+      "misses": 26,
       "errors": [],
       "wrong_version_cases": [],
       "left_version_cases": [],
@@ -58224,10 +58295,12 @@
           "kind": "how-to",
           "project": "electron",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 3,
+          "ndcg": 0.5,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            3
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 22.724729031324387,
@@ -58309,10 +58382,12 @@
           "kind": "identifier-lookup",
           "project": "electron",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 1,
+          "ndcg": 1.0,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            1
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 19.106521969661117,
@@ -58768,10 +58843,11 @@
           "project": "electron",
           "answerable": true,
           "rank": 1,
-          "ndcg": 0.46927872602275644,
+          "ndcg": 0.7653606369886217,
           "sections": 3,
           "section_ranks": [
-            1
+            1,
+            2
           ],
           "wrong_version": false,
           "empty": false,
@@ -58870,11 +58946,12 @@
           "kind": "cross-page",
           "project": "electron",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.23463936301137822,
+          "rank": 6,
+          "ndcg": 0.40179981797758046,
           "sections": 3,
           "section_ranks": [
-            3
+            3,
+            6
           ],
           "wrong_version": false,
           "empty": false,
@@ -58937,11 +59014,12 @@
           "kind": "identifier-lookup",
           "project": "electron",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.6131471927654584,
+          "rank": 9,
+          "ndcg": 0.7977228895450266,
           "sections": 2,
           "section_ranks": [
-            1
+            1,
+            9
           ],
           "wrong_version": false,
           "empty": false,
@@ -59809,10 +59887,12 @@
           "kind": "version-change",
           "project": "pydantic",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 1,
+          "ndcg": 1.0,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            1
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 25.12564091011882,
@@ -59920,10 +60000,12 @@
           "kind": "version-change",
           "project": "pydantic",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 1,
+          "ndcg": 1.0,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            1
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 18.742538057267666,
@@ -59935,10 +60017,11 @@
           "kind": "cross-page",
           "project": "pydantic",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.19342640361727081,
+          "rank": 1,
+          "ndcg": 0.8065735963827293,
           "sections": 2,
           "section_ranks": [
+            1,
             8
           ],
           "wrong_version": false,
@@ -59952,10 +60035,12 @@
           "kind": "cross-page",
           "project": "pydantic",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 6,
+          "ndcg": 0.21840743681816419,
           "sections": 2,
-          "section_ranks": [],
+          "section_ranks": [
+            6
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 18.688281998038292,
@@ -60063,10 +60148,12 @@
           "kind": "version-change",
           "project": "pydantic",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 5,
+          "ndcg": 0.23719771276929622,
           "sections": 2,
-          "section_ranks": [],
+          "section_ranks": [
+            5
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 18.438826082274318,
@@ -60113,10 +60200,12 @@
           "kind": "version-change",
           "project": "pydantic",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 2,
+          "ndcg": 0.6309297535714575,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            2
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 17.378633841872215,
@@ -60162,10 +60251,12 @@
           "kind": "version-change",
           "project": "pydantic",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 4,
+          "ndcg": 0.43067655807339306,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            4
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 17.56913005374372,
@@ -61155,10 +61246,11 @@
           "kind": "cross-page",
           "project": "starlette",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.23463936301137822,
+          "rank": 1,
+          "ndcg": 0.7039180890341347,
           "sections": 3,
           "section_ranks": [
+            1,
             3
           ],
           "wrong_version": false,
@@ -61785,10 +61877,11 @@
           "kind": "cross-page",
           "project": "tanstack-query",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.3065735963827292,
+          "rank": 1,
+          "ndcg": 0.9197207891481876,
           "sections": 2,
           "section_ranks": [
+            1,
             3
           ],
           "wrong_version": false,
@@ -61819,10 +61912,12 @@
           "kind": "version-change",
           "project": "tanstack-query",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 1,
+          "ndcg": 1.0,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            1
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 18.546890001744032,
@@ -61834,10 +61929,12 @@
           "kind": "version-change",
           "project": "tanstack-query",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 4,
+          "ndcg": 0.43067655807339306,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            4
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 16.5516110137105,
@@ -61930,11 +62027,12 @@
           "kind": "version-change",
           "project": "tanstack-query",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.6131471927654584,
+          "rank": 2,
+          "ndcg": 1.0,
           "sections": 2,
           "section_ranks": [
-            1
+            1,
+            2
           ],
           "wrong_version": false,
           "empty": false,
@@ -61947,10 +62045,12 @@
           "kind": "version-change",
           "project": "tanstack-query",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 1,
+          "ndcg": 1.0,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            1
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 18.145866924896836,
@@ -62250,10 +62350,12 @@
           "kind": "version-change",
           "project": "tanstack-query",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 2,
+          "ndcg": 0.6309297535714575,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            2
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 15.562858898192644,
@@ -62334,10 +62436,12 @@
           "kind": "identifier-lookup",
           "project": "zod",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 6,
+          "ndcg": 0.3562071871080222,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            6
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 22.50383305363357,
@@ -62560,10 +62664,12 @@
           "kind": "conceptual",
           "project": "zod",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 1,
+          "ndcg": 0.6131471927654584,
           "sections": 2,
-          "section_ranks": [],
+          "section_ranks": [
+            1
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 19.492953782901168,
@@ -62626,10 +62732,12 @@
           "kind": "how-to",
           "project": "zod",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 2,
+          "ndcg": 0.6309297535714575,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            2
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 16.883275005966425,
@@ -63307,10 +63415,12 @@
           "kind": "identifier-lookup",
           "project": "zod",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 1,
+          "ndcg": 1.0,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            1
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 18.367193872109056,
@@ -63322,11 +63432,12 @@
           "kind": "version-change",
           "project": "zod",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.3065735963827292,
+          "rank": 10,
+          "ndcg": 0.48381288316677695,
           "sections": 2,
           "section_ranks": [
-            3
+            3,
+            10
           ],
           "wrong_version": false,
           "empty": false,
@@ -63388,77 +63499,7 @@
         }
       ],
       "rows_from": null,
-      "versus_default": {
-        "configuration": "bm25",
-        "chunking": "default",
-        "tests": {
-          "recall_at_1": {
-            "test": "mcnemar-mid-p",
-            "cases": 267,
-            "difference": -0.0037,
-            "interval": {
-              "low": -0.0562,
-              "high": 0.0487
-            },
-            "p_value": 0.8919,
-            "significant": false,
-            "gained": 26,
-            "lost": 27
-          },
-          "recall_at_5": {
-            "test": "mcnemar-mid-p",
-            "cases": 267,
-            "difference": -0.0562,
-            "interval": {
-              "low": -0.1049,
-              "high": -0.0112
-            },
-            "p_value": 0.02263,
-            "significant": true,
-            "gained": 14,
-            "lost": 29
-          },
-          "recall_at_10": {
-            "test": "mcnemar-mid-p",
-            "cases": 267,
-            "difference": -0.0749,
-            "interval": {
-              "low": -0.1199,
-              "high": -0.03
-            },
-            "p_value": 0.001065,
-            "significant": true,
-            "gained": 9,
-            "lost": 29
-          },
-          "mrr": {
-            "test": "permutation",
-            "cases": 267,
-            "difference": -0.0255,
-            "interval": {
-              "low": -0.0669,
-              "high": 0.0146
-            },
-            "p_value": 0.2317,
-            "significant": false,
-            "gained": null,
-            "lost": null
-          },
-          "ndcg_at_10": {
-            "test": "permutation",
-            "cases": 267,
-            "difference": -0.0417,
-            "interval": {
-              "low": -0.0752,
-              "high": -0.0093
-            },
-            "p_value": 0.0146,
-            "significant": true,
-            "gained": null,
-            "lost": null
-          }
-        }
-      }
+      "versus_default": null
     },
     {
       "configuration": "bm25+ce",
@@ -69689,56 +69730,56 @@
       "rows_from": null,
       "versus_default": {
         "configuration": "bm25",
-        "chunking": "default",
+        "chunking": "h2",
         "tests": {
           "recall_at_1": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": -0.0375,
+            "difference": -0.0712,
             "interval": {
-              "low": -0.1086,
-              "high": 0.0337
+              "low": -0.1386,
+              "high": -0.0037
             },
-            "p_value": 0.2997,
-            "significant": false,
-            "gained": 41,
-            "lost": 51
+            "p_value": 0.03985,
+            "significant": true,
+            "gained": 33,
+            "lost": 52
           },
           "recall_at_5": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": -0.0899,
+            "difference": -0.1011,
             "interval": {
-              "low": -0.1461,
-              "high": -0.0337
+              "low": -0.1536,
+              "high": -0.0487
             },
-            "p_value": 0.002626,
+            "p_value": 0.0002344,
             "significant": true,
-            "gained": 20,
-            "lost": 44
+            "gained": 14,
+            "lost": 41
           },
           "recall_at_10": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": -0.0936,
+            "difference": -0.1049,
             "interval": {
-              "low": -0.1461,
-              "high": -0.0412
+              "low": -0.1573,
+              "high": -0.0562
             },
-            "p_value": 0.0008618,
+            "p_value": 0.00008171,
             "significant": true,
-            "gained": 16,
-            "lost": 41
+            "gained": 12,
+            "lost": 40
           },
           "mrr": {
             "test": "permutation",
             "cases": 267,
-            "difference": -0.0612,
+            "difference": -0.0872,
             "interval": {
-              "low": -0.115,
-              "high": -0.0072
+              "low": -0.1389,
+              "high": -0.0361
             },
-            "p_value": 0.0266,
+            "p_value": 0.0007999,
             "significant": true,
             "gained": null,
             "lost": null
@@ -69746,12 +69787,12 @@
           "ndcg_at_10": {
             "test": "permutation",
             "cases": 267,
-            "difference": -0.0593,
+            "difference": -0.0685,
             "interval": {
-              "low": -0.1027,
-              "high": -0.0158
+              "low": -0.1083,
+              "high": -0.0286
             },
-            "p_value": 0.008399,
+            "p_value": 0.0006999,
             "significant": true,
             "gained": null,
             "lost": null
@@ -75997,70 +76038,70 @@
       "rows_from": null,
       "versus_default": {
         "configuration": "bm25",
-        "chunking": "default",
+        "chunking": "h2",
         "tests": {
           "recall_at_1": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.0,
+            "difference": -0.0337,
             "interval": {
-              "low": -0.0674,
-              "high": 0.0674
+              "low": -0.0899,
+              "high": 0.0225
             },
-            "p_value": 1.0,
+            "p_value": 0.2529,
             "significant": false,
-            "gained": 40,
-            "lost": 40
+            "gained": 26,
+            "lost": 35
           },
           "recall_at_5": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": -0.0824,
+            "difference": -0.0936,
             "interval": {
-              "low": -0.1348,
-              "high": -0.03
+              "low": -0.1423,
+              "high": -0.0412
             },
-            "p_value": 0.003202,
+            "p_value": 0.0004095,
             "significant": true,
-            "gained": 17,
-            "lost": 39
+            "gained": 13,
+            "lost": 38
           },
           "recall_at_10": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": -0.0861,
+            "difference": -0.0974,
             "interval": {
-              "low": -0.1423,
-              "high": -0.03
+              "low": -0.1498,
+              "high": -0.0449
             },
-            "p_value": 0.00369,
+            "p_value": 0.000198,
             "significant": true,
-            "gained": 20,
-            "lost": 43
+            "gained": 12,
+            "lost": 38
           },
           "mrr": {
             "test": "permutation",
             "cases": 267,
-            "difference": -0.037,
+            "difference": -0.0629,
             "interval": {
-              "low": -0.0891,
-              "high": 0.0149
+              "low": -0.1076,
+              "high": -0.0181
             },
-            "p_value": 0.1682,
-            "significant": false,
+            "p_value": 0.006699,
+            "significant": true,
             "gained": null,
             "lost": null
           },
           "ndcg_at_10": {
             "test": "permutation",
             "cases": 267,
-            "difference": -0.032,
+            "difference": -0.0412,
             "interval": {
-              "low": -0.0754,
-              "high": 0.011
+              "low": -0.0779,
+              "high": -0.0045
             },
-            "p_value": 0.1494,
-            "significant": false,
+            "p_value": 0.0326,
+            "significant": true,
             "gained": null,
             "lost": null
           }
@@ -76115,13 +76156,13 @@
         "questions": 321,
         "answerable": 267,
         "unanswerable": 54,
-        "recall_at_1": 0.4906,
-        "recall_at_5": 0.7416,
-        "recall_at_10": 0.8052,
-        "mrr": 0.6024,
-        "ndcg_at_10": 0.6438,
-        "section_recall_at_5": 0.6851,
-        "section_recall_at_10": 0.7711,
+        "recall_at_1": 0.5393,
+        "recall_at_5": 0.8165,
+        "recall_at_10": 0.8876,
+        "mrr": 0.6619,
+        "ndcg_at_10": 0.7125,
+        "section_recall_at_5": 0.7552,
+        "section_recall_at_10": 0.8536,
         "wrong_version_rate": 0.0,
         "unanswerable_clean_rate": 1.0,
         "no_answer_rate": 0.0,
@@ -76132,32 +76173,32 @@
         "usd_per_question": 0.0,
         "intervals": {
           "recall_at_1": {
-            "low": 0.4307,
-            "high": 0.5506
+            "low": 0.4794,
+            "high": 0.5993
           },
           "recall_at_5": {
-            "low": 0.6891,
-            "high": 0.794
+            "low": 0.7678,
+            "high": 0.8614
           },
           "recall_at_10": {
-            "low": 0.7566,
-            "high": 0.8502
+            "low": 0.8502,
+            "high": 0.9251
           },
           "mrr": {
-            "low": 0.5519,
-            "high": 0.6525
+            "low": 0.6154,
+            "high": 0.7079
           },
           "ndcg_at_10": {
-            "low": 0.601,
-            "high": 0.6862
+            "low": 0.6743,
+            "high": 0.7489
           },
           "section_recall_at_5": {
-            "low": 0.6368,
-            "high": 0.7322
+            "low": 0.7127,
+            "high": 0.7965
           },
           "section_recall_at_10": {
-            "low": 0.7276,
-            "high": 0.8137
+            "low": 0.8184,
+            "high": 0.8873
           },
           "wrong_version_rate": {
             "low": 0.0,
@@ -76190,13 +76231,13 @@
           "questions": 53,
           "answerable": 53,
           "unanswerable": 0,
-          "recall_at_1": 0.5283,
-          "recall_at_5": 0.7736,
-          "recall_at_10": 0.8302,
-          "mrr": 0.6425,
-          "ndcg_at_10": 0.6846,
-          "section_recall_at_5": 0.7358,
-          "section_recall_at_10": 0.8113,
+          "recall_at_1": 0.5472,
+          "recall_at_5": 0.8113,
+          "recall_at_10": 0.8679,
+          "mrr": 0.6676,
+          "ndcg_at_10": 0.7129,
+          "section_recall_at_5": 0.7736,
+          "section_recall_at_10": 0.8491,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": null,
           "no_answer_rate": null,
@@ -76207,32 +76248,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.3962,
-              "high": 0.6604
+              "low": 0.4151,
+              "high": 0.6792
             },
             "recall_at_5": {
-              "low": 0.6604,
-              "high": 0.8868
+              "low": 0.6981,
+              "high": 0.9057
             },
             "recall_at_10": {
-              "low": 0.717,
-              "high": 0.9245
+              "low": 0.7736,
+              "high": 0.9434
             },
             "mrr": {
-              "low": 0.529,
-              "high": 0.7486
+              "low": 0.5596,
+              "high": 0.7704
             },
             "ndcg_at_10": {
-              "low": 0.5839,
-              "high": 0.7782
+              "low": 0.6197,
+              "high": 0.8003
             },
             "section_recall_at_5": {
-              "low": 0.6289,
-              "high": 0.8365
+              "low": 0.673,
+              "high": 0.8649
             },
             "section_recall_at_10": {
-              "low": 0.7107,
-              "high": 0.9025
+              "low": 0.7579,
+              "high": 0.9277
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -76256,13 +76297,13 @@
           "questions": 48,
           "answerable": 48,
           "unanswerable": 0,
-          "recall_at_1": 0.3333,
-          "recall_at_5": 0.6042,
-          "recall_at_10": 0.6667,
-          "mrr": 0.453,
-          "ndcg_at_10": 0.5023,
-          "section_recall_at_5": 0.4931,
-          "section_recall_at_10": 0.6128,
+          "recall_at_1": 0.3958,
+          "recall_at_5": 0.7083,
+          "recall_at_10": 0.7708,
+          "mrr": 0.5276,
+          "ndcg_at_10": 0.5952,
+          "section_recall_at_5": 0.5799,
+          "section_recall_at_10": 0.717,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": null,
           "no_answer_rate": null,
@@ -76273,32 +76314,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.2083,
-              "high": 0.4792
+              "low": 0.2708,
+              "high": 0.5417
             },
             "recall_at_5": {
-              "low": 0.4583,
-              "high": 0.7292
+              "low": 0.5833,
+              "high": 0.8333
             },
             "recall_at_10": {
-              "low": 0.5208,
-              "high": 0.7917
+              "low": 0.6458,
+              "high": 0.875
             },
             "mrr": {
-              "low": 0.3398,
-              "high": 0.5747
+              "low": 0.4149,
+              "high": 0.6462
             },
             "ndcg_at_10": {
-              "low": 0.418,
-              "high": 0.5871
+              "low": 0.5189,
+              "high": 0.6708
             },
             "section_recall_at_5": {
-              "low": 0.4028,
-              "high": 0.5903
+              "low": 0.4965,
+              "high": 0.6632
             },
             "section_recall_at_10": {
-              "low": 0.5138,
-              "high": 0.7118
+              "low": 0.6267,
+              "high": 0.8039
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -76322,13 +76363,13 @@
           "questions": 58,
           "answerable": 58,
           "unanswerable": 0,
-          "recall_at_1": 0.5517,
-          "recall_at_5": 0.7586,
-          "recall_at_10": 0.8448,
-          "mrr": 0.6509,
-          "ndcg_at_10": 0.6603,
-          "section_recall_at_5": 0.6741,
-          "section_recall_at_10": 0.7839,
+          "recall_at_1": 0.5862,
+          "recall_at_5": 0.8103,
+          "recall_at_10": 0.9138,
+          "mrr": 0.6936,
+          "ndcg_at_10": 0.7114,
+          "section_recall_at_5": 0.7264,
+          "section_recall_at_10": 0.8534,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": null,
           "no_answer_rate": null,
@@ -76339,32 +76380,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.431,
-              "high": 0.6724
+              "low": 0.4655,
+              "high": 0.7069
             },
             "recall_at_5": {
-              "low": 0.6547,
-              "high": 0.8621
+              "low": 0.7069,
+              "high": 0.9138
             },
             "recall_at_10": {
-              "low": 0.7414,
-              "high": 0.931
+              "low": 0.8448,
+              "high": 0.9828
             },
             "mrr": {
-              "low": 0.546,
-              "high": 0.7564
+              "low": 0.594,
+              "high": 0.7905
             },
             "ndcg_at_10": {
-              "low": 0.5676,
-              "high": 0.7525
+              "low": 0.6268,
+              "high": 0.7947
             },
             "section_recall_at_5": {
-              "low": 0.5661,
-              "high": 0.7793
+              "low": 0.6264,
+              "high": 0.8241
             },
             "section_recall_at_10": {
-              "low": 0.6839,
-              "high": 0.8736
+              "low": 0.7701,
+              "high": 0.9282
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -76388,13 +76429,13 @@
           "questions": 52,
           "answerable": 52,
           "unanswerable": 0,
-          "recall_at_1": 0.4423,
-          "recall_at_5": 0.6923,
-          "recall_at_10": 0.7692,
-          "mrr": 0.547,
-          "ndcg_at_10": 0.6214,
-          "section_recall_at_5": 0.6795,
-          "section_recall_at_10": 0.7917,
+          "recall_at_1": 0.5385,
+          "recall_at_5": 0.8077,
+          "recall_at_10": 0.9038,
+          "mrr": 0.6523,
+          "ndcg_at_10": 0.7333,
+          "section_recall_at_5": 0.7949,
+          "section_recall_at_10": 0.9263,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": null,
           "no_answer_rate": null,
@@ -76405,32 +76446,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.3077,
-              "high": 0.5769
+              "low": 0.4038,
+              "high": 0.6731
             },
             "recall_at_5": {
-              "low": 0.5577,
-              "high": 0.8077
+              "low": 0.6923,
+              "high": 0.9038
             },
             "recall_at_10": {
-              "low": 0.6538,
-              "high": 0.8846
+              "low": 0.8269,
+              "high": 0.9808
             },
             "mrr": {
-              "low": 0.4294,
-              "high": 0.6646
+              "low": 0.5447,
+              "high": 0.759
             },
             "ndcg_at_10": {
-              "low": 0.5139,
-              "high": 0.7272
+              "low": 0.6424,
+              "high": 0.8195
             },
             "section_recall_at_5": {
-              "low": 0.5545,
-              "high": 0.8013
+              "low": 0.689,
+              "high": 0.8942
             },
             "section_recall_at_10": {
-              "low": 0.6763,
-              "high": 0.8942
+              "low": 0.8558,
+              "high": 0.984
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -76496,13 +76537,13 @@
           "questions": 56,
           "answerable": 56,
           "unanswerable": 0,
-          "recall_at_1": 0.5714,
-          "recall_at_5": 0.8571,
-          "recall_at_10": 0.8929,
-          "mrr": 0.6939,
-          "ndcg_at_10": 0.7304,
-          "section_recall_at_5": 0.8185,
-          "section_recall_at_10": 0.8363,
+          "recall_at_1": 0.6071,
+          "recall_at_5": 0.9286,
+          "recall_at_10": 0.9643,
+          "mrr": 0.7475,
+          "ndcg_at_10": 0.7943,
+          "section_recall_at_5": 0.881,
+          "section_recall_at_10": 0.9077,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": null,
           "no_answer_rate": null,
@@ -76513,32 +76554,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.4464,
-              "high": 0.6964
+              "low": 0.4821,
+              "high": 0.7321
             },
             "recall_at_5": {
-              "low": 0.7679,
-              "high": 0.9464
+              "low": 0.8571,
+              "high": 0.9821
             },
             "recall_at_10": {
-              "low": 0.8036,
-              "high": 0.9643
+              "low": 0.9107,
+              "high": 1.0
             },
             "mrr": {
-              "low": 0.5919,
-              "high": 0.7914
+              "low": 0.6568,
+              "high": 0.8324
             },
             "ndcg_at_10": {
-              "low": 0.6425,
-              "high": 0.8127
+              "low": 0.7192,
+              "high": 0.8654
             },
             "section_recall_at_5": {
-              "low": 0.7321,
-              "high": 0.8929
+              "low": 0.8095,
+              "high": 0.9435
             },
             "section_recall_at_10": {
-              "low": 0.75,
-              "high": 0.9107
+              "low": 0.8452,
+              "high": 0.9643
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -76564,13 +76605,13 @@
           "questions": 65,
           "answerable": 53,
           "unanswerable": 12,
-          "recall_at_1": 0.4717,
-          "recall_at_5": 0.717,
-          "recall_at_10": 0.7358,
-          "mrr": 0.5675,
-          "ndcg_at_10": 0.6153,
-          "section_recall_at_5": 0.6415,
-          "section_recall_at_10": 0.7201,
+          "recall_at_1": 0.5283,
+          "recall_at_5": 0.8113,
+          "recall_at_10": 0.8302,
+          "mrr": 0.6325,
+          "ndcg_at_10": 0.6901,
+          "section_recall_at_5": 0.7296,
+          "section_recall_at_10": 0.8145,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": 1.0,
           "no_answer_rate": 0.0,
@@ -76581,32 +76622,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.3396,
-              "high": 0.6038
+              "low": 0.3962,
+              "high": 0.6604
             },
             "recall_at_5": {
-              "low": 0.5849,
-              "high": 0.8302
+              "low": 0.6981,
+              "high": 0.9057
             },
             "recall_at_10": {
-              "low": 0.6226,
-              "high": 0.8491
+              "low": 0.717,
+              "high": 0.9245
             },
             "mrr": {
-              "low": 0.4509,
-              "high": 0.6813
+              "low": 0.5198,
+              "high": 0.7404
             },
             "ndcg_at_10": {
-              "low": 0.5075,
-              "high": 0.7183
+              "low": 0.5919,
+              "high": 0.782
             },
             "section_recall_at_5": {
-              "low": 0.522,
-              "high": 0.7517
+              "low": 0.6226,
+              "high": 0.827
             },
             "section_recall_at_10": {
-              "low": 0.6069,
-              "high": 0.8239
+              "low": 0.7138,
+              "high": 0.8994
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -76638,13 +76679,13 @@
           "questions": 66,
           "answerable": 55,
           "unanswerable": 11,
-          "recall_at_1": 0.4545,
-          "recall_at_5": 0.8,
-          "recall_at_10": 0.8727,
-          "mrr": 0.5993,
-          "ndcg_at_10": 0.6455,
-          "section_recall_at_5": 0.7364,
-          "section_recall_at_10": 0.8136,
+          "recall_at_1": 0.4909,
+          "recall_at_5": 0.8182,
+          "recall_at_10": 0.9091,
+          "mrr": 0.6322,
+          "ndcg_at_10": 0.6829,
+          "section_recall_at_5": 0.7545,
+          "section_recall_at_10": 0.85,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": 1.0,
           "no_answer_rate": 0.0,
@@ -76655,32 +76696,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.3273,
-              "high": 0.5818
+              "low": 0.3636,
+              "high": 0.6182
             },
             "recall_at_5": {
-              "low": 0.6909,
-              "high": 0.8909
+              "low": 0.7091,
+              "high": 0.9091
             },
             "recall_at_10": {
-              "low": 0.7818,
-              "high": 0.9455
+              "low": 0.8364,
+              "high": 0.9818
             },
             "mrr": {
-              "low": 0.4949,
-              "high": 0.7003
+              "low": 0.5297,
+              "high": 0.7304
             },
             "ndcg_at_10": {
-              "low": 0.5591,
-              "high": 0.7287
+              "low": 0.6072,
+              "high": 0.7577
             },
             "section_recall_at_5": {
-              "low": 0.6364,
-              "high": 0.8303
+              "low": 0.6606,
+              "high": 0.8424
             },
             "section_recall_at_10": {
-              "low": 0.7197,
-              "high": 0.8985
+              "low": 0.7727,
+              "high": 0.9212
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -76712,13 +76753,13 @@
           "questions": 64,
           "answerable": 54,
           "unanswerable": 10,
-          "recall_at_1": 0.5926,
-          "recall_at_5": 0.7407,
-          "recall_at_10": 0.7778,
-          "mrr": 0.6585,
-          "ndcg_at_10": 0.6641,
-          "section_recall_at_5": 0.716,
-          "section_recall_at_10": 0.7531,
+          "recall_at_1": 0.6667,
+          "recall_at_5": 0.8704,
+          "recall_at_10": 0.9074,
+          "mrr": 0.7573,
+          "ndcg_at_10": 0.7566,
+          "section_recall_at_5": 0.8179,
+          "section_recall_at_10": 0.8642,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": 1.0,
           "no_answer_rate": 0.0,
@@ -76729,32 +76770,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.463,
-              "high": 0.7222
+              "low": 0.537,
+              "high": 0.7963
             },
             "recall_at_5": {
-              "low": 0.6296,
-              "high": 0.8519
+              "low": 0.7778,
+              "high": 0.9444
             },
             "recall_at_10": {
-              "low": 0.6667,
-              "high": 0.8889
+              "low": 0.8148,
+              "high": 0.9815
             },
             "mrr": {
-              "low": 0.5417,
-              "high": 0.7719
+              "low": 0.6573,
+              "high": 0.8511
             },
             "ndcg_at_10": {
-              "low": 0.5623,
-              "high": 0.7617
+              "low": 0.6706,
+              "high": 0.8368
             },
             "section_recall_at_5": {
-              "low": 0.608,
-              "high": 0.8148
+              "low": 0.7253,
+              "high": 0.8981
             },
             "section_recall_at_10": {
-              "low": 0.6481,
-              "high": 0.8488
+              "low": 0.784,
+              "high": 0.9321
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -76786,13 +76827,13 @@
           "questions": 63,
           "answerable": 52,
           "unanswerable": 11,
-          "recall_at_1": 0.4423,
-          "recall_at_5": 0.7115,
-          "recall_at_10": 0.7885,
-          "mrr": 0.5608,
-          "ndcg_at_10": 0.6219,
-          "section_recall_at_5": 0.6571,
-          "section_recall_at_10": 0.7724,
+          "recall_at_1": 0.4808,
+          "recall_at_5": 0.75,
+          "recall_at_10": 0.8269,
+          "mrr": 0.5993,
+          "ndcg_at_10": 0.6568,
+          "section_recall_at_5": 0.6859,
+          "section_recall_at_10": 0.8109,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": 1.0,
           "no_answer_rate": 0.0,
@@ -76803,32 +76844,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.3077,
-              "high": 0.5769
+              "low": 0.3462,
+              "high": 0.6154
             },
             "recall_at_5": {
-              "low": 0.5769,
-              "high": 0.8269
+              "low": 0.6346,
+              "high": 0.8654
             },
             "recall_at_10": {
-              "low": 0.6731,
-              "high": 0.9038
+              "low": 0.7115,
+              "high": 0.9231
             },
             "mrr": {
-              "low": 0.4455,
-              "high": 0.6758
+              "low": 0.4877,
+              "high": 0.7106
             },
             "ndcg_at_10": {
-              "low": 0.5268,
-              "high": 0.7121
+              "low": 0.5658,
+              "high": 0.7439
             },
             "section_recall_at_5": {
-              "low": 0.5481,
-              "high": 0.7596
+              "low": 0.5769,
+              "high": 0.7917
             },
             "section_recall_at_10": {
-              "low": 0.6731,
-              "high": 0.8622
+              "low": 0.7179,
+              "high": 0.8974
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -76860,13 +76901,13 @@
           "questions": 63,
           "answerable": 53,
           "unanswerable": 10,
-          "recall_at_1": 0.4906,
-          "recall_at_5": 0.7358,
-          "recall_at_10": 0.8491,
-          "mrr": 0.6244,
-          "ndcg_at_10": 0.6716,
-          "section_recall_at_5": 0.6717,
-          "section_recall_at_10": 0.795,
+          "recall_at_1": 0.5283,
+          "recall_at_5": 0.8302,
+          "recall_at_10": 0.9623,
+          "mrr": 0.6863,
+          "ndcg_at_10": 0.775,
+          "section_recall_at_5": 0.7855,
+          "section_recall_at_10": 0.9277,
           "wrong_version_rate": 0.0,
           "unanswerable_clean_rate": 1.0,
           "no_answer_rate": 0.0,
@@ -76877,32 +76918,32 @@
           "usd_per_question": 0.0,
           "intervals": {
             "recall_at_1": {
-              "low": 0.3585,
-              "high": 0.6226
+              "low": 0.3962,
+              "high": 0.6604
             },
             "recall_at_5": {
-              "low": 0.6226,
-              "high": 0.8491
+              "low": 0.717,
+              "high": 0.9245
             },
             "recall_at_10": {
-              "low": 0.7547,
-              "high": 0.9434
+              "low": 0.9057,
+              "high": 1.0
             },
             "mrr": {
-              "low": 0.5175,
-              "high": 0.7323
+              "low": 0.5911,
+              "high": 0.7788
             },
             "ndcg_at_10": {
-              "low": 0.5768,
-              "high": 0.7646
+              "low": 0.7007,
+              "high": 0.8447
             },
             "section_recall_at_5": {
-              "low": 0.5654,
-              "high": 0.7767
+              "low": 0.6931,
+              "high": 0.8679
             },
             "section_recall_at_10": {
-              "low": 0.6981,
-              "high": 0.8811
+              "low": 0.8679,
+              "high": 0.9748
             },
             "wrong_version_rate": {
               "low": 0.0,
@@ -76935,7 +76976,7 @@
       "fallbacks": 0,
       "reranked": 0,
       "rerank_fallbacks": 0,
-      "misses": 52,
+      "misses": 30,
       "errors": [],
       "wrong_version_cases": [],
       "left_version_cases": [],
@@ -77467,10 +77508,12 @@
           "kind": "how-to",
           "project": "electron",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 1,
+          "ndcg": 1.0,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            1
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 37.167418049648404,
@@ -77612,10 +77655,12 @@
           "kind": "identifier-lookup",
           "project": "electron",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 5,
+          "ndcg": 0.38685280723454163,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            5
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 30.658008065074682,
@@ -77627,10 +77672,12 @@
           "kind": "conceptual",
           "project": "electron",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 1,
+          "ndcg": 1.0,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            1
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 32.58125693537295,
@@ -77661,10 +77708,11 @@
           "project": "electron",
           "answerable": true,
           "rank": 1,
-          "ndcg": 0.46927872602275644,
+          "ndcg": 0.7039180890341347,
           "sections": 3,
           "section_ranks": [
-            1
+            1,
+            3
           ],
           "wrong_version": false,
           "empty": false,
@@ -77765,11 +77813,12 @@
           "project": "electron",
           "answerable": true,
           "rank": 1,
-          "ndcg": 0.6364391809889587,
+          "ndcg": 0.7777061538487877,
           "sections": 3,
           "section_ranks": [
             1,
-            6
+            6,
+            9
           ],
           "wrong_version": false,
           "empty": false,
@@ -77919,10 +77968,11 @@
           "kind": "cross-page",
           "project": "electron",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.1480409554829326,
+          "rank": 4,
+          "ndcg": 0.3501483019834802,
           "sections": 3,
           "section_ranks": [
+            4,
             8
           ],
           "wrong_version": false,
@@ -77936,10 +77986,12 @@
           "kind": "identifier-lookup",
           "project": "electron",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 1,
+          "ndcg": 1.0,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            1
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 28.766839997842908,
@@ -78048,11 +78100,11 @@
           "kind": "identifier-lookup",
           "project": "pydantic",
           "answerable": true,
-          "rank": 3,
-          "ndcg": 0.5,
+          "rank": 1,
+          "ndcg": 1.0,
           "sections": 1,
           "section_ranks": [
-            3
+            1
           ],
           "wrong_version": false,
           "empty": false,
@@ -78162,10 +78214,12 @@
           "kind": "cross-page",
           "project": "pydantic",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 1,
+          "ndcg": 0.6131471927654584,
           "sections": 2,
-          "section_ranks": [],
+          "section_ranks": [
+            1
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 29.91818403825164,
@@ -78178,9 +78232,11 @@
           "project": "pydantic",
           "answerable": true,
           "rank": null,
-          "ndcg": 0.0,
+          "ndcg": 0.6131471927654584,
           "sections": 2,
-          "section_ranks": [],
+          "section_ranks": [
+            1
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 24.723255075514317,
@@ -78192,10 +78248,12 @@
           "kind": "how-to",
           "project": "pydantic",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 7,
+          "ndcg": 0.3333333333333333,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            7
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 32.12314401753247,
@@ -79119,10 +79177,11 @@
           "kind": "version-change",
           "project": "starlette",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.3065735963827292,
+          "rank": 2,
+          "ndcg": 0.6934264036172708,
           "sections": 2,
           "section_ranks": [
+            2,
             3
           ],
           "wrong_version": false,
@@ -79183,10 +79242,12 @@
           "kind": "identifier-lookup",
           "project": "starlette",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 1,
+          "ndcg": 1.0,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            1
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 31.367192044854164,
@@ -79215,10 +79276,12 @@
           "kind": "how-to",
           "project": "starlette",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 1,
+          "ndcg": 1.0,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            1
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 32.19063300639391,
@@ -79427,10 +79490,12 @@
           "kind": "conceptual",
           "project": "starlette",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 3,
+          "ndcg": 0.5,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            3
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 30.858999816700816,
@@ -79460,9 +79525,11 @@
           "project": "starlette",
           "answerable": true,
           "rank": null,
-          "ndcg": 0.0,
+          "ndcg": 0.19342640361727081,
           "sections": 2,
-          "section_ranks": [],
+          "section_ranks": [
+            8
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 32.71317691542208,
@@ -79569,11 +79636,13 @@
           "kind": "cross-page",
           "project": "starlette",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.2960819109658652,
+          "rank": 1,
+          "ndcg": 0.9674679834891693,
           "sections": 3,
           "section_ranks": [
-            2
+            1,
+            2,
+            4
           ],
           "wrong_version": false,
           "empty": false,
@@ -79708,10 +79777,11 @@
           "project": "starlette",
           "answerable": true,
           "rank": 1,
-          "ndcg": 0.6131471927654584,
+          "ndcg": 1.0,
           "sections": 2,
           "section_ranks": [
-            1
+            1,
+            2
           ],
           "wrong_version": false,
           "empty": false,
@@ -79810,10 +79880,12 @@
           "kind": "version-change",
           "project": "starlette",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 2,
+          "ndcg": 0.38685280723454163,
           "sections": 2,
-          "section_ranks": [],
+          "section_ranks": [
+            2
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 25.932439137250185,
@@ -80043,10 +80115,11 @@
           "kind": "cross-page",
           "project": "starlette",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.23463936301137822,
+          "rank": 1,
+          "ndcg": 0.7039180890341347,
           "sections": 3,
           "section_ranks": [
+            1,
             3
           ],
           "wrong_version": false,
@@ -80326,9 +80399,10 @@
           "project": "tanstack-query",
           "answerable": true,
           "rank": 10,
-          "ndcg": 0.17723928678404774,
+          "ndcg": 0.38162168437253385,
           "sections": 2,
           "section_ranks": [
+            7,
             10
           ],
           "wrong_version": false,
@@ -80825,10 +80899,11 @@
           "kind": "version-change",
           "project": "tanstack-query",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.38685280723454163,
+          "rank": 1,
+          "ndcg": 1.0,
           "sections": 2,
           "section_ranks": [
+            1,
             2
           ],
           "wrong_version": false,
@@ -81079,10 +81154,12 @@
           "kind": "identifier-lookup",
           "project": "tanstack-query",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 1,
+          "ndcg": 1.0,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            1
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 31.949032796546817,
@@ -81230,10 +81307,12 @@
           "kind": "identifier-lookup",
           "project": "zod",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 9,
+          "ndcg": 0.3010299956639812,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            9
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 35.898457979783416,
@@ -81563,10 +81642,12 @@
           "kind": "version-change",
           "project": "zod",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 1,
+          "ndcg": 1.0,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            1
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 30.079415999352932,
@@ -81611,11 +81692,12 @@
           "kind": "how-to",
           "project": "zod",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.2960819109658652,
+          "rank": 3,
+          "ndcg": 0.5307212739772434,
           "sections": 3,
           "section_ranks": [
-            2
+            2,
+            3
           ],
           "wrong_version": false,
           "empty": false,
@@ -81661,9 +81743,10 @@
           "project": "zod",
           "answerable": true,
           "rank": 2,
-          "ndcg": 0.38685280723454163,
+          "ndcg": 1.0,
           "sections": 2,
           "section_ranks": [
+            1,
             2
           ],
           "wrong_version": false,
@@ -81741,10 +81824,12 @@
           "kind": "identifier-lookup",
           "project": "zod",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 2,
+          "ndcg": 0.6309297535714575,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            2
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 32.02559286728501,
@@ -81897,10 +81982,12 @@
           "kind": "cross-page",
           "project": "zod",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 3,
+          "ndcg": 0.3065735963827292,
           "sections": 2,
-          "section_ranks": [],
+          "section_ranks": [
+            3
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 34.77960918098688,
@@ -82030,12 +82117,13 @@
           "project": "zod",
           "answerable": true,
           "rank": 2,
-          "ndcg": 0.8297197050122155,
+          "ndcg": 0.9609247825245573,
           "sections": 5,
           "section_ranks": [
             1,
             2,
             3,
+            5,
             8
           ],
           "wrong_version": false,
@@ -82100,9 +82188,10 @@
           "project": "zod",
           "answerable": true,
           "rank": 10,
-          "ndcg": 0.17723928678404774,
+          "ndcg": 0.5640920940185894,
           "sections": 2,
           "section_ranks": [
+            2,
             10
           ],
           "wrong_version": false,
@@ -82117,9 +82206,10 @@
           "project": "zod",
           "answerable": true,
           "rank": 7,
-          "ndcg": 0.20438239758848611,
+          "ndcg": 0.46845052016107697,
           "sections": 2,
           "section_ranks": [
+            4,
             7
           ],
           "wrong_version": false,
@@ -82199,10 +82289,12 @@
           "kind": "identifier-lookup",
           "project": "zod",
           "answerable": true,
-          "rank": null,
-          "ndcg": 0.0,
+          "rank": 1,
+          "ndcg": 1.0,
           "sections": 1,
-          "section_ranks": [],
+          "section_ranks": [
+            1
+          ],
           "wrong_version": false,
           "empty": false,
           "search_ms": 31.86762402765453,
@@ -82266,9 +82358,10 @@
           "project": "zod",
           "answerable": true,
           "rank": 2,
-          "ndcg": 0.38685280723454163,
+          "ndcg": 1.0,
           "sections": 2,
           "section_ranks": [
+            1,
             2
           ],
           "wrong_version": false,
@@ -82281,70 +82374,70 @@
       "rows_from": null,
       "versus_default": {
         "configuration": "bm25",
-        "chunking": "default",
+        "chunking": "h2",
         "tests": {
           "recall_at_1": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": -0.03,
+            "difference": -0.015,
             "interval": {
-              "low": -0.0674,
-              "high": 0.0075
+              "low": -0.0637,
+              "high": 0.0337
             },
-            "p_value": 0.136,
+            "p_value": 0.5601,
             "significant": false,
-            "gained": 10,
-            "lost": 18
+            "gained": 21,
+            "lost": 25
           },
           "recall_at_5": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": -0.0749,
+            "difference": -0.0112,
             "interval": {
-              "low": -0.1124,
-              "high": -0.0412
+              "low": -0.0449,
+              "high": 0.0225
             },
-            "p_value": 0.00004923,
-            "significant": true,
-            "gained": 3,
-            "lost": 23
+            "p_value": 0.5413,
+            "significant": false,
+            "gained": 10,
+            "lost": 13
           },
           "recall_at_10": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": -0.0861,
+            "difference": -0.015,
             "interval": {
-              "low": -0.1236,
-              "high": -0.0524
+              "low": -0.0412,
+              "high": 0.0112
             },
-            "p_value": 3.032e-6,
-            "significant": true,
-            "gained": 2,
-            "lost": 25
+            "p_value": 0.3018,
+            "significant": false,
+            "gained": 5,
+            "lost": 9
           },
           "mrr": {
             "test": "permutation",
             "cases": 267,
-            "difference": -0.0489,
+            "difference": -0.0154,
             "interval": {
-              "low": -0.0801,
-              "high": -0.0189
+              "low": -0.0483,
+              "high": 0.0183
             },
-            "p_value": 0.002,
-            "significant": true,
+            "p_value": 0.369,
+            "significant": false,
             "gained": null,
             "lost": null
           },
           "ndcg_at_10": {
             "test": "permutation",
             "cases": 267,
-            "difference": -0.0612,
+            "difference": -0.0018,
             "interval": {
-              "low": -0.0899,
-              "high": -0.0346
+              "low": -0.0269,
+              "high": 0.0238
             },
-            "p_value": 0.00009999,
-            "significant": true,
+            "p_value": 0.8898,
+            "significant": false,
             "gained": null,
             "lost": null
           }
@@ -88592,56 +88685,56 @@
       "rows_from": null,
       "versus_default": {
         "configuration": "bm25",
-        "chunking": "default",
+        "chunking": "h2",
         "tests": {
           "recall_at_1": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": 0.0,
+            "difference": -0.0337,
             "interval": {
-              "low": -0.0562,
-              "high": 0.0562
+              "low": -0.0974,
+              "high": 0.03
             },
-            "p_value": 1.0,
+            "p_value": 0.2954,
             "significant": false,
-            "gained": 30,
-            "lost": 30
+            "gained": 32,
+            "lost": 41
           },
           "recall_at_5": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": -0.0337,
+            "difference": -0.0449,
             "interval": {
-              "low": -0.0787,
-              "high": 0.0112
+              "low": -0.0974,
+              "high": 0.0075
             },
-            "p_value": 0.1539,
+            "p_value": 0.09191,
             "significant": false,
-            "gained": 15,
-            "lost": 24
+            "gained": 19,
+            "lost": 31
           },
           "recall_at_10": {
             "test": "mcnemar-mid-p",
             "cases": 267,
-            "difference": -0.0562,
+            "difference": -0.0674,
             "interval": {
-              "low": -0.1049,
-              "high": -0.0075
+              "low": -0.1161,
+              "high": -0.0225
             },
-            "p_value": 0.0259,
+            "p_value": 0.006609,
             "significant": true,
-            "gained": 15,
-            "lost": 30
+            "gained": 13,
+            "lost": 31
           },
           "mrr": {
             "test": "permutation",
             "cases": 267,
-            "difference": -0.0132,
+            "difference": -0.0392,
             "interval": {
-              "low": -0.0566,
-              "high": 0.0294
+              "low": -0.0872,
+              "high": 0.0085
             },
-            "p_value": 0.5574,
+            "p_value": 0.11,
             "significant": false,
             "gained": null,
             "lost": null
@@ -88649,12 +88742,12 @@
           "ndcg_at_10": {
             "test": "permutation",
             "cases": 267,
-            "difference": -0.0218,
+            "difference": -0.031,
             "interval": {
-              "low": -0.0596,
-              "high": 0.0148
+              "low": -0.0729,
+              "high": 0.0106
             },
-            "p_value": 0.2509,
+            "p_value": 0.1536,
             "significant": false,
             "gained": null,
             "lost": null
@@ -88667,34 +88760,34 @@
     {
       "budget": "none",
       "configuration": "bm25",
-      "chunking": "default",
+      "chunking": "h2",
       "usd_per_1000_questions": 0.0,
       "reasons": [
-        "best none configuration: `bm25` at `default`: recall@5 81.7%, nDCG@10 0.705, MRR 0.651, wrong-version rate 0, p95 58 ms, $0.0000 per 1000 questions"
+        "best none configuration: `bm25` at `h2`: recall@5 82.8%, nDCG@10 0.714, MRR 0.677, wrong-version rate 0, p95 28 ms, $0.0000 per 1000 questions"
       ],
       "test": null
     },
     {
       "budget": "local",
       "configuration": "bm25",
-      "chunking": "default",
+      "chunking": "h2",
       "usd_per_1000_questions": 0.0,
       "reasons": [
         "best local configuration: `hybrid:bge-small-en-v1.5` at `h6`: recall@5 84.6%, nDCG@10 0.738, MRR 0.676, wrong-version rate 0, p95 109 ms, $0.0000 per 1000 questions",
-        "+3.0 points of recall@5 over `bm25`, under the 5-point margin (McNemar mid-p 0.108): the cheaper `bm25` at `default` stays the default"
+        "+1.9 points of recall@5 over `bm25`, under the 5-point margin (McNemar mid-p 0.405): the cheaper `bm25` at `h2` stays the default"
       ],
       "test": {
         "test": "mcnemar-mid-p",
         "cases": 267,
-        "difference": 0.03,
+        "difference": 0.0187,
         "interval": {
-          "low": -0.0037,
-          "high": 0.0674
+          "low": -0.0225,
+          "high": 0.0637
         },
-        "p_value": 0.1078,
+        "p_value": 0.405,
         "significant": false,
-        "gained": 16,
-        "lost": 8
+        "gained": 20,
+        "lost": 15
       }
     },
     {

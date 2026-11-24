@@ -2175,13 +2175,13 @@
       },
       "bm25": {
         "answerable": 267,
-        "recall_at_1": 0.5169,
-        "recall_at_5": 0.7603,
-        "recall_at_10": 0.8165,
-        "mrr": 0.6258,
+        "recall_at_1": 0.5543,
+        "recall_at_5": 0.8277,
+        "recall_at_10": 0.9026,
+        "mrr": 0.6773,
         "recall_at_5_exact": 0.3933,
         "wrong_version_rate": 0.0,
-        "misses": 49,
+        "misses": 26,
         "errors": []
       },
       "versions": [
@@ -3347,13 +3347,13 @@
       },
       "bm25": {
         "answerable": 267,
-        "recall_at_1": 0.4906,
-        "recall_at_5": 0.7416,
-        "recall_at_10": 0.8052,
-        "mrr": 0.6024,
+        "recall_at_1": 0.5393,
+        "recall_at_5": 0.8165,
+        "recall_at_10": 0.8876,
+        "mrr": 0.6619,
         "recall_at_5_exact": 0.6517,
         "wrong_version_rate": 0.0,
-        "misses": 52,
+        "misses": 30,
         "errors": []
       },
       "versions": [

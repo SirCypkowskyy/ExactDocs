@@ -11,7 +11,7 @@ from pydantic_evals import Case
 
 from retrieval_bench_stand_ins import tiny_corpus
 from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question
-from retrieval_eval.golden_run import nested_match
+from retrieval_eval.golden_run import held_match
 from retrieval_eval.ingestion import tokens
 from retrieval_eval.retrieval_bench import metrics_of
 from retrieval_eval.text_bench import (
@@ -220,9 +220,7 @@ def test_calibration_compares_chunk_id_and_text_decisions() -> None:
         "shared": (Answer(hits=[_chunk("v1", "Install")]), [INSTALL]),
         "unanswerable": (Answer(hits=[]), []),
     }
-    rule = nested_match(lambda _: frozenset())
-
-    c = calibrate("default", cases, results, {"demo": INDEX}, matches=rule, held=rule)
+    c = calibrate("default", cases, results, {"demo": INDEX}, matches=held_match({}))
 
     assert (c.agreement.decisions, c.agreement.agreed) == (3, 2)
     assert c.agreement.hit_miss_rate == 1
