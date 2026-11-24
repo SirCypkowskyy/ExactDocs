@@ -644,10 +644,14 @@ shadcn/ui's data-table guide) is the one way to show a list with many rows.
   remembered in this browser; the URL wins, and a link to page *n* without a size means 20. A
   route parses its view with `parseTableSearch` and `parseFacet` in `validateSearch`; the app
   router's `stringifySearch` writes a validated list back as `a,b`.
-- **Server mode** (`source`): the API sorts, filters and pages. Pages are numbered over the
-  cursor API: each cached page knows its cursor, so First, Previous and Next are one request (and
-  the next page is fetched ahead); a page nobody reached yet walks forward in requests of at most
-  200 rows. Last and a reload on page *n* in one request need `paging: "offset"`.
+- **Server mode** (`source`): the API sorts, filters and pages. Every list of the app pages by
+  offset (`paging: "offset"`, docs/rest-api.md "Jumping to a page"): page *n* is one request of
+  `limit = size` and `offset = (n - 1) × size`, never with a cursor, so numbered jumps, Last and a
+  link to page *n* each cost one request (and the pages on either side are fetched ahead).
+  The API's offset stops at 10,000: a page past it is reached with Next or Previous, which go on
+  by cursor from the page beside it (a link straight to it walks by cursor from row 10,000, in
+  requests of at most 200 rows). A source without `paging: "offset"` walks the same way from the
+  start and offers no jumps or Last.
 - **Client mode** (`query`): a bounded list arrives in one request and is sorted, filtered,
   paged and counted in the browser; `maxRows` hides sizes above the list's cap; Last is offered.
 - **A table inside another page** whose URL is not its own (a job's problems) uses
@@ -658,9 +662,15 @@ shadcn/ui's data-table guide) is the one way to show a list with many rows.
   one server page). Enum filters are faceted multi-selects (an outline button with a count pill,
   a Popover with a Command list, counts per value in client mode); date filters are single presets.
   Active filters show as chips (`pill-neutral` with a remove `IconButton`) and Clear all.
-- **Pagination bar:** "21–40 of 233", Rows per page, "Page 2 of 12", then First, Previous, Next
-  (and Last) as `icon-sm` IconButtons. An end that cannot be passed is `aria-disabled` so focus
-  stays; a live region says the page after a move; the table's top scrolls into view.
+- **Pagination bar:** "21–40 of 233", Rows per page, "Page 2 of 12", then First and Previous
+  (`icon-sm` IconButtons), the numbered pages (at most seven slots: both ends, the shown page and
+  its neighbours, "…" for the gaps; the shown one outlined with `aria-current="page"`, each named
+  "Page 5"; from `sm` up, phones keep the arrows), then Next and Last. An end that cannot be passed
+  is `aria-disabled` so focus stays; a live region says the page after a move; the table's top
+  scrolls into view. In a list longer than the API's offset bound (more than 10,000 rows), Last
+  and the numbers past page `lastJump` are `aria-disabled` and say why in their name and tooltip
+  ("Last page (out of reach: jumps stop at page 501; go on with Next page)"), and a line under the
+  bar says the same for touch screens.
 - **States in the frame:** loading is skeleton rows at the page size, each cell in its column's
   shape (`meta.skeleton`: text, mono, pill, avatar, number, meter), shown after 150ms; while
   another page or view loads the shown rows stay, at 60% with `aria-busy`; empty and no-match keep
