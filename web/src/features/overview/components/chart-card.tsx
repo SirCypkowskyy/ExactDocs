@@ -145,7 +145,7 @@ function ChartHeading({
         {title}
       </h3>
       {status === "pending" && <Skeleton className="mt-1 h-[2.125rem] w-28" />}
-      {status === "success" && <p className="num mt-1 text-figure">{figure}</p>}
+      {status === "success" && <p className="mt-1 text-figure">{figure}</p>}
     </div>
   );
 }

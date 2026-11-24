@@ -417,8 +417,8 @@
     color: var(--muted-foreground);
     opacity: 1;
   }
-  /* Figures line up wherever they are compared. */
-  table,
+  /* Figures line up wherever they are compared. Not on a whole table: in this face tabular
+     figures also widen the comma and the full stop, which a table's prose would show. */
   time,
   .num {
     font-variant-numeric: tabular-nums;

@@ -69,7 +69,8 @@ function useFreshRows(viewKey: string, ids: readonly string[], busy: boolean): R
 
 function cellClass<T>(cell: Cell<T, unknown>) {
   const meta = cell.column.columnDef.meta;
-  return cn(meta?.align === "end" && "text-right", meta?.className);
+  // Figures at the end of a row line up (the cell kinds in ./cells mark theirs `.num` too).
+  return cn(meta?.align === "end" && "num text-right", meta?.className);
 }
 
 type TableStates = Pick<
