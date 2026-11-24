@@ -65,6 +65,17 @@ ssh dellpromaxgb10.local "~/exactdocs-runners/register.sh SirCypkowskyy/ExactDoc
 gh api repos/SirCypkowskyy/ExactDocs/actions/runners --jq '.runners[] | [.name, .status] | @tsv'
 ```
 
+`register.sh` also installs `job-started.sh` as the runner's job-started hook
+(`ACTIONS_RUNNER_HOOK_JOB_STARTED` in `/opt/actions-runner/.env`; its output is in each job's
+*Set up runner* step). A job that ends without its own cleanup (cancelled, its runner lost, the
+disk full) leaves its service containers, `exactdocs-supabase-<run>` or a release's buildx
+builder behind, and the next job on that VM inherits them: the hook removes every container,
+anonymous volume and buildx builder state before each job, since a runner takes one job at a
+time, and at 80% disk or more also build cache and images older than 72 hours. Named volumes
+such as `exactdocs-ci-data` and recent layers stay. To install it on registered runners without
+registering again, run `register.sh` again with a fresh token: it replaces the registration
+and leaves the hook in place.
+
 Add a third runner: `create-vms.sh 3`, then `RUNNERS=3 register.sh ...`.
 
 Remove: `register.sh --remove SirCypkowskyy/ExactDocs <remove-token>`, then `sudo lxc delete --force exactdocs-runner-N`.
