@@ -37,3 +37,28 @@ Feature: Background jobs
     When I list the jobs with both a cursor and an offset
     Then the response status is 422
     And the error code is "cursor_with_offset"
+
+  Scenario: Jobs per day, by state and by kind
+    Given these jobs were queued:
+      | day        | kind   | state     |
+      | 2026-01-01 | import | succeeded |
+      | 2026-01-01 | import | failed    |
+      | 2026-01-01 | embed  | succeeded |
+      | 2026-01-03 | import | succeeded |
+      | 2026-01-04 | import | succeeded |
+    When the operator asks for the jobs per day from 2026-01-01 to 2026-01-03
+    Then the response status is 200
+    And the jobs per day are:
+      | day        | total | succeeded | failed | import | embed |
+      | 2026-01-01 | 3     | 2         | 1      | 2      | 1     |
+      | 2026-01-02 | 0     | 0         | 0      | 0      | 0     |
+      | 2026-01-03 | 1     | 1         | 0      | 1      | 0     |
+
+  Scenario: Listing the libraries whose latest sync failed
+    Given the demo libraries
+    And the latest sync of "/acme/payments" failed after an earlier one succeeded
+    And the latest sync of "/acme/ledger" succeeded
+    When I list the libraries whose latest sync failed
+    Then the response status is 200
+    And the libraries listed are "/acme/payments"
+    And the total is 1 library

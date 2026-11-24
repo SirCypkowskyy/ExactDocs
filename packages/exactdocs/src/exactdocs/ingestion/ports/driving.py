@@ -20,8 +20,11 @@ from exactdocs.ingestion.dtos import (
     GetJobQuery,
     GetLibraryAccessQuery,
     JobList,
+    JobStats,
+    JobStatsQuery,
     JobSummary,
     LatestJobs,
+    LibrariesInSyncStates,
     LibraryAccess,
     ListJobsQuery,
     ListLibraryJobsQuery,
@@ -43,6 +46,7 @@ from exactdocs.ingestion.dtos import (
     SourcesPlanOut,
     SyncedLibrary,
     SyncLibraryCommand,
+    SyncStatesQuery,
     TagArticleCommand,
     TaggedArticle,
     UpdatedLibrarySettings,
@@ -52,7 +56,7 @@ from exactdocs.ingestion.dtos import (
     WebhookQuery,
     WebhookReceipt,
 )
-from exactdocs.ingestion.models import RemoteRefs
+from exactdocs.ingestion.models import RemoteRefs, VersionOrigin
 
 
 class EnqueueJob(Protocol):
@@ -157,6 +161,40 @@ class ListLatestJobs(Protocol):
 
         Returns:
             The newest job of each (library, version).
+        """
+        ...
+
+
+class GetJobStats(Protocol):
+    """Count the jobs queued on each UTC day of a range, by current state and by kind.
+
+    Every library's jobs count: the route is for operators. Raises ``InvalidStatsRangeError``
+    for a range that ends before it starts or covers more than ``MAX_STATS_DAYS`` days.
+    """
+
+    async def __call__(self, query: JobStatsQuery) -> JobStats:
+        """Run the use case.
+
+        Args:
+            query: The days.
+
+        Returns:
+            One entry per day of the range, a day without jobs counting 0.
+        """
+        ...
+
+
+class ListLibrariesInSyncStates(Protocol):
+    """Name the readable libraries whose newest ``import`` or ``refresh`` job is in given states."""
+
+    async def __call__(self, query: SyncStatesQuery) -> LibrariesInSyncStates:
+        """Run the use case.
+
+        Args:
+            query: The states.
+
+        Returns:
+            The libraries, case-folded.
         """
         ...
 
@@ -403,6 +441,7 @@ class SyncLibraryFromRefs(Protocol):
         *,
         refs: RemoteRefs | None = None,
         scheduled: bool = False,
+        origin: VersionOrigin = VersionOrigin.MANUAL,
     ) -> SyncedLibrary:
         """Run the use case.
 
@@ -410,6 +449,8 @@ class SyncLibraryFromRefs(Protocol):
             command: The library to sync.
             refs: The refs the remote advertised; ``None`` lists them now.
             scheduled: The scheduled check asks: a sync a person cancelled is not redone.
+            origin: ``auto`` when the instance syncs on its own (a scheduled check implies it):
+                the jobs say so and name no person.
 
         Returns:
             What happened to each version.

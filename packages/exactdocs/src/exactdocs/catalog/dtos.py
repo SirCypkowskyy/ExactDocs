@@ -305,6 +305,8 @@ class LibraryDetail(_Dto):
 
 
 Limit = Annotated[int, Field(ge=1, le=MAX_LIMIT)]
+SyncState = Literal["queued", "running", "succeeded", "failed", "cancelled"]
+"""The state of a library's latest sync: its newest import job's (ingestion's ``JobState``)."""
 Offset = Annotated[int, Field(ge=0, le=MAX_OFFSET)]
 
 
@@ -338,6 +340,14 @@ class ListLibrariesQuery(_Dto):
     """`true`: only libraries with an imported version; `false`: only those without one."""
     ai_enabled: bool | None = None
     """`true`: only libraries that may use AI providers; `false`: only those with AI turned off."""
+    sync_state: list[SyncState] | None = Field(
+        default=None,
+        description=(
+            "Only libraries whose latest sync (their newest `import` or `refresh` job) is in one "
+            "of these states; repeat for several. A library that never synced matches none."
+        ),
+    )
+    """Only libraries whose latest sync is in one of these states (resolved by the instance)."""
     updated_after: datetime | None = None
     """Only libraries whose latest import is at or after this time (ISO 8601)."""
     updated_before: datetime | None = None

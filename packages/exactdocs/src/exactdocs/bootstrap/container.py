@@ -53,6 +53,7 @@ from exactdocs.bootstrap.caller import (
     current_account_id,
     current_api_identity,
     current_external_identity,
+    current_person,
 )
 from exactdocs.bootstrap.cancellation import being_cancelled
 from exactdocs.bootstrap.constants import (
@@ -85,7 +86,7 @@ from exactdocs.bootstrap.database import (
 from exactdocs.bootstrap.embedding import SaveProviderThenEmbed, requeue_daily
 from exactdocs.bootstrap.executors import PostgresExecutorSlots
 from exactdocs.bootstrap.index_backends import DriftWatch, IndexBackends, build_index_backends
-from exactdocs.bootstrap.library_filters import ListLibrariesByAi
+from exactdocs.bootstrap.library_filters import ListLibrariesByAi, ListLibrariesBySync
 from exactdocs.bootstrap.library_texts import CatalogLibraryTexts
 from exactdocs.bootstrap.local_models import LocalModels
 from exactdocs.bootstrap.open_access import OpenAccess
@@ -1025,7 +1026,8 @@ class Container:
     job_worker: DbosJobWorker
     """Runs the queued jobs (imports, syncs, embeddings) in ``running(jobs=True)``."""
     list_libraries: ListLibraries
-    """Catalog's ``list_libraries`` with the ``ai_enabled`` filter resolved from retrieval."""
+    """Catalog's ``list_libraries`` with the ``ai_enabled`` filter resolved from retrieval and
+    ``sync_state`` from ingestion."""
     save_provider: SaveProvider
     """Retrieval's ``save_provider``, then the embedding queued when the embedding role's profile
     changed (REST ``/ai/providers``)."""
@@ -1238,6 +1240,7 @@ class Container:
             webhook_deliveries=SqliteWebhookDeliveries(engine=engine),
             wrap_handler=traced_job(settings),  # the `push` handler, built inside the module
             access=_access_policy(identity.module),
+            requester=current_person,
         )
         return cls(
             settings=settings,
@@ -1255,9 +1258,12 @@ class Container:
             identity=identity.module,
             ingestion=ingestion,
             retrieval=read.retrieval,
-            list_libraries=ListLibrariesByAi(
-                list_libraries=read.catalog.list_libraries,
-                settings=SqliteLibraryModes(engine=engine),
+            list_libraries=ListLibrariesBySync(
+                list_libraries=ListLibrariesByAi(
+                    list_libraries=read.catalog.list_libraries,
+                    settings=SqliteLibraryModes(engine=engine),
+                ),
+                in_sync_states=ingestion.list_libraries_in_sync_states,
             ),
             save_provider=SaveProviderThenEmbed(
                 save_provider=read.retrieval.save_provider,

@@ -107,7 +107,7 @@ def _include_session_routers(v1: APIRouter, container: Container) -> identity_ht
 def _protected_router(
     container: Container, current_caller: identity_http.CurrentCaller
 ) -> APIRouter:
-    """Build the router of everything that needs a caller, with the library grants routes.
+    """Build the router of everything that needs a caller, with the grants and statistics routes.
 
     Every route of it names the caller to the library roles (``bind_caller``), so each use case
     it reaches checks the role of whoever is calling.
@@ -132,7 +132,9 @@ def _protected_router(
             Control to the protected request.
         """
         binding = bind_caller(
-            account.id, api_identity=account if isinstance(account, ApiTokenIdentity) else None
+            account.id,
+            api_identity=account if isinstance(account, ApiTokenIdentity) else None,
+            username=account.username,
         )
         try:
             yield
@@ -157,6 +159,15 @@ def _protected_router(
             transfer=container.identity.transfer_library,
             caller=current_caller,
             require_library=require_library,
+        )
+    )
+    # Job statistics (#512): every library's jobs, so operators only (a session or a token).
+    router.include_router(
+        ingestion_http.build_stats_router(
+            get_job_stats=container.ingestion.get_job_stats,
+            require_operator=identity_http.build_operator(
+                caller=current_caller, action="reads the job statistics"
+            ),
         )
     )
     return router
