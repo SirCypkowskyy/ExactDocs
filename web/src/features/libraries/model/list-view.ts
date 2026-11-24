@@ -73,8 +73,13 @@ export function listFilters(view: ListView, now: number): ListFilters {
   };
 }
 
-/** The query string of `GET /v1/libraries` for some filters and one request's `limit` and cursor. */
-export function listParams(filters: ListFilters, limit: number, cursor?: string | null): string {
+/** The query string of `GET /v1/libraries` for some filters and one request's `limit` and offset or cursor. */
+export function listParams(
+  filters: ListFilters,
+  limit: number,
+  cursor?: string | null,
+  offset?: number,
+): string {
   const p = new URLSearchParams({ limit: String(limit) });
   if (filters.q) p.set("q", filters.q);
   if (filters.sort) p.set("sort", filters.sort);
@@ -82,6 +87,8 @@ export function listParams(filters: ListFilters, limit: number, cursor?: string 
   if (filters.has_versions !== undefined) p.set("has_versions", String(filters.has_versions));
   if (filters.updated_after) p.set("updated_after", filters.updated_after);
   if (filters.updated_before) p.set("updated_before", filters.updated_before);
-  if (cursor) p.set("cursor", cursor);
+  // A page by offset (0 to 10000) or after a cursor, never both (422 `cursor_with_offset`).
+  if (offset !== undefined) p.set("offset", String(offset));
+  else if (cursor) p.set("cursor", cursor);
   return p.toString();
 }

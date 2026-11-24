@@ -23,16 +23,17 @@ export const sharingSummaryQueryOptions = (owner: string, repo: string) =>
     retry: false,
   });
 
-/** The grants a view asks for, sorted, filtered and paged by the server (DataTable v2). */
+/** The grants a view asks for, sorted, filtered and paged (by offset) by the server (DataTable v2). */
 export function grantsSource(owner: string, repo: string, view: SharingView): ServerSource<Grant> {
   const filters = grantsFilters(view);
   return {
     key: [...sharingKey(owner, repo), "grants", filters],
-    // #509: `paging: "offset"` once the grants endpoint takes an `offset` (Last, numbered jumps).
-    fetchPage: ({ limit, cursor, signal }) =>
-      getJson<GrantList>(`${lib(owner, repo)}/grants?${grantsParams(filters, limit, cursor)}`, {
-        signal,
-      }).then((list) => ({ rows: list.grants, total: list.total, nextCursor: list.next_cursor })),
+    paging: "offset",
+    fetchPage: ({ limit, cursor, offset, signal }) =>
+      getJson<GrantList>(
+        `${lib(owner, repo)}/grants?${grantsParams(filters, limit, cursor, offset)}`,
+        { signal },
+      ).then((list) => ({ rows: list.grants, total: list.total, nextCursor: list.next_cursor })),
   };
 }
 

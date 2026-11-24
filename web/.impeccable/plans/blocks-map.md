@@ -101,13 +101,14 @@ shadcn table primitives.
 - **URL**: every table keeps `q`, its filters, `sort`, `page` (1-based) and `size` (5, 20, 50 or
   100; default 20). The last size per table is remembered in `localStorage` as a convenience; the
   URL wins. A new filter, sort or size goes back to page 1.
-- **Server mode over the cursor API**: the API pages with `limit` (1 to 200) and an opaque,
-  forward-only `cursor`, and every list carries `total`. The kit keeps a cursor per page in the
-  query cache, so Next, Previous and First are instant, and the page count is
-  `ceil(total / size)`. Last, numbered jumps and a reload on page *n* need an `offset` (G8).
-  Until then the reload walks forward with one request of `limit = (n - 1) × size` (≤ 200 per
-  request) to get the cursor, and Last is hidden. Prefetching the next page stays
-  (`use-prefetched-pages.ts`).
+- **Server mode by offset** (G8, #509): the API pages with `limit` (1 to 200) and an `offset`
+  (0 to 10000) or an opaque, forward-only `cursor` (never both), and every list carries `total`;
+  the page count is `ceil(total / size)`. Every server table sets `paging: "offset"`: page *n* is
+  one request of `offset = (n - 1) × size`, so numbered jumps, Last and a link to page *n* are one
+  request each, and the pages on either side are prefetched. Past the offset bound the cursor
+  walk is the fallback: Next and Previous go on from the cursor of the page beside them, a link to
+  such a page walks from row 10,000 in steps of ≤ 200, and Last and the numbers past the bound are
+  disabled with the reason in their name and tooltip and a line under the bar.
 - **Client mode** for bounded lists (tokens ≤ 50, AI usage, job problems ≤ 1,200, Playground
   ≤ 50 per mode, leaderboard ranks): one request, then TanStack's sorted, filtered, paginated and
   faceted row models.
@@ -116,8 +117,8 @@ shadcn table primitives.
   filter is `q`. Filter values that are enums (state, kind, role, change, origin) are faceted
   multi-selects; dates are presets (24 h, 7 d, 30 d, custom).
 - **Pagination bar**: "21–40 of 233" (tabular) · Rows per page (SelectField: 5, 20, 50, 100; sizes
-  above a list's cap are not offered) · First, Previous, Next, Last as IconButtons with tooltips ·
-  "Page 2 of 12". A live region says "Page 2 of 12". The table's top scrolls into view; focus
+  above a list's cap are not offered) · First, Previous, numbered pages (seven slots, "…" for gaps,
+  from `sm`), Next, Last as IconButtons with tooltips · "Page 2 of 12". A live region says "Page 2 of 12". The table's top scrolls into view; focus
   stays on the button.
 - **States**: loading = skeleton rows at the page size, shaped per column (`meta.skeleton`:
   text, mono, pill, avatar, number); refetches keep the old rows with `aria-busy`; empty = the
@@ -495,7 +496,8 @@ New feature slices (`overview`, `leaderboard`, possibly `account`) each need a z
    wherever a library is named, and rows keep their alignment) or show the name only, as #504's
    scenario says. One of the two must change.
 2. People leaderboard: off by default with a personal opt-in (recommended), or on for everyone.
-3. Offset paging (G8) now, or the cursor walk as the interim (no Last button).
+3. Offset paging (G8) now, or the cursor walk as the interim (no Last button). Decided: #509
+   shipped the offset; every server table pages by it, the cursor walk only past 10,000 rows.
 4. Playground: the table as the default view (recommended in compare mode), or keep the ranked
    lists and offer the table as a switch.
 5. Brand marks as inline SVG (recommended) or the `react-icons` dependency the free

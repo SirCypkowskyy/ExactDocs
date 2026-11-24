@@ -53,7 +53,7 @@ export const reprocessJobsQueryOptions = (owner: string, repo: string) =>
   });
 
 /**
- * The library's versions a view asks for, as numbered pages (DataTable v2's server mode); under the
+ * The library's versions a view asks for, as numbered pages by offset (DataTable v2's server mode); under the
  * browse key, so every change to the library reloads them.
  */
 export function versionsSource(
@@ -65,13 +65,11 @@ export function versionsSource(
   const filters = versionsFilters(view, now);
   return {
     key: [...BROWSE_KEY, owner, repo, "versions", filters],
-    // #509: `paging: "offset"` once the endpoint takes an offset (Last and one-request jumps).
-    fetchPage: ({ limit, cursor, signal }) =>
+    paging: "offset",
+    fetchPage: ({ limit, cursor, offset, signal }) =>
       getJson<VersionList>(
-        `${lib(owner, repo)}/versions?${versionsParams(filters, limit, cursor)}`,
-        {
-          signal,
-        },
+        `${lib(owner, repo)}/versions?${versionsParams(filters, limit, cursor, offset)}`,
+        { signal },
       ).then((list) => ({ rows: list.versions, total: list.total, nextCursor: list.next_cursor })),
   };
 }

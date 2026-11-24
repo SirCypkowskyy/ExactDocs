@@ -39,7 +39,7 @@ const ALL = [
   { path: "README.md", title: "Acme Payments", tags: [], size: 120 },
 ];
 
-/** The articles API over ALL: `limit`, an offset cursor (`o<n>`), `q`, `tags`, `path_prefix`. */
+/** The articles API over ALL: `limit`, an `offset` (or a cursor, `o<n>`), `q`, `tags`, `path_prefix`. */
 function serve() {
   const fetchMock = vi.fn(async (input: string) => {
     const url = new URL(String(input), "http://x");
@@ -61,7 +61,9 @@ function serve() {
         (tags.length === 0 || a.tags.some((t) => tags.includes(t))) &&
         (prefix === null || a.path.startsWith(`${prefix}/`)),
     );
-    const start = Number(url.searchParams.get("cursor")?.slice(1) ?? 0);
+    const start = Number(
+      url.searchParams.get("offset") ?? url.searchParams.get("cursor")?.slice(1) ?? 0,
+    );
     const limit = Number(url.searchParams.get("limit"));
     return Response.json({
       articles: rows.slice(start, start + limit),
@@ -163,6 +165,7 @@ describe("the articles table", () => {
     // The table's requests never name a folder unless it is filtered to one.
     expect(pages(fetchMock)[0]?.searchParams.has("path_prefix")).toBe(false);
     expect(pages(fetchMock)[0]?.searchParams.get("limit")).toBe("20");
+    expect(pages(fetchMock)[0]?.searchParams.get("offset")).toBe("0");
     // Tags: three, then "+1", which opens all of them.
     const row = first.closest("tr") as HTMLElement;
     expect(within(row).getByRole("list", { name: "Tags" })).toHaveTextContent("apiguidebeta+1");
@@ -179,14 +182,22 @@ describe("the articles table", () => {
     expect(await screen.findByText("21–26 of 26")).toBeInTheDocument();
     expect(params(history).get("page")).toBe("2");
     expect(screen.getByRole("link", { name: "README.md" })).toBeInTheDocument();
+    expect(pages(fetchMock).some((u) => u.searchParams.get("offset") === "20")).toBe(true);
+    expect(pages(fetchMock).some((u) => u.searchParams.has("cursor"))).toBe(false);
   });
 
-  it("opens a deep page by walking the cursor once, at the size in the URL", async () => {
+  it("opens a deep page with one request by its offset, at the size in the URL", async () => {
     const fetchMock = serve();
     renderTable("/libraries/acme/payments?page=3&size=5");
     expect(await screen.findByText("11–15 of 26")).toBeInTheDocument();
-    // 10 rows to skip and 5 to show: one request.
-    expect(pages(fetchMock)[0]?.searchParams.get("limit")).toBe("15");
+    const [first] = pages(fetchMock);
+    expect(first?.searchParams.get("limit")).toBe("5");
+    expect(first?.searchParams.get("offset")).toBe("10");
+    expect(first?.searchParams.has("cursor")).toBe(false);
+
+    await userEvent.click(screen.getByRole("button", { name: "Last page" }));
+    expect(await screen.findByText("26–26 of 26")).toBeInTheDocument();
+    expect(pages(fetchMock).some((u) => u.searchParams.get("offset") === "25")).toBe(true);
     expect(screen.getByLabelText("Rows per page")).toHaveValue("5");
   });
 

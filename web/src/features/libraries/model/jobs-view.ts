@@ -92,8 +92,13 @@ export function jobsFilters(view: JobsView, now: number): JobsFilters {
   };
 }
 
-/** The query string of `GET /v1/jobs` for some filters and one request's `limit` and cursor. */
-export function jobsParams(filters: JobsFilters, limit: number, cursor?: string | null): string {
+/** The query string of `GET /v1/jobs` for some filters and one request's `limit` and offset or cursor. */
+export function jobsParams(
+  filters: JobsFilters,
+  limit: number,
+  cursor?: string | null,
+  offset?: number,
+): string {
   const p = new URLSearchParams({ limit: String(limit) });
   if (filters.q) p.set("q", filters.q);
   for (const state of filters.state ?? []) p.append("state", state);
@@ -102,6 +107,8 @@ export function jobsParams(filters: JobsFilters, limit: number, cursor?: string 
   if (filters.version) p.set("version", filters.version);
   if (filters.created_after) p.set("created_after", filters.created_after);
   if (filters.sort) p.set("sort", filters.sort);
-  if (cursor) p.set("cursor", cursor);
+  // A page by offset (0 to 10000) or after a cursor, never both (422 `cursor_with_offset`).
+  if (offset !== undefined) p.set("offset", String(offset));
+  else if (cursor) p.set("cursor", cursor);
   return p.toString();
 }

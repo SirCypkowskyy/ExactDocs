@@ -71,11 +71,14 @@ export function accessLogParams(
   filters: AccessLogFilters,
   limit: number,
   cursor?: string | null,
+  offset?: number,
 ): string {
   const p = new URLSearchParams({ limit: String(limit) });
   for (const change of filters.change ?? []) p.append("change", change);
   if (filters.library) p.set("library", filters.library);
-  if (cursor) p.set("cursor", cursor);
+  // A page by offset (0 to 10000) or after a cursor, never both (422 `cursor_with_offset`).
+  if (offset !== undefined) p.set("offset", String(offset));
+  else if (cursor) p.set("cursor", cursor);
   return p.toString();
 }
 

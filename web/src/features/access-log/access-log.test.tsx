@@ -41,7 +41,7 @@ const json = (body: unknown, status = 200) => Response.json(body, { status });
 
 /**
  * An access log API over `events` that filters by `change` (repeatable) and `library`, and pages
- * with `limit` and an offset cursor (`o<n>`); or one that refuses with `status`.
+ * with `limit` and an `offset` (or a cursor, `o<n>`); or one that refuses with `status`.
  */
 function stubApi(events: AccessEvent[], status = 200) {
   const fetchMock = vi.fn(async (url: string) => {
@@ -53,7 +53,7 @@ function stubApi(events: AccessEvent[], status = 200) {
       (e) =>
         (changes.length === 0 || changes.includes(e.change)) && (!library || e.library === library),
     );
-    const start = Number(params.get("cursor")?.slice(1) ?? 0);
+    const start = Number(params.get("offset") ?? params.get("cursor")?.slice(1) ?? 0);
     const limit = Number(params.get("limit"));
     return json({
       events: shown.slice(start, start + limit),
@@ -166,6 +166,7 @@ describe("access log view", () => {
         "c1",
       ),
     ).toBe("limit=20&change=granted&change=revoked&library=%2Fa%2Fb&cursor=c1");
+    expect(accessLogParams({}, 20, null, 40)).toBe("limit=20&offset=40");
   });
 
   it("explains a refusal", () => {
@@ -213,7 +214,7 @@ describe("operators' access log", () => {
     );
     await userEvent.keyboard("{Escape}");
     await waitFor(() =>
-      expect(asked(fetchMock)).toContain("/api/v1/access-log?limit=20&change=granted"),
+      expect(asked(fetchMock)).toContain("/api/v1/access-log?limit=20&change=granted&offset=0"),
     );
     expect(history.location.search).toContain("change=granted");
 
@@ -224,7 +225,7 @@ describe("operators' access log", () => {
 
     await waitFor(() =>
       expect(asked(fetchMock)).toContain(
-        "/api/v1/access-log?limit=20&change=granted&library=%2Facme%2Fledger",
+        "/api/v1/access-log?limit=20&change=granted&library=%2Facme%2Fledger&offset=0",
       ),
     );
     expect(history.location.search).toContain("library=");
@@ -254,7 +255,7 @@ describe("operators' access log", () => {
     expect(screen.getByLabelText("Library")).toHaveValue("/acme/ledger");
   });
 
-  it("pages through a long log, the next page asked for with the first one's cursor", async () => {
+  it("pages through a long log by offset, Last in one request", async () => {
     const fetchMock = stubApi(
       Array.from({ length: 25 }, (_, i) => event({ id: `e${i + 1}`, subject: `user${i + 1}` })),
     );
@@ -266,7 +267,16 @@ describe("operators' access log", () => {
     expect(await screen.findByText("21–25 of 25")).toBeInTheDocument();
     expect(screen.getAllByText("user25")).not.toHaveLength(0);
     expect(history.location.search).toContain("page=2");
-    expect(asked(fetchMock)).toContain("/api/v1/access-log?limit=20&cursor=o20");
+    expect(asked(fetchMock)).toContain("/api/v1/access-log?limit=20&offset=20");
+
+    await userEvent.click(screen.getByRole("button", { name: "First page" }));
+    expect(await screen.findByText("1–20 of 25")).toBeInTheDocument();
+    const before = asked(fetchMock).length;
+    await userEvent.click(screen.getByRole("button", { name: "Last page" }));
+    expect(await screen.findByText("21–25 of 25")).toBeInTheDocument();
+    // Fetched ahead already, or one request by offset; never a cursor walk.
+    expect(asked(fetchMock).slice(before).length).toBeLessThanOrEqual(1);
+    expect(asked(fetchMock).every((u) => !u.includes("cursor="))).toBe(true);
   });
 
   it("says so when nothing was recorded", async () => {
@@ -286,7 +296,9 @@ describe("a library's access log", () => {
 
     const [first] = await rowsOf();
     expect(first).toHaveTextContent("alice gave bob the viewer role");
-    expect(asked(fetchMock)[0]).toBe("/api/v1/libraries/acme/payments/access-log?limit=20");
+    expect(asked(fetchMock)[0]).toBe(
+      "/api/v1/libraries/acme/payments/access-log?limit=20&offset=0",
+    );
     const crumbs = screen.getByRole("navigation", { name: "Breadcrumb" });
     expect(within(crumbs).getByRole("link", { name: "Sharing" })).toHaveAttribute(
       "href",
