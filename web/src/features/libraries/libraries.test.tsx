@@ -5,8 +5,9 @@ import { Suspense } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TestRouter } from "@/shared/lib/test-router";
 import { relativeTime } from "@/shared/lib/time";
+import { TooltipProvider } from "@/shared/ui/tooltip";
 import { LibrariesPage } from "./index";
-import { orderedVersions, syncOf } from "./model/library";
+import { syncOf } from "./model/library";
 
 const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
 const library = (over: Record<string, unknown> = {}) => {
@@ -19,6 +20,7 @@ const library = (over: Record<string, unknown> = {}) => {
     default_pinned: false,
     source_url: "https://github.com/acme/payments.git",
     version_count: versions.length,
+    article_count: 1234,
     refs: versions.map((ref) => ({
       ref,
       kind: ref === "main" ? "branch" : "tag",
@@ -58,6 +60,7 @@ function serve(libraries: unknown[], jobs: unknown[] | (() => unknown[]) = []) {
       return Response.json({ jobs: typeof jobs === "function" ? jobs() : jobs });
     }
     if (url.includes("/v1/jobs/")) {
+      // One job with its skipped files: a failure's details.
       return Response.json({
         ...job(),
         problems: [
@@ -72,21 +75,28 @@ function serve(libraries: unknown[], jobs: unknown[] | (() => unknown[]) = []) {
   return fetchMock;
 }
 
+/** The header's line about the list (the pagination has a live region of its own). */
+const summary = () => document.querySelector("header [role=status]");
+
 function renderPage() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return {
     queryClient,
     ...render(
       <QueryClientProvider client={queryClient}>
-        <Suspense fallback="loading">
-          <TestRouter
-            pages={{
-              "/": LibrariesPage,
-              "/libraries/new": () => <p>Add page</p>,
-              "/libraries/acme/payments": () => <p>Browse page</p>,
-            }}
-          />
-        </Suspense>
+        <TooltipProvider>
+          <Suspense fallback="loading">
+            <TestRouter
+              pages={{
+                "/": LibrariesPage,
+                "/libraries/new": () => <p>Add page</p>,
+                "/libraries/$owner/$repo": () => <p>Browse page</p>,
+                "/libraries/$owner/$repo/settings": () => <p>Settings page</p>,
+                "/jobs": () => <p>Jobs page</p>,
+              }}
+            />
+          </Suspense>
+        </TooltipProvider>
       </QueryClientProvider>,
     ),
   };
@@ -97,49 +107,84 @@ describe("libraries slice", () => {
     vi.unstubAllGlobals();
   });
 
-  it("lists a library with its versions, the default marked and first, and when it was imported", async () => {
+  it("lists a library with its default version, when it was imported and its sync", async () => {
     const fetchMock = serve([library()], [job()]);
     renderPage();
 
-    const row = (await screen.findByRole("heading", { name: "Payments" })).closest("li");
+    const table = await screen.findByRole("table", { name: "Libraries" });
+    const link = await within(table).findByRole("link", { name: "Payments" });
+    expect(link).toHaveAttribute("href", "/libraries/acme/payments");
+    const row = link.closest("tr");
     if (!row) throw new Error("no row");
-    expect(within(row).getByRole("link", { name: "Payments" })).toHaveAttribute(
-      "href",
-      "/libraries/acme/payments",
-    );
-    const versions = within(within(row).getByRole("list", { name: "Versions" })).getAllByRole(
-      "listitem",
-    );
-    expect(versions.map((v) => v.textContent)).toEqual([
-      "v1.4.0 (default)a1b2c3d",
-      "v1.3.0",
-      "main",
-    ]);
+    expect(within(row).getByText("/acme/payments")).toBeInTheDocument();
+    expect(within(row).getByText("v1.4.0")).toBeInTheDocument();
+    expect(within(row).getByText("a1b2c3d")).toBeInTheDocument();
+    expect(within(row).getByText("3")).toBeInTheDocument();
+    expect(within(row).getByText("1,234")).toBeInTheDocument();
     expect(within(row).getByText("3 days ago")).toBeInTheDocument();
-    expect(await within(row).findByText(/Synced/)).toBeInTheDocument();
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/libraries?limit=50", expect.anything());
+    expect(await within(row).findByText("Synced")).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/libraries?limit=20&offset=0",
+      expect.anything(),
+    );
     expect(fetchMock).toHaveBeenCalledWith("/api/v1/jobs/latest", expect.anything());
     // One request for every library's sync, never one per library.
     expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("jobs"))).toHaveLength(1);
-    expect(within(row).getByRole("link", { name: /github\.com\/acme\/payments/ })).toHaveAttribute(
-      "href",
-      "https://github.com/acme/payments.git",
+    expect(summary()).toHaveTextContent("1 library");
+  });
+
+  it("counts the default version's articles in a column the API does not sort", async () => {
+    serve([library(), library({ id: "/acme/empty", title: "Empty", article_count: 0 })]);
+    renderPage();
+    const table = await screen.findByRole("table", { name: "Libraries" });
+    expect(within(table).getByRole("columnheader", { name: "Articles" })).toBeInTheDocument();
+    expect(within(table).queryByRole("button", { name: /Sort by Articles/ })).toBeNull();
+    const count = await within(table).findByText("1,234");
+    // It makes room below `lg`, like the versions count.
+    expect(count.closest("td")).toHaveClass("max-lg:hidden");
+    const empty = (await within(table).findByRole("link", { name: "Empty" })).closest("tr");
+    expect(within(empty as HTMLElement).getByText("0")).toHaveClass("text-muted-foreground");
+  });
+
+  it("says the articles in words on a phone card", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn((query: string) => ({
+        matches: query === "(max-width: 47.99rem)",
+        media: query,
+        addEventListener: () => {},
+        removeEventListener: () => {},
+      })),
     );
-    expect(within(row).getByText("a1b2c3d")).toBeInTheDocument();
-    expect(within(row).getByText("api · guide")).toBeInTheDocument();
+    serve([library(), library({ id: "/acme/one", title: "One", article_count: 1 })]);
+    renderPage();
+    const cards = await screen.findByRole("list", { name: "Libraries" });
+    const [many, one] = within(cards).getAllByRole("listitem") as HTMLElement[];
+    expect(many).toHaveTextContent("Articles: 1,234 articles");
+    expect(one).toHaveTextContent("Articles: 1 article");
+  });
+
+  it("shows a library's logo beside its name, and the generic mark when it has none", async () => {
+    serve([library({ logo: "0123456789abcdef" }), library({ id: "/acme/docs", title: "Docs" })]);
+    renderPage();
+    const withLogo = (await screen.findByRole("link", { name: "Payments" })).closest("tr");
+    expect(withLogo?.querySelector("img")).toHaveAttribute(
+      "src",
+      "/api/v1/libraries/acme/payments/logo?v=0123456789abcdef",
+    );
+    expect(withLogo?.querySelector("img")).toHaveAttribute("alt", "");
+    const without = screen.getByRole("link", { name: "Docs" }).closest("tr");
+    expect(without?.querySelector("img")).toBeNull();
   });
 
   it("says when the default version is pinned", async () => {
     serve([library({ default_pinned: true })], [job()]);
     renderPage();
 
-    const row = (await screen.findByRole("heading", { name: "Payments" })).closest("li");
+    const row = (await screen.findByRole("link", { name: "Payments" })).closest("tr");
     if (!row) throw new Error("no row");
-    const [first] = within(within(row).getByRole("list", { name: "Versions" })).getAllByRole(
-      "listitem",
-    );
-    expect(first).toHaveTextContent("v1.4.0 (pinned default)");
-    expect(first).toHaveAttribute("title", expect.stringMatching(/^Pinned default version/));
+    expect(row).toHaveTextContent("v1.4.0");
+    expect(row).toHaveTextContent("(pinned default)");
   });
 
   it("shows a failed sync calmly and reveals the reason on demand", async () => {
@@ -151,14 +196,21 @@ describe("libraries slice", () => {
 
     const toggle = await screen.findByRole("button", { name: /Sync failed/ });
     expect(toggle).toHaveAttribute("aria-expanded", "false");
-    expect(screen.getByRole("status")).toHaveTextContent("1 library · 1 sync failed");
+    expect(summary()).toHaveTextContent("1 library · 1 sync failed");
+    expect(screen.queryByText("git fetch failed: repository not found")).not.toBeInTheDocument();
     await userEvent.click(toggle);
 
     expect(toggle).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getAllByText("git fetch failed: repository not found").length).toBeGreaterThan(0);
-    expect(await screen.findByText("docs/broken.md")).toBeInTheDocument();
-    expect(screen.getByText("Skipped files (1)")).toBeInTheDocument();
-    expect(screen.queryByText("docs/odd.md")).not.toBeInTheDocument();
+    const details = await screen.findByRole("dialog", {
+      name: "Why the sync of /acme/payments failed",
+    });
+    expect(within(details).getByText("git fetch failed: repository not found")).toBeInTheDocument();
+    expect(await within(details).findByText("docs/broken.md")).toBeInTheDocument();
+    expect(within(details).getByText("Skipped files (1)")).toBeInTheDocument();
+    expect(within(details).queryByText("docs/odd.md")).not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(toggle).toHaveFocus();
   });
 
   describe("a moved tag", () => {
@@ -206,9 +258,9 @@ describe("libraries slice", () => {
         },
       });
       renderPage();
-      await userEvent.click(await screen.findByRole("button", { name: /Sync failed/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /Tag moved/ }));
       expect(
-        screen.getByRole("link", { name: "Review the moved tag in settings" }),
+        await screen.findByRole("link", { name: "Review the moved tag in settings" }),
       ).toBeInTheDocument();
       await userEvent.click(
         screen.getByRole("button", { name: "Re-import the new commit of v1.4.0" }),
@@ -219,7 +271,7 @@ describe("libraries slice", () => {
       expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ ref: "v1.4.0" });
       // The queued re-import is the version's newest job: the error gives way to it.
       expect(await screen.findByText("Queued")).toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /Sync failed/ })).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /Tag moved/ })).not.toBeInTheDocument();
     });
 
     it("says it is queued while the list still shows the old error", async () => {
@@ -238,9 +290,9 @@ describe("libraries slice", () => {
         { stale: true }, // the refetch has not caught up yet
       );
       renderPage();
-      await userEvent.click(await screen.findByRole("button", { name: /Sync failed/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /Tag moved/ }));
       await userEvent.click(
-        screen.getByRole("button", { name: "Re-import the new commit of v1.4.0" }),
+        await screen.findByRole("button", { name: "Re-import the new commit of v1.4.0" }),
       );
       expect(
         await screen.findByText("Queued: the new commit of v1.4.0 is being imported."),
@@ -255,9 +307,9 @@ describe("libraries slice", () => {
         body: { error: "tag_not_moved", detail: "x", fields: [], close_matches: [] },
       });
       renderPage();
-      await userEvent.click(await screen.findByRole("button", { name: /Sync failed/ }));
+      await userEvent.click(await screen.findByRole("button", { name: /Tag moved/ }));
       await userEvent.click(
-        screen.getByRole("button", { name: "Re-import the new commit of v1.4.0" }),
+        await screen.findByRole("button", { name: "Re-import the new commit of v1.4.0" }),
       );
       expect(await screen.findByText(/nothing to re-import/)).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /Re-import/ })).not.toBeInTheDocument();
@@ -267,8 +319,12 @@ describe("libraries slice", () => {
       serve([library()], [job({ state: "failed", error_code: "ref_deleted", error: "gone" })]);
       renderPage();
       await userEvent.click(await screen.findByRole("button", { name: /Sync failed/ }));
+      expect(
+        await screen.findByRole("link", { name: "Open settings to sync again" }),
+      ).toBeInTheDocument();
       expect(screen.queryByRole("button", { name: /Re-import/ })).not.toBeInTheDocument();
-      expect(screen.getByRole("link", { name: "Open settings to sync again" })).toBeInTheDocument();
+      // The error code stays visible in the row.
+      expect(screen.getByText("ref_deleted")).toBeInTheDocument();
     });
   });
 
@@ -297,8 +353,10 @@ describe("libraries slice", () => {
     renderPage();
 
     expect(await screen.findByText("Importing 12 of 40")).toBeInTheDocument();
-    expect(screen.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "12");
-    expect(screen.getByRole("status")).toHaveTextContent("1 importing");
+    expect(
+      screen.getByRole("progressbar", { name: "Import progress for /acme/payments" }),
+    ).toHaveAttribute("aria-valuenow", "30");
+    expect(summary()).toHaveTextContent("1 importing");
   });
 
   describe("cancelling a job from the list (#432)", () => {
@@ -327,7 +385,8 @@ describe("libraries slice", () => {
 
       await userEvent.click(await screen.findByRole("button", { name: /cancel the sync/i }));
       expect(calls).toEqual([]);
-      await userEvent.click(screen.getByRole("button", { name: "Yes, cancel" }));
+      const dialog = screen.getByRole("alertdialog", { name: "Cancel the sync of v1.4.0?" });
+      await userEvent.click(within(dialog).getByRole("button", { name: "Yes, cancel" }));
 
       expect(calls).toEqual(["/api/v1/jobs/j1/cancel"]);
       expect(await screen.findByText(/Cancelling after the current step/)).toBeInTheDocument();
@@ -360,7 +419,8 @@ describe("libraries slice", () => {
 
     expect(await screen.findByText(/Couldn't load sync status/)).toBeInTheDocument();
     expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
-    expect(screen.getByRole("heading", { name: "Payments" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Payments" })).toBeInTheDocument();
+    expect(screen.getByText("Sync status unavailable")).toBeInTheDocument();
   });
 
   it("teaches how to add a library when there are none", async () => {
@@ -370,16 +430,60 @@ describe("libraries slice", () => {
     expect(await screen.findByText(/exactdocs add https:\/\/github\.com/)).toBeInTheDocument();
   });
 
-  it("collapses a long version list behind a count", async () => {
-    const versions = Array.from({ length: 12 }, (_, i) => `v1.${i}.0`);
-    serve([library({ versions, default_version: "v1.11.0" })]);
+  it("offers each library's actions in its menu and syncs one now", async () => {
+    const latest = serve([library()], [job()]);
+    const posts: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        posts.push(url);
+        return Response.json(
+          {
+            library_id: "/acme/payments",
+            versions: [{ ref: "main", ref_kind: "branch", status: "queued" }],
+          },
+          { status: 202 },
+        );
+      }
+      return latest(url);
+    });
     renderPage();
 
-    const more = await screen.findByRole("button", {
-      name: "Show 7 more versions of /acme/payments",
-    });
-    await userEvent.click(more);
-    expect(screen.getAllByRole("listitem").some((li) => li.textContent === "v1.0.0")).toBe(true);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "More actions for /acme/payments" }),
+    );
+    const menu = await screen.findByRole("menu");
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((i) => i.textContent),
+    ).toEqual([
+      "Open library",
+      "Settings",
+      "Sharing",
+      "Sync now",
+      "Show its jobs",
+      "Copy library ID",
+      "Open the repository",
+    ]);
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Sync now" }));
+    await waitFor(() => expect(posts).toEqual(["/api/v1/libraries/acme/payments/sync"]));
+
+    await userEvent.click(screen.getByRole("button", { name: "More actions for /acme/payments" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Settings" }));
+    expect(await screen.findByText("Settings page")).toBeInTheDocument();
+  });
+
+  it("opens the same actions in a context menu from the keyboard", async () => {
+    serve([library()], [job()]);
+    renderPage();
+    const link = await screen.findByRole("link", { name: "Payments" });
+    link.focus();
+
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+
+    const menu = await screen.findByRole("menu");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Show its jobs" }));
+    expect(await screen.findByText("Jobs page")).toBeInTheDocument();
   });
 
   it("polls every 2s while a job runs, stops when it ends and refreshes the list", async () => {
@@ -425,27 +529,6 @@ describe("libraries slice", () => {
     } finally {
       vi.useRealTimers();
     }
-  });
-});
-
-describe("orderedVersions", () => {
-  it("puts the default first, tags by semver descending, then branches", () => {
-    const lib = library({
-      versions: ["main", "v2.9.0", "canary", "v2.10.0", "v2.1.0", "v1.4.0"],
-      default_version: "v2.1.0",
-    });
-    lib.refs = lib.refs.map((r) => ({
-      ...r,
-      kind: r.ref === "main" || r.ref === "canary" ? "branch" : "tag",
-    }));
-    expect(orderedVersions(lib as never)).toEqual([
-      "v2.1.0",
-      "v2.10.0",
-      "v2.9.0",
-      "v1.4.0",
-      "canary",
-      "main",
-    ]);
   });
 });
 

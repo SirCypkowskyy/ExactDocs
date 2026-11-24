@@ -2,10 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronRight, FolderTree } from "lucide-react";
 import { type ReactNode, useCallback, useState } from "react";
+import { useMessages } from "@/shared/lib/i18n";
 import { tagsQueryOptions } from "@/shared/lib/tags-query";
 import { cn } from "@/shared/lib/utils";
 import { trigger } from "@/shared/ui/recipes";
 import { TagChips } from "@/shared/ui/tag-chips";
+import { messages } from "../messages";
 import type { Version } from "../model/browse";
 import { TreePane } from "./tree-pane";
 import { VersionPicker } from "./version-picker";
@@ -71,6 +73,7 @@ export function FilesAside({
   q,
   match,
 }: FilesAsideProps) {
+  const t = useMessages(messages).tree;
   const navigate = useNavigate();
   // On a phone the tree starts open until an article is open; after that the reader decides.
   const [chosen, setChosen] = useState<boolean>();
@@ -91,10 +94,10 @@ export function FilesAside({
   const treeTags = q ? undefined : tagsParam;
   const closeFiles = useCallback(() => setChosen(false), []);
   const name = path?.split("/").pop();
-  const label = filesOpen || !name ? (path || q ? "Files" : "Browse files") : name;
+  const label = filesOpen || !name ? (path || q ? t.files : t.browseFiles) : name;
 
   return (
-    <aside aria-label="Files" className="flex min-w-0 flex-col gap-3 lg:sticky lg:top-17">
+    <aside aria-label={t.files} className="flex min-w-0 flex-col gap-3 lg:sticky lg:top-17">
       <div className="grid grid-cols-2 gap-2 lg:block">
         <VersionPicker
           owner={owner}

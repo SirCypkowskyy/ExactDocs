@@ -2,14 +2,18 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, TriangleAlert } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
+import { reducedMotion } from "@/shared/lib/preferences";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import { DialogContent, DialogDescription, DialogRoot, DialogTitle } from "@/shared/ui/dialog";
 import { Field } from "@/shared/ui/field";
 import { FormAlert } from "@/shared/ui/form-alert";
+import { LibraryCombobox } from "@/shared/ui/library-combobox";
 import { codeWell } from "@/shared/ui/recipes";
 import { SelectField } from "@/shared/ui/select-field";
-import { createToken, tokensKey } from "../api/tokens-query";
+import { createToken, scopeLibrariesQueryOptions, tokensKey } from "../api/tokens-query";
+import { messages } from "../messages";
 import {
   EXPIRY_CHOICES,
   type ExpiryChoice,
@@ -72,12 +76,16 @@ function Body({
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const language = useLanguage();
+  const t = useMessages(messages).create;
+  const c = useMessages(common);
   const [name, setName] = useState("");
   const [expiry, setExpiry] = useState<ExpiryChoice>("never");
   const [scope, setScope] = useState("all");
-  const [libraries, setLibraries] = useState("");
-  const [nameError, setNameError] = useState<string>();
-  const [problem, setProblem] = useState<{ message: string; signIn: boolean }>();
+  const [libraries, setLibraries] = useState<string[]>([]);
+  const [nameMissing, setNameMissing] = useState(false);
+  // The failure itself, so its words follow the language if it changes meanwhile.
+  const [failure, setFailure] = useState<{ error: unknown }>();
   const [pending, setPending] = useState(false);
   const [secret, setSecret] = useState<string>();
   const nameInput = useRef<HTMLInputElement>(null);
@@ -87,25 +95,25 @@ function Body({
     if (pending) return;
     const trimmed = name.trim();
     if (!trimmed) {
-      setNameError("Name the token after where it will run, like “laptop”.");
+      setNameMissing(true);
       nameInput.current?.focus();
       return;
     }
-    setNameError(undefined);
-    setProblem(undefined);
+    setNameMissing(false);
+    setFailure(undefined);
     setPending(true);
     onLock(true);
     try {
       const grant = await createToken(
         trimmed,
         expiresAt(expiry),
-        scope === "all" ? undefined : libraries.split(/[\s,]+/).filter(Boolean),
+        scope === "all" ? undefined : libraries,
       );
       setSecret(grant.token);
       onCreated(grant.name);
     } catch (error) {
       onLock(false);
-      setProblem({ message: explainTokenError(error), signIn: isSessionEnded(error) });
+      setFailure({ error });
     } finally {
       setPending(false);
       // Refetch either way: a refused create (409) means the cached list is out of date.
@@ -117,69 +125,71 @@ function Body({
 
   return (
     <form onSubmit={submit} noValidate>
-      <DialogTitle>New API token</DialogTitle>
-      <DialogDescription>
-        Tokens let an agent read your documentation over <code>/mcp</code>.
-      </DialogDescription>
+      <DialogTitle>{t.title}</DialogTitle>
+      <DialogDescription>{t.description(<code>/mcp</code>)}</DialogDescription>
       <div className="mt-5">
         <FormAlert
           id="token-alert"
-          message={problem?.message}
-          link={problem?.signIn ? { href: "/sign-in", label: "Sign in" } : undefined}
+          message={failure && explainTokenError(failure.error, language)}
+          link={
+            failure && isSessionEnded(failure.error)
+              ? { href: "/sign-in", label: t.signIn }
+              : undefined
+          }
         />
       </div>
       <div className="mt-5 flex flex-col gap-4">
         <Field
           id="token-name"
           ref={nameInput}
-          label="Name"
+          label={t.name}
           value={name}
           maxLength={MAX_NAME_LENGTH}
           autoComplete="off"
-          placeholder="e.g. laptop"
-          hint="Only for you: it tells your tokens apart."
-          error={nameError}
+          placeholder={t.namePlaceholder}
+          hint={t.nameHint}
+          error={nameMissing ? t.nameRequired : undefined}
           onChange={(e) => setName(e.target.value)}
         />
         <SelectField
           id="token-expiry"
-          label="Expires"
+          label={t.expires}
           value={expiry}
           onChange={(e) => setExpiry(e.target.value as ExpiryChoice)}
         >
-          {EXPIRY_CHOICES.map((c) => (
-            <option key={c.value} value={c.value}>
-              {c.label}
+          {EXPIRY_CHOICES.map((choice) => (
+            <option key={choice} value={choice}>
+              {t.expiry[choice]}
             </option>
           ))}
         </SelectField>
         <SelectField
           id="token-scope"
-          label="Library access"
+          label={t.access}
           value={scope}
           onChange={(e) => setScope(e.target.value)}
-          hint="Access always follows your current permissions. An empty selection allows no libraries."
+          hint={t.accessHint}
         >
-          <option value="all">All libraries I can access</option>
-          <option value="selected">Selected libraries</option>
+          <option value="all">{t.allLibraries}</option>
+          <option value="selected">{t.selectedLibraries}</option>
         </SelectField>
         {scope === "selected" && (
-          <Field
+          <LibraryCombobox
+            multiple
             id="token-libraries"
-            label="Library IDs"
+            label={t.libraries}
+            query={scopeLibrariesQueryOptions}
             value={libraries}
-            onChange={(e) => setLibraries(e.target.value)}
-            placeholder="/owner/repo, /owner/another"
-            className="font-mono"
+            onChange={setLibraries}
           />
         )}
       </div>
       <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <Button variant="ghost" aria-disabled={pending} onClick={() => !pending && onClose()}>
-          Cancel
+          {c.cancel}
         </Button>
         <Button type="submit" pending={pending}>
-          Create token
+          {t.submit}
         </Button>
       </div>
     </form>
@@ -189,6 +199,8 @@ function Body({
 type CopyState = "idle" | "copied" | "failed";
 
 function Reveal({ secret, nudge, onDone }: { secret: string; nudge: number; onDone: () => void }) {
+  const t = useMessages(messages).create;
+  const c = useMessages(common);
   const [copy, setCopy] = useState<CopyState>("idle");
   const copyButton = useRef<HTMLButtonElement>(null);
   const code = useRef<HTMLElement>(null);
@@ -203,7 +215,7 @@ function Reveal({ secret, nudge, onDone }: { secret: string; nudge: number; onDo
 
   // A blocked Escape or outside click answers with one short pulse on the warning.
   useEffect(() => {
-    if (nudge === 0 || window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+    if (nudge === 0 || reducedMotion()) return;
     warning.current?.animate?.(
       [{ transform: "scale(1)" }, { transform: "scale(1.02)" }, { transform: "scale(1)" }],
       { duration: 160, easing: "cubic-bezier(0.23, 1, 0.32, 1)" },
@@ -215,7 +227,7 @@ function Reveal({ secret, nudge, onDone }: { secret: string; nudge: number; onDo
     try {
       await navigator.clipboard.writeText(secret);
       setCopy("copied");
-      toast.success("Token copied");
+      toast.success(t.tokenCopied);
       timer.current = setTimeout(() => setCopy("idle"), 2500);
     } catch {
       // No clipboard API (plain-HTTP self-host) or refused: select the token for Ctrl+C.
@@ -230,7 +242,7 @@ function Reveal({ secret, nudge, onDone }: { secret: string; nudge: number; onDo
 
   return (
     <div className="fade-in">
-      <DialogTitle>Copy your token now</DialogTitle>
+      <DialogTitle>{t.revealTitle}</DialogTitle>
       <DialogDescription asChild>
         <p
           ref={warning}
@@ -238,9 +250,7 @@ function Reveal({ secret, nudge, onDone }: { secret: string; nudge: number; onDo
           className="mt-4 flex gap-2.5 rounded-md bg-warning-soft px-3 py-2.5 text-body font-medium text-warning-ink"
         >
           <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
-          <span>
-            This is the only time you will see it. If you lose it, revoke it and create a new one.
-          </span>
+          <span>{t.revealWarning}</span>
         </p>
       </DialogDescription>
       <code
@@ -253,13 +263,13 @@ function Reveal({ secret, nudge, onDone }: { secret: string; nudge: number; onDo
         {secret}
       </code>
       <p role="status" className="mt-2 min-h-5 text-body text-muted-foreground">
-        {copy === "idle" && "Click the token to select it."}
-        {copy === "copied" && "Copied to the clipboard."}
-        {copy === "failed" && "Couldn't copy automatically. The token is selected: press Ctrl+C."}
+        {copy === "idle" && t.clickToSelect}
+        {copy === "copied" && t.copiedToClipboard}
+        {copy === "failed" && t.copyFailed}
       </p>
       <div className="mt-4 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <Button variant="ghost" onClick={onDone}>
-          Done
+          {c.done}
         </Button>
         <Button
           ref={copyButton}
@@ -272,7 +282,7 @@ function Reveal({ secret, nudge, onDone }: { secret: string; nudge: number; onDo
           ) : (
             <Copy aria-hidden="true" className="size-4" />
           )}
-          {copy === "copied" ? "Copied" : "Copy token"}
+          {copy === "copied" ? c.copied : t.copyToken}
         </Button>
       </div>
     </div>

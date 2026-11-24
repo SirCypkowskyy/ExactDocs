@@ -1,0 +1,15 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "broken-image",
+        "value": "*",
+        "files": ["src/features/browse/render/markdown.tsx"],
+        "createdAt": "2026-11-23T21:56:16.059Z",
+        "reason": "Img renders repository images from a computed src list and shows its alt text when none loads; the src is never empty"
+      }
+    ]
+  }
+}

@@ -1,7 +1,14 @@
 import type { ReactNode } from "react";
+import { useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
-import { ThemeSwitch } from "@/shared/ui/theme-switch";
+import {
+  InterfaceMenu,
+  LanguageMenu,
+  TextSizeControl,
+  ThemeButton,
+} from "@/shared/ui/interface-controls";
 import { Wordmark } from "@/shared/ui/wordmark";
+import { messages } from "../messages";
 
 /**
  * The frame for setup and sign-in, after the free shadcnblocks "Login 2" block (a wordmark over
@@ -18,12 +25,18 @@ export function AuthLayout({
   children: ReactNode;
 }) {
   const heading = usePageTitle(title);
+  const t = useMessages(messages);
   return (
     <div className="relative grid min-h-dvh place-items-center bg-frame px-4 py-12">
-      <ThemeSwitch className="absolute top-2 right-2 sm:top-3 sm:right-3" />
+      <div className="absolute top-2 right-2 flex items-center sm:top-3 sm:right-3">
+        <TextSizeControl />
+        <ThemeButton />
+        <LanguageMenu />
+        <InterfaceMenu settings={null} />
+      </div>
       <div className="w-full max-w-[25rem]">
         <div className="rise mb-6 flex justify-center">
-          <Wordmark />
+          <Wordmark className="h-12" />
         </div>
         <main
           id="main"
@@ -40,7 +53,7 @@ export function AuthLayout({
           className="rise mx-auto mt-6 max-w-[22rem] text-center text-body text-muted-foreground text-balance"
           style={{ "--i": 2 } as React.CSSProperties}
         >
-          Documentation, word for word: every answer names its library, version and commit.
+          {t.layout.tagline}
         </p>
       </div>
     </div>

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { components } from "@/shared/lib/api-schema";
+import type { PageSize } from "@/shared/ui/data-table/table-search";
 
 export type LibraryDetail = components["schemas"]["LibraryDetail"];
 export type Version = components["schemas"]["VersionOut"];
@@ -23,6 +24,10 @@ export interface BrowseSearch {
   /** The articles table's text filter (path or title) and API `sort`; the tree ignores both. */
   filter?: string | undefined;
   sort?: string | undefined;
+  /** The articles table's folder (`path_prefix`), page (from 2) and rows per page. */
+  prefix?: string | undefined;
+  page?: number | undefined;
+  size?: PageSize | undefined;
 }
 
 /** The version the page resolved, handed to the search slots (the `search` slice renders them). */
@@ -245,8 +250,8 @@ const HOST_NAMES: Record<string, string> = {
   gitea: "Gitea",
 };
 
-/** The host's display name, for labels. */
-export const hostName = (host: string): string => HOST_NAMES[host] ?? "the host";
+/** The host's display name, for labels; undefined for a host ExactDocs has no name for. */
+export const hostName = (host: string): string | undefined => HOST_NAMES[host];
 
 /** Only http(s) links are ever rendered from repository data. */
 export function safeHref(url: string | null | undefined): string | undefined {

@@ -1,8 +1,11 @@
 import { Search, X } from "lucide-react";
 import { type KeyboardEvent, useEffect, useEffectEvent, useRef, useState } from "react";
+import { common, useMessages } from "@/shared/lib/i18n";
 import { MAX_QUERY, normalizeQuery } from "@/shared/lib/search-query";
 import { parseTags } from "@/shared/lib/tags";
+import { IconButton } from "@/shared/ui/button";
 import { useSearchNav } from "../hooks/use-search-nav";
+import { messages } from "../messages";
 import type { SearchContext } from "../model/context";
 import { SearchTags } from "./search-tags";
 
@@ -20,6 +23,8 @@ const isTyping = (target: EventTarget | null) =>
  * moves into the results.
  */
 export function SearchBox({ ctx }: { ctx: SearchContext }) {
+  const t = useMessages(messages);
+  const c = useMessages(common);
   const update = useSearchNav(ctx.owner, ctx.repo);
   const input = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState(ctx.q ?? "");
@@ -88,7 +93,7 @@ export function SearchBox({ ctx }: { ctx: SearchContext }) {
           }}
         >
           <label htmlFor={INPUT_ID} className="sr-only">
-            Search {ctx.ref}
+            {t.box.searchIn(ctx.ref)}
           </label>
           <div className="relative">
             <Search
@@ -104,7 +109,7 @@ export function SearchBox({ ctx }: { ctx: SearchContext }) {
               enterKeyHint="search"
               aria-keyshortcuts="/"
               maxLength={MAX_QUERY}
-              placeholder={`Search ${ctx.ref}`}
+              placeholder={t.box.searchIn(ctx.ref)}
               value={draft}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={onKeyDown}
@@ -116,18 +121,18 @@ export function SearchBox({ ctx }: { ctx: SearchContext }) {
                 /
               </kbd>
             ) : (
-              <button
-                type="button"
-                aria-label="Clear search"
+              <IconButton
+                label={c.clearSearch}
+                motion="turn"
                 onClick={() => {
                   setDraft("");
                   commit("");
                   input.current?.focus();
                 }}
-                className="absolute top-0 right-0 inline-flex size-11 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none transition-transform duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] [@media(hover:hover)]:hover:text-foreground"
+                className="absolute top-0 right-0 size-11 text-muted-foreground hover:bg-transparent hover:text-foreground focus-visible:ring-offset-0 fine:size-11"
               >
-                <X aria-hidden="true" className="size-4" />
-              </button>
+                <X aria-hidden="true" />
+              </IconButton>
             )}
           </div>
         </form>
