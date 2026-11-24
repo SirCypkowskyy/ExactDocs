@@ -25,11 +25,13 @@ gives the definitions the result pages rely on.
 `h6`, and the recorded runs took the new names when it changed.
 
 The golden set names sections as `h6` cuts them: every heading. A configuration that cuts
-coarser or finer would lose every hit to a heading path that no longer exists, so a returned chunk of the right
-version and article answers an expected section when its heading path is the expected one, when
-it is a section inside the expected one (a finer cut), or when it is a parent of the expected one
-and holds its heading (a coarser cut). The ingestion results also show recall@5 with exact paths
-only, for comparison.
+coarser or finer would lose every hit to a heading path that no longer exists, so a returned chunk
+of the right version and article answers an expected section when its heading path is the
+expected one, when it is a section inside the expected one (a finer cut), or when the chunk holds
+the expected section's heading. What a chunk holds is what the chunker recorded for it, read by
+chunk ID: a section kept inside its parent (`h2`), kept with a sibling when a long section is cut
+again at 4,000 characters (`default`), or merged with its neighbours (`merge-400`) all count
+(#503). The ingestion results also show recall@5 with exact paths only, for comparison.
 
 ## Retrieval metrics
 
@@ -37,10 +39,10 @@ Answerable cases are the 267 cases that name sections; unanswerable cases are th
 
 | Metric | Over | Definition |
 |---|---|---|
-| recall@k (k = 1, 5, 10) | answerable cases | share of cases whose first expected section is in the top k results |
-| section recall@k (k = 5, 10) | answerable cases | per case, the share of its expected sections in the top k, each counted once; averaged over cases. Equal to recall@k for a case with one section, lower when a `cross-page` answer comes back only in part |
-| MRR | answerable cases | mean of 1 / the rank of the first expected section; 0 when it is not in the top 10 |
-| nDCG@10 | answerable cases | binary relevance: a hit at rank *i* scores 1 when it answers an expected section no earlier hit answered, else 0. DCG@10 = Σ *rel*<sub>i</sub> / log<sub>2</sub>(*i* + 1) over the top 10, divided by the ideal DCG, which puts every expected section first |
+| recall@k (k = 1, 5, 10) | answerable cases | share of cases with a section they list in the top k results: any part, any alternative |
+| section recall@k (k = 5, 10) | answerable cases | per case, the share of its parts in the top k, each counted once whichever of its alternatives answered it; averaged over cases. Equal to recall@k for a case of one part, lower when a `cross-page` answer comes back only in part |
+| MRR | answerable cases | mean of 1 / the rank of the first hit on a section the case lists; 0 when there is none in the top 10 |
+| nDCG@10 | answerable cases | binary relevance: a hit at rank *i* scores 1 when it answers a part no earlier hit answered, else 0. DCG@10 = Σ *rel*<sub>i</sub> / log<sub>2</sub>(*i* + 1) over the top 10, divided by the ideal DCG, which puts every part first |
 | wrong-version rate | every case | share of cases with any result of another version, read back by chunk ID; it must be 0, and a configuration with one is never recommended |
 | unanswerable clean | unanswerable cases | share that returned nothing of another version |
 | no answer | unanswerable cases | share that came back with no result at all, the only "no answer" signal `search_docs` has |
@@ -49,9 +51,14 @@ Answerable cases are the 267 cases that name sections; unanswerable cases are th
 | tokens / USD per question | every case | what the spend ledger grew by during each search (embedding a query, a judgment, a HyDE answer, an agent run); USD from the configured prices or `genai-prices` |
 | index | per embedding model and chunking | seconds, tokens and USD of embedding the whole corpus once |
 
-recall@k and MRR count the first expected section only, as the fixture eval suite does, so their
-numbers stay comparable across the three benchmarks; section recall and nDCG@10 count every
-expected section.
+A case lists the sections that answer it as **parts** a complete answer needs ("all of"), each
+followed by its **alternatives**: sections that answer that part as well, either being enough
+("any of"; a reference page next to a guide, the same fact in a release note). recall@k and MRR
+count the first hit on any section the case lists, so a tool that returns another section that
+answers, or one part of a multi-page answer, is not scored a miss; section recall and nDCG@10 count
+each part once, its alternatives counting as that part, so they show how much of a multi-page
+answer came back (#501). The [golden set](golden-set.md) marks as alternatives the sections its
+review (#490) added because they answer as well as the one listed.
 
 ## Intervals and significance
 
@@ -132,8 +139,8 @@ answer (not the docs). It grades `correct` (every fact, nothing contradicted),
 `partially_correct` (some facts, nothing contradicted), `wrong` (no fact, a contradiction or an
 invented API) or `refused` (says the docs do not cover it). Accuracy is the share `correct`,
 plus `refused` on `unanswerable` cases, where refusing is the right answer. The report also
-counts answers true only of another version, how often the agent read every section the case
-names in full, and whether it read another version, with tool calls, tokens, USD and wall time
+counts answers true only of another version, how often the agent read every part the case
+names in full (a section of each, or one of its alternatives), and whether it read another version, with tool calls, tokens, USD and wall time
 per question.
 
 **Judge agreement with hand labels: not measured yet.** The judge is checked by labelling at

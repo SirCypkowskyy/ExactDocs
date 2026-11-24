@@ -14,7 +14,7 @@ rendered as plain text still matches. A result answers a section when it holds a
 ``MATCH_THRESHOLD`` of the section's own shingles (a coarser result: the section is inside it),
 or when at least ``MATCH_THRESHOLD`` of the result's shingles lie in the section with its
 subsections (a finer result: it is a part of the section). These are the text forms of the
-nested match rule of chunk-ID scoring (``golden_run.nested_match``). See
+match rule of chunk-ID scoring (``golden_run.held_match``). See
 docs/evals.md#scoring-text-results.
 """
 

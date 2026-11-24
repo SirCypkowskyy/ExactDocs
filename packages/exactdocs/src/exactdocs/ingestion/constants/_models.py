@@ -297,6 +297,21 @@ being used.
 JOB_SORT_FIELDS: Final[tuple[str, ...]] = ("id", "created_at", "state", "kind", "library")
 """What the jobs lists can be sorted by (columns that are never null); `-id` is the default, which
 is newest first."""
+JOB_KINDS: Final[tuple[JobKind, ...]] = (
+    IMPORT_JOB,
+    REFRESH_JOB,
+    REPROCESS_JOB,
+    RETAG_JOB,
+    RECHUNK_JOB,
+    COLLECT_JOB,
+    EMBED_JOB,
+    PUSH_JOB,
+)
+"""Every kind of job, in the order the job statistics list them (each day counts every one)."""
+DEFAULT_STATS_DAYS: Final[int] = 30
+"""Days the job statistics cover when the request names no start: the last 30, today included."""
+MAX_STATS_DAYS: Final[int] = 366
+"""The most days one request for job statistics may cover (a leap year): the range is bounded."""
 ABOVE_EVERY_JOB_ID: Final[str] = "\U0010ffff"
 """The first page's cursor in the SQL job repository: the last Unicode code point sorts after
 every job ID (a UUID string), by code point in Python and SQLite and byte-wise in PostgreSQL's
@@ -337,3 +352,113 @@ ANY: Final[str] = "*"
 """Matches any run of characters in a path segment; as a token it is the 1-tuple ``("*",)``."""
 ONE: Final[str] = "?"
 """Matches one character of a path segment; as a token it is the 1-tuple ``("?",)``."""
+
+# ---------------------------------------------------------------- project logos (#504)
+LOGO_TYPES: Final[frozenset[str]] = frozenset(
+    {"image/png", "image/jpeg", "image/webp", "image/svg+xml"}
+)
+"""Media types a library logo may have; any other image (a GIF too) is not a logo."""
+MAX_LOGO_BYTES: Final[int] = 512 * 2**10
+"""Most bytes a logo file may have; a bigger one is cut off while it downloads and ignored."""
+MIN_LOGO_SIDE: Final[int] = 16
+"""Shortest side of a raster logo, in pixels: a smaller image is a spacer or a tracking pixel."""
+MAX_LOGO_SIDE: Final[int] = 4096
+"""Longest side of a raster logo, in pixels."""
+MAX_LOGO_PIXELS: Final[int] = 2048 * 2048
+"""Most pixels (width times height) of a raster logo: bounds what a browser decodes to show it."""
+MAX_LOGO_SVG_ELEMENTS: Final[int] = 10_000
+"""Most elements an SVG logo may have; a bigger drawing is not a logo."""
+MAX_README_LOGOS: Final[int] = 4
+"""Images the top of a README offers as logos, tried in order before the conventional files."""
+_README_LOGO_TOKENS: Final[int] = 200
+"""Tokens of a parsed README looked through for a logo: the logo sits at the top."""
+_MAX_LOGO_SOURCE: Final[int] = 2048
+"""Longest image ``src`` kept from a README as a logo; a longer one is not a logo."""
+_LOGO_NAME: Final[re.Pattern[str]] = re.compile(r"(?<![a-z])logos?(?![a-z])", re.IGNORECASE)
+"""Says "logo" in an image's path or ``alt`` (``logo-dark.svg``, ``acme_logo.png``, ``Acme logo``),
+not inside another word (``catalogo``, ``logout``)."""
+LOGO_FILES: Final[tuple[str, ...]] = (
+    "logo.svg",
+    "logo.png",
+    ".github/logo.svg",
+    ".github/logo.png",
+    ".github/assets/logo.svg",
+    ".github/assets/logo.png",
+    "assets/logo.svg",
+    "assets/logo.png",
+    "assets/logo.webp",
+    "assets/logo.jpg",
+    "docs/public/logo.svg",
+    "docs/public/logo.png",
+    "docs/logo.svg",
+    "docs/logo.png",
+    "docs/assets/logo.svg",
+    "docs/assets/logo.png",
+    "docs/static/img/logo.svg",
+    "website/static/img/logo.svg",
+    "static/img/logo.svg",
+    "public/logo.svg",
+)
+"""Where projects conventionally keep their logo (the root, the GitHub folder, ``assets``,
+VitePress' ``docs/public``, MkDocs' ``docs/assets``, Docusaurus' ``static/img``), tried in this
+order after the README's own logo images."""
+_SVG_NAMESPACE: Final[str] = "http://www.w3.org/2000/svg"
+"""The SVG namespace: an SVG logo's root and every element it keeps are in it."""
+_XLINK_NAMESPACE: Final[str] = "http://www.w3.org/1999/xlink"
+"""The XLink namespace of SVG 1.1's ``xlink:href``, written as plain ``href`` when kept."""
+_XML_NAMESPACE: Final[str] = "http://www.w3.org/XML/1998/namespace"
+"""The ``xml:`` namespace (``xml:space``, ``xml:lang``): its attributes are kept."""
+_SVG_ELEMENTS: Final[frozenset[str]] = frozenset(
+    {
+        "svg", "g", "defs", "symbol", "use", "title", "desc", "style", "switch", "a",
+        "path", "rect", "circle", "ellipse", "line", "polyline", "polygon",
+        "text", "tspan", "textPath",
+        "linearGradient", "radialGradient", "stop", "pattern", "clipPath", "mask", "marker",
+        "filter", "feBlend", "feColorMatrix", "feComponentTransfer", "feComposite",
+        "feConvolveMatrix", "feDiffuseLighting", "feDisplacementMap", "feDistantLight",
+        "feDropShadow", "feFlood", "feFuncA", "feFuncB", "feFuncG", "feFuncR",
+        "feGaussianBlur", "feMerge", "feMergeNode", "feMorphology", "feOffset",
+        "fePointLight", "feSpecularLighting", "feSpotLight", "feTile", "feTurbulence",
+    }
+)  # fmt: skip
+"""The SVG elements a logo keeps: shapes, text, paint servers, clipping, masks and filters. Any
+other element is dropped with everything inside it: ``script``, ``foreignObject``, ``image`` and
+``feImage`` (they run or embed other content), the animation elements (they can turn an attribute
+into a ``javascript:`` link), ``metadata`` and editors' own elements."""
+_UNSAFE_CSS: Final[re.Pattern[str]] = re.compile(
+    r"\\|@import|expression\s*\(|javascript:|url\s*\(\s*(?![\"']?\s*#)", re.IGNORECASE
+)
+"""CSS or an attribute value an SVG logo does not keep: an escape (it could spell any of the rest),
+an import, an IE expression, a ``javascript:`` URL, or a ``url()`` that is not a ``#fragment``
+of the same document."""
+_PNG_SIGNATURE: Final[bytes] = b"\x89PNG\r\n\x1a\n"
+"""The first bytes of every PNG file; its ``IHDR`` chunk follows with the size."""
+_PNG_HEADER: Final[int] = 24
+"""Bytes of a PNG up to the end of its size: signature, ``IHDR`` length and type, width, height."""
+_WEBP_HEADER: Final[int] = 30
+"""Bytes of a WebP up to the end of its size, whichever of the three formats it is."""
+_VP8L_SIGNATURE: Final[int] = 0x2F
+"""The byte a lossless WebP bitstream (``VP8L``) starts with, before its packed size."""
+_JPEG_MARKER: Final[int] = 0xFF
+"""The byte every JPEG marker starts with (also the fill byte between segments)."""
+_JPEG_SIZE_SEGMENT: Final[int] = 7
+"""Shortest start-of-frame segment that holds the image's size (length, precision, height, width).
+"""
+_JPEG_LENGTH_FIELD: Final[int] = 2
+"""Bytes of a JPEG segment's length field, which the length counts: a smaller length is broken."""
+_JPEG_STOP: Final[frozenset[int]] = frozenset({0xD9, 0xDA})
+"""JPEG end of image and start of scan: with no frame header before them, the size is unknown."""
+_JPEG_FRAMES: Final[frozenset[int]] = frozenset(
+    {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+)
+"""JPEG start-of-frame markers: the segment that holds the image's height and width."""
+_JPEG_STANDALONE: Final[frozenset[int]] = frozenset(
+    {0x01, 0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8}
+)
+"""JPEG markers without a length (``TEM``, the restart markers, start of image)."""
+_GITHUB_RAW_HOSTS: Final[frozenset[str]] = frozenset(
+    {"raw.githubusercontent.com", "github.com", "www.github.com"}
+)
+"""Hosts of the absolute URLs a GitHub README gives its own images with (so that they show on
+package indexes too): such a URL into the library's own repository names a file of the imported
+commit, which is read from git like any other; nothing is fetched from the URL."""

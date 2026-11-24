@@ -41,6 +41,15 @@ IMAGE_TYPES: Final[frozenset[str]] = frozenset(
     {"image/png", "image/jpeg", "image/gif", "image/webp", "image/svg+xml"}
 )
 """The only types the catalog stores and serves (the importer sniffs, the catalog re-checks)."""
+LOGO_TYPES: Final[frozenset[str]] = frozenset(
+    {"image/png", "image/jpeg", "image/webp", "image/svg+xml"}
+)
+"""The only types a library logo is stored and served as (the importer checks and cleans the
+file, the catalog re-checks the type and the size)."""
+MAX_LOGO_BYTES: Final[int] = 512 * 2**10
+"""Most bytes a library logo may have."""
+LOGO_DIGEST_CHARS: Final[int] = 16
+"""Hex digits of a logo's SHA-256 that name it: its version in the library DTOs and its ETag."""
 MAX_INSTRUCTION_FILES: Final[int] = 64
 """Instruction files (``AGENTS.md`` / ``CLAUDE.md``) a manifest may keep (RET-08)."""
 MAX_INSTRUCTION_FILE_CHARS: Final[int] = 32_768
@@ -99,6 +108,9 @@ browser must not guess another type, and no other site may embed it.
 """
 _SVG: Final[str] = "image/svg+xml"
 """Media type of SVG images, which get extra protection when served."""
+_LOGO_CACHED: Final[str] = "private, max-age=31536000, immutable"
+"""``Cache-Control`` of a logo asked for by its current version (``?v=``): those bytes never
+change under that URL, so the browser keeps them for a year without asking again."""
 
 # ---------------------------------------------------------------- adapters.driving.mcp
 ARTICLE_TEMPLATE: Final[str] = "exactdocs://{owner}/{repo}/{path*}{?ref}"

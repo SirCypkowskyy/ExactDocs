@@ -610,7 +610,7 @@ cases:
   expected_output:
     hits:
     - {version: v2.5.3, article: docs/migration.md, heading_path: ['Migration guide', 'Changes to pydantic.BaseModel']}
-    - {version: v2.5.3, article: docs/blog/pydantic-v2.md, heading_path: ['Pydantic V2 Plan', 'Headlines', 'Model Namespace Cleanup :thumbsup:']}
+    - {version: v2.5.3, article: docs/blog/pydantic-v2.md, heading_path: ['Pydantic V2 Plan', 'Headlines', 'Model Namespace Cleanup :thumbsup:'], alternative: true}
     reference: >-
       V2 renames the `BaseModel` methods to `model_*`: `dict()` becomes `model_dump()` and `parse_obj()`
       becomes `model_validate()` (also `json()` to `model_dump_json()`, `copy()` to `model_copy()`). The
@@ -703,7 +703,7 @@ cases:
   expected_output:
     hits:
     - {version: v2.5.3, article: docs/migration.md, heading_path: ['Migration guide', 'Changes to validators', 'TypeError is no longer converted to ValidationError in validators']}
-    - {version: v2.5.3, article: docs/concepts/validators.md, heading_path: ['Handling errors in validators']}
+    - {version: v2.5.3, article: docs/concepts/validators.md, heading_path: ['Handling errors in validators'], alternative: true}
     reference: >-
       No. In V1 a `TypeError` in a validator was wrapped into a `ValidationError`; in V2 it propagates
       as a `TypeError`, for all validation decorators.

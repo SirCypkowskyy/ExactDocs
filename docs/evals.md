@@ -207,9 +207,10 @@ just eval --write-baseline
 
 The fingerprint (`sha256:...` in `baseline.json`) is a hash of what the dataset states: each
 case's question (`inputs`, defaults left out) and the version, article and heading path of each
-section it expects. Renaming, reordering or commenting cases keeps it, and so does a new field with
-a default in the dataset's models; adding, removing or changing a question or an expected section
-changes it. Numbers measured on different datasets are not comparable (harder questions lower
+section it expects, in order, and whether it is an alternative (#501). Renaming, reordering or
+commenting cases keeps it, and so does a new field with a default in the dataset's models; adding,
+removing or changing a question or an expected section, or marking one as an alternative, changes
+it. Numbers measured on different datasets are not comparable (harder questions lower
 recall without anything getting worse), so:
 
 1. Change `dataset.yaml` (see [The dataset](#the-dataset)).
@@ -315,9 +316,22 @@ holds the full commit SHAs; each was resolved from the release tag with `git ls-
   `how-to` (steps to do something), `conceptual` (what something is or why it behaves so),
   `version-change` (what changed in or by this version), `cross-page` (needs sections of at least
   two articles), `unanswerable` (this version's docs do not answer it).
-- `expected_output.hits`: the sections that answer it, best first, each the article path and the
-  heading path from the top heading, as ExactDocs cuts the article (below). An `unanswerable`
-  case has none.
+- `expected_output.hits`: the sections that answer it, each the article path and the heading
+  path from the top heading, as ExactDocs cuts the article (below). An `unanswerable` case has
+  none. Each section is a **part** a complete answer needs ("all of"), unless it is marked
+  `alternative: true`: then it answers the same part as the section listed before it, as well as
+  that one does, and either is enough ("any of", #501). List each part first, then its
+  alternatives:
+
+  ```yaml
+  hits:
+  - {version: v4.36.1, article: docs/react/reference/useQuery.md, heading_path: []}
+  - {version: v4.36.1, article: docs/react/guides/important-defaults.md, heading_path: [], alternative: true}
+  - {version: v4.36.1, article: docs/react/guides/caching.md, heading_path: [Basic Example], alternative: true}
+  ```
+
+  A `cross-page` case lists two parts or more in different articles; a reference page and a
+  guide that both state the answer are alternatives of one part.
 - `expected_output.reference`: a short reference answer, as the pinned docs give it; for an
   unanswerable case, a sentence saying the version does not cover it.
 - `expected_output.facts`: the short facts a correct answer must contain, each checkable on its
@@ -333,7 +347,9 @@ Every case file must load as the dataset's models, and every case must:
 - have a unique `name`, a golden `kind`, the `project` its file is named after, and a `version`
   the manifest pins;
 - have a reference answer; name sections and facts unless it is `unanswerable`, and neither when
-  it is; name sections of the case's own version only; for `cross-page`, of two articles or more;
+  it is; name sections of the case's own version only, none of them twice; start with a part (an
+  alternative follows the part it answers, or the file does not load); for `cross-page`, need
+  parts of two articles or more, alternatives aside;
 - name only sections that exist **at the pinned commit**: the article is read from the cache,
   must be selected by the project's docs paths, and its heading path must be one of the chunks the
   importer's own parser and chunker (`parse_article`, `MarkdownChunker` with no settings, which
@@ -540,10 +556,16 @@ misses of the golden set's answerable cases, with the suite's own evaluators.
 **Matching a hit across chunking depths.** A configuration that cuts coarser or finer than the
 golden set's sections would otherwise lose every hit to a heading path that no longer exists. So a
 returned chunk of the expected version and article answers the expected section when its heading
-path is the expected one; or the expected path is a non-empty prefix of it (a finer cut: the chunk
-is part of the section); or its path is a prefix of the expected one and the chunk holds the
-expected heading (a coarser cut merged the section into it). `recall_at_5_exact` is recall@5 with
-only the exact heading path, for comparison. The rule is `golden_run.nested_match`.
+path is the expected one (the section, or a part of it split at its blocks); or the expected path
+is a non-empty prefix of it (a finer cut: the chunk is part of the section with its subsections);
+or the chunk holds the expected heading. The last is read from what the chunk holds, not guessed
+from heading paths: the chunker records every heading it puts in a chunk (`headings` of the stored
+chunk), the benchmark reads those records by chunk ID once the corpus is imported, and each
+returned hit carries its chunk ID. So a coarser cut that keeps the section inside its parent, a cut
+at `max_chars` that keeps it in a sibling's chunk, and sections merged by `min_chars` all count
+(#503; until then only a chunk named after a parent of the section counted, and `h2` and
+`merge-400` lost 6 to 7 points of recall@5 to it). `recall_at_5_exact` is recall@5 with only the
+exact heading path, for comparison. The rule is `golden_run.held_match`.
 
 ### The JSON report
 
@@ -563,7 +585,7 @@ and `schema_version` changes when a field is renamed or removed.
 `retrieval_eval/golden_run.py` is the golden set's multi-library runner: `golden_retriever` sends
 each question to its project's library through the suite's `SearchDocsRetriever`, and
 `run_golden` scores the whole set with the suite's evaluators and `evaluate_mode`, with the exact
-or the nested match rule. The ingestion benchmark runs BM25 through it, and the retrieval
+or the held match rule. The ingestion benchmark runs BM25 through it, and the retrieval
 benchmark (below) every mode.
 
 ## The retrieval benchmark
@@ -585,7 +607,9 @@ of its own (the ingestion benchmark's import). Then every configuration runs on 
 directory in a container built with only the model roles it calls, embeds the corpus the first
 time an embedding model is used (as the `embed` jobs would, timed and costed as `index`), and asks
 every golden question in its project's library (`golden_run`), one at a time. Hits are matched
-with the nested rule, so a coarser or finer chunking is not penalised for cutting at another depth.
+by the headings their chunk holds (`golden_run.held_match`, in
+[the ingestion benchmark](#the-ingestion-benchmark)), so a coarser or finer chunking is not
+penalised for cutting at another depth or merging sections.
 It writes `retrieval.json` and `retrieval.md` to `reports/evals/` (or `--out`), prints the summary
 (and appends it to `$GITHUB_STEP_SUMMARY`), and exits with 1 when a configuration returned a result
 of another version, read outside its version (agentic traces), or failed on a question.
@@ -619,10 +643,10 @@ Each metric is reported per configuration and chunking, over all cases, per ques
 
 | Metric | Over | Definition |
 |---|---|---|
-| recall@1, recall@5, recall@10 | answerable cases | the first expected section is in the top k |
-| MRR | answerable cases | mean of 1 / the rank of the first expected section (0 past 10) |
-| section recall@5, @10 | answerable cases | the share of a case's expected sections in the top k, averaged over the cases |
-| nDCG@10 | answerable cases | binary relevance over every expected section, below |
+| recall@1, recall@5, recall@10 | answerable cases | a section the case lists (any part, any alternative) is in the top k |
+| MRR | answerable cases | mean of 1 / the rank of the first hit on a section the case lists (0 past 10) |
+| section recall@5, @10 | answerable cases | the share of a case's parts in the top k, averaged over the cases |
+| nDCG@10 | answerable cases | binary relevance over the case's parts, below |
 | wrong-version rate | every case | share of cases with a result of another version (read back by chunk ID, as in the suite); must be 0 |
 | unanswerable clean | unanswerable cases | share that returned nothing of another version |
 | no answer | unanswerable cases | share that signalled no answer: came back with no result |
@@ -631,20 +655,26 @@ Each metric is reported per configuration and chunking, over all cases, per ques
 | tokens / USD per question | every case | what the spend ledger grew by during each search (an embedding, a judgment, a HyDE answer, an agent run); USD from the configured prices or `genai-prices` |
 | index | per embedding model and chunking | seconds, tokens and USD of embedding the whole corpus once |
 
-**nDCG@10.** A returned hit at rank *i* is relevant (*rel* = 1) when it answers an expected section
-that no earlier hit answered, so a section found twice counts once; otherwise *rel* = 0.
+**nDCG@10.** A returned hit at rank *i* is relevant (*rel* = 1) when it answers a part of the case
+(one of its sections or of their alternatives) that no earlier hit answered, so a part found twice,
+or through two of its alternatives, counts once; otherwise *rel* = 0.
 DCG@10 = Σ<sub>i=1..10</sub> *rel*<sub>i</sub> / log<sub>2</sub>(*i* + 1). The ideal DCG puts every
-expected section first: IDCG@10 = Σ<sub>i=1..min(R, 10)</sub> 1 / log<sub>2</sub>(*i* + 1), with *R*
-the number of expected sections. nDCG@10 = DCG@10 / IDCG@10.
+part first: IDCG@10 = Σ<sub>i=1..min(R, 10)</sub> 1 / log<sub>2</sub>(*i* + 1), with *R* the number
+of parts. nDCG@10 = DCG@10 / IDCG@10.
 
-**Cases with several expected sections** (`cross-page`, and any case listing more than one).
-recall@k and MRR follow the suite's rule and the fixture suite's numbers: they count the first
-expected section only (`VersionAndRank`, `rank_of`), so they stay comparable with the retrieval
-eval and the ingestion benchmark. Section recall@k counts every expected section: a case scores
-the share of its sections found in the top k (each found section counted once, by the hit
-matching rule above), and the metric is the mean over cases; for a case with one section it equals
-recall@k. The per-kind and per-project tables show recall@5, section recall@5 and nDCG@10 side by
-side, so the `cross-page` row says how often the whole answer came back, not only its first page.
+**Cases with several expected sections** (`cross-page`, and any case listing more than one,
+#501). recall@k and MRR count the first hit on **any** section the case lists: a part, or an
+alternative of one (`VersionAndRank`, `first_rank`). So a tool that returns the reference page
+where ExactDocs returns the guide, both of which answer, is not scored a miss, and a tool that
+returns the second page of a two-page answer has found an answer. Section recall@k and nDCG@10 say
+how much of the answer came back: they count each **part** once, its alternatives counting as that
+part. A case scores the share of its parts found in the top k (each found part counted once, by
+the hit matching rule above), and section recall is the mean over cases; for a case of one part it
+equals recall@k. The per-kind and per-project tables show recall@5, section recall@5 and nDCG@10
+side by side, so the `cross-page` row says how often the whole answer came back, not only a part
+of it. Until #501, recall@k and MRR counted the first listed section only, as the fixture suite
+did, and section recall and nDCG@10 counted every listed section as a part; the fixture's cases
+list one section each, so its numbers are the same under both rules.
 
 **"No answer".** `search_docs` has no explicit no-answer signal: a result carries a `score` that is
 "only comparable within one search", and no mode applies a relevance threshold. The only signal a
@@ -720,11 +750,11 @@ still 1, and a report without them still reads.
 
 ### The recorded run
 
-Recorded on 23–24 November 2026 for the golden-set review (#490), on the reviewed set
-(`sha256:7dd51c59057c279a`), by the manual *Retrieval eval (real providers)* workflow with
+Recorded on 24 November 2026 for #503 and #501, on the golden set with its alternatives marked
+(`sha256:a00997851150e3b0`), by the manual *Retrieval eval (real providers)* workflow with
 `benchmark` ticked and local configurations only
-([run 45276428449](https://github.com/SirCypkowskyy/ExactDocs/actions/runs/45276428449)): one
-self-hosted runner VM (Linux aarch64, 4 CPUs), ExactDocs `861b5ea`, in 3 h 17 min. A full local
+([run 45353553786](https://github.com/SirCypkowskyy/ExactDocs/actions/runs/45353553786)): one
+self-hosted runner VM (Linux aarch64, 4 CPUs), ExactDocs `8e789e6`, in 3 h 22 min. A full local
 matrix (three embedding models, each with and without the cross-encoder, at four chunkings) would
 take far longer there, so it ran on this subset:
 
@@ -741,16 +771,23 @@ EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
 ```
 
 Every result keeps its per-case `rows`, so every one has intervals and a paired test against its
-budget's default (#489). On that runner, embedding the whole corpus took 24 minutes with
-bge-small at `default` (30 at `h6`, 14 at `h2`, 23 at `merge-400`) and 34 with arctic-embed-s; the
-cross-encoder adds about 2.5 s per question (32 candidates). What it found: BM25 is best at
-`default` (recall@5 81.7%, against 79.8% at `h6`); hybrid on bge-small reaches 84.6% at `h6` and
-the cross-encoder on BM25 84.6% at `default`, both 3 points more, under the 5-point margin and not
-significant (McNemar mid-p 0.11 and 0.18), so BM25 stays the default for both the no-model and the
-local budget; the cross-encoder loses recall at `h2`, whose chunks are longer than its window;
-arctic-embed-s is below BM25 (75.3%). The review (#490) did not change any case's first expected
-section, so recall@k and MRR match the run it replaces (13 November 2026, before the review, on a
-10-core laptop) for every configuration both ran.
+budget's default (#489). On that runner, embedding the whole corpus took 25 minutes with
+bge-small at `default` (32 at `h6`, 14 at `h2`, 23 at `merge-400`) and 35 with arctic-embed-s; the
+cross-encoder adds about 2.5 s per question (32 candidates). What it found: BM25 scores alike at
+`h2`, `default` and `merge-400` (recall@5 89.1%, 87.6%, 87.6%), above `h6` (85.8%); `h2` comes
+first by the benchmark's ordering, so the summary names it for the no-model budget, but its lead
+over `default` is not significant (+1.5 points, McNemar mid-p 0.42), and the shipped default stays
+`default`. Hybrid on bge-small reaches 91.0% at `merge-400`, 1.9 points over BM25 at `h2`, under
+the 5-point margin and not significant (p 0.33), so BM25 stays the default for the local budget
+too; the cross-encoder loses recall at `h2`, whose chunks are longer than its window;
+arctic-embed-s is below BM25 (79.8%).
+
+It replaces a run of 23–24 November 2026 (the same subset on the same runner) scored by the rules
+before #503 and #501, whose numbers are not comparable: a chunk that held the expected section
+next to a sibling was a miss (BM25's recall@5 was 76.0% at `h2` and 74.2% at `merge-400`), and
+recall@k counted only a case's first listed section (81.7% at `default`). Scored that way, BM25's
+results at `default` give the same 81.7%; the alternatives the review marked add 3 cases, and the
+other parts of multi-part cases 13 (8 of them `cross-page`).
 
 ### Running it with local models
 
@@ -830,8 +867,8 @@ just text-bench --offline --chunkings default,h6,h2,merge-400 --out packages/exa
   of the section's own text (the section is inside it: a coarser result, such as a chunk of
   several sections), or when at least 80% of its own shingles are in the section with its
   subsections (it is a part of the section: a finer result, such as a window of it or a part of a
-  long section). These are the text forms of the nested rule chunk-ID scoring matches hits with
-  (`golden_run.nested_match`, in [the ingestion benchmark](#the-ingestion-benchmark)), so both
+  long section). These are the text forms of the rule chunk-ID scoring matches hits with
+  (`golden_run.held_match`, in [the ingestion benchmark](#the-ingestion-benchmark)), so both
   scorings count the same hits.
 - **Version.** For a question about version V, a result is *right* when its text matches sections
   of V and of no other pinned version; *version-neutral* when it matches sections of V and of
@@ -847,7 +884,8 @@ becomes the retrieval benchmark's own `Row`, so the metrics are computed by the 
 (`metrics_of`) with [the same definitions](#the-retrieval-benchmark): recall@1/5/10, MRR, section
 recall and nDCG@10 over the top 10, the wrong-version rate, unanswerable clean, no answer,
 answerable empty, and latency, model tokens and USD when the harness measures them. A hit is the
-first result in the top 10 that answers the expected section; a case is wrong-version when any of
+first result in the top 10 that answers a section the case lists, and each part counts once in
+section recall and nDCG@10, its alternatives with it, as above; a case is wrong-version when any of
 its results is. Next to them:
 
 | Metric | Over | Definition |
@@ -856,7 +894,7 @@ its results is. Next to them:
 | unmatched | every result returned | share whose text matches no section of any pinned version |
 | results / question | every case | results returned |
 | context tokens / question, p95 | every case | estimated tokens of all the text returned (characters / 4, as `CHARS_PER_TOKEN`); tools return very different amounts of text, so a hit costs a different number of tokens in each |
-| tokens to first hit | answerable cases whose first expected section is in the top 10 | estimated tokens of the results up to and including the one that answers it |
+| tokens to first hit | answerable cases with a hit in the top 10 | estimated tokens of the results up to and including the first that answers a section the case lists |
 | facts found | answerable cases | the share of the case's facts the returned text holds, averaged over the cases |
 
 **Facts found** is a second signal, independent of the sections: a fact is found when at least
@@ -882,7 +920,7 @@ says how much of what a tool returned no check on the text alone can attribute.
 each chunking configuration it imports the corpus as the ingestion benchmark does, asks every
 golden question with BM25 in its project's library, reads each result back by its chunk ID and
 keeps the chunk's content as the result's text. Then it scores the results both ways, chunk IDs
-with the retrieval benchmark's nested rule. A decision is where an expected section of an
+with the retrieval benchmark's rule (`golden_run.held_match`). A decision is where an expected section of an
 answerable case is in the top 10 (its rank), or that it is not; the two agree on a decision when
 they give the same rank, or both a miss. The criterion is 98% agreement at `default`, the
 chunking ExactDocs ships (`MIN_AGREEMENT`, `GATED_CHUNKING`); below it the command exits with 1.
@@ -891,35 +929,45 @@ The report (`text-scorer.json` and `text-scorer.md`, in `reports/evals/` or `--o
 - the agreement on hit or miss alone, whatever the rank;
 - the agreement on the same results rendered as plain text (the Markdown rendered and the tags
   dropped), as a tool that renders its results returns them;
-- the agreement with a chunk-ID rule that also counts a chunk holding the expected section's
-  heading under another heading path (below);
 - the agreement on each case's wrong-version decision;
 - the agreement at each threshold from 0.5 to 1, on the results as returned and as rendered;
 - both scorings' metrics side by side, the text-only metrics, and every disagreement with what
   the result at the earlier rank is.
 
 **The recorded calibration** is `packages/exactdocs/evals/results/text-scorer.json` and
-`text-scorer.md`, on the whole golden set (321 cases, 384 decisions), about two minutes per
-chunking on 4 CPUs:
+`text-scorer.md`, on the whole reviewed golden set (321 cases, 404 decisions), about two minutes
+per chunking on 4 CPUs:
 
-| chunking | same rank | hit / miss | rendered as plain text | counting held headings | BM25 recall@5, text (chunk ID) |
-|---|---|---|---|---|---|
-| `default` | **99.5%** | 99.7% | 99.5% | 99.7% | 81.7% (81.7%) |
-| `h6` | 99.7% | 100.0% | 99.7% | 99.7% | 79.8% (79.8%) |
-| `h2` | 93.2% | 93.5% | 93.0% | 99.7% | 82.8% (76.0%) |
-| `merge-400` | 90.9% | 91.4% | 90.9% | 99.5% | 81.7% (74.2%) |
+| chunking | same rank | hit / miss | rendered as plain text | BM25 recall@5, text (chunk ID) |
+|---|---|---|---|---|
+| `default` | **99.8%** | 100.0% | 99.8% | 87.6% (87.6%) |
+| `h6` | 99.8% | 100.0% | 99.8% | 85.8% (85.8%) |
+| `h2` | 99.8% | 100.0% | 99.5% | 89.1% (89.1%) |
+| `merge-400` | 99.5% | 99.8% | 99.5% | 87.6% (87.6%) |
 
-The criterion is met at `default`. Both scorings take the same wrong-version decision on every
-case at every chunking (BM25 returns nothing of another version, and no result's text is only in
-another version). At `default`, 72% of BM25's results are version-neutral; its ten results hold
-3,464 tokens of context on average, 736 of them up to the first hit; they hold 87% of the cases'
-facts, where the expected sections' own text holds 80% and another question's results 25%.
+The criterion is met at `default`, and the agreement is above it at every chunking. Both
+scorings take the same wrong-version decision on every case at every chunking (BM25 returns
+nothing of another version, and no result's text is only in another version). At `default`, 72%
+of BM25's results are version-neutral; its ten results hold 3,464 tokens of context on average,
+656 of them up to the first hit; they hold 87% of the cases' facts, where the expected sections'
+own text holds 81% and another question's results 25%.
 
 The threshold is 0.8 because of the sweep: below it, results of other articles that share part of
-a section's text count as hits (at `default`, 98.4% agreement at 0.7, 97.1% at 0.5); above it the
-results as returned agree as well, but rendered ones less (99.2% at 0.9, 89.8% at 1), since a
+a section's text count as hits (at `default`, 98.8% agreement at 0.7, 97.5% at 0.5); above it the
+results as returned agree as well, but rendered ones less (99.5% at 0.9, 90.3% at 1), since a
 rendering loses a little text. Shingles of 5 words are the usual size for near-duplicate text; in
 trial runs, 3 to 9 words moved the agreement at 0.8 by less than a point.
+
+Until #503, chunk-ID scoring counted a coarser chunk only when it was named after a parent of the
+expected section. The calibration showed what that missed: at `h2` and `merge-400` the two
+scorings agreed on only 93.2% and 90.9% of the decisions, and in 25 of `h2`'s 26 disagreements and
+33 of `merge-400`'s 35 the returned chunk held the expected section next to another one (a section
+with its subsections; small sections merged with the next), as did one at `default`: Starlette's
+1.0.0rc1 release notes are longer than 4,000 characters, so they are cut again at their `####`
+headings, and the chunk `1.0.0rc1 > Removed` also holds `Fixed`. Chunk-ID scoring now reads what
+each chunk holds, and BM25's recall@5 at `h2` and `merge-400` went from 76.0% and 74.2% to the
+82.8% and 81.7% the text gives. Then #501 counted a hit on any section a case lists (the recall@5
+column above), which moved both scorings alike.
 
 What still disagrees, and why:
 
@@ -927,30 +975,21 @@ What still disagrees, and why:
   `useSuspenseQuery` in `guides/suspense.md` and again, nearly word for word, in
   `guides/advanced-ssr.md`. BM25 returns the second at rank 1 and the expected one at rank 7; the
   text scorer finds the expected section's text at rank 1. Text alone cannot say which article a
-  result came from; a tool that returns it does answer the question.
-- **A section held under another heading path.** At `default`, Starlette's 1.0.0rc1 release notes
-  are longer than 4,000 characters, so they are cut again at their `####` headings and the chunk
-  `1.0.0rc1 > Removed` also holds `Added`, `Fixed` and `Changed`. The question about Jinja2
-  autoescaping expects `Fixed`: the text scorer finds it in that chunk at rank 8, the nested rule
-  does not, since it counts a chunk for its own section, the sections inside it and its parents,
-  not for a sibling it holds. `h2` and `merge-400` put sibling sections into one chunk far more
-  often (a section with all its subsections; small sections merged with the next), which is 25 of
-  `h2`'s 26 disagreements and 33 of `merge-400`'s 35: with the rule that counts held headings they
-  agree on 99.7% and 99.5%. The text scorer is right there, and the nested rule undercounts those
-  chunkings' hits: scored from text, BM25's recall@5 is 82.8% at `h2` and 81.7% at `merge-400`,
-  not 76.0% and 74.2%.
-- **A part of a section that runs past it.** At `merge-400`, one chunk named after a subsection
-  of the expected section was merged with the start of the next section: the nested rule counts
-  it as part of the expected section, the text scorer does not, since less than 80% of its text
-  is.
+  result came from; a tool that returns it does answer the question. This is the one
+  disagreement at `default`, `h6` and `h2`.
+- **A part of a section that runs past it.** At `merge-400`, Electron's chunk
+  `Signing & notarizing macOS builds > Signing Mac App Store applications`, a subsection of the
+  expected section, was merged with the start of the next section: chunk-ID scoring counts it as
+  part of the expected section, the text scorer does not, since less than 80% of its text is.
 
 ### The JSON report
 
-`text-scorer.json` (`schema_version` 1) records `golden` (the golden set's fingerprint), `cases`,
+`text-scorer.json` (`schema_version` 2) records `golden` (the golden set's fingerprint), `cases`,
 `projects`, `corpus` (every pinned version's commit), `environment` (as the retrieval benchmark
 records it), `scorer` (`shingle_words`, `threshold`, `fact_share`, `min_agreement`,
-`gated_chunking`) and, per chunking, in `calibrations`: `agreement`, `held_agreement` and
-`rendered_agreement` (each `decisions`, `agreed`, `rate`, `hit_miss_rate`),
+`gated_chunking`) and, per chunking, in `calibrations`: `agreement` and `rendered_agreement`
+(each `decisions`, `agreed`, `rate`, `hit_miss_rate`; version 1 also had `held_agreement`, the
+agreement with a rule that counted held headings, which chunk-ID scoring does itself since #503),
 `wrong_version_agreement`, `sweep` (`threshold`, `rate`, `rendered_rate`), `disagreements`
 (`case`, `section`, `chunk_id_rank`, `text_rank`, `why`), `chunk_id` (the retrieval benchmark's
 metrics), `text` (the same scored from text, with the metrics only text gives),
@@ -1165,7 +1204,8 @@ one cell per agent model and retrieval configuration:
   and per project; errors;
 - *Wrong for the version*: answers the judge flagged `wrong_version`;
 - *Read the answer*: of the answerable questions, the share where the agent read in full every
-  section the case names (at its version). Search snippets do not count. This is the measure of
+  part the case names (at its version): a section of each part, or one of its alternatives
+  (#501). Search snippets do not count. This is the measure of
   "the cited chunks contain the required facts": a case's sections are, by construction, where
   its facts are stated;
 - *Read another version*: questions where the agent read something of the asked library at

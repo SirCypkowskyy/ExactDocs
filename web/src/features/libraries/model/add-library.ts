@@ -2,18 +2,20 @@ import type { components } from "@/shared/lib/api-schema";
 import {
   type CredentialKind,
   explainInvalidCredential,
-  HOST_KEY_CHANGED,
+  hostKeyChanged,
   refusedCredential,
 } from "@/shared/lib/credentials";
 import { HttpError } from "@/shared/lib/http";
+import { currentLanguage, type Language } from "@/shared/lib/i18n";
 import {
   filledRules,
   lines,
-  TAG_RULE_HINT,
   type TagRuleDraft,
+  tagRuleHint,
   validatePatterns,
   validateRule,
 } from "@/shared/lib/path-selection";
+import { addMessages } from "../messages/add";
 
 export type CheckedRepository = components["schemas"]["CheckedRepository"];
 export type AddedLibrary = components["schemas"]["AddedLibrary"];
@@ -39,190 +41,151 @@ export interface AddProblem {
 /** `https://github.com/acme/payments` or `git@host:org/repo.git`, no credentials. */
 const MAX_URL_LENGTH = 2048;
 
-export function validateUrl(raw: string): string | undefined {
+/** The refusals in the language the UI speaks; model code takes it from the component. */
+const errorsIn = (language: Language) => addMessages[language].errors;
+
+export function validateUrl(
+  raw: string,
+  language: Language = currentLanguage(),
+): string | undefined {
+  const t = errorsIn(language);
   const url = raw.trim();
-  if (!url) return "Paste the address of a git repository.";
-  if (url.length > MAX_URL_LENGTH)
-    return "That address is too long. Addresses can be up to 2048 characters.";
-  if (/\s/.test(url)) return "An address has no spaces. Paste it again.";
+  if (!url) return t.urlEmpty;
+  if (url.length > MAX_URL_LENGTH) return t.urlTooLong;
+  if (/\s/.test(url)) return t.urlSpaces;
   if (/^[a-z][a-z0-9+.-]*:\/\/[^/@]*@/i.test(url) && !/^ssh:\/\/git@/i.test(url)) {
-    return "Remove the username and password from the address. For a private repository, give its token under “This repository is private”.";
+    return t.urlCredentials;
   }
   if (!/^(https?:\/\/|ssh:\/\/|file:\/\/|[\w.-]+@[\w.-]+:)/i.test(url)) {
-    return "That isn't a repository address yet. Start with https://, like https://github.com/acme/payments.";
+    return t.urlScheme;
   }
   return undefined;
 }
 
-export function validateLibraryId(raw: string): string | undefined {
+export function validateLibraryId(
+  raw: string,
+  language: Language = currentLanguage(),
+): string | undefined {
   if (!/^\/[^/\s]+\/[^/\s]+$/.test(raw.trim())) {
-    return "Use the form /owner/repo, like /acme/payments.";
+    return errorsIn(language).libraryIdForm;
   }
   return undefined;
 }
 
-const session = (error: HttpError): AddProblem | undefined => {
+const session = (error: HttpError, language: Language): AddProblem | undefined => {
+  const t = errorsIn(language);
   if (error.status === 401) {
-    return { message: "Your session ended.", link: { href: "/sign-in", label: "Sign in" } };
+    return { message: t.sessionEnded, link: { href: "/sign-in", label: t.signIn } };
   }
   if (error.status === 403 && error.code === "setup_required") {
-    return {
-      message: "This server has no admin yet.",
-      link: { href: "/setup", label: "Set it up" },
-    };
+    return { message: t.noAdmin, link: { href: "/setup", label: t.setUp } };
   }
   if (error.status === 403) {
-    return { message: "Your account isn't allowed to add libraries." };
+    return { message: t.forbidden };
   }
   return undefined;
 };
 
-const generic = (error: HttpError): AddProblem => ({
-  message: `Something went wrong on the server (${error.status}). Try again in a moment.`,
+const generic = (error: HttpError, language: Language): AddProblem => ({
+  message: errorsIn(language).server(error.status),
 });
-const OFFLINE: AddProblem = {
-  message: "Can't reach the server. Check your connection and try again.",
-};
+const offline = (language: Language): AddProblem => ({ message: errorsIn(language).offline });
 
 /**
  * The address step: what to tell a person who pasted a URL that does not work. `sent` is the
  * kind of credential the request carried, if any: a refused login means something else then.
  */
-export function explainCheckError(error: unknown, sent?: CredentialKind): AddProblem {
-  if (!(error instanceof HttpError)) return OFFLINE;
-  const gone = session(error);
+export function explainCheckError(
+  error: unknown,
+  sent?: CredentialKind,
+  language: Language = currentLanguage(),
+): AddProblem {
+  if (!(error instanceof HttpError)) return offline(language);
+  const gone = session(error, language);
   if (gone) return gone;
+  const t = errorsIn(language);
   switch (error.code) {
     case "invalid_repository_url":
-      return {
-        field: "url",
-        message:
-          "That doesn't look like a git repository address. Try https://github.com/owner/repo.",
-      };
+      return { field: "url", message: t.invalidUrl };
     case "not_a_git_repository":
-      return {
-        field: "url",
-        message: "No git repository there. Check the address; a private repository looks the same.",
-      };
+      return { field: "url", message: t.notARepository };
     case "repository_auth_required":
       return sent
-        ? { field: "credential", message: refusedCredential(sent) }
-        : {
-            field: "credential",
-            message:
-              "That repository asks for a login. If it is private, give a token or deploy key that can read it.",
-          };
+        ? { field: "credential", message: refusedCredential(sent, language) }
+        : { field: "credential", message: t.authRequired };
     case "invalid_credential":
-      return { field: "credential", message: explainInvalidCredential(error.message) };
+      return { field: "credential", message: explainInvalidCredential(error.message, language) };
     case "host_key_changed":
-      return { message: HOST_KEY_CHANGED };
+      return { message: hostKeyChanged(language) };
     case "repository_unreachable":
-      return {
-        field: "url",
-        message: "Couldn't reach that address. Check it, and that the server can get online.",
-      };
+      return { field: "url", message: t.unreachable };
     case "git_not_installed":
-      return { message: "The server has no git installed, so it can't read repositories." };
+      return { message: t.noGit };
     case "library_id_taken":
       // The check refuses before it reads anything: the ID this address proposes is in use.
       // Only the IDs collide; that library may come from another host, so say no more than that.
       return error.libraryId
-        ? {
-            field: "url",
-            message: `A library with this repository's ID, ${error.libraryId}, already exists.`,
-            library: error.libraryId,
-          }
-        : { field: "url", message: "A library with this repository's ID already exists." };
+        ? { field: "url", message: t.idTakenBy(error.libraryId), library: error.libraryId }
+        : { field: "url", message: t.idTakenByRepository };
     default:
-      return generic(error);
+      return generic(error, language);
   }
 }
-
-/** `preview_busy`: the server is reading other repositories; say how long to wait when it did. */
-const busy = (error: HttpError, what: string): AddProblem => ({
-  message: `The server is busy ${what}. Try again in ${
-    error.retryAfter
-      ? `${error.retryAfter} ${error.retryAfter === 1 ? "second" : "seconds"}`
-      : "a moment"
-  }.`,
-});
 
 /** The submit step. */
 export function explainAddError(
   error: unknown,
   ref: string | null,
   sent?: CredentialKind,
+  language: Language = currentLanguage(),
 ): AddProblem {
-  if (!(error instanceof HttpError)) return OFFLINE;
-  const gone = session(error);
+  if (!(error instanceof HttpError)) return offline(language);
+  const gone = session(error, language);
   if (gone) return gone;
+  const t = errorsIn(language);
   switch (error.code) {
     case "preview_busy":
-      return busy(
-        error,
-        "reading other repositories, so it couldn't read this one's context7.json",
-      );
+      // The server is reading other repositories; say how long to wait when it did.
+      return { message: t.busyReading(error.retryAfter) };
     case "library_id_taken":
-      return {
-        field: "id",
-        message: "That ID is already used by another library. Choose another.",
-      };
+      return { field: "id", message: t.idTaken };
     case "unknown_ref":
-      return {
-        field: "ref",
-        message: ref
-          ? `This repository has no branch, tag or commit “${ref}”.`
-          : "This repository has no default branch. Choose a tag or a branch.",
-      };
+      return { field: "ref", message: ref ? t.unknownRef(ref) : t.noDefaultBranch };
     case "ambiguous_ref":
-      return {
-        field: "ref",
-        message: `“${ref ?? ""}” starts more than one commit. Type more characters of the SHA.`,
-      };
+      return { field: "ref", message: t.ambiguousRef(ref ?? "") };
     case "invalid_path_pattern":
-      return {
-        field: "paths",
-        message:
-          "One of the paths isn't valid. Use folders, files or globs like docs/ or docs/**/*.md.",
-      };
+      return { field: "paths", message: t.invalidPath };
     case "invalid_tag":
-      return {
-        field: "tags",
-        message: `A tag isn't valid. ${TAG_RULE_HINT}`,
-      };
+      return { field: "tags", message: t.invalidTag(tagRuleHint(language)) };
     case "invalid_repository_url":
     case "not_a_git_repository":
     case "repository_unreachable":
-      return { ...explainCheckError(error), field: "url" };
+      return { ...explainCheckError(error, undefined, language), field: "url" };
     case "repository_auth_required":
     case "invalid_credential":
     case "host_key_changed":
-      return explainCheckError(error, sent);
+      return explainCheckError(error, sent, language);
     case "no_articles":
-      return {
-        field: "paths",
-        message:
-          "No Markdown files match these paths. Widen them, or clear them to take every .md, .mdx and .rst file.",
-      };
+      return { field: "paths", message: t.noArticles };
     default:
-      return error.status === 422
-        ? { message: "Check the form and try again. The server refused something in it." }
-        : generic(error);
+      return error.status === 422 ? { message: t.refused } : generic(error, language);
   }
 }
 
-/** One group of skipped files, with the reason in words. Unknown codes fall back to the server's sentence. */
-const SKIP_REASONS: Partial<Record<ProblemCode, string>> = {
-  binary: "Binary files",
-  too_large: "Over the size limit (2 MiB)",
-  undecodable: "Not readable as text",
-  not_a_file: "Not regular files (symlinks)",
-  unreadable: "Couldn't be read",
-  bad_file_name: "File names that aren't valid UTF-8",
-  unparsable: "Couldn't be parsed or split into chunks",
-};
+/** The groups of skipped files we have words for; unknown codes fall back to the server's sentence. */
+const SKIP_CODES: ReadonlySet<string> = new Set<ProblemCode>([
+  "binary",
+  "too_large",
+  "undecodable",
+  "not_a_file",
+  "unreadable",
+  "bad_file_name",
+  "unparsable",
+]);
 
-const skipReason = (code: string) => SKIP_REASONS[code as ProblemCode];
+type SkipReasons = (typeof addMessages)["en"]["skipReasons"];
+const skipReason = (code: string, language: Language) =>
+  SKIP_CODES.has(code) ? addMessages[language].skipReasons[code as keyof SkipReasons] : undefined;
 
 export interface SkipGroup {
   code: string;
@@ -240,7 +203,10 @@ export interface ProblemSummary {
   truncated: boolean;
 }
 
-export function summarizeProblems(problems: readonly FileProblem[]): ProblemSummary {
+export function summarizeProblems(
+  problems: readonly FileProblem[],
+  language: Language = currentLanguage(),
+): ProblemSummary {
   const groups = new Map<string, SkipGroup>();
   const notes: FileProblem[] = [];
   let truncated = false;
@@ -248,10 +214,10 @@ export function summarizeProblems(problems: readonly FileProblem[]): ProblemSumm
     if (p.code === "truncated") {
       truncated = true;
     } else if (p.is_skip) {
-      const label = skipReason(p.code);
+      const label = skipReason(p.code, language);
       const group = groups.get(p.code) ?? {
         code: p.code,
-        label: label ?? "Skipped",
+        label: label ?? addMessages[language].skipReasons.other,
         known: Boolean(label),
         files: [],
       };
@@ -271,16 +237,20 @@ export function summarizeProblems(problems: readonly FileProblem[]): ProblemSumm
 }
 
 /** The checks that need no server: what is wrong with the form as it stands. */
-export function validateForm(form: {
-  libraryId: string;
-  include: string;
-  exclude: string;
-  rules: readonly TagRuleDraft[];
-}) {
-  const id = validateLibraryId(form.libraryId);
-  const paths = validatePatterns(form.include) ?? validatePatterns(form.exclude);
+export function validateForm(
+  form: {
+    libraryId: string;
+    include: string;
+    exclude: string;
+    rules: readonly TagRuleDraft[];
+  },
+  language: Language = currentLanguage(),
+) {
+  const id = validateLibraryId(form.libraryId, language);
+  const paths =
+    validatePatterns(form.include, language) ?? validatePatterns(form.exclude, language);
   const badRule = filledRules(form.rules).some((r) => {
-    const p = validateRule(r);
+    const p = validateRule(r, language);
     return Boolean(p.pattern || p.tag);
   });
   return { id, paths, badRule, ok: !id && !paths && !badRule };
@@ -295,39 +265,37 @@ export function explainPreviewError(
   error: unknown,
   ref: string | null,
   sent?: CredentialKind,
+  language: Language = currentLanguage(),
 ): AddProblem {
   if (error instanceof HttpError && error.code === "preview_busy") {
-    return busy(error, "previewing other repositories");
+    return { message: errorsIn(language).busyPreviewing(error.retryAfter) };
   }
-  return explainAddError(error, ref, sent);
+  return explainAddError(error, ref, sent, language);
 }
 
 /** Why an older version ticked in the preview was not queued, and whether trying again can help. */
 export function explainOlderVersionError(
   error: unknown,
   tag: string,
+  language: Language = currentLanguage(),
 ): { message: string; retry: boolean } {
+  const t = errorsIn(language);
   if (error instanceof HttpError) {
     switch (error.code) {
       case "version_importing":
-        return { message: "Already being imported.", retry: false };
+        return { message: t.importing, retry: false };
       case "version_exists":
-        return { message: "Already a version of this library.", retry: false };
+        return { message: t.versionExists, retry: false };
       case "commit_already_imported": {
         // The server names the version: "commit … is already the version 'v1.4.0' of library …".
         const other = /the version ['"](.+?)['"] of library/.exec(error.message)?.[1];
-        return {
-          message: other
-            ? `Same commit as version ${other}, already imported.`
-            : "Same commit as a version already imported.",
-          retry: false,
-        };
+        return { message: other ? t.sameCommitAs(other) : t.sameCommit, retry: false };
       }
     }
   }
   // Offline, a busy or failing server: worth another go. A refusal about the tag itself is not.
   const retry = !(error instanceof HttpError) || error.status >= 500 || error.status === 429;
-  return { message: explainAddError(error, tag).message, retry };
+  return { message: explainAddError(error, tag, undefined, language).message, retry };
 }
 
 /** What a preview was asked for; a different one means the result on screen is out of date. */
@@ -388,15 +356,13 @@ export function buildFileTree(paths: readonly string[]): PreviewFolder {
   return finish("", "", root);
 }
 
-const files = (n: number) => `${n.toLocaleString("en-US")} ${n === 1 ? "file" : "files"}`;
-
 /** The headline of a preview: how many files an import would take, and whether all are listed. */
 export function previewCountText(
   preview: Pick<RepositoryPreview, "total" | "truncated" | "files">,
+  language: Language = currentLanguage(),
 ) {
-  if (preview.total === 0) return "No Markdown files match.";
-  const match = `${files(preview.total)} ${preview.total === 1 ? "matches" : "match"}.`;
-  return preview.truncated
-    ? `${match} The first ${preview.files.length.toLocaleString("en-US")} are listed.`
-    : match;
+  const t = addMessages[language].preview;
+  if (preview.total === 0) return t.noneMatch;
+  const match = t.filesMatch(preview.total);
+  return preview.truncated ? `${match} ${t.firstListed(preview.files.length)}` : match;
 }

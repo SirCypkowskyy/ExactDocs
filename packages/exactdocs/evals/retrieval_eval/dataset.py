@@ -1,11 +1,12 @@
-"""The dataset: questions pinned to a version, and the section that answers each."""
+"""The dataset: questions pinned to a version, and the sections that answer each."""
 
 import hashlib
 import json
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Final, Literal, get_args
+from typing import Final, Literal, Self, get_args
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_evals import Dataset
 
 DATASET_FILE: Final[Path] = Path(__file__).with_name("dataset.yaml")
@@ -42,6 +43,36 @@ class Hit(_Model):
     """The section's headings, from the H1."""
     commit_sha: str | None = None
     """The commit the result was read from, when the mode says."""
+    chunk_id: str | None = None
+    """The chunk the result was read from, when the mode says: the golden benchmarks look up
+    the headings it holds by it (``golden_run.held_match``)."""
+    alternative: bool = False
+    """An expected section only: it answers the same part of the case as the section listed
+    before it, as well as that one does, so either is enough (#501). False: a part a complete
+    answer needs, with the alternatives listed after it."""
+
+
+type Part = tuple[Hit, ...]
+"""One part of a complete answer: a section, and the alternatives that answer it as well."""
+
+
+def parts_of(expected: Sequence[Hit]) -> list[Part]:
+    """Group a case's expected sections into the parts a complete answer needs.
+
+    Args:
+        expected: The sections, as the case lists them: each part, then its alternatives.
+
+    Returns:
+        One part per section that is not an alternative, with the alternatives after it; an
+        alternative listed first (which ``Answer`` refuses) is a part of its own.
+    """
+    parts: list[list[Hit]] = []
+    for hit in expected:
+        if hit.alternative and parts:
+            parts[-1].append(hit)
+        else:
+            parts.append([hit])
+    return [tuple(part) for part in parts]
 
 
 class TracedRead(_Model):
@@ -63,7 +94,8 @@ class Answer(_Model):
     """What a mode returned for a question (the expected output: the ideal answer)."""
 
     hits: list[Hit]
-    """Best first. Expected: the one section that answers, or none when the version has none."""
+    """Best first. Expected: the sections that answer, each part a complete answer needs
+    followed by its alternatives (``Hit.alternative``); none when the version has no answer."""
     pinned_commit: str | None = None
     """The commit the asked version points at; a hit of another commit is of another version."""
     answered_by: str | None = None
@@ -88,6 +120,23 @@ class Answer(_Model):
     case, that this version does not cover it)."""
     facts: list[str] = Field(default_factory=list)
     """Golden set: the short facts a correct answer must contain; empty when unanswerable."""
+
+    @model_validator(mode="after")
+    def _alternatives_follow_a_part(self) -> Self:
+        """Refuse an alternative listed first: it has no part before it to answer.
+
+        Returns:
+            The answer unchanged.
+
+        Raises:
+            ValueError: The first section is marked as an alternative.
+        """
+        if self.hits and self.hits[0].alternative:
+            message = (
+                "the first expected section is a part, not an alternative: list its part first"
+            )
+            raise ValueError(message)
+        return self
 
 
 type GoldenKind = Literal[
@@ -127,9 +176,10 @@ def fingerprint(dataset: RetrievalDataset) -> str:
     """Hash what the dataset states, so a baseline knows which dataset it measured.
 
     Only each question (its inputs, defaults left out) and the sections it expects (version,
-    article, heading path) count: renaming, reordering or commenting cases keeps the fingerprint,
-    and so does a field added to the models with a default. Adding, removing or changing a
-    question or an expected section changes it (and resets the baseline, docs/evals.md).
+    article, heading path, in order, and whether each is an alternative) count: renaming,
+    reordering or commenting cases keeps the fingerprint, and so does a field added to the
+    models with a default. Adding, removing or changing a question or an expected section
+    changes it (and resets the baseline, docs/evals.md).
 
     Args:
         dataset: The cases.
@@ -143,6 +193,7 @@ def fingerprint(dataset: RetrievalDataset) -> str:
                 case.inputs.model_dump(mode="json", exclude_defaults=True),
                 [
                     [hit.version, hit.article, hit.heading_path]
+                    + (["alternative"] if hit.alternative else [])
                     for hit in (case.expected_output.hits if case.expected_output else [])
                 ],
             ],

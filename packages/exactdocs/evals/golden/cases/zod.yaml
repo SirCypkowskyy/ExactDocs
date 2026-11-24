@@ -678,7 +678,7 @@ cases:
   expected_output:
     hits:
     - {version: v4.0.17, article: packages/docs/content/v4/changelog.mdx, heading_path: [ZodError, changes error map precedence]}
-    - {version: v4.0.17, article: packages/docs/content/error-customization.mdx, heading_path: [Per-parse error customization]}
+    - {version: v4.0.17, article: packages/docs/content/error-customization.mdx, heading_path: [Per-parse error customization], alternative: true}
     reference: >-
       Yes. Zod 4 changed the precedence: an error map passed into `.parse()` no longer takes
       precedence over a schema-level error map, so the schema-level message wins (in Zod 3 the
@@ -910,10 +910,10 @@ cases:
   expected_output:
     hits:
     - {version: v4.6.7, article: packages/docs/content/compile.mdx, heading_path: ['import "zod/compile"']}
-    - {version: v4.6.7, article: packages/docs/content/blog/introducing-z-compile.mdx, heading_path: [Tradeoffs]}
+    - {version: v4.6.7, article: packages/docs/content/blog/introducing-z-compile.mdx, heading_path: [Compile all the things!], alternative: true}
+    - {version: v4.6.7, article: packages/docs/content/blog/zod-4-5.mdx, heading_path: [z.compile(), 'import "zod/compile"'], alternative: true}
     - {version: v4.6.7, article: packages/docs/content/compile.mdx, heading_path: [Bundle size]}
-    - {version: v4.6.7, article: packages/docs/content/blog/introducing-z-compile.mdx, heading_path: [Compile all the things!]}
-    - {version: v4.6.7, article: packages/docs/content/blog/zod-4-5.mdx, heading_path: [z.compile(), 'import "zod/compile"']}
+    - {version: v4.6.7, article: packages/docs/content/blog/introducing-z-compile.mdx, heading_path: [Tradeoffs], alternative: true}
     reference: >-
       `import "zod/compile"` before any module defines schemas (or `node --import
       zod/compile`); schemas are then compiled lazily on first parse. The compiler adds about
@@ -995,7 +995,7 @@ cases:
     hits:
     - {version: v4.0.17, article: packages/docs/content/packages/mini.mdx, heading_path: [ZodMiniType, .check()]}
     - {version: v4.0.17, article: packages/docs/content/v4/index.mdx, heading_path: [Introducing Zod Mini]}
-    - {version: v4.0.17, article: packages/docs/content/packages/mini.mdx, heading_path: [Tree-shaking]}
+    - {version: v4.0.17, article: packages/docs/content/packages/mini.mdx, heading_path: [Tree-shaking], alternative: true}
     reference: >-
       Pass checks to `.check()`: `z.string().check(z.minLength(5), z.maxLength(10),
       z.refine(...))`. Zod Mini replaces methods with top-level functions because a

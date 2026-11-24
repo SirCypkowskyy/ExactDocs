@@ -59,7 +59,7 @@ cases:
   expected_output:
     hits:
     - {version: '0.52.1', article: docs/lifespan.md, heading_path: [Accessing State]}
-    - {version: '0.52.1', article: docs/release-notes.md, heading_path: ['0.52.0 (January 18, 2026)']}
+    - {version: '0.52.1', article: docs/release-notes.md, heading_path: ['0.52.0 (January 18, 2026)'], alternative: true}
     reference: Dictionary-style access to the state was introduced in Starlette 0.52.0 (January
       2026), with `Request` generic over the state type for type safety.
     facts:
@@ -952,8 +952,8 @@ cases:
   expected_output:
     hits:
     - {version: '1.10.0', article: docs/testclient.md, heading_path: []}
+    - {version: '1.10.0', article: docs/index.md, heading_path: [Introduction, Dependencies], alternative: true}
     - {version: '1.10.0', article: docs/release-notes.md, heading_path: ['1.2.0 (May 28, 2026)', Added]}
-    - {version: '1.10.0', article: docs/index.md, heading_path: [Introduction, Dependencies]}
     reference: >-
       `httpx2`. 1.2.0 added httpx2 support to the test client; `TestClient` is now built on it and
       plain `httpx` still works but is deprecated. `httpx2` is included in `starlette[full]`.

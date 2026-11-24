@@ -1,9 +1,13 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createMemoryHistory } from "@tanstack/react-router";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
+import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
+import { TestRouter } from "@/shared/lib/test-router";
+import { TooltipProvider } from "@/shared/ui/tooltip";
 import { UsersPage } from "./index";
 import { explainUserError, validateNewUser, validatePassword } from "./model/user";
 
@@ -15,6 +19,8 @@ const user = (id: string, username: string, extra = {}) => ({
   role: "user",
   created_at: "2026-11-13T10:00:00Z",
   disabled: false,
+  last_active_at: null,
+  token_count: 0,
   ...extra,
 });
 const json = (body: unknown, status = 200) => Response.json(body, { status });
@@ -63,10 +69,35 @@ function renderPage(currentUserId = "a") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={client}>
-      <UsersPage currentUserId={currentUserId} />
+      <TooltipProvider>
+        <TestRouter
+          history={createMemoryHistory({ initialEntries: ["/users"] })}
+          pages={{ "/users": () => <UsersPage currentUserId={currentUserId} /> }}
+        />
+      </TooltipProvider>
     </QueryClientProvider>,
   );
 }
+
+/** The table's row of an account (a card's list item on a phone). */
+async function rowOf(name: string): Promise<HTMLElement> {
+  const table = await screen.findByRole("table", { name: /User accounts|Konta użytkowników/ });
+  const cell = await within(table).findByText(name);
+  const row = cell.closest("tr");
+  if (!row) throw new Error(`no row for ${name}`);
+  return row;
+}
+
+/** Opens a row's "More actions" menu and returns it. */
+async function menuOf(name: string, label = `More actions for ${name}`) {
+  await userEvent.click(await screen.findByRole("button", { name: label }));
+  return screen.findByRole("menu");
+}
+
+const items = (menu: HTMLElement) =>
+  within(menu)
+    .getAllByRole("menuitem")
+    .map((item) => item.textContent);
 
 const sent = (fetchMock: ReturnType<typeof stubApi>, method: string) =>
   fetchMock.mock.calls.filter(([, init]) => init?.method === method);
@@ -77,14 +108,42 @@ describe("users page", () => {
   it("lists every account with its role and state, and marks the operator's own", async () => {
     stubApi();
     renderPage();
-    const list = await screen.findByRole("list", { name: "User accounts" });
-    const [ada, bob] = within(list).getAllByRole("listitem") as [HTMLElement, HTMLElement];
-    expect(ada).toHaveTextContent(/ada\s*You/);
-    expect(ada).toHaveTextContent(/Admin\s*Active/);
-    expect(bob).toHaveTextContent(/User\s*Active/);
-    // Nobody disables themselves from here (the server keeps the last admin anyway).
-    expect(within(ada).queryByRole("button", { name: /disable/i })).not.toBeInTheDocument();
-    expect(within(bob).getByRole("button", { name: "Disable bob" })).toBeInTheDocument();
+    const ada = await rowOf("ada");
+    const bob = await rowOf("bob");
+    expect(ada).toHaveTextContent(/ADada\s*You/);
+    expect(ada).toHaveTextContent(/Admin.*Password.*Active/);
+    expect(bob).toHaveTextContent(/User.*Password.*Active/);
+    expect(screen.getByText("2 accounts")).toBeInTheDocument();
+    // Nobody disables themselves from here (the server keeps the last admin anyway), nor resets
+    // their own password (it would sign them out): the operator's own row only leads elsewhere.
+    expect(items(await menuOf("ada"))).toEqual([
+      "Show their API tokens",
+      "Show their access-log entries",
+    ]);
+    await userEvent.keyboard("{Escape}");
+    expect(items(await menuOf("bob"))).toEqual([
+      "Show their API tokens",
+      "Show their access-log entries",
+      "Reset password…",
+      "Disable…",
+    ]);
+  });
+
+  it("offers the same actions in a context menu from the keyboard", async () => {
+    stubApi();
+    renderPage();
+    const bob = await rowOf("bob");
+    bob.focus();
+    await userEvent.keyboard("{Shift>}{F10}{/Shift}");
+    const menu = await screen.findByRole("menu");
+    expect(items(menu)).toEqual([
+      "Show their API tokens",
+      "Show their access-log entries",
+      "Reset password…",
+      "Disable…",
+    ]);
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Disable…" }));
+    expect(await screen.findByRole("alertdialog", { name: "Disable “bob”?" })).toBeInTheDocument();
   });
 
   it("creates a user after checking the form, and sends the chosen role", async () => {
@@ -111,8 +170,8 @@ describe("users page", () => {
       password: PASSWORD,
       role: "admin",
     });
-    expect(await screen.findByText("carol")).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(/carol created/);
+    expect(await rowOf("carol")).toBeInTheDocument();
+    expect(screen.getByText("User carol created.")).toHaveAttribute("role", "status");
     expect(toast.success).toHaveBeenCalledWith("User carol created", expect.anything());
     expect(document.body).not.toHaveTextContent(PASSWORD);
   });
@@ -132,38 +191,51 @@ describe("users page", () => {
   it("disables only after confirmation, then offers to enable", async () => {
     const fetchMock = stubApi();
     renderPage();
-    await userEvent.click(await screen.findByRole("button", { name: "Disable bob" }));
-    const confirm = await screen.findByRole("alertdialog");
+    const kebab = await screen.findByRole("button", { name: "More actions for bob" });
+    // With the mouse: the kebab never has focus while its menu is open.
+    await userEvent.click(kebab);
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Disable…" }));
+    const confirm = await screen.findByRole("alertdialog", { name: "Disable “bob”?" });
     expect(confirm).toHaveTextContent(/signed out at once/);
+    expect(within(confirm).getByRole("button", { name: "Cancel" })).toHaveFocus();
     await userEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
     expect(sent(fetchMock, "POST")).toHaveLength(0);
+    // Focus goes back to the row's menu button.
+    await waitFor(() => expect(kebab).toHaveFocus());
 
-    await userEvent.click(screen.getByRole("button", { name: "Disable bob" }));
+    await userEvent.click(within(await menuOf("bob")).getByRole("menuitem", { name: "Disable…" }));
     await userEvent.click(
       within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Disable" }),
     );
-    expect(await screen.findByRole("button", { name: "Enable bob" })).toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(/bob disabled/);
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument());
+    expect(await within(await rowOf("bob")).findByText("Disabled")).toBeInTheDocument();
+    expect(screen.getByText(/bob disabled\. Their sessions ended/)).toHaveAttribute(
+      "role",
+      "status",
+    );
     expect(sent(fetchMock, "POST")[0]?.[0]).toBe("/api/v1/users/b/disable");
 
-    await userEvent.click(screen.getByRole("button", { name: "Enable bob" }));
-    expect(await screen.findByRole("button", { name: "Disable bob" })).toBeInTheDocument();
+    await userEvent.click(within(await menuOf("bob")).getByRole("menuitem", { name: "Enable" }));
+    await waitFor(() => expect(sent(fetchMock, "POST")[1]?.[0]).toBe("/api/v1/users/b/enable"));
+    expect(await screen.findByText("bob enabled.")).toBeInTheDocument();
   });
 
   it("explains why the last admin stays enabled", async () => {
     stubApi();
     renderPage("b"); // signed in as another admin's view: ada can be targeted
-    await userEvent.click(await screen.findByRole("button", { name: "Disable ada" }));
-    await userEvent.click(
-      within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Disable" }),
-    );
-    expect(await screen.findByText(/last enabled admin/)).toBeInTheDocument();
+    await userEvent.click(within(await menuOf("ada")).getByRole("menuitem", { name: "Disable…" }));
+    const confirm = await screen.findByRole("alertdialog");
+    await userEvent.click(within(confirm).getByRole("button", { name: "Disable" }));
+    // The refusal shows inside the dialog, which stays open.
+    expect(await within(confirm).findByText(/last enabled admin/)).toBeInTheDocument();
   });
 
   it("resets a password and says the user was signed out", async () => {
     const fetchMock = stubApi();
     renderPage();
-    await userEvent.click(await screen.findByRole("button", { name: "Reset the password of bob" }));
+    await userEvent.click(
+      within(await menuOf("bob")).getByRole("menuitem", { name: "Reset password…" }),
+    );
     const dialog = await screen.findByRole("dialog");
     await userEvent.type(within(dialog).getByLabelText("New password"), PASSWORD);
     await userEvent.type(within(dialog).getByLabelText("Repeat password"), "something else!");
@@ -176,21 +248,26 @@ describe("users page", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Reset password" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     expect(sent(fetchMock, "PUT")[0]?.[0]).toBe("/api/v1/users/b/password");
-    expect(screen.getByRole("status")).toHaveTextContent(/bob changed.*signed out/);
+    expect(screen.getByText(/bob changed.*signed out/)).toHaveAttribute("role", "status");
   });
 
-  it("offers no password reset of the operator's own account, which would sign them out", async () => {
-    stubApi();
+  it("offers no password reset of the operator's own disabled account, only Enable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        json({
+          users: [user("a", "ada", { role: "admin", provider: null, disabled: true })],
+          next_cursor: null,
+          total: 1,
+        }),
+      ),
+    );
     renderPage();
-    const list = await screen.findByRole("list", { name: "User accounts" });
-    const [ada, bob] = within(list).getAllByRole("listitem") as [HTMLElement, HTMLElement];
-    expect(ada).toHaveTextContent(/You/);
-    expect(
-      within(ada).queryByRole("button", { name: /reset the password/i }),
-    ).not.toBeInTheDocument();
-    expect(
-      within(bob).getByRole("button", { name: "Reset the password of bob" }),
-    ).toBeInTheDocument();
+    expect(items(await menuOf("ada"))).toEqual([
+      "Show their API tokens",
+      "Show their access-log entries",
+      "Enable",
+    ]);
   });
 
   it("says plainly when the API refuses a non-operator", async () => {
@@ -200,6 +277,7 @@ describe("users page", () => {
     );
     renderPage();
     expect(await screen.findByRole("alert")).toHaveTextContent(/only an admin/i);
+    expect(screen.getByRole("button", { name: "Try again" })).toBeInTheDocument();
   });
 });
 
@@ -259,20 +337,45 @@ describe("user form rules", () => {
       vi.fn(async () => json({ users: accounts, next_cursor: null, total: 3 })),
     );
     renderPage();
-    const list = await screen.findByRole("list", { name: "User accounts" });
-    const [ada, carol, dave] = within(list).getAllByRole("listitem") as [
-      HTMLElement,
-      HTMLElement,
-      HTMLElement,
-    ];
+    const ada = await rowOf("ada");
+    const carol = await rowOf("carol");
+    const dave = await rowOf("dave");
+    expect(screen.getByRole("columnheader", { name: "Sign-in" })).toBeInTheDocument();
     expect(ada).toHaveTextContent(/Password/);
-    expect(carol).toHaveTextContent(/Signs in with corp/);
-    expect(carol).toHaveTextContent(/Groups: docspayments/);
-    expect(dave).toHaveTextContent(/No groups at the identity provider/);
+    expect(carol).toHaveTextContent(/corp/);
+    expect(within(carol).getByText("docs")).toBeInTheDocument();
+    expect(within(carol).getByText("payments")).toBeInTheDocument();
+    expect(dave).toHaveTextContent(/corp–/);
+    expect(items(await menuOf("carol"))).toEqual([
+      "Show their API tokens",
+      "Show their access-log entries",
+      "Disable…",
+    ]);
+  });
+
+  it("shows the first two groups and the rest on demand", async () => {
+    const groups = ["docs", "payments", "search", "ops"];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        json({
+          users: [user("c", "carol", { provider: "corp", groups })],
+          next_cursor: null,
+          total: 1,
+        }),
+      ),
+    );
+    renderPage();
+    const carol = await rowOf("carol");
+    expect(within(carol).queryByText("search")).not.toBeInTheDocument();
+    await userEvent.click(within(carol).getByRole("button", { name: "2 more groups of carol" }));
+    const all = await screen.findByRole("dialog");
+    expect(within(all).getByText("Groups of carol")).toBeInTheDocument();
     expect(
-      within(carol).queryByRole("button", { name: /reset the password/i }),
-    ).not.toBeInTheDocument();
-    expect(within(carol).getByRole("button", { name: "Disable carol" })).toBeInTheDocument();
+      within(all)
+        .getAllByRole("listitem")
+        .map((g) => g.textContent),
+    ).toEqual(groups);
   });
 
   it("explains that an account of an identity provider has no password", () => {
@@ -282,5 +385,84 @@ describe("user form rules", () => {
       fields: [],
     });
     expect(explainUserError(error)).toMatch(/identity provider/);
+  });
+});
+
+describe("users page in Polish", () => {
+  beforeEach(() => setPreferences({ language: "pl" }));
+  afterEach(() => {
+    resetPreferences();
+    vi.unstubAllGlobals();
+  });
+
+  it("names roles, states and actions in Polish", async () => {
+    stubApi();
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Użytkownicy" })).toBeInTheDocument();
+    expect(document.title).toBe("Użytkownicy - ExactDocs");
+    const ada = await rowOf("ada");
+    const bob = await rowOf("bob");
+    expect(ada).toHaveTextContent(/ada\s*Ty/);
+    expect(ada).toHaveTextContent(/Administrator.*Hasło.*Aktywne/);
+    expect(bob).toHaveTextContent(/Użytkownik.*Hasło.*Aktywne/);
+    expect(screen.getByText("2 konta")).toBeInTheDocument();
+    expect(screen.getByText("1–2 z 2")).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: "Logowanie" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Rola" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /Ostatnia aktywność/ })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /Tokeny/ })).toBeInTheDocument();
+    expect(within(bob).getByText("Nigdy")).toBeInTheDocument();
+    const views = screen.getByRole("navigation", { name: "Widoki użytkowników" });
+    expect(within(views).getByRole("link", { name: "Konta" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Logowanie" }));
+    expect(await screen.findByRole("option", { name: "Hasło" })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+
+    const menu = await menuOf("bob", "Więcej opcji: bob");
+    expect(items(menu)).toEqual([
+      "Pokaż tokeny API tej osoby",
+      "Pokaż wpisy tej osoby w dzienniku dostępu",
+      "Zresetuj hasło…",
+      "Wyłącz…",
+    ]);
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "Wyłącz…" }));
+    const confirm = await screen.findByRole("alertdialog");
+    expect(within(confirm).getByText("Wyłączyć konto „bob”?")).toBeInTheDocument();
+    expect(within(confirm).getByRole("button", { name: "Wyłącz" })).toBeInTheDocument();
+  });
+
+  it("checks a new account's password in Polish", async () => {
+    stubApi();
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Nowy użytkownik" }));
+    const dialog = await screen.findByRole("dialog", { name: "Nowy użytkownik" });
+    await userEvent.type(within(dialog).getByLabelText("Nazwa użytkownika"), "carol");
+    await userEvent.type(within(dialog).getByLabelText("Hasło"), "short");
+    await userEvent.click(within(dialog).getByRole("button", { name: "Utwórz użytkownika" }));
+    expect(within(dialog).getByLabelText("Hasło")).toHaveAccessibleDescription(
+      "Co najmniej 12 znaków. Użyj co najmniej 12 znaków.",
+    );
+    expect(within(dialog).getByRole("option", { name: "Administrator" })).toBeInTheDocument();
+  });
+
+  it("explains refusals in Polish, keeping the server's reason", () => {
+    expect(
+      explainUserError(new HttpError(409, "/v1/users", { error: "username_taken" }), "pl"),
+    ).toBe("Inne konto ma już tę nazwę użytkownika. Wybierz inną.");
+    const invalid = new HttpError(422, "/v1/users", {
+      error: "validation_error",
+      detail: "request is invalid",
+      fields: [{ loc: ["body", "password"], msg: "Value error, too short", type: "value_error" }],
+    });
+    expect(explainUserError(invalid, "pl")).toBe(
+      "To hasło jest niedozwolone: Value error, too short.",
+    );
+    expect(validatePassword("pass", "other", "pl")).toEqual({
+      password: "Użyj co najmniej 12 znaków.",
+      confirm: "Hasła się różnią.",
+    });
   });
 });

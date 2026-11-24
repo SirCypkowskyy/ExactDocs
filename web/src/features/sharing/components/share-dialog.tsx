@@ -1,18 +1,18 @@
 import { type FormEvent, useState } from "react";
 import { HttpError } from "@/shared/lib/http";
+import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { Button } from "@/shared/ui/button";
 import { DialogContent, DialogDescription, DialogRoot, DialogTitle } from "@/shared/ui/dialog";
 import { Field } from "@/shared/ui/field";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { SelectField } from "@/shared/ui/select-field";
 import { putGrant } from "../api/grants";
+import { messages } from "../messages";
 import {
   type CallerRole,
   explainSharingError,
   type GrantedRole,
   givableRoles,
-  ROLE_HINTS,
-  ROLE_LABELS,
   type SubjectKind,
 } from "../model/grant";
 
@@ -46,6 +46,9 @@ function Body({
   onShared,
   onDone,
 }: Omit<Props, "open" | "onOpenChange"> & { onDone: () => void }) {
+  const t = useMessages(messages);
+  const c = useMessages(common);
+  const language = useLanguage();
   const [kind, setKind] = useState<SubjectKind>("user");
   const [role, setRole] = useState<GrantedRole>("viewer");
   const [subjectError, setSubjectError] = useState<string>();
@@ -58,7 +61,7 @@ function Body({
     const subject = String(new FormData(event.currentTarget).get("share-subject") ?? "").trim();
     setProblem(undefined);
     if (!subject) {
-      setSubjectError(kind === "user" ? "Enter a username." : "Enter a group's name.");
+      setSubjectError(kind === "user" ? t.share.enterUsername : t.share.enterGroup);
       document.getElementById("share-subject")?.focus();
       return;
     }
@@ -70,10 +73,10 @@ function Body({
       onDone();
     } catch (error) {
       if (error instanceof HttpError && error.code === "unknown_account") {
-        setSubjectError(explainSharingError(error));
+        setSubjectError(explainSharingError(error, language));
         document.getElementById("share-subject")?.focus();
       } else {
-        setProblem(explainSharingError(error));
+        setProblem(explainSharingError(error, language));
       }
     } finally {
       setPending(false);
@@ -82,17 +85,14 @@ function Body({
 
   return (
     <form onSubmit={submit} noValidate>
-      <DialogTitle>Share {libraryId}</DialogTitle>
-      <DialogDescription>
-        Give a person or an identity-provider group a role. Someone who already has one gets the new
-        role instead.
-      </DialogDescription>
+      <DialogTitle>{t.share.title(libraryId)}</DialogTitle>
+      <DialogDescription>{t.share.description}</DialogDescription>
       <div className="mt-5">
         <FormAlert id="share-alert" message={problem} />
       </div>
       <div className="flex flex-col gap-4">
         <fieldset className="flex flex-col gap-2">
-          <legend className="mb-2 text-body font-medium">Share with</legend>
+          <legend className="mb-2 text-body font-medium">{t.share.with}</legend>
           <div className="flex flex-wrap gap-x-5 gap-y-2">
             {(["user", "group"] as const).map((k) => (
               <label key={k} className="inline-flex min-h-11 cursor-pointer items-center gap-2">
@@ -104,49 +104,43 @@ function Body({
                   onChange={() => setKind(k)}
                   className="size-4 accent-primary"
                 />
-                {k === "user" ? "A person" : "A group"}
+                {k === "user" ? t.share.person : t.share.group}
               </label>
             ))}
           </div>
         </fieldset>
         <Field
           id="share-subject"
-          label={kind === "user" ? "Username" : "Group"}
+          label={kind === "user" ? t.share.username : t.share.groupName}
           autoComplete="off"
           autoCapitalize="none"
           spellCheck={false}
-          hint={
-            kind === "group"
-              ? "As your identity provider reports it, prefix included (corp:docs). Letter case matters."
-              : undefined
-          }
+          hint={kind === "group" ? t.share.groupHint : undefined}
           error={subjectError}
         />
         <SelectField
           id="share-role"
-          label="Role"
+          label={t.share.role}
           value={role}
           onChange={(e) => setRole(e.target.value as GrantedRole)}
-          hint={ROLE_HINTS[role]}
+          hint={t.roleHints[role]}
         >
           {givableRoles(caller).map((r) => (
             <option key={r} value={r}>
-              {ROLE_LABELS[r]}
+              {t.roles[r]}
             </option>
           ))}
         </SelectField>
         {caller !== "creator" && (
-          <p className="text-small text-muted-foreground">
-            Only the library's creator makes someone an admin.
-          </p>
+          <p className="text-small text-muted-foreground">{t.share.creatorOnly}</p>
         )}
       </div>
       <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <Button variant="ghost" aria-disabled={pending} onClick={() => !pending && onDone()}>
-          Cancel
+          {c.cancel}
         </Button>
         <Button type="submit" pending={pending}>
-          Share
+          {t.share.submit}
         </Button>
       </div>
     </form>

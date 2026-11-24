@@ -2,6 +2,9 @@ import { API_BASE_URL } from "@/shared/config/env";
 import { HttpError } from "@/shared/lib/http";
 import type { AnswerProgress, AnswerResult } from "../model/playground";
 
+/** The code of the error thrown when the stream closes before its `answer` event. */
+export const STREAM_ENDED = "stream_ended";
+
 interface ProgressEvent {
   tool_calls: number;
   max_tool_calls: number;
@@ -62,5 +65,9 @@ export async function streamAnswer(
       end = buffer.indexOf("\n\n");
     }
   }
-  throw new HttpError(502, path, { detail: "The answer stream ended without an answer." });
+  // A client-side code, so the page can say it in the UI's language.
+  throw new HttpError(502, path, {
+    error: STREAM_ENDED,
+    detail: "The answer stream ended without an answer.",
+  });
 }

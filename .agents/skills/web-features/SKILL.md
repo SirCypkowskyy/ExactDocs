@@ -41,3 +41,5 @@ pnpm lint      # biome + fallow architecture + fallow dead-code + react-doctor
 pnpm test
 pnpm build     # typecheck + vite build (commit the regenerated routeTree.gen.ts)
 ```
+
+A change to a screen the README or the docs show: `just screenshots` retakes every picture (e2e/screenshots.ts).

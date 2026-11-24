@@ -29,6 +29,7 @@ from exactdocs.ingestion.models import (
     JobId,
     JobState,
     ProblemCode,
+    VersionOrigin,
     VersionToEmbed,
 )
 from exactdocs.ingestion.module import IngestionModule
@@ -274,6 +275,10 @@ async def test_an_import_queues_the_embedding_of_its_library_when_it_succeeds() 
 
     assert imported == [f"{IMPORT_JOB}-v1"]
     assert [(j.library, j.version) for j in world.runner.submitted] == [(LIB, "v1")]
+    # The instance queued it on its own (#512): automatic, and no person is named.
+    assert [(j.origin, j.created_by) for j in world.runner.submitted] == [
+        (VersionOrigin.AUTO, None)
+    ]
 
 
 async def test_a_failed_import_queues_nothing_and_a_failed_queue_fails_no_import() -> None:

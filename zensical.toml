@@ -11,7 +11,8 @@ repo_url = "https://github.com/SirCypkowskyy/ExactDocs"
 repo_name = "SirCypkowskyy/ExactDocs"
 edit_uri = "edit/develop/docs/"
 extra_javascript = ["https://unpkg.com/mermaid@12.3.0/dist/mermaid.min.js"]
-# The web UI's colours, the logo swap for the dark scheme, and the home page's hero and grid.
+# The web UI's colours (web/DESIGN.md, "The Headlamp"), the logo swap for the dark scheme, and the
+# home page's hero and grid.
 extra_css = ["stylesheets/extra.css"]
 docs_dir = "docs"
 site_dir = "site"
@@ -51,12 +52,14 @@ nav = [
 
 [project.theme]
 language = "en"
-# The station mark of the web UI (web/src/shared/ui/wordmark.tsx), drawn by docs/assets/logo/.
-logo = "assets/logo/exactdocs-mark-light.svg"
-favicon = "assets/logo/exactdocs-mark-light.svg"
+# The mole of the web UI's band (web/src/shared/ui/wordmark.tsx, `Mark`): the small-size cut from
+# web/public/brand/, copied to docs/assets/logo/. extra.css swaps it for the on-dark cut in the dark
+# scheme. The favicon is the web UI's favicon.svg.
+logo = "assets/logo/exactdocs-mark-small.svg"
+favicon = "assets/logo/favicon.svg"
 # The web UI's faces (web/DESIGN.md, "Typography").
-font.text = "IBM Plex Sans"
-font.code = "IBM Plex Mono"
+font.text = "Schibsted Grotesk"
+font.code = "JetBrains Mono"
 features = [
   "content.action.edit",
   "content.code.annotate",

@@ -14,6 +14,21 @@ Feature: A retrieval benchmark compares modes, models and chunking on the golden
     And each unanswerable question is scored on returning nothing of another version and on signalling no answer
     And each result records its models, its settings and the corpus commits
 
+  Scenario: A chunk that holds the expected section is a hit at any chunking
+    Given a golden case whose expected section a chunking merges into the chunk of the section before it
+    When the retrieval benchmark runs BM25 at that chunking
+    Then the case counts as a hit at the rank of that chunk
+
+  Scenario: Any answering section is a hit
+    Given a case whose answer is in section A or, equally, in section B
+    When a tool returns B in its top 5 and not A
+    Then the case counts as a hit for recall@5
+
+  Scenario: A multi-page answer still needs every part
+    Given a cross-page case that needs sections A and C
+    When a tool returns only A
+    Then recall@5 counts the case, and section recall shows that C is missing
+
   Scenario: The benchmark names the best default for each budget
     When the retrieval benchmark runs every configuration at two chunking configurations
     Then the summary names the best configuration with no models, with local models only and with hosted models

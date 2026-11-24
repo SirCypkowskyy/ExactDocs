@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "golden": "sha256:7dd51c59057c279a",
+  "golden": "sha256:a00997851150e3b0",
   "cases": 321,
   "projects": [
     "starlette",
@@ -162,13 +162,13 @@
       },
       "bm25": {
         "answerable": 267,
-        "recall_at_1": 0.5206,
-        "recall_at_5": 0.8165,
-        "recall_at_10": 0.8914,
-        "mrr": 0.6513,
-        "recall_at_5_exact": 0.7678,
+        "recall_at_1": 0.588,
+        "recall_at_5": 0.8764,
+        "recall_at_10": 0.9363,
+        "mrr": 0.7109,
+        "recall_at_5_exact": 0.8352,
         "wrong_version_rate": 0.0,
-        "misses": 29,
+        "misses": 17,
         "errors": []
       },
       "versions": [
@@ -1100,13 +1100,13 @@
       },
       "bm25": {
         "answerable": 267,
-        "recall_at_1": 0.4981,
-        "recall_at_5": 0.7978,
-        "recall_at_10": 0.8689,
-        "mrr": 0.6258,
-        "recall_at_5_exact": 0.7978,
+        "recall_at_1": 0.5693,
+        "recall_at_5": 0.8577,
+        "recall_at_10": 0.9213,
+        "mrr": 0.6885,
+        "recall_at_5_exact": 0.8577,
         "wrong_version_rate": 0.0,
-        "misses": 35,
+        "misses": 21,
         "errors": []
       },
       "versions": [
@@ -2175,13 +2175,13 @@
       },
       "bm25": {
         "answerable": 267,
-        "recall_at_1": 0.5169,
-        "recall_at_5": 0.7603,
-        "recall_at_10": 0.8165,
-        "mrr": 0.6258,
-        "recall_at_5_exact": 0.3933,
+        "recall_at_1": 0.618,
+        "recall_at_5": 0.8914,
+        "recall_at_10": 0.9401,
+        "mrr": 0.7365,
+        "recall_at_5_exact": 0.4944,
         "wrong_version_rate": 0.0,
-        "misses": 49,
+        "misses": 16,
         "errors": []
       },
       "versions": [
@@ -3347,13 +3347,13 @@
       },
       "bm25": {
         "answerable": 267,
-        "recall_at_1": 0.4906,
-        "recall_at_5": 0.7416,
-        "recall_at_10": 0.8052,
-        "mrr": 0.6024,
-        "recall_at_5_exact": 0.6517,
+        "recall_at_1": 0.5955,
+        "recall_at_5": 0.8764,
+        "recall_at_10": 0.9326,
+        "mrr": 0.7152,
+        "recall_at_5_exact": 0.7341,
         "wrong_version_rate": 0.0,
-        "misses": 52,
+        "misses": 18,
         "errors": []
       },
       "versions": [

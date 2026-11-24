@@ -4,7 +4,7 @@ import { cn } from "@/shared/lib/utils";
 /*
  * The signature of the UI (DESIGN.md, "The route"): every library is a line with its own colour,
  * every version a station on it. A library's bullet, a version's station and the route between
- * them say where a piece of text comes from, the way a wayfinding sign does.
+ * them say exactly where a piece of text comes from: library, version, commit.
  */
 
 const LINES = 8;
@@ -45,7 +45,7 @@ export function LibraryBullet({
   className,
 }: {
   id: string;
-  size?: "sm" | "md" | "lg";
+  size?: "sm" | "md" | "lg" | "xl";
   className?: string;
 }) {
   return (
@@ -57,6 +57,7 @@ export function LibraryBullet({
         size === "sm" && "size-6 text-small",
         size === "md" && "size-7 text-small",
         size === "lg" && "size-9 text-body",
+        size === "xl" && "size-12 text-section",
         className,
       )}
     >

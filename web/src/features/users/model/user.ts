@@ -1,5 +1,7 @@
 import type { components } from "@/shared/lib/api-schema";
 import { HttpError } from "@/shared/lib/http";
+import { currentLanguage, type Language } from "@/shared/lib/i18n";
+import { messages } from "../messages";
 
 export type User = components["schemas"]["UserSummary"];
 export type NewUser = components["schemas"]["CreateUserCommand"];
@@ -12,67 +14,75 @@ const MAX_USERNAME_LENGTH = 64;
 /** The sign-in throttle keeps its own keys under `<username>@address:`, so no account may. */
 const RESERVED_IN_USERNAME = "@address:";
 
-export const ROLE_LABELS: Record<Role, string> = { user: "User", admin: "Admin" };
+/** The roles the create form offers, in its order; their names are in the catalogue. */
+export const ROLES: readonly Role[] = ["user", "admin"];
 
 export type FieldErrors = Partial<Record<"username" | "password" | "confirm", string>>;
 
-export function validatePassword(password: string, confirm: string): FieldErrors {
+export function validatePassword(
+  password: string,
+  confirm: string,
+  language: Language = currentLanguage(),
+): FieldErrors {
+  const t = messages[language].validation;
   const errors: FieldErrors = {};
   if (password.length < MIN_PASSWORD_LENGTH)
-    errors.password = `Use at least ${MIN_PASSWORD_LENGTH} characters.`;
-  else if (password.length > MAX_PASSWORD_LENGTH)
-    errors.password = `Use at most ${MAX_PASSWORD_LENGTH} characters.`;
-  if (confirm !== password) errors.confirm = "The passwords don't match.";
+    errors.password = t.passwordTooShort(MIN_PASSWORD_LENGTH);
+  else if (password.length > MAX_PASSWORD_LENGTH) errors.password = t.tooLong(MAX_PASSWORD_LENGTH);
+  if (confirm !== password) errors.confirm = t.mismatch;
   return errors;
 }
 
-export function validateNewUser(values: {
-  username: string;
-  password: string;
-  confirm: string;
-}): FieldErrors {
-  const errors: FieldErrors = validatePassword(values.password, values.confirm);
+export function validateNewUser(
+  values: {
+    username: string;
+    password: string;
+    confirm: string;
+  },
+  language: Language = currentLanguage(),
+): FieldErrors {
+  const t = messages[language].validation;
+  const errors: FieldErrors = validatePassword(values.password, values.confirm, language);
   const username = values.username.trim();
-  if (!username) errors.username = "Choose a username.";
-  else if (username.length > MAX_USERNAME_LENGTH)
-    errors.username = `Use at most ${MAX_USERNAME_LENGTH} characters.`;
-  else if (/\s/.test(username)) errors.username = "No spaces, please.";
+  if (!username) errors.username = t.usernameMissing;
+  else if (username.length > MAX_USERNAME_LENGTH) errors.username = t.tooLong(MAX_USERNAME_LENGTH);
+  else if (/\s/.test(username)) errors.username = t.noSpaces;
   else if (username.toLowerCase().includes(RESERVED_IN_USERNAME))
-    errors.username = `A username can't contain "${RESERVED_IN_USERNAME}".`;
+    errors.username = t.reserved(RESERVED_IN_USERNAME);
   return errors;
 }
 
 /** One sentence a person can act on, for any failure of the users API. */
-export function explainUserError(error: unknown): string {
-  if (!(error instanceof HttpError)) {
-    return "Can't reach the server. Check your connection and try again.";
-  }
+export function explainUserError(error: unknown, language: Language = currentLanguage()): string {
+  const t = messages[language].errors;
+  if (!(error instanceof HttpError)) return t.offline;
   switch (error.code) {
     case "username_taken":
-      return "Another account already has that username. Pick another one.";
+      return t.usernameTaken;
     case "invalid_username":
-      return "That username isn't accepted: no spaces or control characters.";
+      return t.invalidUsername;
     case "last_operator":
-      return "This is the last enabled admin. Make another admin first, or the instance would have nobody to manage accounts.";
+      return t.lastOperator;
     case "unknown_account":
-      return "That account no longer exists. The list has been refreshed.";
+      return t.unknownAccount;
     case "external_account":
-      return "This account signs in through an identity provider: it has no password to reset.";
+      return t.externalAccount;
     case "forbidden":
-      return "Only an admin can manage user accounts.";
+      return t.forbidden;
   }
-  if (error.status === 401) return "Your session ended. Sign in again to manage users.";
-  if (error.status === 422) return explainInvalidRequest(error);
-  return `Something went wrong (${error.status}). Try again.`;
+  if (error.status === 401) return t.sessionEnded;
+  if (error.status === 422) return explainInvalidRequest(error, language);
+  return t.other(error.status);
 }
 
 /** A 422 without a domain code: name the field the server refused, with its reason. */
-function explainInvalidRequest(error: HttpError): string {
+function explainInvalidRequest(error: HttpError, language: Language): string {
+  const t = messages[language].errors;
   const [first] = error.fields;
   const field = first?.loc.at(-1);
   if (first && (field === "username" || field === "password")) {
-    return `That ${field} isn't accepted: ${first.msg}.`;
+    return t.fieldRefused(field, first.msg);
   }
-  if (first) return `The server refused ${String(field)}: ${first.msg}.`;
-  return `The server refused the request: ${error.message}.`;
+  if (first) return t.otherFieldRefused(String(field), first.msg);
+  return t.requestRefused(error.message);
 }

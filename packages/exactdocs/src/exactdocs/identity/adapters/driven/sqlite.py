@@ -6,6 +6,7 @@ from collections.abc import AsyncGenerator, Collection, Iterable, Mapping, Seque
 from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from enum import StrEnum
 from typing import Any
 
 from sqlalchemy import (
@@ -16,16 +17,22 @@ from sqlalchemy import (
     MetaData,
     Table,
     Text,
+    and_,
     delete,
     exists,
+    false,
     func,
     insert,
     literal,
     or_,
     select,
     text,
+    tuple_,
     update,
 )
+from sqlalchemy.dialects import postgresql, sqlite
+from sqlalchemy.dialects.postgresql import insert as postgres_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import Row
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
@@ -33,11 +40,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from exactdocs.identity.constants import (
     _LOCK_NOT_AVAILABLE,
     _SIGN_IN_LOCKS,
+    ACCOUNTS_PER_QUERY,
     FORGET_FAILURES_AFTER,
     FORGOTTEN_SIGN_INS_PER_TURN,
     MAX_CONCURRENT_SIGN_IN_TURNS,
     REMEMBER_SIGN_INS_FOR,
     SIGN_IN_TURN_TIMEOUT,
+    TEXT_SCALES,
 )
 from exactdocs.identity.models import (
     AccessChange,
@@ -46,18 +55,26 @@ from exactdocs.identity.models import (
     Account,
     AccountId,
     ApiToken,
+    Contrast,
     ExternalIdentity,
     FailedSignIns,
+    Font,
+    Language,
     LibraryGrant,
     LibraryRole,
+    Motion,
+    Preferences,
     Role,
     Session,
     SignInAttempt,
     SubjectKind,
+    TextSpacing,
+    Theme,
     Username,
     known_sign_ins_prefix,
 )
-from exactdocs.identity.ports.driven import LinkOutcome
+from exactdocs.identity.ports.driven import AttachOutcome, LinkOutcome
+from exactdocs_kernel import Sort, SortValue
 
 # The identity tables, prefixed `identity_`. The schema itself is created by an Alembic revision
 # in `exactdocs.bootstrap`; this is only the adapter's query-side description of it.
@@ -71,6 +88,7 @@ accounts = Table(
     Column("role", Text, nullable=False),
     Column("created_at", Text, nullable=False),  # ISO 8601 with offset
     Column("disabled_at", Text),  # see `_stamp`; NULL while the account may sign in
+    Column("last_active_at", Text),  # an hour, see `_stamp`; NULL while never active
 )
 sessions = Table(
     "identity_sessions",
@@ -111,12 +129,10 @@ external_identities = Table(
     metadata,
     Column("issuer", Text, primary_key=True),
     Column("subject", Text, primary_key=True),
+    # One identity per (account, provider), and one origin (`linked_at` NULL) per account: both
+    # are unique indexes of the revision, not described here.
     Column(
-        "account_id",
-        Text,
-        ForeignKey("identity_accounts.id", ondelete="CASCADE"),
-        nullable=False,
-        unique=True,
+        "account_id", Text, ForeignKey("identity_accounts.id", ondelete="CASCADE"), nullable=False
     ),
     Column("provider", Text, nullable=False),
     Column("sealed_tokens", Text),  # the refresh token, sealed; NULL when there is none
@@ -124,6 +140,7 @@ external_identities = Table(
     Column("checked_at", Text, nullable=False),
     Column("next_check_at", Text, nullable=False),
     Column("access_until", Text, nullable=False),
+    Column("linked_at", Text),  # see `_stamp`; NULL for the origin, the identity it was created by
 )
 account_groups = Table(
     "identity_account_groups",
@@ -154,6 +171,7 @@ sign_in_attempts = Table(
     Column("code_verifier", Text, nullable=False),
     Column("return_to", Text, nullable=False),
     Column("created_at", Text, nullable=False),  # see `_stamp`
+    Column("link_session_hash", Text),  # a link's session; NULL for a sign-in
 )
 access_events = Table(
     "identity_access_events",
@@ -175,6 +193,19 @@ known_sign_ins = Table(
     Column("key", Text, primary_key=True),  # `<username>@address:...`
     Column("signed_in_at", Text, nullable=False),  # see `_stamp`
 )
+account_preferences = Table(
+    "identity_preferences",
+    metadata,
+    Column(
+        "account_id",
+        Text,
+        ForeignKey("identity_accounts.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("preferences", Text, nullable=False),  # a JSON object, one key per preference
+)
+# The identity an account was created through (the others were linked from Account settings).
+_origin = external_identities.c.linked_at.is_(None)
 # One statement takes every key's lock, in the order of the lock ids (not of the keys: two keys
 # whose `hashtext` collides share an id, and key order could then cross another attempt's).
 # PostgreSQL evaluates a volatile function in the select list after the sort.
@@ -195,6 +226,18 @@ def _stamp(moment: datetime) -> str:
         The time as stored, e.g. ``2026-01-02T03:04:05.000000+00:00``.
     """
     return moment.astimezone(UTC).isoformat(timespec="microseconds")
+
+
+def _optional_stamp(moment: datetime | None) -> str | None:
+    """Store an optional time like ``_stamp``.
+
+    Args:
+        moment: A timezone-aware time, or ``None``.
+
+    Returns:
+        The time as stored, or ``None``.
+    """
+    return None if moment is None else _stamp(moment)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -341,6 +384,25 @@ class SqliteAccountRepository:
         async with self.engine.connect() as connection:
             return bool((await connection.execute(select(exists(select(accounts.c.id))))).scalar())
 
+    async def record_activity(self, account_id: AccountId, hour: datetime) -> None:
+        """Move the account's ``last_active_at`` forward to ``hour``, never back, in one UPDATE.
+
+        Args:
+            account_id: The account's id.
+            hour: The hour it was active.
+        """
+        stamp = _stamp(hour)
+        statement = (
+            update(accounts)
+            .where(
+                accounts.c.id == account_id,
+                or_(accounts.c.last_active_at.is_(None), accounts.c.last_active_at < stamp),
+            )
+            .values(last_active_at=stamp)
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(statement)
+
 
 def _account_values(account: Account) -> dict[str, Any]:
     """Return the ``accounts`` row of a further account.
@@ -358,6 +420,7 @@ def _account_values(account: Account) -> dict[str, Any]:
         "role": account.role.value,
         "created_at": account.created_at.isoformat(),
         "disabled_at": None if account.disabled_at is None else _stamp(account.disabled_at),
+        "last_active_at": _optional_stamp(account.last_active_at),
     }
 
 
@@ -377,6 +440,7 @@ def _account(row: Row[Any]) -> Account:
         role=Role(row.role),
         created_at=datetime.fromisoformat(row.created_at),
         disabled_at=None if row.disabled_at is None else datetime.fromisoformat(row.disabled_at),
+        last_active_at=_moment(row.last_active_at),
     )
 
 
@@ -557,6 +621,34 @@ class SqliteTokenRepository:
         )
         async with self.engine.connect() as connection:
             return [_token(row) for row in await connection.execute(query)]
+
+    async def list_all(self) -> list[ApiToken]:
+        """Return every account's tokens, newest first.
+
+        Returns:
+            The tokens, newest first.
+        """
+        query = select(api_tokens).order_by(api_tokens.c.created_at.desc(), api_tokens.c.id.desc())
+        async with self.engine.connect() as connection:
+            return [_token(row) for row in await connection.execute(query)]
+
+    async def count_by_account(self, now: datetime) -> Mapping[AccountId, int]:
+        """Count each account's tokens that have not expired at ``now``, in one grouped query.
+
+        Args:
+            now: The current time.
+
+        Returns:
+            The count per account; an account without a live token is absent.
+        """
+        query = (
+            select(api_tokens.c.account_id, func.count())
+            .where(or_(api_tokens.c.expires_at.is_(None), api_tokens.c.expires_at > _stamp(now)))
+            .group_by(api_tokens.c.account_id)
+        )
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query)).all()
+        return {AccountId(account_id): count for account_id, count in rows}
 
     async def touch(self, token_hash: str, at: datetime) -> None:
         """Record that the token was used at ``at``.
@@ -1046,6 +1138,7 @@ class SqliteSignInAttemptRepository:
             "code_verifier": attempt.code_verifier,
             "return_to": attempt.return_to,
             "created_at": _stamp(attempt.created_at),
+            "link_session_hash": attempt.link_session_hash,
         }
         stale = delete(sign_in_attempts).where(
             sign_in_attempts.c.created_at < _stamp(expired_before)
@@ -1080,6 +1173,7 @@ class SqliteSignInAttemptRepository:
             code_verifier=row.code_verifier,
             return_to=row.return_to,
             created_at=datetime.fromisoformat(row.created_at),
+            link_session_hash=row.link_session_hash,
         )
 
 
@@ -1108,18 +1202,99 @@ class SqliteExternalIdentityRepository:
         return None if row is None else _identity(row)
 
     async def get_for_account(self, account_id: AccountId) -> ExternalIdentity | None:
-        """Return the link of this account, or ``None``.
+        """Return the account's origin, or ``None``.
 
         Args:
             account_id: The account's id.
 
         Returns:
-            The link, or ``None``.
+            The identity the account was created through, or ``None``.
         """
-        query = select(external_identities).where(external_identities.c.account_id == account_id)
+        query = select(external_identities).where(
+            external_identities.c.account_id == account_id, _origin
+        )
         async with self.engine.connect() as connection:
             row = (await connection.execute(query)).first()
         return None if row is None else _identity(row)
+
+    async def list_for_account(self, account_id: AccountId) -> list[ExternalIdentity]:
+        """Return every identity linked to the account: its origin first, then by provider.
+
+        Args:
+            account_id: The account's id.
+
+        Returns:
+            The identities.
+        """
+        query = (
+            select(external_identities)
+            .where(external_identities.c.account_id == account_id)
+            .order_by(external_identities.c.linked_at.is_not(None), external_identities.c.provider)
+        )
+        async with self.engine.connect() as connection:
+            rows = (await connection.execute(query)).all()
+        return [_identity(row) for row in rows]
+
+    async def link(self, identity: ExternalIdentity) -> AttachOutcome:
+        """Link an identity to an existing account in one ``INSERT``.
+
+        The primary key (issuer, subject) refuses an identity linked already, the unique
+        (account, provider) index a second identity of the provider; which one it was is read
+        again afterwards, so the answer holds whatever the dialect's error says.
+
+        Args:
+            identity: The identity, its ``account_id`` the account's.
+
+        Returns:
+            ``linked``, ``identity_taken`` or ``provider_taken``.
+        """
+        try:
+            async with self.engine.begin() as connection:
+                await connection.execute(
+                    insert(external_identities).values(_identity_values(identity))
+                )
+        except IntegrityError:
+            if await self.get(identity.issuer, identity.subject) is not None:
+                return "identity_taken"
+            return "provider_taken"
+        return "linked"
+
+    async def unlink(self, account_id: AccountId, provider: str) -> bool:
+        """Delete the account's identity of a provider, never its origin.
+
+        Args:
+            account_id: The account.
+            provider: The provider's name.
+
+        Returns:
+            ``True`` when a row was deleted.
+        """
+        statement = delete(external_identities).where(
+            external_identities.c.account_id == account_id,
+            external_identities.c.provider == provider,
+            external_identities.c.linked_at.is_not(None),
+        )
+        async with self.engine.begin() as connection:
+            return (await connection.execute(statement)).rowcount == 1
+
+    async def record_linked_sign_in(self, identity: ExternalIdentity, at: datetime) -> None:
+        """Note a sign-in through a linked identity (its times only).
+
+        Args:
+            identity: The identity.
+            at: When it signed in.
+        """
+        statement = (
+            update(external_identities)
+            .where(
+                external_identities.c.issuer == identity.issuer,
+                external_identities.c.subject == identity.subject,
+                external_identities.c.linked_at.is_not(None),
+            )
+            .values(signed_in_at=_stamp(at), checked_at=_stamp(at))
+        )
+        async with self.engine.begin() as connection:
+            await connection.execute(statement)
 
     async def create_linked_account(
         self, account: Account, identity: ExternalIdentity, groups: frozenset[str]
@@ -1234,7 +1409,7 @@ class SqliteExternalIdentityRepository:
         """
         statement = (
             update(external_identities)
-            .where(external_identities.c.account_id == account_id)
+            .where(external_identities.c.account_id == account_id, _origin)
             .values(access_until=_stamp(now), sealed_tokens=None)
         )
         async with self.engine.begin() as connection:
@@ -1249,7 +1424,7 @@ class SqliteExternalIdentityRepository:
         """
         statement = (
             update(external_identities)
-            .where(external_identities.c.account_id == account_id)
+            .where(external_identities.c.account_id == account_id, _origin)
             .values(sealed_tokens=None)
         )
         async with self.engine.begin() as connection:
@@ -1275,6 +1450,7 @@ class SqliteExternalIdentityRepository:
         query = (
             select(external_identities)
             .where(
+                _origin,
                 external_identities.c.sealed_tokens.is_not(None),
                 external_identities.c.next_check_at <= _stamp(now),
             )
@@ -1300,15 +1476,17 @@ class SqliteExternalIdentityRepository:
         return [_identity(row) for row in rows]
 
     async def groups_by_account(self) -> Mapping[AccountId, tuple[str, list[str]]]:
-        """Return the provider and the groups of every linked account.
+        """Return the provider and the groups of every account created through a provider.
 
         Returns:
-            For each linked account: its provider's name and its groups, sorted.
+            For each account with an origin: the origin's provider name and its groups, sorted.
         """
         async with self.engine.connect() as connection:
             links = (
                 await connection.execute(
-                    select(external_identities.c.account_id, external_identities.c.provider)
+                    select(external_identities.c.account_id, external_identities.c.provider).where(
+                        _origin
+                    )
                 )
             ).all()
             groups = (
@@ -1526,24 +1704,42 @@ class SqliteAccessLog:
                 )
             )
 
-    async def newest(
-        self, where: AccessLogFilter, *, older_than: str | None, limit: int, offset: int = 0
+    async def search(
+        self,
+        where: AccessLogFilter,
+        *,
+        sort: Sort,
+        after: tuple[SortValue, str] | None,
+        limit: int,
+        offset: int = 0,
     ) -> list[AccessEvent]:
-        """Return the newest events that match, newest first.
+        """Return the events that match, in ``sort`` order, after the ``after`` key.
+
+        A keyset query: ``(sort value, id)`` compares as a row, in the sort's direction. The
+        text columns compare by code point on both databases (PostgreSQL's are collated ``C``
+        by the migration), as Python compares str, and ``at`` is fixed-width UTC text
+        (``_stamp``), so it sorts in time order. ``(at, id)``, ``(library, at, id)``,
+        ``(actor, at, id)`` and ``(subject, at, id)`` are indexed for the default order. An
+        offset is the database's ``OFFSET`` over the same order.
 
         Args:
             where: Which events.
-            older_than: Only events recorded before the one with this ID.
+            sort: The order.
+            after: The sort value and ID of the last event of the previous page.
             limit: Most events returned.
-            offset: How many of the matching events, newest first, to skip first (``OFFSET``).
+            offset: How many of the matching events in order (after ``after``) to skip first.
 
         Returns:
-            Up to ``limit`` events, by ID descending.
+            Up to ``limit`` events, in order.
         """
+        column = access_events.c[sort.field]
+        key = access_events.c.id
         query = select(access_events).where(*_access_conditions(where))
-        if older_than is not None:
-            query = query.where(access_events.c.id < older_than)
-        query = query.order_by(access_events.c.id.desc()).limit(limit)
+        if after is not None:
+            row, bound = tuple_(column, key), tuple_(*after)
+            query = query.where(row < bound if sort.descending else row > bound)
+        order = (column.desc(), key.desc()) if sort.descending else (column, key)
+        query = query.order_by(*order).limit(limit)
         if offset:
             query = query.offset(offset)
         async with self.engine.connect() as connection:
@@ -1580,6 +1776,22 @@ def _access_conditions(where: AccessLogFilter) -> list[Any]:
         conditions.append(access_events.c.change.in_(sorted(c.value for c in where.changes)))
     if where.newer_than is not None:
         conditions.append(access_events.c.id > where.newer_than)
+    if where.actor is not None:
+        conditions.append(access_events.c.actor == where.actor)
+    if where.subjects is not None:
+        conditions.append(
+            or_(
+                false(),
+                *(
+                    and_(access_events.c.kind == kind.value, access_events.c.subject == subject)
+                    for kind, subject in sorted(where.subjects)
+                ),
+            )
+        )
+    if where.at_after is not None:
+        conditions.append(access_events.c.at >= _stamp(where.at_after))
+    if where.at_before is not None:
+        conditions.append(access_events.c.at < _stamp(where.at_before))
     return conditions
 
 
@@ -1676,6 +1888,7 @@ def _identity_values(identity: ExternalIdentity) -> dict[str, Any]:
         "checked_at": _stamp(identity.checked_at),
         "next_check_at": _stamp(identity.next_check_at),
         "access_until": _stamp(identity.access_until),
+        "linked_at": None if identity.linked_at is None else _stamp(identity.linked_at),
     }
 
 
@@ -1698,6 +1911,7 @@ def _identity(row: Row[Any]) -> ExternalIdentity:
         checked_at=datetime.fromisoformat(row.checked_at),
         next_check_at=datetime.fromisoformat(row.next_check_at),
         access_until=datetime.fromisoformat(row.access_until),
+        linked_at=_moment(row.linked_at),
     )
 
 
@@ -1719,3 +1933,171 @@ async def _replace_groups(
             insert(account_groups),
             [{"account_id": account_id, "name": name} for name in sorted(groups)],
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqlitePreferencesRepository:
+    """Implements ``ports.driven.PreferencesRepository`` (SQLite, libSQL and PostgreSQL).
+
+    One JSON object per account, so a preference added later needs no migration: a key a row
+    lacks, or a value the interface no longer offers, reads as that preference's default.
+    """
+
+    engine: AsyncEngine
+    """The database engine."""
+
+    async def get(self, account_id: AccountId) -> Preferences | None:
+        """Return the preferences an account saved, or ``None`` when it never saved any.
+
+        Args:
+            account_id: The account.
+
+        Returns:
+            Its preferences, or ``None``.
+        """
+        query = select(account_preferences.c.preferences).where(
+            account_preferences.c.account_id == account_id
+        )
+        async with self.engine.connect() as connection:
+            stored = (await connection.execute(query)).scalar_one_or_none()
+        return None if stored is None else _preferences(json.loads(stored))
+
+    async def put(self, account_id: AccountId, preferences: Preferences) -> None:
+        """Save an account's preferences, replacing the ones it had (one atomic upsert).
+
+        Args:
+            account_id: The account, which exists.
+            preferences: Its new preferences.
+        """
+        values = {"preferences": json.dumps(_preference_values(preferences), sort_keys=True)}
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                _conflict_insert(connection, account_preferences)
+                .values(account_id=account_id, **values)
+                .on_conflict_do_update(
+                    index_elements=[account_preferences.c.account_id], set_=values
+                )
+            )
+
+    async def opted_in(self, account_ids: Collection[AccountId]) -> frozenset[AccountId]:
+        """Return the accounts among these that agreed to be on the people leaderboard.
+
+        Asked ``ACCOUNTS_PER_QUERY`` IDs at a time; a row whose ``leaderboard_opt_in`` is missing
+        or not ``true`` has not agreed.
+
+        Args:
+            account_ids: The accounts to ask about.
+
+        Returns:
+            Those that opted in.
+        """
+        wanted = sorted(set(account_ids))
+        found: set[AccountId] = set()
+        async with self.engine.connect() as connection:
+            for start in range(0, len(wanted), ACCOUNTS_PER_QUERY):
+                batch = wanted[start : start + ACCOUNTS_PER_QUERY]
+                query = select(account_preferences).where(
+                    account_preferences.c.account_id.in_(batch)
+                )
+                for row in await connection.execute(query):
+                    if _preferences(json.loads(row.preferences)).leaderboard_opt_in:
+                        found.add(AccountId(row.account_id))
+        return frozenset(found)
+
+
+def _conflict_insert(
+    bind: AsyncConnection | AsyncEngine, table: Table
+) -> sqlite.Insert | postgresql.Insert:
+    """Return an ``INSERT`` that takes ``ON CONFLICT`` clauses, in the database's dialect.
+
+    Args:
+        bind: Where the statement runs (SQLite, libSQL or PostgreSQL).
+        table: The table to insert into.
+
+    Returns:
+        The statement; both dialects spell ``on_conflict_do_update``/``_nothing`` alike.
+    """
+    if bind.dialect.name == "postgresql":
+        return postgres_insert(table)
+    return sqlite_insert(table)
+
+
+def _preference_values(preferences: Preferences) -> dict[str, Any]:
+    """Return the JSON object a row stores.
+
+    Args:
+        preferences: The preferences.
+
+    Returns:
+        One plain value per preference.
+    """
+    return {
+        "theme": preferences.theme.value,
+        "contrast": preferences.contrast.value,
+        "text_scale": preferences.text_scale,
+        "text_spacing": preferences.text_spacing.value,
+        "motion": preferences.motion.value,
+        "font": preferences.font.value,
+        "underline_links": preferences.underline_links,
+        "large_targets": preferences.large_targets,
+        "language": preferences.language.value,
+        "library_logos": preferences.library_logos,
+        "leaderboard_opt_in": preferences.leaderboard_opt_in,
+    }
+
+
+def _preferences(stored: object) -> Preferences:
+    """Read a row's JSON object back, a missing or no longer offered value as its default.
+
+    Args:
+        stored: The decoded JSON.
+
+    Returns:
+        The preferences.
+    """
+    values: Mapping[str, Any] = stored if isinstance(stored, dict) else {}
+    defaults = Preferences()
+    scale = values.get("text_scale")
+    offered = type(scale) is int and scale in TEXT_SCALES
+    return Preferences(
+        theme=_choice(Theme, values.get("theme"), defaults.theme),
+        contrast=_choice(Contrast, values.get("contrast"), defaults.contrast),
+        text_scale=scale if offered else defaults.text_scale,
+        text_spacing=_choice(TextSpacing, values.get("text_spacing"), defaults.text_spacing),
+        motion=_choice(Motion, values.get("motion"), defaults.motion),
+        font=_choice(Font, values.get("font"), defaults.font),
+        underline_links=_flag(values.get("underline_links"), default=defaults.underline_links),
+        large_targets=_flag(values.get("large_targets"), default=defaults.large_targets),
+        language=_choice(Language, values.get("language"), defaults.language),
+        library_logos=_flag(values.get("library_logos"), default=defaults.library_logos),
+        leaderboard_opt_in=_flag(
+            values.get("leaderboard_opt_in"), default=defaults.leaderboard_opt_in
+        ),
+    )
+
+
+def _flag(value: object, *, default: bool) -> bool:
+    """Return the stored yes or no, or the default when it is missing or not a boolean.
+
+    Args:
+        value: The stored value.
+        default: The preference's default.
+
+    Returns:
+        The flag.
+    """
+    return value if isinstance(value, bool) else default
+
+
+def _choice[E: StrEnum](kind: type[E], value: object, default: E) -> E:
+    """Return the stored choice, or the default when it is missing or no longer offered.
+
+    Args:
+        kind: The enumeration of the choices.
+        value: The stored value.
+        default: The preference's default.
+
+    Returns:
+        The choice.
+    """
+    return next((choice for choice in kind if choice.value == value), default)

@@ -20,7 +20,7 @@ from typing import Any, Final, Self
 from markdown_it import MarkdownIt
 from pydantic import BaseModel, ConfigDict
 
-from retrieval_eval.dataset import Answer, Hit
+from retrieval_eval.dataset import Answer, Hit, parts_of
 from retrieval_eval.evaluators import SectionMatch, wrong_version_hits
 from retrieval_eval.golden import GoldenCase
 from retrieval_eval.ingestion import tokens
@@ -36,8 +36,9 @@ from retrieval_eval.text_match import (
     words,
 )
 
-SCHEMA_VERSION: Final[int] = 1
-"""The JSON report's layout; bumped when a field is renamed or removed."""
+SCHEMA_VERSION: Final[int] = 2
+"""The JSON report's layout; bumped when a field is renamed or removed (2: ``held_agreement``
+went, since chunk-ID scoring counts held headings itself, #503)."""
 FACT_SHARE: Final[float] = 0.75
 """A fact is in the returned text when at least this share of its content words is."""
 MIN_AGREEMENT: Final[float] = 0.98
@@ -158,8 +159,8 @@ class TextRow(_Model):
     context_tokens: int
     """Estimated tokens of every result's text (``ingestion.tokens``: characters / 4)."""
     tokens_to_hit: int | None
-    """Estimated tokens of the results up to and including the first expected section's; None
-    when it is not in the top 10."""
+    """Estimated tokens of the results up to and including the first that answers a section the
+    case lists; None when none is in the top 10."""
     facts: int
     """The facts the case lists."""
     facts_found: int
@@ -190,21 +191,29 @@ def first_ranks(expected: Sequence[Hit], matches: Sequence[TextMatch]) -> list[i
 
 
 def _section_ranks(expected: Sequence[Hit], matches: Sequence[TextMatch]) -> tuple[int, ...]:
-    """The ranks of the results that answer an expected section no earlier result answered.
+    """The ranks of the results that answer a part of the case no earlier result answered.
 
-    The text form of ``retrieval_bench.section_ranks``.
+    The text form of ``retrieval_bench.section_ranks``: a part is answered by one of its
+    sections or of its alternatives (#501), and counts once.
 
     Args:
-        expected: The sections that answer the case.
+        expected: The sections the case lists.
         matches: Each result's matches, best first.
 
     Returns:
-        One rank per expected section found in the top 10, ascending.
+        One rank per part found in the top 10, ascending.
     """
-    left = list(expected)
+    left = parts_of(expected)
     ranks = []
     for rank, match in enumerate(matches[:NDCG_AT], start=1):
-        found = next((e for e in left if match.answers(e.version, e.article, e.heading_path)), None)
+        found = next(
+            (
+                part
+                for part in left
+                if any(match.answers(e.version, e.article, e.heading_path) for e in part)
+            ),
+            None,
+        )
         if found is not None:
             left.remove(found)
             ranks.append(rank)
@@ -215,7 +224,7 @@ def _ndcg(expected: int, ranks: Sequence[int]) -> float:
     """nDCG@10 with binary relevance, as ``retrieval_bench.ndcg_at`` defines it.
 
     Args:
-        expected: How many sections the case expects.
+        expected: How many parts the case needs.
         ranks: The ranks of the relevant results (``_section_ranks``).
 
     Returns:
@@ -241,8 +250,9 @@ def text_row(case: GoldenCase, answer: TextAnswer, index: SectionIndex) -> TextR
     facts = [f for f in (case.expected_output.facts if case.expected_output else []) if f.strip()]
     matches = index.match_all(answer.texts)
     verdicts = [m.verdict(case.inputs.version) for m in matches]
-    rank = first_ranks(expected[:1], matches)[0] if expected else None
+    rank = min((r for r in first_ranks(expected, matches) if r is not None), default=None)
     ranks = _section_ranks(expected, matches)
+    parts = len(parts_of(expected))
     sizes = [tokens(text) for text in answer.texts]
     return TextRow(
         case=case.name or "",
@@ -252,8 +262,8 @@ def text_row(case: GoldenCase, answer: TextAnswer, index: SectionIndex) -> TextR
             project=case.inputs.project or "",
             answerable=bool(expected),
             rank=rank,
-            ndcg=_ndcg(len(expected), ranks),
-            sections=len(expected),
+            ndcg=_ndcg(parts, ranks),
+            sections=parts,
             section_ranks=ranks,
             wrong_version=Verdict.WRONG in verdicts,
             empty=not answer.texts,
@@ -288,8 +298,8 @@ class TextMetrics(_Model):
     context_tokens_p95: float
     """Nearest-rank p95 of the same."""
     tokens_to_first_hit: float | None
-    """Over answerable cases whose first expected section is in the top 10: estimated tokens of
-    the results up to and including it."""
+    """Over answerable cases with a section they list in the top 10: estimated tokens of the
+    results up to and including the first that answers one."""
     facts_found_rate: float | None
     """Over answerable cases: the mean share of the case's facts the returned text holds."""
 
@@ -446,11 +456,7 @@ class Calibration(_Model):
     threshold: float
     """The text scorer's threshold (``MATCH_THRESHOLD``)."""
     agreement: Agreement
-    """With chunk-ID scoring as the retrieval benchmark scores it (the nested match rule)."""
-    held_agreement: Agreement
-    """With chunk-ID scoring that also counts a chunk holding the section's heading under
-    another heading path (a section merged into a sibling's chunk), which the nested rule does
-    not."""
+    """With chunk-ID scoring as the retrieval benchmark scores it (``golden_run.held_match``)."""
     rendered_agreement: Agreement
     """With chunk-ID scoring, the results rendered as plain text first."""
     wrong_version_agreement: float
@@ -496,27 +502,28 @@ def _shown(hit: Hit) -> str:
     return f"{hit.version} {hit.article} [{' > '.join(hit.heading_path)}]"
 
 
-def _why(ranks: Sequence[int | None], hits: Sequence[Hit]) -> str:
+def _why(expected: Hit, ranks: tuple[int | None, int | None], hits: Sequence[Hit]) -> str:
     """Say why two decisions differ, from the result at the earlier rank.
 
     Args:
-        ranks: The section's chunk-ID rank, text rank and held-heading rank.
+        expected: The expected section.
+        ranks: The section's chunk-ID rank and text rank.
         hits: What ExactDocs returned, best first.
 
     Returns:
         A short reason.
     """
-    by_id, by_text, by_held = ranks
+    by_id, by_text = ranks
     if by_text is not None and (by_id is None or by_text < by_id):
         hit = hits[by_text - 1]
-        if by_held == by_text:
+        if (hit.version, hit.article) != (expected.version, expected.article):
             return (
-                f"the chunk at rank {by_text} holds the section under another heading path "
-                f"({_shown(hit)}), which the nested rule does not count"
+                f"the chunk at rank {by_text} ({_shown(hit)}) holds the section's text, but is "
+                "another article or version"
             )
         return (
-            f"the chunk at rank {by_text} ({_shown(hit)}) holds the section's text, but is "
-            "another article or version"
+            f"the chunk at rank {by_text} ({_shown(hit)}) holds the section's text, but not "
+            "its heading"
         )
     if by_id is not None:
         return (
@@ -535,9 +542,7 @@ class _Tally:
     """What the calibration counts, case by case."""
 
     pairs: list[_Pair] = field(default_factory=list)
-    """Chunk-ID (nested rule) against text."""
-    held_pairs: list[_Pair] = field(default_factory=list)
-    """Chunk-ID counting held headings against text."""
+    """Chunk-ID against text."""
     rendered_pairs: list[_Pair] = field(default_factory=list)
     """Chunk-ID against the text rendered as plain text."""
     sweep: dict[float, tuple[list[bool], list[bool]]] = field(
@@ -559,7 +564,7 @@ def _tally(
     case: GoldenCase,
     found: tuple[Answer, Sequence[str]],
     index: SectionIndex,
-    rules: tuple[SectionMatch, SectionMatch],
+    matches: SectionMatch,
 ) -> None:
     """Score one case both ways and count its decisions.
 
@@ -568,17 +573,14 @@ def _tally(
         case: The case.
         found: What ExactDocs returned for it, and the text of each hit.
         index: The case's project's sections.
-        rules: The chunk-ID rule and the held-heading rule.
+        matches: The chunk-ID rule.
     """
     answer, texts = found
-    matches, held = rules
     expected = case.expected_output.hits if case.expected_output else []
     rendered = [plain_text(t) for t in texts]
     by_ids = [_first(e, answer.hits, matches) for e in expected]
-    by_held = [_first(e, answer.hits, held) for e in expected]
     by_text = first_ranks(expected, index.match_all(texts))
     tally.pairs.extend(zip(by_ids, by_text, strict=True))
-    tally.held_pairs.extend(zip(by_held, by_text, strict=True))
     tally.rendered_pairs.extend(
         zip(by_ids, first_ranks(expected, index.match_all(rendered)), strict=True)
     )
@@ -588,9 +590,9 @@ def _tally(
             section=_shown(e),
             chunk_id_rank=by_id,
             text_rank=by_txt,
-            why=_why((by_id, by_txt, by_hld), answer.hits),
+            why=_why(e, (by_id, by_txt), answer.hits),
         )
-        for e, by_id, by_txt, by_hld in zip(expected, by_ids, by_text, by_held, strict=True)
+        for e, by_id, by_txt in zip(expected, by_ids, by_text, strict=True)
         if by_id != by_txt
     )
     for threshold, (plain, as_rendered) in tally.sweep.items():
@@ -615,7 +617,6 @@ def calibrate(
     indexes: Mapping[str, SectionIndex],
     *,
     matches: SectionMatch,
-    held: SectionMatch,
 ) -> Calibration:
     """Score ExactDocs' own results by chunk ID and by text, and compare the decisions.
 
@@ -625,8 +626,7 @@ def calibrate(
         results: Each case's answer (by its name), with the text of each hit (the chunk's
             content, as ``read_chunk`` returns it).
         indexes: Each project's sections.
-        matches: The benchmark's chunk-ID rule (``golden_run.nested_match``).
-        held: The rule that also counts a chunk holding the section's heading.
+        matches: The benchmark's chunk-ID rule (``golden_run.held_match``).
 
     Returns:
         The calibration.
@@ -634,13 +634,12 @@ def calibrate(
     tally = _Tally()
     for case in cases:
         found = results[case.name or ""]
-        _tally(tally, case, found, indexes[case.inputs.project or ""], (matches, held))
+        _tally(tally, case, found, indexes[case.inputs.project or ""], matches)
     ceiling, control = _facts_bounds(cases, results, indexes)
     return Calibration(
         chunking=chunking,
         threshold=next((i.threshold for i in indexes.values()), MATCH_THRESHOLD),
         agreement=agreement(tally.pairs),
-        held_agreement=agreement(tally.held_pairs),
         rendered_agreement=agreement(tally.rendered_pairs),
         wrong_version_agreement=round(tally.wrong_agreed / len(cases), _DIGITS) if cases else 1.0,
         sweep=[
@@ -832,16 +831,16 @@ def markdown(report: TextScorerReport) -> str:
         "",
         (
             "| chunking | decisions | same rank | hit / miss | rendered as plain text "
-            "| counting held headings | wrong version (cases) | criterion |"
+            "| wrong version (cases) | criterion |"
         ),
-        "|---|---|---|---|---|---|---|---|",
+        "|---|---|---|---|---|---|---|",
     ]
     for c in report.calibrations:
         verdict = ("met" if c.passed else "NOT MET") if c.chunking == s["gated_chunking"] else "-"
         lines.append(
             f"| `{c.chunking}` | {c.agreement.decisions} | {_pct(c.agreement.rate)} "
             f"| {_pct(c.agreement.hit_miss_rate)} | {_pct(c.rendered_agreement.rate)} "
-            f"| {_pct(c.held_agreement.rate)} | {_pct(c.wrong_version_agreement)} | {verdict} |"
+            f"| {_pct(c.wrong_version_agreement)} | {verdict} |"
         )
     lines.extend(_sweep(report.calibrations))
     lines.extend(

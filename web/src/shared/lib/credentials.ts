@@ -1,4 +1,46 @@
 import type { components } from "./api-schema";
+import { currentLanguage, defineMessages, type Language } from "./i18n";
+
+/** What the credential checks and the server's credential refusals say. */
+const messages = defineMessages(
+  {
+    pasteToken: "Paste the access token.",
+    tokenShape: "A token is one line without spaces. Paste it again.",
+    usernameShape: "A user name has only letters, digits, dots, dashes and underscores.",
+    pasteKey: "Paste the private deploy key, or choose its file.",
+    keyTooLong: "That key is too long for a deploy key.",
+    notPrivate:
+      "That isn't a private key. Use the file without .pub (its first line names a PRIVATE KEY).",
+    passphrase:
+      "This key has a passphrase, and ExactDocs can't type it. Use a deploy key without one.",
+    serverRefused: (why: string) => `The server can't use it: ${why}.`,
+    hostKeyChanged:
+      "The repository's SSH server shows a different host key from the one ExactDocs saw first, so nothing was fetched. Someone may be intercepting the connection, or the server's key was replaced. Ask whoever runs that server; if the change is expected, an admin removes the old key from the known_hosts file in ExactDocs' data directory.",
+    refusedToken:
+      "The repository refused this token. Check that it can read the repository and hasn't expired.",
+    refusedKey:
+      "The repository refused this deploy key. Check that its public half is added to the repository.",
+  },
+  {
+    pasteToken: "Wklej token dostępu.",
+    tokenShape: "Token to jeden wiersz bez spacji. Wklej go ponownie.",
+    usernameShape:
+      "Nazwa użytkownika może zawierać tylko litery, cyfry, kropki, myślniki i podkreślenia.",
+    pasteKey: "Wklej prywatny klucz wdrożeniowy albo wybierz jego plik.",
+    keyTooLong: "Ten klucz jest za długi jak na klucz wdrożeniowy.",
+    notPrivate:
+      "To nie jest klucz prywatny. Użyj pliku bez rozszerzenia .pub (jego pierwszy wiersz zawiera PRIVATE KEY).",
+    passphrase:
+      "Ten klucz jest chroniony hasłem, którego ExactDocs nie może wpisać. Użyj klucza wdrożeniowego bez hasła.",
+    serverRefused: (why) => `Serwer nie może go użyć: ${why}.`,
+    hostKeyChanged:
+      "Serwer SSH repozytorium przedstawia inny klucz hosta niż ten, który ExactDocs zobaczył za pierwszym razem, więc nic nie zostało pobrane. Ktoś może przechwytywać połączenie albo klucz serwera został wymieniony. Zapytaj osobę, która zarządza tym serwerem; jeśli zmiana jest oczekiwana, administrator usuwa stary klucz z pliku known_hosts w katalogu danych ExactDocs.",
+    refusedToken:
+      "Repozytorium odrzuciło ten token. Sprawdź, czy ma prawo odczytu repozytorium i czy nie wygasł.",
+    refusedKey:
+      "Repozytorium odrzuciło ten klucz wdrożeniowy. Sprawdź, czy jego część publiczna została dodana do repozytorium.",
+  },
+);
 
 /**
  * What reads a private repository: a token (https) or a deploy key (ssh). Write-only: it lives in
@@ -54,31 +96,34 @@ export function normalizeKey(raw: string): string {
 }
 
 /** The checks that need no server; the words never repeat the secret. */
-export function validateCredential(kind: CredentialKind, draft: CredentialDraft) {
+export function validateCredential(
+  kind: CredentialKind,
+  draft: CredentialDraft,
+  language: Language = currentLanguage(),
+) {
+  const t = messages[language];
   if (kind === "token") {
     const token = draft.secret.trim();
-    if (!token) return "Paste the access token.";
-    if (token.length > MAX_TOKEN || /\s/.test(token)) {
-      return "A token is one line without spaces. Paste it again.";
-    }
+    if (!token) return t.pasteToken;
+    if (token.length > MAX_TOKEN || /\s/.test(token)) return t.tokenShape;
     const user = draft.username.trim();
-    if (user && !USERNAME.test(user)) {
-      return "A user name has only letters, digits, dots, dashes and underscores.";
-    }
+    if (user && !USERNAME.test(user)) return t.usernameShape;
     return undefined;
   }
   const key = normalizeKey(draft.secret);
-  if (!key) return "Paste the private deploy key, or choose its file.";
-  if (key.length > MAX_KEY) return "That key is too long for a deploy key.";
-  if (!KEY.test(key)) {
-    return "That isn't a private key. Use the file without .pub (its first line names a PRIVATE KEY).";
-  }
-  if (hasPassphrase(draft.secret)) return PASSPHRASE;
+  if (!key) return t.pasteKey;
+  if (key.length > MAX_KEY) return t.keyTooLong;
+  if (!KEY.test(key)) return t.notPrivate;
+  if (hasPassphrase(draft.secret)) return t.passphrase;
   return undefined;
 }
 
-export const PASSPHRASE =
-  "This key has a passphrase, and ExactDocs can't type it. Use a deploy key without one.";
+/**
+ * The English sentence for a key with a passphrase.
+ * @deprecated The words depend on the language: compare with `validateCredential`'s result in
+ * the language under test instead.
+ */
+export const PASSPHRASE = messages.en.passphrase;
 
 const MAGIC = "openssh-key-v1\0";
 
@@ -122,19 +167,21 @@ export function credentialOf(kind: CredentialKind, draft: CredentialDraft): Cred
 
 const SERVER_PREFIX = /^not a usable credential:\s*/i;
 
-/** `invalid_credential`: the server's sentence is fixed text (it never repeats the secret). */
-export function explainInvalidCredential(detail: string) {
-  if (/passphrase/i.test(detail)) return PASSPHRASE;
+/**
+ * `invalid_credential`: the server's sentence is fixed text (it never repeats the secret). Its
+ * reason stays in the server's words; only the sentence around it follows the language.
+ */
+export function explainInvalidCredential(detail: string, language: Language = currentLanguage()) {
+  const t = messages[language];
+  if (/passphrase/i.test(detail)) return t.passphrase;
   const why = detail.replace(SERVER_PREFIX, "").replace(/\.$/, "");
-  return `The server can't use it: ${why}.`;
+  return t.serverRefused(why);
 }
 
 /** `host_key_changed`, in words: someone may be in the middle, or the server got a new key. */
-export const HOST_KEY_CHANGED =
-  "The repository's SSH server shows a different host key from the one ExactDocs saw first, so nothing was fetched. Someone may be intercepting the connection, or the server's key was replaced. Ask whoever runs that server; if the change is expected, an admin removes the old key from the known_hosts file in ExactDocs' data directory.";
+export const hostKeyChanged = (language: Language = currentLanguage()) =>
+  messages[language].hostKeyChanged;
 
 /** A login refused with a token or key sent: it does not read this repository. */
-export const refusedCredential = (kind: CredentialKind) =>
-  kind === "token"
-    ? "The repository refused this token. Check that it can read the repository and hasn't expired."
-    : "The repository refused this deploy key. Check that its public half is added to the repository.";
+export const refusedCredential = (kind: CredentialKind, language: Language = currentLanguage()) =>
+  kind === "token" ? messages[language].refusedToken : messages[language].refusedKey;

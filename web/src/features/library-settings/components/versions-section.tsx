@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check } from "lucide-react";
+import { Check, Plus, X } from "lucide-react";
 import { type FormEvent, type ReactNode, useCallback, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -10,13 +10,19 @@ import {
   EMPTY_CREDENTIAL,
   validateCredential,
 } from "@/shared/lib/credentials";
+import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { type RefChoice, refToSend } from "@/shared/lib/refs";
 import { useFocusAfterRender } from "@/shared/lib/use-focus-after-render";
 import { Button } from "@/shared/ui/button";
+import { TypedConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { CredentialField } from "@/shared/ui/credential-field";
+import { restoreRowFocus } from "@/shared/ui/data-table/row-actions";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { RefPicker } from "@/shared/ui/ref-picker";
 import { accessQueryOptions, addVersion, refreshLibraries, removeVersion } from "../api/settings";
+import { errorMessages } from "../messages/errors";
+import { pageMessages } from "../messages/page";
+import { versionsMessages } from "../messages/versions";
 import {
   type Activity,
   type AddedVersion,
@@ -29,7 +35,6 @@ import {
   type SettingsVersion,
 } from "../model/settings";
 import { SettingsSection } from "./settings-section";
-import { TypedConfirm } from "./typed-confirm";
 import { VersionsTable } from "./versions-table";
 
 interface Props {
@@ -70,6 +75,9 @@ function AddVersionForm({
   onClose,
   onStart,
 }: Props & { onClose: () => void }) {
+  const language = useLanguage();
+  const t = versionsMessages[language];
+  const { cancel, close } = common[language];
   const queryClient = useQueryClient();
   const focusAfterRender = useFocusAfterRender();
   // Known before the picker asks anything: a private repository's refs need a credential.
@@ -95,7 +103,7 @@ function AddVersionForm({
 
   function typedCredential(): { credential?: Credential; error?: string } {
     if (!kind || !showCredential || !draft.secret.trim()) return {};
-    const error = validateCredential(kind, draft);
+    const error = validateCredential(kind, draft, language);
     if (error) return { error };
     const credential = credentialOf(kind, draft);
     return credential ? { credential } : {};
@@ -130,7 +138,7 @@ function AddVersionForm({
   const unavailable = useCallback(() => setChoice({ kind: "other" }), []);
   // A replacement that does not even list the refs would not import either: say so now.
   const listRefused = (error: unknown) => {
-    const p = explainAddVersion(error, "", kind);
+    const p = explainAddVersion(error, "", kind, language);
     return p.field === "credential" ? p.message : undefined;
   };
 
@@ -139,7 +147,7 @@ function AddVersionForm({
     if (busy.current) return;
     setProblem(undefined);
     if (!ref) {
-      setFieldError("Choose a branch or tag from the list, or pick “Another ref or commit…”.");
+      setFieldError(t.chooseRef);
       focusAfterRender(refField);
       return;
     }
@@ -159,11 +167,11 @@ function AddVersionForm({
       setDraft(EMPTY_CREDENTIAL);
       setListedWith(undefined);
       setAdded(result);
-      toast.success(`Importing ${ref}`, {
-        description: "It appears here as soon as the import finishes.",
+      toast.success(t.importingToast(ref), {
+        description: t.importingDescription,
       });
     } catch (error) {
-      refuse(explainAddVersion(error, ref, sent.credential?.kind));
+      refuse(explainAddVersion(error, ref, sent.credential?.kind, language));
     } finally {
       busy.current = false;
       setPending(false);
@@ -178,7 +186,8 @@ function AddVersionForm({
         added={added}
         finish={
           <Button type="button" onClick={onClose}>
-            Close
+            <X aria-hidden="true" data-icon-motion="turn" />
+            {close}
           </Button>
         }
       />
@@ -187,7 +196,7 @@ function AddVersionForm({
 
   return (
     <form onSubmit={submit} noValidate>
-      <h3 className="text-section font-semibold">Add a version</h3>
+      <h3 className="text-section font-semibold">{t.add}</h3>
       <div className="mt-4">
         <FormAlert id="add-version-alert" message={problem?.message} link={problem?.link} />
       </div>
@@ -199,11 +208,7 @@ function AddVersionForm({
               kind={kind}
               draft={draft}
               error={credentialError}
-              hint={
-                access?.private
-                  ? `Optional. Leave it empty to use the ${kind === "token" ? "token" : "key"} stored for this library; a new one replaces it.`
-                  : "A new one is stored encrypted for this library, replacing any stored one."
-              }
+              hint={access?.private ? t.storedHint[kind === "token" ? "token" : "key"] : t.newHint}
               onChange={(d) => {
                 setDraft(d);
                 setCredentialError(undefined);
@@ -217,11 +222,7 @@ function AddVersionForm({
             url={library.source_url}
             credential={listedWith}
             explainRefusal={listRefused}
-            unlisted={
-              access?.private
-                ? "Branches and tags of a private repository are listed with its token or key: enter it above to see them, or type a version below."
-                : undefined
-            }
+            unlisted={access?.private ? t.unlisted : undefined}
             choice={choice}
             typed={typed}
             error={fieldError}
@@ -241,15 +242,14 @@ function AddVersionForm({
             }}
           />
         )}
-        <p className="text-body text-muted-foreground">
-          It is imported with the same paths and tag rules as the other versions.
-        </p>
+        <p className="text-body text-muted-foreground">{t.sameRules}</p>
         <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
+            {cancel}
           </Button>
           <Button type="submit" pending={pending} aria-disabled={pending} className="min-w-32">
-            {pending ? "Adding" : "Add version"}
+            {!pending && <Plus aria-hidden="true" data-icon-motion="turn" />}
+            {pending ? t.adding : t.addVersion}
           </Button>
         </div>
       </div>
@@ -257,14 +257,12 @@ function AddVersionForm({
   );
 }
 
-const defaultNote = (v: SettingsVersion | undefined) =>
-  v?.is_default
-    ? " It is the default version, so the library's default moves to another version."
-    : "";
-
 /** The imported versions, an add form, and a typed-confirmation remove per version. */
 export function VersionsSection(props: Props) {
   const { owner, repo, activity, onStart } = props;
+  const language = useLanguage();
+  const t = versionsMessages[language];
+  const page = useMessages(pageMessages);
   const queryClient = useQueryClient();
   const [adding, setAdding] = useState(false);
   const [removing, setRemoving] = useState<SettingsVersion>();
@@ -272,7 +270,6 @@ export function VersionsSection(props: Props) {
   const [problem, setProblem] = useState<Problem>();
   const heading = useRef<HTMLHeadingElement>(null);
   const addButton = useRef<HTMLButtonElement>(null);
-  const trigger = useRef<HTMLElement | null>(null);
   const removedOk = useRef(false);
   const focusAfterRender = useFocusAfterRender();
 
@@ -288,21 +285,23 @@ export function VersionsSection(props: Props) {
       setProblem(undefined);
       setNotice(
         result?.default_version
-          ? `Removed ${version.ref}. The default version is now ${result.default_version}.`
+          ? t.removedNewDefault(version.ref, result.default_version)
           : result
-            ? `Removed ${version.ref}. This library has no versions left.`
-            : `${version.ref} was already removed.`,
+            ? t.removedLast(version.ref)
+            : t.alreadyRemoved(version.ref),
       );
       setRemoving(undefined);
-      toast.success(`Removed ${version.ref}`, {
+      toast.success(t.removedToast(version.ref), {
         ...(result?.default_version && {
-          description: `The default version is now ${result.default_version}.`,
+          description: t.newDefault(result.default_version),
         }),
       });
       refreshLibraries(queryClient);
     },
     onError: (error, version) => {
-      setProblem(explainRemove(error, `version ${version.ref}`));
+      setProblem(
+        explainRemove(error, errorMessages[language].remove.version(version.ref), language),
+      );
       refreshLibraries(queryClient);
     },
   });
@@ -316,8 +315,8 @@ export function VersionsSection(props: Props) {
   return (
     <SettingsSection
       id="versions"
-      title="Versions"
-      description="Each version is a branch, tag or commit imported as it was. The filled station is the default."
+      title={page.sections.versions}
+      description={t.description}
       headingRef={heading}
     >
       <div className="mb-4">
@@ -333,7 +332,8 @@ export function VersionsSection(props: Props) {
             setAdding(true);
           }}
         >
-          Add a version
+          <Plus aria-hidden="true" data-icon-motion="turn" />
+          {t.add}
         </Button>
       </div>
 
@@ -358,8 +358,8 @@ export function VersionsSection(props: Props) {
         <VersionsTable
           owner={owner}
           repo={repo}
-          onRemove={(version, el) => {
-            trigger.current = el;
+          pinned={props.library.default_pinned}
+          onRemove={(version) => {
             removedOk.current = false;
             remove.reset();
             setProblem(undefined);
@@ -369,29 +369,35 @@ export function VersionsSection(props: Props) {
         />
       </div>
 
-      <TypedConfirm
+      <TypedConfirmDialog
         open={removing !== undefined}
         onOpenChange={(open) => {
           if (!open) setRemoving(undefined);
         }}
-        title={
-          <>
-            Remove <span className="font-mono">{removing?.ref ?? "version"}</span>?
-          </>
-        }
-        loss="Its articles disappear from browse, search and agents now."
-        safe={`Nothing in the repository changes. Content that other versions share stays available. You can add this version again.${defaultNote(removing)}`}
+        title={page.confirm.title(
+          <span className="font-mono [overflow-wrap:anywhere]">
+            {removing?.ref ?? t.versionFallback}
+          </span>,
+        )}
+        description={<span className="text-foreground">{t.loss}</span>}
         phrase={removing?.ref ?? ""}
-        confirmLabel="Remove version"
+        initialFocus="phrase"
+        confirmLabel={t.confirm}
+        pendingLabel={page.confirm.removing}
         pending={remove.isPending}
-        problem={problem}
+        error={problem?.message}
+        errorTone={problem?.tone}
+        errorLink={problem?.link}
         onConfirm={() => removing && remove.mutate(removing)}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
-          // A removed row is gone: land on the heading. Otherwise back on the button that opened it.
-          (removedOk.current ? heading.current : trigger.current)?.focus();
+          // A removed row is gone: land on the heading. Otherwise back to the row's menu.
+          if (removedOk.current) heading.current?.focus();
+          else restoreRowFocus(event);
         }}
-      />
+      >
+        <p className="mt-1.5">{t.safe(removing?.is_default ? t.defaultNote : "")}</p>
+      </TypedConfirmDialog>
     </SettingsSection>
   );
 }

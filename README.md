@@ -1,8 +1,9 @@
 <p align="center">
   <a href="https://sircypkowskyy.github.io/ExactDocs/">
     <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo/exactdocs-wordmark-dark.svg">
-      <img src="docs/assets/logo/exactdocs-wordmark-light.svg" alt="ExactDocs" width="300">
+      <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo/exactdocs-lockup-dark.svg">
+      <source media="(prefers-color-scheme: light)" srcset="docs/assets/logo/exactdocs-lockup-light.svg">
+      <img src="docs/assets/logo/exactdocs-lockup-light.svg" alt="ExactDocs" width="320">
     </picture>
   </a>
 </p>
@@ -15,12 +16,12 @@
 </p>
 
 <p align="center">
-  <a href="https://pypi.org/project/exactdocs/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/exactdocs?label=pypi&color=0b6677"></a>
+  <a href="https://pypi.org/project/exactdocs/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/exactdocs?label=pypi&color=17171a"></a>
   <a href="https://github.com/SirCypkowskyy/ExactDocs/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/SirCypkowskyy/ExactDocs/actions/workflows/ci.yml/badge.svg?branch=develop"></a>
-  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-0b6677"></a>
-  <a href="https://www.python.org/"><img alt="Python 3.14" src="https://img.shields.io/badge/python-3.14-0b6677?logo=python&logoColor=white"></a>
-  <a href="docs/deployment.md"><img alt="Docker image on ghcr.io" src="https://img.shields.io/badge/docker-ghcr.io%2Fsircypkowskyy%2Fexactdocs-0b6677?logo=docker&logoColor=white"></a>
-  <a href="https://sircypkowskyy.github.io/ExactDocs/"><img alt="Documentation" src="https://img.shields.io/badge/docs-sircypkowskyy.github.io%2FExactDocs-0b6677"></a>
+  <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-17171a"></a>
+  <a href="https://www.python.org/"><img alt="Python 3.14" src="https://img.shields.io/badge/python-3.14-17171a?logo=python&logoColor=white"></a>
+  <a href="docs/deployment.md"><img alt="Docker image on ghcr.io" src="https://img.shields.io/badge/docker-ghcr.io%2Fsircypkowskyy%2Fexactdocs-17171a?logo=docker&logoColor=white"></a>
+  <a href="https://sircypkowskyy.github.io/ExactDocs/"><img alt="Documentation" src="https://img.shields.io/badge/docs-sircypkowskyy.github.io%2FExactDocs-17171a"></a>
 </p>
 
 <p align="center">
@@ -83,9 +84,25 @@ differ.</sub>
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/libraries-dark.webp">
-        <img width="100%" src="docs/assets/screenshots/libraries-light.webp" alt="The libraries page: Acme Payments with versions v1.4.0, v1.3.0 and next, and ExactDocs with v0.4.0, v0.3.1 and v0.2.0, each default version shown with its commit.">
+        <img width="100%" src="docs/assets/screenshots/libraries-light.webp" alt="The libraries page: Acme Payments, default version v1.4.0 at commit 3fb0656, 3 versions and 15 articles, and Acme Store, v2.1.0 at 7bd0779, 1 version and 5 articles, each with its project mark, when it was last imported and whether it syncs.">
       </picture>
-      <br><sub>Each library with its imported versions; the default one shows its commit.</sub>
+      <br><sub>Each library with its default version and commit, and how many versions and articles it has.</sub>
+    </td>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/library-dark.webp">
+        <img width="100%" src="docs/assets/screenshots/library-light.webp" alt="The Acme Payments library at its default version, v1.4.0, with the version picker open: v1.4.0 at commit 3fb0656, v1.3.0 at db8b674 and the next branch at 30b96c1.">
+      </picture>
+      <br><sub>A library and its versions, each a tag, branch or commit pinned to its SHA.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/search-dark.webp">
+        <img width="100%" src="docs/assets/screenshots/search-light.webp" alt="Search results for retry across every library: 7 results in 2 libraries, grouped by library and version, each with its heading path, its file and the matching text highlighted.">
+      </picture>
+      <br><sub>One search across the default version of every library.</sub>
     </td>
     <td width="50%">
       <picture>
@@ -96,6 +113,9 @@ differ.</sub>
     </td>
   </tr>
 </table>
+
+<sub>`just screenshots` takes every picture here from the running UI, with the test fixture
+libraries and a stand-in embedding model.</sub>
 
 ## Quick start
 
@@ -169,9 +189,9 @@ of failing. Articles are cut at their headings, never inside a code block or a t
 
 ExactDocs is measured on a [golden set](docs/benchmark/golden-set.md) of 321 questions about the
 docs of Starlette, Pydantic, TanStack Query, Zod and Electron, at three pinned versions each. With
-no model at all, BM25 puts the section that answers in the top 5 for 81.7% of the 267 answerable
-questions, at 57 ms p95. Hybrid search on a small local embedding model (bge-small) reaches up
-to 84.6%. Hosted models and the agent benchmark have not run yet. [Benchmark](docs/benchmark/index.md) has
+no model at all, BM25 puts a section that answers in the top 5 for 87.6% of the 267 answerable
+questions, at 52 ms p95. Hybrid search on a small local embedding model (bge-small) reaches up
+to 91.0%. Hosted models and the agent benchmark have not run yet. [Benchmark](docs/benchmark/index.md) has
 the method, every table and the known weak spots.
 
 ## How it works

@@ -10,10 +10,12 @@ from pathlib import Path
 import pytest
 import yaml
 
+from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
+from exactdocs.ingestion.models import ChunkingConfig, parse_article
 from fixture_repo import git
 from retrieval_eval.dataset import Answer, Hit, Question
 from retrieval_eval.golden import Corpus, PinnedVersion, Project
-from retrieval_eval.golden_run import GoldenRetriever, nested_match
+from retrieval_eval.golden_run import GoldenRetriever, held_match
 from retrieval_eval.ingestion import (
     Article,
     Chunk,
@@ -275,8 +277,8 @@ def test_nothing_measured_is_all_zero_and_fully_covered() -> None:
 # ---------------------------------------------------------------- the match rule
 
 
-def _hit(path: list[str], *, article: str = "a.md", commit: str = "c1") -> Hit:
-    return Hit(version="v1", article=article, heading_path=path, commit_sha=commit)
+def _hit(path: list[str], *, article: str = "a.md", chunk: str | None = "c1") -> Hit:
+    return Hit(version="v1", article=article, heading_path=path, chunk_id=chunk)
 
 
 @pytest.mark.parametrize(
@@ -285,26 +287,71 @@ def _hit(path: list[str], *, article: str = "a.md", commit: str = "c1") -> Hit:
         (["A", "B"], ["A", "B"], True),  # the same section
         (["A"], ["A", "B"], True),  # a finer cut: part of the expected section
         (["A", "B", "C"], ["A", "B"], True),  # a coarser cut that holds it (below)
+        (["A", "D"], ["A", "B"], True),  # a sibling held after a size cut or a merge (#503)
         (["A", "X"], ["A"], False),  # a coarser chunk that does not hold it
-        (["A", "B"], ["A", "C"], False),
+        (["A", "E"], ["A", "B"], False),  # a sibling it does not hold
         ([], ["A"], False),  # text before the first heading is not a prefix of everything
         ([], [], True),
     ],
 )
-def test_the_nested_rule_holds_across_chunking_depths(
+def test_a_hit_answers_every_section_its_chunk_holds(
     expected: list[str], hit: list[str], matches: bool
 ) -> None:
-    held = {("A", "B"): frozenset({("A", "B"), ("A", "B", "C")})}
-    rule = nested_match(lambda h: held.get(tuple(h.heading_path), frozenset()))
+    rule = held_match({"c1": frozenset({("A", "B"), ("A", "B", "C"), ("A", "D")})})
 
     assert rule(_hit(expected), _hit(hit)) is matches
 
 
-def test_the_nested_rule_needs_the_same_version_and_article() -> None:
-    rule = nested_match(lambda _: frozenset())
+def test_only_the_hit_s_own_chunk_counts() -> None:
+    # two parts of section B: the second also holds C, merged into it
+    rule = held_match({"part-0": frozenset({("A", "B")}), "part-1": frozenset({("A", "C")})})
+
+    assert rule(_hit(["A", "C"]), _hit(["A", "B"], chunk="part-1"))
+    assert not rule(_hit(["A", "C"]), _hit(["A", "B"], chunk="part-0"))
+    assert not rule(_hit(["A", "C"]), _hit(["A", "B"], chunk=None))  # nothing says what it holds
+
+
+def test_the_rule_needs_the_same_version_and_article() -> None:
+    rule = held_match({"c1": frozenset({("A",)})})
 
     assert not rule(_hit(["A"]), _hit(["A"], article="b.md"))
     assert not rule(_hit(["A"]), Hit(version="v2", article="a.md", heading_path=["A"]))
+
+
+_RELEASE = (
+    "## 1.0\n\n#### Removed\n\n" + "Dropped an old option. " * 180 + "\n\n"
+    "#### Fixed\n\nTemplates escape HTML.\n\n"
+    "#### Added\n\nA new option.\n"
+)
+"""A release note over 4,000 characters: ``default`` cuts it again, and "Fixed" lands in the
+chunk named after "Added"'s sibling before it (Starlette's 1.0.0rc1, #503)."""
+_SMALL = (
+    "# Guide\n\n" + "Settings come from one file. " * 20 + "\n\n"
+    "## Install\n\nRun pip.\n\n## Upgrade\n\nPass --upgrade.\n\n"
+    "## Configure\n\n" + "Set the timeout option. " * 20 + "\n"
+)
+"""Small sections between two long ones: ``merge-400`` merges "Upgrade" into "Install"'s chunk."""
+
+
+@pytest.mark.parametrize(
+    ("config", "text", "named", "held"),
+    [
+        (ChunkingConfig(split_depth=3, max_chars=4000), _RELEASE, ("1.0", "Fixed"), "Added"),
+        (ChunkingConfig(min_chars=400, max_chars=4000), _SMALL, ("Guide", "Install"), "Upgrade"),
+    ],
+    ids=["default: a size cut", "merge-400: a merge"],
+)
+def test_the_rule_reads_what_the_chunker_put_in_a_chunk(
+    config: ChunkingConfig, text: str, named: tuple[str, ...], held: str
+) -> None:
+    chunks = MarkdownChunker(config).chunk(parse_article("a.md", text))
+    holds = {str(c.position): frozenset(h.heading_path for h in c.headings or ()) for c in chunks}
+    (chunk,) = [c for c in chunks if c.heading_path == named]
+    hit = _hit(list(named), chunk=str(chunk.position))
+    sibling = _hit([*named[:-1], held])
+
+    assert held_match(holds)(sibling, hit)
+    assert not held_match({})(sibling, hit)  # by heading paths alone, a sibling is not a match
 
 
 async def test_the_golden_retriever_asks_the_question_s_project() -> None:

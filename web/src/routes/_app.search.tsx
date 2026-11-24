@@ -1,7 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { GlobalSearchPage } from "@/features/search";
+import { useMessages } from "@/shared/lib/i18n";
 import { MAX_LIBRARY_ID, normalizeQuery } from "@/shared/lib/search-query";
 import { usePageTitle } from "@/shared/lib/use-page-title";
+import { messages } from "./-messages";
 
 const text = (value: unknown) => (typeof value === "string" && value !== "" ? value : undefined);
 
@@ -15,7 +17,8 @@ export const Route = createFileRoute("/_app/search")({
   }),
   component: function Search() {
     const { q, library } = Route.useSearch();
-    usePageTitle(q ? `Search: ${q}` : "Search");
+    const t = useMessages(messages);
+    usePageTitle(q ? t.searchFor(q) : t.searchTitle);
     return <GlobalSearchPage q={q} {...(library && { library })} />;
   },
 });

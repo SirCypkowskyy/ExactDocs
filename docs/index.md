@@ -118,10 +118,28 @@ and its headings.</figcaption>
 
 <figure class="xd-shot" markdown>
 
-![The libraries page: Acme Payments with versions v1.4.0, v1.3.0 and next, and ExactDocs with v0.4.0, v0.3.1 and v0.2.0.](assets/screenshots/libraries-light.webp#only-light){ loading=lazy }
-![The libraries page: Acme Payments with versions v1.4.0, v1.3.0 and next, and ExactDocs with v0.4.0, v0.3.1 and v0.2.0.](assets/screenshots/libraries-dark.webp#only-dark){ loading=lazy }
+![The libraries page: Acme Payments, default version v1.4.0 at commit 3fb0656, 3 versions and 15 articles, and Acme Store, v2.1.0 at 7bd0779, 1 version and 5 articles, each with its project mark, when it was last imported and whether it syncs.](assets/screenshots/libraries-light.webp#only-light){ loading=lazy }
+![The libraries page: Acme Payments, default version v1.4.0 at commit 3fb0656, 3 versions and 15 articles, and Acme Store, v2.1.0 at 7bd0779, 1 version and 5 articles, each with its project mark, when it was last imported and whether it syncs.](assets/screenshots/libraries-dark.webp#only-dark){ loading=lazy }
 
-<figcaption>Each library with its imported versions; the default one shows its commit.</figcaption>
+<figcaption>Each library with its default version and commit, and how many versions and articles it has.</figcaption>
+
+</figure>
+
+<figure class="xd-shot" markdown>
+
+![The Acme Payments library at its default version, v1.4.0, with the version picker open: v1.4.0 at commit 3fb0656, v1.3.0 at db8b674 and the next branch at 30b96c1.](assets/screenshots/library-light.webp#only-light){ loading=lazy }
+![The Acme Payments library at its default version, v1.4.0, with the version picker open: v1.4.0 at commit 3fb0656, v1.3.0 at db8b674 and the next branch at 30b96c1.](assets/screenshots/library-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>A library and its versions, each a tag, branch or commit pinned to its SHA.</figcaption>
+
+</figure>
+
+<figure class="xd-shot" markdown>
+
+![Search results for retry across every library: 7 results in 2 libraries, grouped by library and version, each with its heading path, its file and the matching text highlighted.](assets/screenshots/search-light.webp#only-light){ loading=lazy }
+![Search results for retry across every library: 7 results in 2 libraries, grouped by library and version, each with its heading path, its file and the matching text highlighted.](assets/screenshots/search-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>One search across the default version of every library, grouped by library.</figcaption>
 
 </figure>
 
@@ -141,8 +159,8 @@ result's BM25 and vector rank.</figcaption>
 
 The [golden set](benchmark/golden-set.md) is 321 questions about the docs of Starlette, Pydantic,
 TanStack Query, Zod and Electron, at three pinned versions each. With no model at all, BM25 puts
-the section that answers in the top 5 for 81.7% of the 267 answerable questions, at 57 ms p95.
-Hybrid search on a small local embedding model reaches up to 84.6%. Hosted models have not run
+a section that answers in the top 5 for 87.6% of the 267 answerable questions, at 52 ms p95.
+Hybrid search on a small local embedding model reaches up to 91.0%. Hosted models have not run
 yet. [Recommended defaults](benchmark/defaults.md) has the numbers and the known weak spots.
 
 </div>
@@ -181,8 +199,8 @@ yet. [Recommended defaults](benchmark/defaults.md) has the numbers and the known
 
 !!! note "Which version this site describes"
     The site is published from the `main` branch, so it describes the latest release. Anything not
-    built yet is marked *planned*. The screenshots come from the `develop` branch, with the test
-    fixture library imported.
+    built yet is marked *planned*. The screenshots are taken from the `develop` branch by
+    `just screenshots`, with the test fixture libraries and a stand-in embedding model.
 
 The diagrams are [Mermaid](https://mermaid.js.org), and CI parses every one of them. This site
 loads Mermaid from unpkg, pinned to 12.3.0 (the version CI checks with). That request is made by
