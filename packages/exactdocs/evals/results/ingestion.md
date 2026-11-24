@@ -1,13 +1,13 @@
 # Ingestion benchmark
 
-The golden corpus (starlette, pydantic, tanstack-query, zod, electron; every pinned version) imported with each chunking configuration; BM25 over the golden set's 321 cases (`sha256:7dd51c59057c279a`). Tokens are estimated at 4 characters; a small chunk is under 50 tokens. Definitions: docs/evals.md#the-ingestion-benchmark.
+The golden corpus (starlette, pydantic, tanstack-query, zod, electron; every pinned version) imported with each chunking configuration; BM25 over the golden set's 321 cases (`sha256:a00997851150e3b0`). Tokens are estimated at 4 characters; a small chunk is under 50 tokens. Definitions: docs/evals.md#the-ingestion-benchmark.
 
 | configuration | coverage | held | cut fence / table / list | lost chars | tokens p50 / p95 / max | small | multi-top | empty / wrong path | headings missed / extra | BM25 recall@5 (exact) | MRR |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `default` | 91.6% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 114 / 738 / 8645 | 23.1% | 0.0% | 723 / 102 | 60 / 3 | 81.7% (76.8%) | 0.651 |
-| `h6` | 100.0% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 88 / 516 / 8645 | 32.2% | 0.0% | 723 / 103 | 60 / 3 | 79.8% (79.8%) | 0.626 |
-| `h2` | 53.0% | 381/381 | 3 / 0 / 0 | 11446 of 7940351 | 179 / 1699 / 8645 | 14.3% | 0.6% | 726 / 95 | 60 / 3 | 82.8% (39.3%) | 0.677 |
-| `merge-400` | 77.4% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 183 / 654 / 8645 | 3.0% | 5.1% | 723 / 88 | 60 / 3 | 81.7% (65.2%) | 0.662 |
+| `default` | 91.6% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 114 / 738 / 8645 | 23.1% | 0.0% | 723 / 102 | 60 / 3 | 87.6% (83.5%) | 0.711 |
+| `h6` | 100.0% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 88 / 516 / 8645 | 32.2% | 0.0% | 723 / 103 | 60 / 3 | 85.8% (85.8%) | 0.689 |
+| `h2` | 53.0% | 381/381 | 3 / 0 / 0 | 11446 of 7940351 | 179 / 1699 / 8645 | 14.3% | 0.6% | 726 / 95 | 60 / 3 | 89.1% (49.4%) | 0.737 |
+| `merge-400` | 77.4% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 183 / 654 / 8645 | 3.0% | 5.1% | 723 / 88 | 60 / 3 | 87.6% (73.4%) | 0.715 |
 
 - `default`: today's default (#381): # to ### start a chunk; one over 4,000 characters is cut again at deeper headings.
 - `h6`: every heading starts a chunk; nothing is merged or bounded (the default before #381).

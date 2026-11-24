@@ -163,8 +163,9 @@ In brackets: the 95% interval, a percentile bootstrap over the questions (10,000
 
 Per agent model and arm: accuracy (correct, plus a refusal on an `unanswerable` case) overall,
 per question kind and per project; answers true only of another version; refusals on answerable
-cases; correct refusals on `unanswerable` cases; how often the agent read every expected section
-in full; tool calls; and the cost per question: wall time, input tokens, output tokens with the
+cases; correct refusals on `unanswerable` cases; how often the agent read every part of the
+answer in full (a section of each part, or one of its alternatives); tool calls; and the cost per
+question: wall time, input tokens, output tokens with the
 thinking, thinking tokens on their own, USD. Every rate and mean has a 95% interval, every cost
 its median and 95th percentile, and `exactdocs` is compared with `none` on the same cases:
 McNemar's test for accuracy, a paired permutation test for time and tokens

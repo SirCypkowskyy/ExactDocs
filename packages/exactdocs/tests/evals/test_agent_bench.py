@@ -165,6 +165,8 @@ def test_an_answer_is_grounded_when_every_answering_section_was_read() -> None:
         assert grounded(_info(), _read(wrong)) is False
     cross = _info(hits=[*_info().hits, Hit(version="v1", article="docs/b.md", heading_path=[])])
     assert grounded(cross, _read(install)) is False
+    either = Hit(version="v1", article="docs/b.md", heading_path=[], alternative=True)
+    assert grounded(_info(hits=[*_info().hits, either]), _read(install)) is True  # #501
     assert grounded(_info(kind="unanswerable", facts=[], hits=[]), _read(install)) is None
 
 

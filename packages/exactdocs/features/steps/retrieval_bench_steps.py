@@ -6,14 +6,17 @@ configurations are reported as unavailable.
 """
 
 import asyncio
+import math
 import shutil
 import tempfile
 from pathlib import Path
 
 from behave import given, then, when
 from behave.runner import Context
+from pydantic_evals import Case
 
 from retrieval_bench_stand_ins import HOSTED, stand_in_container, tiny_corpus
+from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question
 from retrieval_eval.golden import fetch, load_corpus, load_golden
 from retrieval_eval.ingestion_cli import CONFIGURATIONS
 from retrieval_eval.retrieval_bench import (
@@ -21,8 +24,10 @@ from retrieval_eval.retrieval_bench import (
     ConfigResult,
     Row,
     markdown,
+    metrics_of,
     paired_tests,
     recommend,
+    row_of,
 )
 from retrieval_eval.retrieval_bench_cli import bench, matrix
 from retrieval_eval.stats import ALPHA
@@ -290,3 +295,61 @@ def step_stays(context: Context) -> None:
     local = next(p for p in context.picks if p.budget is Budget.LOCAL)
     assert local.configuration == "A", local
     assert "the difference is not significant" in " ".join(local.reasons), local.reasons
+
+
+# ---------------------------------------------------------------- any answering section (#501)
+
+
+def _section(article: str, heading: str, *, alternative: bool = False) -> Hit:
+    return Hit(version="v1", article=article, heading_path=[heading], alternative=alternative)
+
+
+def _golden_case(kind: str, sections: list[Hit]) -> Case[Question, Answer, CaseInfo]:
+    return Case(
+        name=f"demo v1: a {kind} question",
+        inputs=Question(query="q", version="v1", project="demo"),
+        metadata=CaseInfo.model_validate({"kind": kind}),
+        expected_output=Answer(hits=sections, reference="r", facts=["f"]),
+    )
+
+
+@given("a case whose answer is in section A or, equally, in section B")
+def step_alternatives(context: Context) -> None:
+    context.a = _section("guide.md", "A")
+    context.b = _section("reference.md", "B", alternative=True)
+    context.case = _golden_case("how-to", [context.a, context.b])
+
+
+@when("a tool returns B in its top 5 and not A")
+def step_returns_b(context: Context) -> None:
+    other = _section("other.md", "X")
+    context.returned = [other, other, context.b.model_copy(update={"alternative": False})]
+    context.row = row_of(context.case, Answer(hits=context.returned))
+
+
+@then("the case counts as a hit for recall@5")
+def step_hit_at_5(context: Context) -> None:
+    assert context.row.rank == len(context.returned), context.row  # B, last
+    metrics = metrics_of([context.row])
+    assert metrics.recall_at_5 == 1
+    assert metrics.section_recall_at_5 == 1  # B answers the case's one part
+
+
+@given("a cross-page case that needs sections A and C")
+def step_two_parts(context: Context) -> None:
+    context.a = _section("guide.md", "A")
+    context.c = _section("api.md", "C")
+    context.case = _golden_case("cross-page", [context.a, context.c])
+
+
+@when("a tool returns only A")
+def step_returns_a(context: Context) -> None:
+    context.row = row_of(context.case, Answer(hits=[context.a]))
+
+
+@then("recall@5 counts the case, and section recall shows that C is missing")
+def step_one_part_of_two(context: Context) -> None:
+    metrics = metrics_of([context.row])
+    assert metrics.recall_at_5 == 1
+    assert (context.row.sections, context.row.section_ranks) == (2, (1,))  # A found, C not
+    assert math.isclose(metrics.section_recall_at_5, 1 / 2)
