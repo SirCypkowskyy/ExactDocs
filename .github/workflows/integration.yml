@@ -229,6 +229,20 @@ jobs:
           echo "::add-mask::$token"
           echo "LIBSQL_DATABASE_URL=$url" >> "$GITHUB_ENV"
           echo "LIBSQL_DATABASE_TOKEN=$token" >> "$GITHUB_ENV"
+      # #538: ExactDocs behind a corporate proxy (tests/bootstrap/test_behind_a_proxy.py). The
+      # forward proxy (Squid, pinned, multi-arch) has to sit on an `--internal` Docker network the
+      # test creates with its stand-ins, which a service container cannot join, so the test starts
+      # it (and the pinned Debian image the checkout's Python runs in) and removes them; pulled
+      # here, so the test's time is the test's.
+      - name: Pull the forward proxy (Squid)
+        run: |
+          proxy="ubuntu/squid:6.6-24.04_beta@sha256:6a097f68bae708cedbabd6188d68c7e2e7a38cedd05a176e1cc0ba29e3bbe029"
+          docker pull --quiet "$proxy"
+          docker pull --quiet "buildpack-deps:trixie-scm@sha256:505da14ee66b95066dae9eb29490a243b66bd09d45766acc2e09a0099e1c4a7c"
+          {
+            echo "EXACTDOCS_TEST_PROXY_IMAGE=$proxy"
+            echo "EXACTDOCS_REQUIRE_PROXY=1" # the behind-a-proxy test never skips here
+          } >> "$GITHUB_ENV"
       # The tests the fast jobs leave out, and only those: `-m integration` (the eval-marked ones
       # stay with the release's eval job).
       - name: pytest (integration; adapters on PostgreSQL and the servers)
@@ -313,6 +327,13 @@ jobs:
       - name: Stop libSQL server (database)
         if: ${{ always() }}
         run: docker rm -f "exactdocs-libsql-db-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >/dev/null || true
+      # The behind-a-proxy test removes its containers and networks itself; this catches a run
+      # that was killed before it could.
+      - name: Remove what the behind-a-proxy test left
+        if: ${{ always() }}
+        run: |
+          docker ps -aq --filter name=exd-proxy- | xargs -r docker rm -f >/dev/null || true
+          docker network ls -q --filter name=exd-proxy- | xargs -r docker network rm >/dev/null || true
       - uses: actions/upload-artifact@v7
         if: ${{ !cancelled() }}
         with:

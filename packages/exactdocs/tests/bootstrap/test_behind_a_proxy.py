@@ -143,7 +143,7 @@ def docker() -> Iterator[Docker]:
         if os.environ.get("EXACTDOCS_REQUIRE_PROXY") == "1":
             pytest.fail(f"EXACTDOCS_REQUIRE_PROXY=1 but {reason}")
         pytest.skip(reason)
-    python_home = Path(sys.base_prefix)
+    python_home = Path(sys.base_prefix).resolve()
     if python_home.parts[:2] in {("/", "usr"), ("/", "bin")}:
         pytest.skip(f"Python lives in {python_home}, which cannot be mounted into a container")
     runner = Docker(tag=f"exd-proxy-{os.getpid()}-{secrets.token_hex(3)}")
@@ -161,7 +161,10 @@ def _common() -> list[str]:
         its virtual environment and its Python mounted read-only at the same paths; the
         fixtures on the path.
     """
-    paths = dict.fromkeys([ROOT, Path(sys.prefix), Path(sys.base_prefix).resolve()])
+    # The Python installations' folder, not just this one: the environment's interpreter is a
+    # link through a version alias next to it (uv's ``cpython-3.14-...``).
+    pythons = Path(sys.base_prefix).resolve().parent
+    paths = dict.fromkeys([ROOT, Path(sys.prefix), pythons])
     return [
         "--user", f"{os.getuid()}:{os.getgid()}",
         *(option for path in paths for option in ("-v", f"{path}:{path}:ro")),
