@@ -50,7 +50,7 @@ jobs:
       refresh: ${{ steps.meta.outputs.refresh }}
       created: ${{ steps.meta.outputs.created }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
       - id: meta
@@ -125,8 +125,8 @@ jobs:
     env:
       FORCE_COLOR: "1"
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
       - name: Install
@@ -190,7 +190,7 @@ jobs:
           uv run python -c "from exactdocs.bootstrap.constants import PINNED_MODEL_REVISIONS as p;
           print('key=local-models-' + '-'.join(m.replace('/', '_') + '@' + r[:12] for m, r in
           sorted(p.items())))" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .models
           key: ${{ steps.models-key.outputs.key }}
@@ -217,7 +217,7 @@ jobs:
           uv run python packages/exactdocs/evals/run_retrieval_eval.py
           --configured-models --local-roles embedding,reranker --modes bm25,hybrid
           --report reports/evals/local-rerank.json
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: retrieval-eval
@@ -246,18 +246,18 @@ jobs:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           package_json_file: web/package.json
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: web/.nvmrc
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm build
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: web-dist
           path: web/dist/
@@ -270,9 +270,9 @@ jobs:
     env:
       UV_DYNAMIC_VERSIONING_BYPASS: ${{ needs.meta.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: web-dist
           path: packages/exactdocs/src/exactdocs/_web
@@ -285,11 +285,12 @@ jobs:
           test -f "dist/exactdocs-$v-py3-none-any.whl"
           test -f "dist/exactdocs_kernel-$v-py3-none-any.whl"
           unzip -l "dist/exactdocs-$v-py3-none-any.whl" | grep -q 'exactdocs/_web/index.html'
-          uvx twine check --strict dist/*
+          # An exact twine: the release build runs no tool at a version it was not tested with.
+          uvx twine==7.0.0 check --strict dist/*
       - name: Smoke test the wheel like uvx would
         run: |
           uv run --isolated --no-project --find-links dist --with "exactdocs==${{ needs.meta.outputs.version }}" exactdocs --version
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: python-dist
           path: dist/
@@ -309,8 +310,8 @@ jobs:
     permissions:
       id-token: write # PyPI trusted publishing, no API token stored anywhere
     steps:
-      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
-      - uses: actions/download-artifact@v8
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: python-dist
           path: dist
@@ -327,8 +328,8 @@ jobs:
     permissions:
       id-token: write
     steps:
-      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
-      - uses: actions/download-artifact@v8
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: python-dist
           path: dist
@@ -354,7 +355,7 @@ jobs:
         variant: [base, ai, local]
         arch: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Hosted runners start with little free disk; -local, the build cache and the scan's
       # `docker save` copy need several GB. Never on the self-hosted runner.
       - name: Free disk space
@@ -366,16 +367,16 @@ jobs:
       # build, so DEBIAN_REFRESH is the release's date (needs.meta.outputs.refresh, the same in
       # `image`, so it reuses these layers).
       # binfmt for the cross-built amd64 leg on the ARM64 runner (self-hosted mode only).
-      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         if: matrix.arch == 'amd64' && runner.arch == 'ARM64'
         with:
           platforms: amd64
-      - uses: docker/setup-buildx-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       # Built and loaded. The gate fails on a fixable CRITICAL/HIGH finding; accepted
       # ones are in .trivyignore (docs/releasing.md). The GitHub Actions cache, one scope per
       # variant and architecture, hands these layers to the build in `image`.
       - name: Build the image to scan
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: deploy/Dockerfile
@@ -425,16 +426,16 @@ jobs:
         variant: [base, ai, local]
         arch: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Free disk space
         if: runner.environment == 'github-hosted'
         run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL
-      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
         if: matrix.arch == 'amd64' && runner.arch == 'ARM64'
         with:
           platforms: amd64
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         if: github.event_name == 'push'
         with:
           registry: ghcr.io
@@ -443,7 +444,7 @@ jobs:
       # The image's labels (title, description, licenses, version, revision, created) come from
       # the variant's stage of deploy/Dockerfile and these build arguments.
       - id: build
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: deploy/Dockerfile
@@ -467,7 +468,7 @@ jobs:
           [[ "$DIGEST" == sha256:* ]] || { echo "::error::the build reported no digest"; exit 1; }
           mkdir -p "$RUNNER_TEMP/digests"
           touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: github.event_name == 'push'
         with:
           name: digest-${{ matrix.variant }}-${{ matrix.arch }}
@@ -506,13 +507,13 @@ jobs:
             description: Self-hosted, version-accurate documentation for AI coding agents, with local embedding and reranking models (exactdocs[ai,local])
             licenses: Apache-2.0 AND MIT
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: digest-${{ matrix.variant }}-*
           path: ${{ runner.temp }}/digests
           merge-multiple: true
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/login-action@v4
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -520,7 +521,7 @@ jobs:
       # <v>, <v>-ai, <v>-local; stable also X.Y and latest, dev also <v>-<sha7> and dev, each with
       # the variant's suffix (latest-ai, dev-local, ...). The annotations go on the index.
       - id: tags
-        uses: docker/metadata-action@v6
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         env:
           DOCKER_METADATA_ANNOTATIONS_LEVELS: index
         with:
@@ -568,7 +569,7 @@ jobs:
           fi
           digest=$(docker buildx imagetools inspect --format '{{json .Manifest}}' "$REF" | jq -r .digest)
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
-      - uses: sigstore/cosign-installer@v4.1.3 # upstream has no floating major tag
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
       - name: Sign image (keyless)
         run: cosign sign --yes "${{ needs.meta.outputs.image }}@${{ steps.index.outputs.digest }}"
 
@@ -580,7 +581,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: python-dist
           path: dist
