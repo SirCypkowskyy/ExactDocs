@@ -99,7 +99,7 @@ export function ActiveFilters<T>({ model }: { model: DataTableModel<T> }) {
       chips.push({
         key: param.id,
         title: param.title,
-        value,
+        value: param.format?.(value) ?? value,
         ...(param.mono && { mono: true }),
         remove: () => model.setParam(param.id, undefined),
       });

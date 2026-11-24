@@ -69,6 +69,8 @@ export interface TableParam {
   title: string;
   /** Set the value in mono (an ID, a ref). */
   mono?: boolean;
+  /** The value in words for its chip (an account's name for its ID); the value itself if left out. */
+  format?: (value: string) => string;
 }
 
 /** What client mode needs of a query: a `useQuery` result whose data is the rows. */
