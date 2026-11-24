@@ -6,12 +6,14 @@ from http import HTTPStatus
 from behave import given, then, when
 from behave.runner import Context
 
+from exactdocs.identity.constants import SESSION_COOKIE
 from steps.import_steps import (
     JOB_SECONDS,
     LIBRARY,
     import_version,
     start,
     version_commit,
+    wait_for_job,
 )
 
 EVERY_SECOND = "* * * * * *"  # DBOS cron, seconds first
@@ -145,3 +147,69 @@ def step_new_commit(context: Context) -> None:
 @then("no tag was imported")
 def step_no_tag(context: Context) -> None:
     assert _versions(context) == {"next": "manual", "v1.3.0": "manual"}
+
+
+ALICE_PHRASE = "alice's long passphrase"
+
+
+@given('"{username}" is signed in')
+def step_signed_in(context: Context, username: str) -> None:
+    """Create an operator account and sign it in; the admin's cookie stays the client's own."""
+    admin = context.client.cookies.get(SESSION_COOKIE)
+    body = {"username": username, "password": ALICE_PHRASE, "role": "admin"}
+    created = context.client.post("/api/v1/users", json=body)
+    assert created.status_code == HTTPStatus.CREATED, created.text
+    # Without the admin's cookie: a sign-in ends the session the request carries.
+    request = context.client.build_request(
+        "POST", "/api/v1/session", json={"username": username, "password": ALICE_PHRASE}
+    )
+    request.headers.pop("cookie", None)
+    signed_in = context.client.send(request)
+    assert signed_in.status_code == HTTPStatus.CREATED, signed_in.text
+    context.person_session = signed_in.cookies.get(SESSION_COOKIE)
+    assert context.person_session
+    context.client.cookies.clear()  # every other step acts as the admin, as before
+    context.client.cookies.set(SESSION_COOKIE, admin)
+
+
+@when("alice re-syncs the library")
+def step_person_syncs(context: Context) -> None:
+    request = context.client.build_request("POST", f"/api/v1/libraries{LIBRARY}/sync")
+    request.headers["cookie"] = f"{SESSION_COOKIE}={context.person_session}"
+    response = context.client.send(request)
+    assert response.status_code == HTTPStatus.ACCEPTED, response.text
+    context.job = wait_for_job(context, response.headers["Location"].rsplit("/", 1)[-1])
+    assert context.job["state"] == "succeeded", context.job
+
+
+@then('the re-sync job was started by "{username}", by hand')
+def step_started_by(context: Context, username: str) -> None:
+    job = context.job
+    assert job["kind"] == "refresh", job
+    assert job["created_by"] is not None, job
+    assert job["created_by"]["username"] == username, job
+    assert job["created_by"]["id"], job
+    assert job["origin"] == "manual", job
+
+
+@then("the newest re-sync job was started by nobody, automatically")
+def step_started_by_nobody(context: Context) -> None:
+    newest = next(job for job in context.jobs if job["kind"] == "refresh")
+    assert newest["id"] != context.job["id"], newest
+    assert (newest["state"], newest["created_by"], newest["origin"]) == (
+        "succeeded",
+        None,
+        "auto",
+    ), newest
+    context.auto_job = newest
+
+
+@then("only that job is listed when the jobs are filtered to automatic ones")
+def step_only_auto(context: Context) -> None:
+    response = context.client.get("/api/v1/jobs", params={"origin": "auto"})
+    assert response.status_code == HTTPStatus.OK, response.text
+    body = response.json()
+    assert [job["id"] for job in body["jobs"]] == [context.auto_job["id"]], body
+    assert body["total"] == 1, body
+    manual = context.client.get("/api/v1/jobs", params={"origin": "manual"}).json()
+    assert context.auto_job["id"] not in [job["id"] for job in manual["jobs"]], manual

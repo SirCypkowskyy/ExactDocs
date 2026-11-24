@@ -25,6 +25,8 @@ from exactdocs.ingestion.dtos import (
     GetLibraryAccessQuery,
     JobList,
     JobListQuery,
+    JobStats,
+    JobStatsQuery,
     JobSummary,
     LatestJobs,
     LibraryAccess,
@@ -69,6 +71,7 @@ from exactdocs.ingestion.ports.driving import (
     DisableWebhook,
     GetAutoSync,
     GetJob,
+    GetJobStats,
     GetLibraryAccess,
     GetWebhook,
     ListJobs,
@@ -517,9 +520,10 @@ def _read_router(
     async def list_all(query: Annotated[ListJobsQuery, Query()]) -> JobList:
         """List the jobs of every library the caller may read, newest first unless sorted.
 
-        Filter with `library`, `state`, `kind`, `version`, `q`, `created_after` and
-        `created_before`; `total` counts every match (never a job of a library hidden from the
-        caller).
+        Filter with `library`, `state`, `kind`, `origin` (`auto`: the instance queued it on its
+        own; `manual`), `version`, `q`, `created_after` and `created_before`; `total` counts
+        every match (never a job of a library hidden from the caller). `created_by` names the
+        person whose request queued a job.
 
         Args:
             query: The filters, the sort, the page size and the cursor of the previous page.
@@ -1080,5 +1084,45 @@ def build_webhook_settings_router(
             The webhook, now off.
         """
         return await disable_webhook(WebhookQuery(library=f"/{owner}/{repo}"))
+
+    return router
+
+
+def build_stats_router(
+    *, get_job_stats: GetJobStats, require_operator: Callable[..., Awaitable[object]]
+) -> APIRouter:
+    """Expose the job statistics, for operators: they count the jobs of every library.
+
+    Self-contained (its own ``/stats`` prefix and route), so other statistics routers sit next
+    to it without touching it.
+
+    Args:
+        get_job_stats: Counts the jobs queued per UTC day.
+        require_operator: Refuses (403) a caller that is not an operator.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(
+        prefix="/stats", tags=["ingestion"], dependencies=[Depends(require_operator)]
+    )
+
+    @router.get("/jobs", name="get_job_stats")
+    async def job_stats(query: Annotated[JobStatsQuery, Query()]) -> JobStats:
+        """Count the jobs queued on each UTC day from `from` to `to`, by state and by kind.
+
+        Every day of the range is listed, a day without jobs counting 0, and each day lists
+        every state and every kind. A job counts on the day it was queued, in the state it is
+        in now. Only `bucket=day` exists. The range is at most 366 days; one that ends before
+        it starts or is longer is a 422 `invalid_range`. Operators only (a session or an API
+        token of an `admin`): the counts cover every library.
+
+        Args:
+            query: The bucket and the days.
+
+        Returns:
+            One entry per day, oldest first.
+        """
+        return await get_job_stats(query)
 
     return router

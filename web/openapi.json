@@ -579,7 +579,7 @@
           "identity"
         ],
         "summary": "Callback",
-        "description": "Finish signing in: the identity provider sends the browser here.\n\nThe binding cookie is cleared whatever happens. Refusals go back to the sign-in page\nwith `?error=` and one of `sign_in_failed`, `sign_in_cancelled`, `not_allowed`,\n`account_disabled`, `username_unavailable` or `provider_unavailable`; no session is\ncreated then.",
+        "description": "Finish signing in (or linking): the identity provider sends the browser here.\n\nThe binding cookie is cleared whatever happens. Refusals go back to the sign-in page\nwith `?error=` and one of `sign_in_failed`, `sign_in_cancelled`, `not_allowed`,\n`not_linked` (the provider creates no accounts, and nobody linked this identity),\n`account_disabled`, `username_unavailable`, `provider_access_revoked` or\n`provider_unavailable`; no session is created then. A link started from Account\nsettings goes back to where it started, with `?linked=<provider>` or\n`?link_error=<code>`, and leaves the session as it was.",
         "operationId": "identity-callback",
         "parameters": [
           {
@@ -645,7 +645,7 @@
         ],
         "responses": {
           "303": {
-            "description": "Signed in, or back to the sign-in page with `?error=`"
+            "description": "Signed in, or back to the sign-in page with `?error=`; after a link, back to where it started, with `?linked=` or `?link_error=`"
           },
           "400": {
             "description": "The request cannot be processed (error code in `error`).",
@@ -706,6 +706,117 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/{provider}/icon": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Icon",
+        "description": "Serve a provider's own icon, from this server (never from the provider's).\n\nOnly for a provider with an operator's `icon_file` (its `icon_url`); a built-in icon\n(`icon`) is the web UI's own, and anything else is `no_icon` (404). The response may be\ncached: its URL carries the icon's version, which is also its ETag.",
+        "operationId": "identity-icon",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          },
+          {
+            "name": "if-none-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-None-Match"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The icon (PNG, WebP or a sanitised SVG)",
+            "content": {
+              "image/png": {},
+              "image/webp": {},
+              "image/svg+xml": {}
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The browser's copy is current (`If-None-Match`)"
           }
         }
       }
@@ -1081,7 +1192,7 @@
           "identity"
         ],
         "summary": "Get Users",
-        "description": "List the local accounts, disabled ones included, oldest first unless `sort` says otherwise, a page at a time. Filter with `q`, `role` and `disabled`; `total` counts every match. Operators only (`admin`): any other signed-in account is refused with `forbidden` (403). Needs a signed-in session; an API token is refused (401), so a leaked token cannot create accounts. There is no self-signup: accounts are created here, by `exactdocs user create` or, for the first admin, by the setup.",
+        "description": "List the local accounts, disabled ones included, oldest first unless `sort` says otherwise, a page at a time. Filter with `q`, `role`, `disabled` and `provider`; `total` counts every match. Each account shows when it was last active (to the hour), where it signs in and how many live API tokens it holds; every account's tokens are at `GET /users/tokens`. Operators only (`admin`): any other signed-in account is refused with `forbidden` (403). Needs a signed-in session; an API token is refused (401), so a leaked token cannot create accounts. There is no self-signup: accounts are created here, by `exactdocs user create` or, for the first admin, by the setup.",
         "operationId": "identity-get_users",
         "security": [
           {
@@ -1174,10 +1285,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Sort by one of created_at, username, role; prefix `-` for descending. Default: `created_at`. An unknown field is a 422.",
+              "description": "Sort by one of created_at, username, role, last_active_at, token_count; prefix `-` for descending. Default: `created_at`. An unknown field is a 422.",
               "title": "Sort"
             },
-            "description": "Sort by one of created_at, username, role; prefix `-` for descending. Default: `created_at`. An unknown field is a 422."
+            "description": "Sort by one of created_at, username, role, last_active_at, token_count; prefix `-` for descending. Default: `created_at`. An unknown field is a 422."
           },
           {
             "name": "role",
@@ -1221,6 +1332,28 @@
               "title": "Disabled"
             },
             "description": "`true`: only disabled accounts; `false`: only enabled ones."
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 256
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only accounts that sign in through one of these: `password` for a local account, else the provider's name, as `provider` shows it (the provider the account was created through); repeat for several.",
+              "title": "Provider"
+            },
+            "description": "Only accounts that sign in through one of these: `password` for a local account, else the provider's name, as `provider` shows it (the provider the account was created through); repeat for several."
           }
         ],
         "responses": {
@@ -1696,13 +1829,247 @@
         }
       }
     },
+    "/api/v1/users/tokens": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "List All Tokens",
+        "description": "List the API tokens of every account, newest first, never their secrets. Operators only.\n\nEach token comes with its owner (`owner_id`, `owner`), its prefix, its expiry and its\nlast use, expired ones not yet removed included. Filter with `q` (the token's name),\n`owner_id`, `expired` and `unused`; order with `sort`; `total` counts every match. Needs\na signed-in session; an API token is refused (401).",
+        "operationId": "identity-list_all_tokens",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "How many items per page.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "How many items per page."
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it.",
+              "title": "Cursor"
+            },
+            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it."
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 10000,
+                  "minimum": 0
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it.",
+              "title": "Offset"
+            },
+            "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it."
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only items whose name contains this text, any case: a user's username, a token's name, a\ngrant's username or group.",
+              "title": "Q"
+            },
+            "description": "Only items whose name contains this text, any case: a user's username, a token's name, a\ngrant's username or group."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort by one of created_at, name, expires_at, last_used_at, owner; prefix `-` for descending. Default: `-created_at`. A token that never expires or was never used sorts first by `expires_at` or `last_used_at`; `owner` sorts by username. An unknown field is a 422.",
+              "title": "Sort"
+            },
+            "description": "Sort by one of created_at, name, expires_at, last_used_at, owner; prefix `-` for descending. Default: `-created_at`. A token that never expires or was never used sorts first by `expires_at` or `last_used_at`; `owner` sorts by username. An unknown field is a 422."
+          },
+          {
+            "name": "owner_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only the tokens of the account with this id.",
+              "title": "Owner Id"
+            },
+            "description": "Only the tokens of the account with this id."
+          },
+          {
+            "name": "expired",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`true`: only tokens whose expiry has passed (they no longer work); `false`: only the\nothers.",
+              "title": "Expired"
+            },
+            "description": "`true`: only tokens whose expiry has passed (they no longer work); `false`: only the\nothers."
+          },
+          {
+            "name": "unused",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "`true`: only tokens that never authenticated a request; `false`: only used ones.",
+              "title": "Unused"
+            },
+            "description": "`true`: only tokens that never authenticated a request; `false`: only used ones."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AllTokensList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/access-log": {
       "get": {
         "tags": [
           "identity"
         ],
         "summary": "List Access Log",
-        "description": "List the access changes of every library, newest first. Operators only.\n\nCreations, grants (a new role, or another one), revocations, ownership transfers and\nremovals, each with who made it and when; a removed library's events stay. Filter with\n`library` and `change`; `total` counts every match.",
+        "description": "List the access changes of every library, newest first. Operators only.\n\nCreations, grants (a new role, or another one), revocations, ownership transfers and\nremovals, each with who made it and when; a removed library's events stay. Filter with\n`library`, `change`, `actor`, `subject`, `at_after` and `at_before`, and order with\n`sort`; `total` counts every match.",
         "operationId": "identity-list_access_log",
         "security": [
           {
@@ -1737,10 +2104,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it.",
+              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it (another `sort` is a 422\n`invalid_cursor`).",
               "title": "Cursor"
             },
-            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it."
+            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it (another `sort` is a 422\n`invalid_cursor`)."
           },
           {
             "name": "offset",
@@ -1761,6 +2128,25 @@
               "title": "Offset"
             },
             "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort by one of at, library, change; prefix `-` for descending. Default: `-at` (newest first). Ties go by the event's ID (the order it was recorded in), in the same direction. An unknown field is a 422.",
+              "title": "Sort"
+            },
+            "description": "Sort by one of at, library, change; prefix `-` for descending. Default: `-at` (newest first). Ties go by the event's ID (the order it was recorded in), in the same direction. An unknown field is a 422."
           },
           {
             "name": "change",
@@ -1791,6 +2177,84 @@
             "description": "Only events of these changes; repeat for several."
           },
           {
+            "name": "actor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only changes made by this person: a username (any case), or the account ID the log shows as `actor` for an account that no longer exists. Changes the instance made (`actor` null) never match.",
+              "title": "Actor"
+            },
+            "description": "Only changes made by this person: a username (any case), or the account ID the log shows as `actor` for an account that no longer exists. Changes the instance made (`actor` null) never match."
+          },
+          {
+            "name": "subject",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only changes about this user or group: a username (any case), the account ID the log shows as `subject` for an account that no longer exists, or a group name (exact case, as the log shows it). A user and a group of the same name both match. Deletions, which are about nobody, never match.",
+              "title": "Subject"
+            },
+            "description": "Only changes about this user or group: a username (any case), the account ID the log shows as `subject` for an account that no longer exists, or a group name (exact case, as the log shows it). A user and a group of the same name both match. Deletions, which are about nobody, never match."
+          },
+          {
+            "name": "at_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events that happened at or after this time (ISO 8601; no offset means UTC).",
+              "title": "At After"
+            },
+            "description": "Only events that happened at or after this time (ISO 8601; no offset means UTC)."
+          },
+          {
+            "name": "at_before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events that happened before this time (ISO 8601; no offset means UTC).",
+              "title": "At Before"
+            },
+            "description": "Only events that happened before this time (ISO 8601; no offset means UTC)."
+          },
+          {
             "name": "library",
             "in": "query",
             "required": false,
@@ -1818,6 +2282,490 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/AccessLogPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stats/usage": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "Get Usage Stats",
+        "description": "Report the instance's reads, searches and agent answers per period. Operators only.\n\n`series` has one bucket per `period` (UTC days, ISO weeks, months or years; `periods`\nof them, the last holding `until`), zeros included; `groups` breaks the whole range\ndown `by` library, person (`account`) or person and API token (`token`). Only counts\nare kept, never what was read or asked. People are named only while the people\nleaderboard is on (`GET /stats/settings`) and only if they opted in\n(`leaderboard_opt_in`); everyone else is summed into one group with `others: true`.\nA search or an answer over several libraries counts to no library (`library: null`).",
+        "operationId": "usage-get_usage_stats",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Period",
+              "description": "What each bucket adds up: `day` (UTC), `week` (ISO, Monday first), `month` or `year`.",
+              "default": "day"
+            },
+            "description": "What each bucket adds up: `day` (UTC), `week` (ISO, Monday first), `month` or `year`."
+          },
+          {
+            "name": "periods",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 400,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How many buckets, the last one holding `until`; default 30 days, 12 weeks, 12 months or 2\nyears. Counts older than the retention are gone, so older buckets are zeros.",
+              "title": "Periods"
+            },
+            "description": "How many buckets, the last one holding `until`; default 30 days, 12 weeks, 12 months or 2\nyears. Counts older than the retention are gone, so older buckets are zeros."
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A day of the last bucket (UTC); default today.",
+              "title": "Until"
+            },
+            "description": "A day of the last bucket (UTC); default today."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "How many groups to list, most reads first.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "How many groups to list, most reads first."
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Grouping",
+              "description": "`library`, `account` (people), `token` (people and their API tokens), or `none`. People\nare named only while the people leaderboard is on and only if they opted in; everyone else\nis summed into one group with `others` set.",
+              "default": "none"
+            },
+            "description": "`library`, `account` (people), `token` (people and their API tokens), or `none`. People\nare named only while the people leaderboard is on and only if they opted in; everyone else\nis summed into one group with `others` set."
+          },
+          {
+            "name": "library",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256,
+                  "pattern": "^/[^/]+/[^/]+$"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only this library's counts (`/owner/repo`, any letter case).",
+              "title": "Library"
+            },
+            "description": "Only this library's counts (`/owner/repo`, any letter case)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/account/providers": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Get Providers",
+        "description": "List the signed-in account's ways to sign in: its password and every provider.\n\nEach configured provider says whether an identity of it is linked and whether it may\nbe linked or unlinked now; an identity of a provider no longer configured is listed\nlast, to be unlinked.",
+        "operationId": "identity-get_providers",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountProviders"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/account/providers/{provider}/link": {
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Link Provider",
+        "description": "Start linking an identity of this provider to the signed-in account. Answers `redirect_url`, where the browser goes next (the provider's sign-in), and sets the `exactdocs_sign_in` binding cookie, exactly as `GET /auth/{provider}/start` does; the attempt is also bound to this session. The provider then comes back to `GET /auth/{provider}/callback`, which links the identity to this account (no new session) and redirects to `return_to` with `?linked=<provider>`, or `?link_error=<code>`: `identity_linked_elsewhere`, `provider_linked`, `not_allowed`, `sign_in_failed`, `sign_in_cancelled`, `unauthenticated` (the session ended meanwhile) or `provider_unavailable`. Refused at once with `provider_linked` (409) when the account has an identity of the provider already, `unknown_provider` (404) for a provider not configured, and `provider_unavailable` (429) when it cannot be reached. Needs a session cookie (401 otherwise, an API token included).",
+        "operationId": "identity-link_provider",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/StartAccountLinkRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountLinkStart"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/account/providers/{provider}": {
+      "delete": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Delete Provider",
+        "description": "Unlink the signed-in account's identity of this provider: it no longer signs the account in. Answers the account's providers as `GET /account/providers` does. Refused with `last_sign_in_method` (409) for the provider an account without a password was created through (its role, groups and access follow it, and it is the account's way in), and with `provider_not_linked` (404) when the account has no identity of this provider. Needs a session cookie.",
+        "operationId": "identity-delete_provider",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountProviders"
                 }
               }
             }
@@ -2621,7 +3569,7 @@
           "identity"
         ],
         "summary": "List Library Access Log",
-        "description": "List who changed the library's access, how and when, newest first. Library admins only.\n\nIts creation, grants (a new role, or another one), revocations and ownership transfers,\neach with who made it and when. Operators see every event under the library's ID;\nanyone else only those since it was last removed. Filter with `change`; `total` counts\nevery match.",
+        "description": "List who changed the library's access, how and when, newest first. Library admins only.\n\nIts creation, grants (a new role, or another one), revocations and ownership transfers,\neach with who made it and when. Operators see every event under the library's ID;\nanyone else only those since it was last removed. Filter with `change`, `actor`,\n`subject`, `at_after` and `at_before`, and order with `sort`; `total` counts every\nmatch.",
         "operationId": "identity-list_library_access_log",
         "security": [
           {
@@ -2677,10 +3625,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it.",
+              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it (another `sort` is a 422\n`invalid_cursor`).",
               "title": "Cursor"
             },
-            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it."
+            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it (another `sort` is a 422\n`invalid_cursor`)."
           },
           {
             "name": "offset",
@@ -2701,6 +3649,25 @@
               "title": "Offset"
             },
             "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort by one of at, library, change; prefix `-` for descending. Default: `-at` (newest first). Ties go by the event's ID (the order it was recorded in), in the same direction. An unknown field is a 422.",
+              "title": "Sort"
+            },
+            "description": "Sort by one of at, library, change; prefix `-` for descending. Default: `-at` (newest first). Ties go by the event's ID (the order it was recorded in), in the same direction. An unknown field is a 422."
           },
           {
             "name": "change",
@@ -2729,6 +3696,84 @@
               "title": "Change"
             },
             "description": "Only events of these changes; repeat for several."
+          },
+          {
+            "name": "actor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only changes made by this person: a username (any case), or the account ID the log shows as `actor` for an account that no longer exists. Changes the instance made (`actor` null) never match.",
+              "title": "Actor"
+            },
+            "description": "Only changes made by this person: a username (any case), or the account ID the log shows as `actor` for an account that no longer exists. Changes the instance made (`actor` null) never match."
+          },
+          {
+            "name": "subject",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only changes about this user or group: a username (any case), the account ID the log shows as `subject` for an account that no longer exists, or a group name (exact case, as the log shows it). A user and a group of the same name both match. Deletions, which are about nobody, never match.",
+              "title": "Subject"
+            },
+            "description": "Only changes about this user or group: a username (any case), the account ID the log shows as `subject` for an account that no longer exists, or a group name (exact case, as the log shows it). A user and a group of the same name both match. Deletions, which are about nobody, never match."
+          },
+          {
+            "name": "at_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events that happened at or after this time (ISO 8601; no offset means UTC).",
+              "title": "At After"
+            },
+            "description": "Only events that happened at or after this time (ISO 8601; no offset means UTC)."
+          },
+          {
+            "name": "at_before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events that happened before this time (ISO 8601; no offset means UTC).",
+              "title": "At Before"
+            },
+            "description": "Only events that happened before this time (ISO 8601; no offset means UTC)."
           }
         ],
         "responses": {
@@ -2803,6 +3848,337 @@
             }
           }
         }
+      }
+    },
+    "/api/v1/stats/jobs": {
+      "get": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Get Job Stats",
+        "description": "Count the jobs queued on each UTC day from `from` to `to`, by state and by kind.\n\nEvery day of the range is listed, a day without jobs counting 0, and each day lists\nevery state and every kind. A job counts on the day it was queued, in the state it is\nin now. Only `bucket=day` exists. The range is at most 366 days; one that ends before\nit starts or is longer is a 422 `invalid_range`. Operators only (a session or an API\ntoken of an `admin`): the counts cover every library.",
+        "operationId": "ingestion-get_job_stats",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "bucket",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "const": "day",
+              "type": "string",
+              "description": "How jobs are grouped: `day` (UTC days) is the only bucket.",
+              "default": "day",
+              "title": "Bucket"
+            },
+            "description": "How jobs are grouped: `day` (UTC days) is the only bucket."
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The first UTC day counted (`YYYY-MM-DD`); default: 29 days before `to`. At most 366 days are counted at once.",
+              "title": "From"
+            },
+            "description": "The first UTC day counted (`YYYY-MM-DD`); default: 29 days before `to`. At most 366 days are counted at once."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The last UTC day counted (`YYYY-MM-DD`), included; default: today (UTC).",
+              "title": "To"
+            },
+            "description": "The last UTC day counted (`YYYY-MM-DD`), included; default: today (UTC)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/account/preferences": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Get Account Preferences",
+        "description": "Return the caller's interface preferences.\n\n`saved` is `false` while the account never saved any: `preferences` then holds the\ndefaults, and a browser signing in keeps the preferences it already applies (and saves\nthem). Once `saved` is `true`, the account's preferences win over a browser's.",
+        "operationId": "identity-get_account_preferences",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountPreferences"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Save Account Preferences",
+        "description": "Save the caller's interface preferences, replacing the ones it had.\n\nEvery preference is required. An unknown key or a value the interface does not offer is\na 422 `validation_error` naming the field, and nothing is saved.",
+        "operationId": "identity-save_account_preferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InterfacePreferences"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountPreferences"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ]
       }
     },
     "/api/v1/libraries/{owner}/{repo}/asset": {
@@ -3395,7 +4771,7 @@
                 {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/VersionOrigin-Input"
+                    "$ref": "#/components/schemas/exactdocs__catalog__models__VersionOrigin"
                   }
                 },
                 {
@@ -3723,7 +5099,7 @@
           "catalog"
         ],
         "summary": "List All",
-        "description": "List the libraries the caller may read, a page at a time; sort by ID unless told.\n\nFilter with `q`, `has_versions`, `ai_enabled`, `updated_after` and `updated_before`;\n`total` counts every match (never a library hidden from the caller).",
+        "description": "List the libraries the caller may read, a page at a time; sort by ID unless told.\n\nFilter with `q`, `has_versions`, `ai_enabled`, `sync_state` (the state of the library's\nnewest import job), `updated_after` and `updated_before`; `total` counts every match\n(never a library hidden from the caller).",
         "operationId": "catalog-list_all",
         "security": [
           {
@@ -3859,6 +5235,34 @@
               "title": "Ai Enabled"
             },
             "description": "`true`: only libraries that may use AI providers; `false`: only those with AI turned off."
+          },
+          {
+            "name": "sync_state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "queued",
+                      "running",
+                      "succeeded",
+                      "failed",
+                      "cancelled"
+                    ],
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only libraries whose latest sync (their newest `import` or `refresh` job) is in one of these states; repeat for several. A library that never synced matches none.",
+              "title": "Sync State"
+            },
+            "description": "Only libraries whose latest sync (their newest `import` or `refresh` job) is in one of these states; repeat for several. A library that never synced matches none."
           },
           {
             "name": "updated_after",
@@ -6791,6 +8195,427 @@
         }
       }
     },
+    "/api/v1/account/usage": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "Get Account Usage",
+        "description": "Report your own reads, searches and agent answers per period.\n\nThe same shape as `GET /stats/usage`, over your account only, broken down by library or\nby API token (`token_id: null` is your browser sessions and OAuth sign-ins).",
+        "operationId": "usage-get_account_usage",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Period",
+              "description": "What each bucket adds up: `day` (UTC), `week` (ISO, Monday first), `month` or `year`.",
+              "default": "day"
+            },
+            "description": "What each bucket adds up: `day` (UTC), `week` (ISO, Monday first), `month` or `year`."
+          },
+          {
+            "name": "periods",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer",
+                  "maximum": 400,
+                  "minimum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "How many buckets, the last one holding `until`; default 30 days, 12 weeks, 12 months or 2\nyears. Counts older than the retention are gone, so older buckets are zeros.",
+              "title": "Periods"
+            },
+            "description": "How many buckets, the last one holding `until`; default 30 days, 12 weeks, 12 months or 2\nyears. Counts older than the retention are gone, so older buckets are zeros."
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A day of the last bucket (UTC); default today.",
+              "title": "Until"
+            },
+            "description": "A day of the last bucket (UTC); default today."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "How many groups to list, most reads first.",
+              "default": 50,
+              "title": "Limit"
+            },
+            "description": "How many groups to list, most reads first."
+          },
+          {
+            "name": "by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "none",
+                "library",
+                "token"
+              ],
+              "type": "string",
+              "description": "`library`, `token` (your API tokens; null is your browser sessions), or `none`.",
+              "default": "none",
+              "title": "By"
+            },
+            "description": "`library`, `token` (your API tokens; null is your browser sessions), or `none`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stats/leaderboard": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "Get Leaderboard",
+        "description": "Rank libraries or people by reads, searches or agent answers over a period.\n\n`period` is the UTC day, ISO week, month or year holding `at` (default today, so the\ncurrent period so far); each entry has its rank in the previous period among the same\nsubjects (`previous_rank`, null when it had none). `libraries` ranks only libraries you\nmay read. `people` is 403 `people_leaderboard_off` unless the operator turned the\npeople leaderboard on, and ranks only people who opted in (`leaderboard_opt_in` in\n`PUT /account/preferences`); your own entry is marked `you`, and given in `you` when\nit is ranked beyond `limit`.",
+        "operationId": "usage-get_leaderboard",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "subject",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Subject",
+              "description": "`libraries` (always on; only libraries you may read) or `people` (only while the\noperator has it on; only people who opted in).",
+              "default": "libraries"
+            },
+            "description": "`libraries` (always on; only libraries you may read) or `people` (only while the\noperator has it on; only people who opted in)."
+          },
+          {
+            "name": "metric",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Metric",
+              "description": "`reads`, `searches` or `answers`.",
+              "default": "reads"
+            },
+            "description": "`reads`, `searches` or `answers`."
+          },
+          {
+            "name": "period",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/Period",
+              "description": "`day` (UTC), `week` (ISO), `month` or `year`.",
+              "default": "week"
+            },
+            "description": "`day` (UTC), `week` (ISO), `month` or `year`."
+          },
+          {
+            "name": "at",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A day of the period to rank (UTC); default today, so the current period so far.",
+              "title": "At"
+            },
+            "description": "A day of the period to rank (UTC); default today, so the current period so far."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "description": "How many entries to list, best first.",
+              "default": 100,
+              "title": "Limit"
+            },
+            "description": "How many entries to list, best first."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Leaderboard"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/stats/settings": {
+      "get": {
+        "tags": [
+          "usage"
+        ],
+        "summary": "Get Usage Settings",
+        "description": "Say whether the people leaderboard is on and how long daily counts are kept.\n\nBoth are the operator's configuration (`EXACTDOCS_USAGE__PEOPLE_LEADERBOARD`,\n`EXACTDOCS_USAGE__RETENTION_MONTHS`).",
+        "operationId": "usage-get_usage_settings",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageSettingsOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/libraries/{owner}/{repo}/retrieval": {
       "get": {
         "tags": [
@@ -9371,7 +11196,7 @@
           "ingestion"
         ],
         "summary": "List Jobs",
-        "description": "List the jobs of every library the caller may read, newest first unless sorted.\n\nFilter with `library`, `state`, `kind`, `version`, `q`, `created_after` and\n`created_before`; `total` counts every match (never a job of a library hidden from the\ncaller).",
+        "description": "List the jobs of every library the caller may read, newest first unless sorted.\n\nFilter with `library`, `state`, `kind`, `origin` (`auto`: the instance queued it on its\nown; `manual`), `version`, `q`, `created_after` and `created_before`; `total` counts\nevery match (never a job of a library hidden from the caller). `created_by` names the\nperson whose request queued a job.",
         "operationId": "ingestion-list_jobs",
         "security": [
           {
@@ -9423,6 +11248,27 @@
               "title": "Kind"
             },
             "description": "Only jobs of one of these kinds (`import`, `embed`, ...); repeatable."
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/exactdocs__ingestion__models__VersionOrigin"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs with one of these origins: `auto` (the instance queued it on its own) or `manual`; repeat the parameter for both.",
+              "title": "Origin"
+            },
+            "description": "Only jobs with one of these origins: `auto` (the instance queued it on its own) or `manual`; repeat the parameter for both."
           },
           {
             "name": "version",
@@ -10046,6 +11892,27 @@
               "title": "Kind"
             },
             "description": "Only jobs of one of these kinds (`import`, `embed`, ...); repeatable."
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/exactdocs__ingestion__models__VersionOrigin"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs with one of these origins: `auto` (the instance queued it on its own) or `manual`; repeat the parameter for both.",
+              "title": "Origin"
+            },
+            "description": "Only jobs with one of these origins: `auto` (the instance queued it on its own) or `manual`; repeat the parameter for both."
           },
           {
             "name": "version",
@@ -11283,7 +13150,7 @@
               }
             ],
             "title": "Next Cursor",
-            "description": "Pass as `cursor` to get the next (older) page; null on the last page."
+            "description": "Pass as `cursor` (with the same `sort` and filters) to get the next page; null on the\nlast page."
           },
           "total": {
             "type": "integer",
@@ -11299,7 +13166,7 @@
           "total"
         ],
         "title": "AccessLogPage",
-        "description": "A page of the access log, newest first."
+        "description": "A page of the access log, newest first unless sorted otherwise."
       },
       "AccessTokenIn": {
         "properties": {
@@ -11340,6 +13207,178 @@
         "title": "AccessTokenIn",
         "description": "An HTTPS access token for a private repository. Write-only: no response repeats it."
       },
+      "AccountLinkStart": {
+        "properties": {
+          "redirect_url": {
+            "type": "string",
+            "title": "Redirect Url",
+            "description": "The identity provider's authorization URL: the browser goes there next."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "redirect_url"
+        ],
+        "title": "AccountLinkStart",
+        "description": "A started link: send the browser to ``redirect_url`` (the binding cookie is set)."
+      },
+      "AccountPreferences": {
+        "properties": {
+          "saved": {
+            "type": "boolean",
+            "title": "Saved",
+            "description": "`false` while the account never saved any: `preferences` then holds the defaults, and a\nbrowser keeps (and may save) the ones it already applies."
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/InterfacePreferences",
+            "description": "The saved preferences, or the defaults when `saved` is `false`."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "saved",
+          "preferences"
+        ],
+        "title": "AccountPreferences",
+        "description": "An account's interface preferences, and whether it saved them."
+      },
+      "AccountProvider": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "The provider's name: sign in at `GET /api/v1/auth/{name}/start`."
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name",
+            "description": "What its sign-in button says."
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "discord",
+                  "github",
+                  "google",
+                  "microsoft"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon",
+            "description": "The built-in icon its button shows (the web UI ships these); `null` when it has none, or\nan icon of its own (`icon_url`)."
+          },
+          "icon_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon Url",
+            "description": "Where ExactDocs serves the provider's own icon, an operator's file (a same-origin path,\n`/api/v1/auth/{name}/icon?v=<version>`, which changes with the icon); `null` when it has\nnone."
+          },
+          "configured": {
+            "type": "boolean",
+            "title": "Configured",
+            "description": "`false` for an identity linked through a provider that is no longer configured (or\nthrough Cloudflare Access): it signs nobody in, and only unlinking it is offered."
+          },
+          "linked": {
+            "type": "boolean",
+            "title": "Linked",
+            "description": "Whether an identity of this provider is linked to the account."
+          },
+          "origin": {
+            "type": "boolean",
+            "title": "Origin",
+            "description": "Whether the account was created through this provider. An account without a password\nfollows it (its role, groups and access) and always keeps it."
+          },
+          "linked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked At",
+            "description": "When the person linked it here; `null` for the origin, and when it is not linked."
+          },
+          "last_signed_in_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Signed In At",
+            "description": "The latest sign-in through it (or when it was linked); `null` when it is not linked."
+          },
+          "can_link": {
+            "type": "boolean",
+            "title": "Can Link",
+            "description": "Whether `POST /api/v1/account/providers/{name}/link` may start: configured, not linked."
+          },
+          "can_unlink": {
+            "type": "boolean",
+            "title": "Can Unlink",
+            "description": "Whether `DELETE /api/v1/account/providers/{name}` may unlink it: linked, and not the\naccount's only way to sign in."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "display_name",
+          "configured",
+          "linked",
+          "origin",
+          "linked_at",
+          "last_signed_in_at",
+          "can_link",
+          "can_unlink"
+        ],
+        "title": "AccountProvider",
+        "description": "A provider as the signed-in person's Account settings show it: linked or not."
+      },
+      "AccountProviders": {
+        "properties": {
+          "has_password": {
+            "type": "boolean",
+            "title": "Has Password",
+            "description": "Whether the account has a password (it always keeps that way in)."
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/AccountProvider"
+            },
+            "type": "array",
+            "title": "Providers",
+            "description": "Every configured provider, in configuration order, then every identity linked through a\nprovider no longer configured."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "has_password",
+          "providers"
+        ],
+        "title": "AccountProviders",
+        "description": "The signed-in account's ways to sign in: its password and its providers."
+      },
       "AccountSummary": {
         "properties": {
           "id": {
@@ -11373,6 +13412,99 @@
         ],
         "title": "AccountSummary",
         "description": "An account as the outside world sees it (never the password hash)."
+      },
+      "AccountTokenSummary": {
+        "properties": {
+          "library_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 256,
+                  "pattern": "^/[^/]+/[^/]+$"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library Ids",
+            "description": "Selected library IDs; omit or use null for all libraries the user can access."
+          },
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Stable identifier of the token, used to revoke it."
+          },
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "Label the token was given when it was created."
+          },
+          "prefix": {
+            "type": "string",
+            "title": "Prefix",
+            "description": "The first characters of the secret (`exd_` and four more), to recognise the token."
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "When the token was created."
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At",
+            "description": "When the token stops working; `null` for a token that never expires."
+          },
+          "last_used_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Used At",
+            "description": "When the token last authenticated a request; `null` if it was never used."
+          },
+          "owner_id": {
+            "type": "string",
+            "title": "Owner Id",
+            "description": "The id of the account that holds the token."
+          },
+          "owner": {
+            "type": "string",
+            "title": "Owner",
+            "description": "The username of the account that holds the token."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "prefix",
+          "created_at",
+          "expires_at",
+          "last_used_at",
+          "owner_id",
+          "owner"
+        ],
+        "title": "AccountTokenSummary",
+        "description": "A token as an operator sees it in the list of every token: with its owner, no secret."
       },
       "AddLibraryCommand": {
         "properties": {
@@ -11693,6 +13825,44 @@
         ],
         "title": "AiUsageOut",
         "description": "Spend and budget left per scope: the instance, embedding runs, each library and user."
+      },
+      "AllTokensList": {
+        "properties": {
+          "tokens": {
+            "items": {
+              "$ref": "#/components/schemas/AccountTokenSummary"
+            },
+            "type": "array",
+            "title": "Tokens",
+            "description": "The tokens of this page."
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor",
+            "description": "Pass as `cursor` to get the next page; null on the last page."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "How many tokens match the filters, across every page."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "tokens",
+          "next_cursor",
+          "total"
+        ],
+        "title": "AllTokensList",
+        "description": "A page of every account's tokens, newest first unless sorted otherwise."
       },
       "AnswerAvailabilityOut": {
         "properties": {
@@ -13939,6 +16109,17 @@
         "title": "FileProblemSummary",
         "description": "A problem with a file: skipped (`is_skip`) or imported with a note. `code` is stable."
       },
+      "Grouping": {
+        "type": "string",
+        "enum": [
+          "none",
+          "library",
+          "account",
+          "token"
+        ],
+        "title": "Grouping",
+        "description": "What a usage report breaks its counts down by."
+      },
       "HostKind": {
         "type": "string",
         "enum": [
@@ -13950,6 +16131,162 @@
         ],
         "title": "HostKind",
         "description": "Where the repository is hosted; `git` is any other HTTPS/SSH git server."
+      },
+      "InterfacePreferences": {
+        "properties": {
+          "theme": {
+            "type": "string",
+            "enum": [
+              "light",
+              "dark",
+              "system"
+            ],
+            "title": "Theme",
+            "description": "Colour scheme: `light`, `dark`, or `system` to follow the operating system. Default\n`system`."
+          },
+          "contrast": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "more"
+            ],
+            "title": "Contrast",
+            "description": "Contrast of text and controls: `standard` or `more`. Default `standard`."
+          },
+          "text_scale": {
+            "type": "integer",
+            "enum": [
+              90,
+              100,
+              110,
+              125,
+              150
+            ],
+            "title": "Text Scale",
+            "description": "Text size in percent of the default size: 90, 100, 110, 125 or 150. Default 100."
+          },
+          "text_spacing": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "wide"
+            ],
+            "title": "Text Spacing",
+            "description": "Spacing of lines, words and letters: `standard`, or `wide` (WCAG 1.4.12's minimums).\nDefault `standard`."
+          },
+          "motion": {
+            "type": "string",
+            "enum": [
+              "system",
+              "reduced",
+              "full"
+            ],
+            "title": "Motion",
+            "description": "Animations: `system` follows the operating system's reduced-motion setting; `reduced` and\n`full` override it. Default `system`."
+          },
+          "font": {
+            "type": "string",
+            "enum": [
+              "default",
+              "hyperlegible",
+              "dyslexic",
+              "system"
+            ],
+            "title": "Font",
+            "description": "Typeface: `default`, `hyperlegible` (a typeface for low vision), `dyslexic` (one for\ndyslexic readers) or `system` (the operating system's). Default `default`."
+          },
+          "underline_links": {
+            "type": "boolean",
+            "title": "Underline Links",
+            "description": "Whether every link is underlined, not only told apart by its colour. Default `false`."
+          },
+          "large_targets": {
+            "type": "boolean",
+            "title": "Large Targets",
+            "description": "Whether buttons and links get larger hit areas. Default `false`."
+          },
+          "language": {
+            "type": "string",
+            "enum": [
+              "system",
+              "en",
+              "pl"
+            ],
+            "title": "Language",
+            "description": "Interface language: `en` (English), `pl` (Polish), or `system` to follow the browser's.\nDefault `system`."
+          },
+          "library_logos": {
+            "type": "boolean",
+            "title": "Library Logos",
+            "description": "Whether libraries show their logos, and generic icons where they have none; `false` hides\nboth. Default `true`."
+          },
+          "leaderboard_opt_in": {
+            "type": "boolean",
+            "title": "Leaderboard Opt In",
+            "description": "Whether the person agrees to be shown by name on the people leaderboard while the operator\nhas it on (`GET /stats/settings`). Without it they are on no people leaderboard, and nobody\nsees their usage except as part of totals. Default `false`. The one setting a save may leave\nout: a client that does not know it keeps the choice already saved (`false` if none).",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "theme",
+          "contrast",
+          "text_scale",
+          "text_spacing",
+          "motion",
+          "font",
+          "underline_links",
+          "large_targets",
+          "language",
+          "library_logos"
+        ],
+        "title": "InterfacePreferences",
+        "description": "How a person wants the interface to look and behave.\n\nEvery setting is required but `leaderboard_opt_in` (#510), which a client written before it\nexisted does not send."
+      },
+      "JobDayStats": {
+        "properties": {
+          "day": {
+            "type": "string",
+            "format": "date",
+            "title": "Day",
+            "description": "The UTC day the jobs were queued on."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "How many jobs were queued that day."
+          },
+          "by_state": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/JobState"
+            },
+            "type": "object",
+            "title": "By State",
+            "description": "How many of them are in each state now; every state is listed, 0 included."
+          },
+          "by_kind": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "By Kind",
+            "description": "How many of them are of each kind; every kind is listed, 0 included."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "day",
+          "total",
+          "by_state",
+          "by_kind"
+        ],
+        "title": "JobDayStats",
+        "description": "The jobs queued on one UTC day, counted by the state they are in now and by kind."
       },
       "JobList": {
         "properties": {
@@ -14000,6 +16337,46 @@
         ],
         "title": "JobState",
         "description": "Where a job is in its life. Only ``queued`` and ``running`` jobs are unfinished."
+      },
+      "JobStats": {
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "const": "day",
+            "title": "Bucket",
+            "description": "How the jobs are grouped: `day`."
+          },
+          "from": {
+            "type": "string",
+            "format": "date",
+            "title": "From",
+            "description": "The first day counted, as `from`."
+          },
+          "to": {
+            "type": "string",
+            "format": "date",
+            "title": "To",
+            "description": "The last day counted, included, as `to`."
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/JobDayStats"
+            },
+            "type": "array",
+            "title": "Days",
+            "description": "One entry per day from `from` to `to`, oldest first."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "bucket",
+          "from",
+          "to",
+          "days"
+        ],
+        "title": "JobStats",
+        "description": "Jobs per UTC day, every day of the range listed (a day without jobs counts 0)."
       },
       "JobSummary": {
         "properties": {
@@ -14112,8 +16489,19 @@
           },
           "origin": {
             "$ref": "#/components/schemas/exactdocs__ingestion__models__VersionOrigin",
-            "description": "`auto` when the scheduled check queued it, `manual` otherwise.",
+            "description": "`auto` when the instance queued it on its own (the scheduled check, a repository's\nwebhook, the embedding of what an import stored), `manual` otherwise.",
             "default": "manual"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The person whose request queued the job; null for the instance's own work (`auto`), the\ncommand line, and jobs queued before ExactDocs recorded who queued them."
           },
           "created_at": {
             "type": "string",
@@ -14285,6 +16673,22 @@
             "title": "Error Code",
             "description": "The stable code of `error`, null unless the job failed (or failed before codes were recorded). An upstream problem is `repo_unreachable` (the repository was deleted, made private, moved, or cannot be reached), `auth_failed` (the credential was refused or cannot be read), `ref_deleted` (the branch or tag is gone) or `tag_moved` (the tag points elsewhere now); otherwise the error's own code (`no_articles`, `host_key_changed`...) or `unexpected`."
           },
+          "origin": {
+            "$ref": "#/components/schemas/exactdocs__ingestion__models__VersionOrigin",
+            "description": "`auto` when the instance queued it on its own, `manual` otherwise.",
+            "default": "manual"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The person whose request queued the job; null when no person did (or before it was\nrecorded)."
+          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -14387,6 +16791,168 @@
         ],
         "title": "LatestJobs",
         "description": "The newest job of every (library, version), ordered by library and version."
+      },
+      "Leaderboard": {
+        "properties": {
+          "subject": {
+            "$ref": "#/components/schemas/Subject",
+            "description": "What is ranked."
+          },
+          "metric": {
+            "$ref": "#/components/schemas/Metric",
+            "description": "What it is ranked by."
+          },
+          "period": {
+            "$ref": "#/components/schemas/Period",
+            "description": "The kind of period."
+          },
+          "start": {
+            "type": "string",
+            "format": "date",
+            "title": "Start",
+            "description": "The period's first day (UTC)."
+          },
+          "end": {
+            "type": "string",
+            "format": "date",
+            "title": "End",
+            "description": "The period's last day, included (UTC); the current period ends after today."
+          },
+          "previous_start": {
+            "type": "string",
+            "format": "date",
+            "title": "Previous Start",
+            "description": "The previous period's first day: what `previous_rank` ranks."
+          },
+          "previous_end": {
+            "type": "string",
+            "format": "date",
+            "title": "Previous End",
+            "description": "The previous period's last day, included."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "The metric summed over every ranked subject (for each one's share)."
+          },
+          "ranked": {
+            "type": "integer",
+            "title": "Ranked",
+            "description": "How many subjects are ranked; `entries` lists the first `limit`."
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/LeaderboardEntryOut"
+            },
+            "type": "array",
+            "title": "Entries",
+            "description": "The best first; equal values by name."
+          },
+          "you": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LeaderboardEntryOut"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`people`: the caller's own entry when it is ranked but beyond `limit`; null otherwise."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "subject",
+          "metric",
+          "period",
+          "start",
+          "end",
+          "previous_start",
+          "previous_end",
+          "total",
+          "ranked",
+          "entries"
+        ],
+        "title": "Leaderboard",
+        "description": "Libraries or people ranked by one metric over one period, with the previous period's rank."
+      },
+      "LeaderboardEntryOut": {
+        "properties": {
+          "rank": {
+            "type": "integer",
+            "title": "Rank",
+            "description": "1 for the most; equal values share a rank (1, 2, 2, 4)."
+          },
+          "previous_rank": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Previous Rank",
+            "description": "The rank in the previous period, among the same subjects; null when it was not ranked\nthen (nothing counted)."
+          },
+          "value": {
+            "type": "integer",
+            "title": "Value",
+            "description": "The metric's count in the period."
+          },
+          "library": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library",
+            "description": "`libraries`: the library ID, lower-case."
+          },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id",
+            "description": "`people`: the account ID."
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username",
+            "description": "`people`: the username."
+          },
+          "you": {
+            "type": "boolean",
+            "title": "You",
+            "description": "`people`: this is the caller.",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "rank",
+          "previous_rank",
+          "value"
+        ],
+        "title": "LeaderboardEntryOut",
+        "description": "One library or person on a leaderboard."
       },
       "LibraryAccess": {
         "properties": {
@@ -15983,6 +18549,16 @@
         "title": "ManualTagsIn",
         "description": "The tags to set by hand on an article path; they replace its earlier manual tags."
       },
+      "Metric": {
+        "type": "string",
+        "enum": [
+          "reads",
+          "searches",
+          "answers"
+        ],
+        "title": "Metric",
+        "description": "What a leaderboard ranks by: one operation's counts."
+      },
       "ModelCheckOut": {
         "properties": {
           "role": {
@@ -16430,6 +19006,39 @@
         ],
         "title": "PathsChange",
         "description": "A managed path list as stored and as declared."
+      },
+      "Period": {
+        "type": "string",
+        "enum": [
+          "day",
+          "week",
+          "month",
+          "year"
+        ],
+        "title": "Period",
+        "description": "A calendar period in UTC: what counts are added up over."
+      },
+      "PersonSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The account's stable ID."
+          },
+          "username": {
+            "type": "string",
+            "title": "Username",
+            "description": "The account's user name, as it was when they asked."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "username"
+        ],
+        "title": "PersonSummary",
+        "description": "A person as the jobs show them: their account's ID and user name, nothing else."
       },
       "PlanSourcesCommand": {
         "properties": {
@@ -18082,6 +20691,36 @@
             "type": "string",
             "title": "Display Name",
             "description": "What its sign-in button says."
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "discord",
+                  "github",
+                  "google",
+                  "microsoft"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon",
+            "description": "The built-in icon its button shows (the web UI ships these); `null` when it has none, or\nan icon of its own (`icon_url`)."
+          },
+          "icon_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon Url",
+            "description": "Where ExactDocs serves the provider's own icon, an operator's file (a same-origin path,\n`/api/v1/auth/{name}/icon?v=<version>`, which changes with the icon); `null` when it has\nnone."
           }
         },
         "additionalProperties": false,
@@ -18567,6 +21206,36 @@
         ],
         "title": "SpentOut",
         "description": "What one scope spent in one window, as the providers reported it."
+      },
+      "StartAccountLinkRequest": {
+        "properties": {
+          "return_to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8192
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return To",
+            "description": "A path on this server; default `/account`. `?linked=<provider>` or\n`?link_error=<code>` is added to it."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "StartAccountLinkRequest",
+        "description": "Where to come back to once the provider linked the identity (or refused it)."
+      },
+      "Subject": {
+        "type": "string",
+        "enum": [
+          "libraries",
+          "people"
+        ],
+        "title": "Subject",
+        "description": "Who or what a leaderboard ranks."
       },
       "SyncStatus": {
         "type": "string",
@@ -19246,6 +21915,243 @@
         "title": "UpdatedLibrarySettings",
         "description": "The settings as stored (normalized) and the job that brings every version in line."
       },
+      "UsageBucketOut": {
+        "properties": {
+          "reads": {
+            "type": "integer",
+            "title": "Reads",
+            "description": "Articles and chunks read (MCP, REST and the web reader)."
+          },
+          "searches": {
+            "type": "integer",
+            "title": "Searches",
+            "description": "Searches (one library, several or all; `query-docs` included)."
+          },
+          "answers": {
+            "type": "integer",
+            "title": "Answers",
+            "description": "Questions answered by the agent."
+          },
+          "start": {
+            "type": "string",
+            "format": "date",
+            "title": "Start",
+            "description": "The period's first day (UTC)."
+          },
+          "end": {
+            "type": "string",
+            "format": "date",
+            "title": "End",
+            "description": "The period's last day, included (UTC); the current period's may be after today."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reads",
+          "searches",
+          "answers",
+          "start",
+          "end"
+        ],
+        "title": "UsageBucketOut",
+        "description": "The counts of one period."
+      },
+      "UsageCountsOut": {
+        "properties": {
+          "reads": {
+            "type": "integer",
+            "title": "Reads",
+            "description": "Articles and chunks read (MCP, REST and the web reader)."
+          },
+          "searches": {
+            "type": "integer",
+            "title": "Searches",
+            "description": "Searches (one library, several or all; `query-docs` included)."
+          },
+          "answers": {
+            "type": "integer",
+            "title": "Answers",
+            "description": "Questions answered by the agent."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reads",
+          "searches",
+          "answers"
+        ],
+        "title": "UsageCountsOut",
+        "description": "How many reads, searches and agent answers were counted."
+      },
+      "UsageGroupOut": {
+        "properties": {
+          "reads": {
+            "type": "integer",
+            "title": "Reads",
+            "description": "Articles and chunks read (MCP, REST and the web reader)."
+          },
+          "searches": {
+            "type": "integer",
+            "title": "Searches",
+            "description": "Searches (one library, several or all; `query-docs` included)."
+          },
+          "answers": {
+            "type": "integer",
+            "title": "Answers",
+            "description": "Questions answered by the agent."
+          },
+          "library": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Library",
+            "description": "`by=library`: the library ID, lower-case; null for searches and answers over several\nlibraries."
+          },
+          "account_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Account Id",
+            "description": "`by=account` or `token`: the person's account ID; null in the `others` group."
+          },
+          "username": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Username",
+            "description": "The person's username, next to `account_id`."
+          },
+          "token_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Token Id",
+            "description": "`by=token`: the API token's ID; null for browser sessions and OAuth sign-ins."
+          },
+          "others": {
+            "type": "boolean",
+            "title": "Others",
+            "description": "`true` for the one group that sums everyone not shown by name (people who did not opt\nin, everyone while the people leaderboard is off, and requests without an account).",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "reads",
+          "searches",
+          "answers"
+        ],
+        "title": "UsageGroupOut",
+        "description": "The counts of one library, person or token over the whole report."
+      },
+      "UsageSettingsOut": {
+        "properties": {
+          "people_leaderboard": {
+            "type": "boolean",
+            "title": "People Leaderboard",
+            "description": "Whether the people leaderboard is on (`EXACTDOCS_USAGE__PEOPLE_LEADERBOARD`). Off, nobody\nis shown by name; on, only people who opted in (`leaderboard_opt_in`)."
+          },
+          "retention_months": {
+            "type": "integer",
+            "title": "Retention Months",
+            "description": "How many months of daily counts are kept (`EXACTDOCS_USAGE__RETENTION_MONTHS`)."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "people_leaderboard",
+          "retention_months"
+        ],
+        "title": "UsageSettingsOut",
+        "description": "How this instance counts usage: the operator's configuration."
+      },
+      "UsageStats": {
+        "properties": {
+          "period": {
+            "$ref": "#/components/schemas/Period",
+            "description": "What each bucket adds up."
+          },
+          "since": {
+            "type": "string",
+            "format": "date",
+            "title": "Since",
+            "description": "The first day covered (UTC)."
+          },
+          "until": {
+            "type": "string",
+            "format": "date",
+            "title": "Until",
+            "description": "The last day covered, included (UTC)."
+          },
+          "by": {
+            "$ref": "#/components/schemas/Grouping",
+            "description": "What `groups` breaks the counts down by."
+          },
+          "total": {
+            "$ref": "#/components/schemas/UsageCountsOut",
+            "description": "Everything counted in the range."
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/UsageBucketOut"
+            },
+            "type": "array",
+            "title": "Series",
+            "description": "One bucket per period, oldest first, zeros included."
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/UsageGroupOut"
+            },
+            "type": "array",
+            "title": "Groups",
+            "description": "The breakdown, most reads first (then searches, then answers), at most `limit`; the\n`others` group, when there is one, comes last and is always listed."
+          },
+          "groups_total": {
+            "type": "integer",
+            "title": "Groups Total",
+            "description": "How many groups there are in all, the `others` group included."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "period",
+          "since",
+          "until",
+          "by",
+          "total",
+          "series",
+          "groups",
+          "groups_total"
+        ],
+        "title": "UsageStats",
+        "description": "Counts per period over a range of periods, and a breakdown over the whole range."
+      },
       "UserList": {
         "properties": {
           "users": {
@@ -19328,7 +22234,7 @@
               }
             ],
             "title": "Provider",
-            "description": "The sign-in provider the account signs in through; `null` for a local account (password)."
+            "description": "The sign-in provider the account signs in through; `null` for a local account (password).\nAn account created through a provider keeps that provider here."
           },
           "groups": {
             "items": {
@@ -19337,6 +22243,25 @@
             "type": "array",
             "title": "Groups",
             "description": "The account's groups at its identity provider, as of its latest sign-in or revalidation\n(with the provider's `group_prefix`); empty for a local account."
+          },
+          "last_active_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Active At",
+            "description": "The hour (UTC, minutes always zero) of the account's latest sign-in or request with one\nof its sessions or API tokens; `null` while it has not been active since this was recorded."
+          },
+          "token_count": {
+            "type": "integer",
+            "title": "Token Count",
+            "description": "How many API tokens the account holds that have not expired.",
+            "default": 0
           }
         },
         "additionalProperties": false,
@@ -19394,15 +22319,6 @@
         ],
         "title": "VersionList",
         "description": "A page of a library's versions."
-      },
-      "VersionOrigin-Input": {
-        "type": "string",
-        "enum": [
-          "manual",
-          "auto"
-        ],
-        "title": "VersionOrigin",
-        "description": "Who asked for a version: a person, or the scheduled check (which may prune its own)."
       },
       "VersionOut": {
         "properties": {

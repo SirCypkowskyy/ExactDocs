@@ -4,7 +4,11 @@ from typing import Protocol
 
 from exactdocs.identity.dtos import (
     AccessLogPage,
+    AccountPreferences,
+    AccountProviders,
     AccountSummary,
+    AllTokensList,
+    AllTokensQuery,
     ApiTokenIdentity,
     AuthenticateQuery,
     ChangePasswordCommand,
@@ -17,7 +21,10 @@ from exactdocs.identity.dtos import (
     ExternalSignInStart,
     ExternalTokenIdentity,
     FinishExternalSignInCommand,
+    GetPreferencesQuery,
     GrantLibraryRoleCommand,
+    LeaderboardPeople,
+    LeaderboardPeopleQuery,
     LibraryCreationQuery,
     LibraryGrantList,
     LibraryGrants,
@@ -28,13 +35,16 @@ from exactdocs.identity.dtos import (
     ListLibraryGrantsQuery,
     LoginForTokenCommand,
     PasswordReset,
+    ProviderIconFile,
     ResetPasswordCommand,
     RevalidationReport,
     RevokeLibraryRoleCommand,
+    SavePreferencesCommand,
     SessionGrant,
     SessionState,
     SetupState,
     SetUserDisabledCommand,
+    StartAccountLinkCommand,
     StartExternalSignInCommand,
     TokenGrant,
     TokenList,
@@ -328,6 +338,21 @@ class ListTokens(Protocol):
         ...
 
 
+class ListAllTokens(Protocol):
+    """Every account's tokens with their owners, never their secrets, for an operator."""
+
+    async def __call__(self, query: AllTokensQuery) -> AllTokensList:
+        """Run the use case.
+
+        Args:
+            query: The filters, the sort and the page.
+
+        Returns:
+            A page of the tokens, newest first unless sorted otherwise.
+        """
+        ...
+
+
 class RevokeToken(Protocol):
     """Delete one of the account's tokens; ``UnknownTokenError`` when it has none by this id."""
 
@@ -398,11 +423,14 @@ class StartExternalSignIn(Protocol):
 
 
 class FinishExternalSignIn(Protocol):
-    """Finish an external sign-in and start a session.
+    """Finish an external sign-in and start a session, or finish a link from Account settings.
 
-    Refuses with ``ExternalSignInFailedError`` (forged, replayed, expired or invalid),
-    ``SignInCancelledError``, ``NotAllowedError``, ``AccountDisabledError``,
-    ``UsernameUnavailableError`` or ``ProviderUnavailableError``; no session is created then.
+    A sign-in refuses with ``ExternalSignInFailedError`` (forged, replayed, expired or invalid),
+    ``SignInCancelledError``, ``NotAllowedError``, ``NoLinkedAccountError``,
+    ``AccountDisabledError``, ``UsernameUnavailableError``, ``ProviderAccessRevokedError`` or
+    ``ProviderUnavailableError``; no session is created then. A link (an attempt started by
+    ``StartAccountLink``) creates no session either way; once its attempt is found, a refusal is
+    a ``LinkRefusedError`` naming where the browser goes back to.
     """
 
     async def __call__(
@@ -416,6 +444,81 @@ class FinishExternalSignIn(Protocol):
 
         Returns:
             The new session, and where to send the browser.
+        """
+        ...
+
+
+class GetProviderIcon(Protocol):
+    """Return a provider's own icon; ``UnknownSignInProviderError`` or ``NoProviderIconError``."""
+
+    async def __call__(self, provider: str) -> ProviderIconFile:
+        """Run the use case.
+
+        Args:
+            provider: The provider's name.
+
+        Returns:
+            The icon, as ExactDocs serves it.
+        """
+        ...
+
+
+class ListAccountProviders(Protocol):
+    """List the signed-in account's ways to sign in: its password, its providers, linked or not."""
+
+    async def __call__(self, account: AccountSummary) -> AccountProviders:
+        """Run the use case.
+
+        Args:
+            account: The signed-in account.
+
+        Returns:
+            Whether it has a password, and every provider with whether it is linked.
+        """
+        ...
+
+
+class StartAccountLink(Protocol):
+    """Start linking an identity of a provider to the signed-in account.
+
+    The attempt is bound to the browser (the binding returned) and to the session that started
+    it; the provider's callback then links instead of signing in (``FinishExternalSignIn``).
+    Refuses with ``UnknownSignInProviderError``, ``ProviderAlreadyLinkedError``,
+    ``NotSignedInError`` (no session to bind to) or ``ProviderUnavailableError``.
+    """
+
+    async def __call__(
+        self, account: AccountSummary, command: StartAccountLinkCommand, session_token: str | None
+    ) -> ExternalSignInStart:
+        """Run the use case.
+
+        Args:
+            account: The signed-in account.
+            command: The provider and where to come back to.
+            session_token: The session the link is started from.
+
+        Returns:
+            The provider's authorization URL and the binding for the browser.
+        """
+        ...
+
+
+class UnlinkProvider(Protocol):
+    """Unlink the signed-in account's identity of a provider.
+
+    Refuses with ``ProviderNotLinkedError``, or ``LastSignInMethodError`` for the provider an
+    account without a password was created through.
+    """
+
+    async def __call__(self, account: AccountSummary, provider: str) -> AccountProviders:
+        """Run the use case.
+
+        Args:
+            account: The signed-in account.
+            provider: The provider's name.
+
+        Returns:
+            The account's providers afterwards.
         """
         ...
 
@@ -595,5 +698,54 @@ class CanCreateLibrary(Protocol):
 
         Returns:
             Whether the caller may create a library.
+        """
+        ...
+
+
+class GetPreferences(Protocol):
+    """An account's interface preferences, or the defaults when it never saved any."""
+
+    async def __call__(self, query: GetPreferencesQuery) -> AccountPreferences:
+        """Run the use case.
+
+        Args:
+            query: The account.
+
+        Returns:
+            Its preferences, and whether it saved them.
+        """
+        ...
+
+
+class SavePreferences(Protocol):
+    """Save an account's interface preferences, replacing the ones it had."""
+
+    async def __call__(self, command: SavePreferencesCommand) -> AccountPreferences:
+        """Run the use case.
+
+        Args:
+            command: The account and its new preferences, every setting given.
+
+        Returns:
+            The preferences as saved.
+        """
+        ...
+
+
+class FindLeaderboardPeople(Protocol):
+    """Tell which accounts may be shown by name on the people leaderboard (#510).
+
+    Only accounts that exist, are enabled and opted in (``leaderboard_opt_in``); whether the
+    operator turned the board on is not identity's to know.
+    """
+
+    async def __call__(self, query: LeaderboardPeopleQuery) -> LeaderboardPeople:
+        """Run the use case.
+
+        Args:
+            query: The accounts asked about.
+
+        Returns:
+            Those that may be shown, with their usernames.
         """
         ...
