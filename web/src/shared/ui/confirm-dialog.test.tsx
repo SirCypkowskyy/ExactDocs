@@ -120,6 +120,26 @@ describe("ConfirmDialog", () => {
     );
   });
 
+  it("offers the refusal's way out as a link after its sentence", async () => {
+    render(
+      <ConfirmDialog
+        open
+        onOpenChange={() => {}}
+        title="Remove v1.4.0?"
+        confirmLabel="Remove version"
+        error="Your session ended."
+        errorLink={{ href: "/sign-in", label: "Sign in" }}
+        onConfirm={() => {}}
+      />,
+    );
+    const alert = within(await screen.findByRole("alertdialog")).getByRole("alert");
+    expect(alert).toHaveTextContent("Your session ended. Sign in");
+    expect(within(alert).getByRole("link", { name: "Sign in" })).toHaveAttribute(
+      "href",
+      "/sign-in",
+    );
+  });
+
   it("can be a plain primary confirm with its own way out", async () => {
     render(<Remove tone="default" cancelLabel="Keep it" />);
     const dialog = await open();

@@ -52,6 +52,8 @@ interface ConfirmDialogProps {
   /** Why it did not work, announced inside the dialog; `info` for a wait, not a mistake. */
   error?: string | undefined;
   errorTone?: "error" | "info" | undefined;
+  /** A way out of the refusal, after its sentence ("Sign in" after the session ended). */
+  errorLink?: { href: string; label: string } | undefined;
   onConfirm: () => void;
   /**
    * Where focus goes when it closes; call `preventDefault` and focus something yourself. By
@@ -80,6 +82,7 @@ function ConfirmShell({
   pending = false,
   error,
   errorTone,
+  errorLink,
   armed,
   onSubmit,
   onCloseAutoFocus,
@@ -129,7 +132,7 @@ function ConfirmShell({
           <AlertDialogTitle>{title}</AlertDialogTitle>
           {body}
           <div className="mt-4">
-            <FormAlert id={alertId} message={error} tone={errorTone} />
+            <FormAlert id={alertId} message={error} link={errorLink} tone={errorTone} />
           </div>
           <AlertDialogFooter className="mt-2">
             <AlertDialogCancel aria-disabled={pending || undefined}>

@@ -387,6 +387,7 @@ export function VersionsSection(props: Props) {
         pending={remove.isPending}
         error={problem?.message}
         errorTone={problem?.tone}
+        errorLink={problem?.link}
         onConfirm={() => removing && remove.mutate(removing)}
         onCloseAutoFocus={(event) => {
           event.preventDefault();

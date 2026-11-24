@@ -101,6 +101,7 @@ export function DangerSection({
         pending={remove.isPending}
         error={problem?.message}
         errorTone={problem?.tone}
+        errorLink={problem?.link}
         onConfirm={() => remove.mutate()}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
