@@ -3,7 +3,7 @@
 Kept up to date by the overnight session that continues `HANDOFF.md`. Newest state first in each
 section. Read `HANDOFF.md` for the plan, the owner's decisions and the rules.
 
-_Last updated: 2026-11-24 02:10 UTC._
+_Last updated: 2026-11-24 08:00 UTC._
 
 ## Frontend (`feature/486-design-system`)
 
@@ -69,6 +69,23 @@ FormAlert's alert reaction. Then the local workarounds go.
 - Next: #487 (drop the `as ApiPath` cast once merged), #505/#506 (Account → Sign-in tab, brand
   buttons), #509 (offset paging in DataTable v2), #510–#513 (Overview and Leaderboard),
   #514/#515 (access-log and users filters).
+
+## Release v0.6.0 (owner's request, 2026-11-24)
+
+The owner asked to merge every PR into develop, then #486 and #530 once section C is done, then
+develop -> main and release v0.6.0.
+
+- Merged into develop (squash, after green CI): #509 (#524), #505 (#526), #511 (#521), #513 (#522).
+- **Blocked:** since 07:41 UTC every GitHub-hosted Actions job fails within 3 s without a runner
+  (likely the Actions spending limit or a failed payment). Merges wait for green CI. The owner
+  fixes billing, or sets `RUNNER_MODE=self-hosted`.
+- Next, in order: #504 (#518, develop merged at 935e7d9, conflicts with #513 resolved), #506
+  (#528), #487 (#525), #510 (#527), #512 (#520), #514 (#519), #515 (#523), re-pointing each
+  migration onto develop's head; then #486 and #530; release dry run; develop -> main; `v0.6.0`.
+- Section C on this branch: #505 Account → Sign-in → Password done (`d822c00`); #509 offset paging
+  in progress; #513 counts next.
+- #530 (docs site and READMEs in the new theme and logo) is filed and in progress on
+  `docs/530-docs-brand`.
 
 ## Backend: every issue has a draft PR
 
