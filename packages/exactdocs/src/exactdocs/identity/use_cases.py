@@ -39,6 +39,7 @@ from exactdocs.identity.constants import (
 from exactdocs.identity.dtos import (
     AccessEventSummary,
     AccessLogPage,
+    AccountPreferences,
     AccountProvider,
     AccountProviders,
     AccountSummary,
@@ -54,6 +55,7 @@ from exactdocs.identity.dtos import (
     ExternalSignInStart,
     ExternalTokenIdentity,
     FinishExternalSignInCommand,
+    GetPreferencesQuery,
     GrantLibraryRoleCommand,
     LibraryCreationQuery,
     LibraryGrantList,
@@ -70,6 +72,7 @@ from exactdocs.identity.dtos import (
     ResetPasswordCommand,
     RevalidationReport,
     RevokeLibraryRoleCommand,
+    SavePreferencesCommand,
     SessionGrant,
     SessionState,
     SetupState,
@@ -161,6 +164,7 @@ from exactdocs.identity.ports.driven import (
     FailedSignInLog,
     LibraryGrantRepository,
     PasswordHasher,
+    PreferencesRepository,
     SecretBox,
     SessionRepository,
     SignInAttemptRepository,
@@ -2852,3 +2856,48 @@ class CanCreateLibraryUseCase:
             or query.account_id in self.policy.users
             or bool(self.policy.groups.intersection(groups))
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GetPreferencesUseCase:
+    """Implements ``ports.driving.GetPreferences``."""
+
+    preferences: PreferencesRepository
+    """Where each account's interface preferences are saved."""
+
+    async def __call__(self, query: GetPreferencesQuery) -> AccountPreferences:
+        """Return the account's saved preferences, or the defaults when it saved none.
+
+        Args:
+            query: The account.
+
+        Returns:
+            Its preferences, and whether it saved them.
+        """
+        return AccountPreferences.from_model(
+            await self.preferences.get(AccountId(query.account_id))
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SavePreferencesUseCase:
+    """Implements ``ports.driving.SavePreferences``."""
+
+    preferences: PreferencesRepository
+    """Where each account's interface preferences are saved."""
+
+    async def __call__(self, command: SavePreferencesCommand) -> AccountPreferences:
+        """Save the account's preferences, replacing the ones it had.
+
+        Saving the defaults saves them too: the account then has preferences of its own, which
+        win over a browser's on the next sign-in.
+
+        Args:
+            command: The account and its new preferences.
+
+        Returns:
+            The preferences as saved.
+        """
+        chosen = command.preferences.to_model()
+        await self.preferences.put(AccountId(command.account_id), chosen)
+        return AccountPreferences.from_model(chosen)

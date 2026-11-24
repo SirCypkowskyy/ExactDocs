@@ -4,6 +4,7 @@ from typing import Protocol
 
 from exactdocs.identity.dtos import (
     AccessLogPage,
+    AccountPreferences,
     AccountProviders,
     AccountSummary,
     ApiTokenIdentity,
@@ -18,6 +19,7 @@ from exactdocs.identity.dtos import (
     ExternalSignInStart,
     ExternalTokenIdentity,
     FinishExternalSignInCommand,
+    GetPreferencesQuery,
     GrantLibraryRoleCommand,
     LibraryCreationQuery,
     LibraryGrantList,
@@ -33,6 +35,7 @@ from exactdocs.identity.dtos import (
     ResetPasswordCommand,
     RevalidationReport,
     RevokeLibraryRoleCommand,
+    SavePreferencesCommand,
     SessionGrant,
     SessionState,
     SetupState,
@@ -676,5 +679,35 @@ class CanCreateLibrary(Protocol):
 
         Returns:
             Whether the caller may create a library.
+        """
+        ...
+
+
+class GetPreferences(Protocol):
+    """An account's interface preferences, or the defaults when it never saved any."""
+
+    async def __call__(self, query: GetPreferencesQuery) -> AccountPreferences:
+        """Run the use case.
+
+        Args:
+            query: The account.
+
+        Returns:
+            Its preferences, and whether it saved them.
+        """
+        ...
+
+
+class SavePreferences(Protocol):
+    """Save an account's interface preferences, replacing the ones it had."""
+
+    async def __call__(self, command: SavePreferencesCommand) -> AccountPreferences:
+        """Run the use case.
+
+        Args:
+            command: The account and its new preferences, every setting given.
+
+        Returns:
+            The preferences as saved.
         """
         ...

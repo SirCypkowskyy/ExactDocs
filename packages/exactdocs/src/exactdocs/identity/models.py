@@ -8,7 +8,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
-from typing import NewType
+from typing import Literal, NewType
 from urllib.parse import urlsplit
 
 from exactdocs.identity.constants import (
@@ -29,8 +29,13 @@ from exactdocs.identity.constants import (
     PROVIDER_NAME_PATTERN,
     RESERVED_IN_USERNAME,
     SIGN_IN_ATTEMPT_LIFETIME,
+    TEXT_SCALES,
 )
-from exactdocs.identity.errors import InvalidTokenNameError, InvalidUsernameError
+from exactdocs.identity.errors import (
+    InvalidPreferencesError,
+    InvalidTokenNameError,
+    InvalidUsernameError,
+)
 
 AccountId = NewType("AccountId", str)
 
@@ -940,3 +945,95 @@ class LibraryCreationPolicy:
     """Exact stable account IDs, including verified unlinked provider:subject IDs."""
     groups: frozenset[str] = frozenset()
     """Exact mapped group names, including any provider prefix."""
+
+
+class Theme(StrEnum):
+    """The colour scheme of the interface; ``system`` follows the operating system's."""
+
+    LIGHT = "light"
+    DARK = "dark"
+    SYSTEM = "system"
+
+
+class Contrast(StrEnum):
+    """How strongly text and controls stand out from their background."""
+
+    STANDARD = "standard"
+    MORE = "more"
+
+
+class TextSpacing(StrEnum):
+    """The spacing of lines, words and letters (``wide`` meets WCAG 1.4.12's minimums)."""
+
+    STANDARD = "standard"
+    WIDE = "wide"
+
+
+class Motion(StrEnum):
+    """Animations: ``system`` follows the operating system's reduced-motion setting."""
+
+    SYSTEM = "system"
+    REDUCED = "reduced"
+    FULL = "full"
+
+
+class Font(StrEnum):
+    """The typeface of the interface's text."""
+
+    DEFAULT = "default"
+    HYPERLEGIBLE = "hyperlegible"
+    DYSLEXIC = "dyslexic"
+    SYSTEM = "system"
+
+
+class Language(StrEnum):
+    """The language of the interface; ``system`` follows the browser's."""
+
+    SYSTEM = "system"
+    EN = "en"
+    PL = "pl"
+
+
+# The text sizes the interface offers, in percent: ``TEXT_SCALES`` as a type.
+TextScale = Literal[90, 100, 110, 125, 150]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Preferences:
+    """How one person wants the interface to look and behave, saved to their account (#487).
+
+    The defaults are what an account that never saved any gets: follow the operating system and
+    change nothing else.
+    """
+
+    theme: Theme = Theme.SYSTEM
+    """The colour scheme."""
+    contrast: Contrast = Contrast.STANDARD
+    """The contrast level."""
+    text_scale: TextScale = 100
+    """The text size in percent, one of ``TEXT_SCALES``."""
+    text_spacing: TextSpacing = TextSpacing.STANDARD
+    """The spacing of lines, words and letters."""
+    motion: Motion = Motion.SYSTEM
+    """Whether the interface animates."""
+    font: Font = Font.DEFAULT
+    """The typeface."""
+    underline_links: bool = False
+    """Whether every link is underlined, not only told apart by its colour."""
+    large_targets: bool = False
+    """Whether buttons and links get larger hit areas."""
+    language: Language = Language.SYSTEM
+    """The language of the interface."""
+    library_logos: bool = True
+    """Whether libraries show their logos (and generic icons where they have none)."""
+
+    def __post_init__(self) -> None:
+        """Check the text size.
+
+        Raises:
+            InvalidPreferencesError: The text size is not one of ``TEXT_SCALES``.
+        """
+        if self.text_scale not in TEXT_SCALES:
+            sizes = ", ".join(str(scale) for scale in TEXT_SCALES)
+            message = f"text_scale must be one of {sizes} (percent)"
+            raise InvalidPreferencesError(message)

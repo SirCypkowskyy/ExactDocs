@@ -411,3 +411,7 @@ OAUTH_CLIENT_BASIC: Final[str] = "client_secret_basic"
 
 OAUTH_CLIENT_POST: Final[str] = "client_secret_post"
 """OAuth client authentication using token form fields (GitHub OAuth Apps)."""
+
+TEXT_SCALES: Final[tuple[int, ...]] = (90, 100, 110, 125, 150)
+"""The text sizes the interface offers, in percent of its default size (#487); the same as
+``models.TextScale``, which types them."""

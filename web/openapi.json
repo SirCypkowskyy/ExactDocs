@@ -3216,6 +3216,194 @@
         }
       }
     },
+    "/api/v1/account/preferences": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Get Account Preferences",
+        "description": "Return the caller's interface preferences.\n\n`saved` is `false` while the account never saved any: `preferences` then holds the\ndefaults, and a browser signing in keeps the preferences it already applies (and saves\nthem). Once `saved` is `true`, the account's preferences win over a browser's.",
+        "operationId": "identity-get_account_preferences",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountPreferences"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Save Account Preferences",
+        "description": "Save the caller's interface preferences, replacing the ones it had.\n\nEvery preference is required. An unknown key or a value the interface does not offer is\na 422 `validation_error` naming the field, and nothing is saved.",
+        "operationId": "identity-save_account_preferences",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InterfacePreferences"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountPreferences"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
     "/api/v1/libraries/{owner}/{repo}/asset": {
       "get": {
         "tags": [
@@ -11767,6 +11955,27 @@
         "title": "AccountLinkStart",
         "description": "A started link: send the browser to ``redirect_url`` (the binding cookie is set)."
       },
+      "AccountPreferences": {
+        "properties": {
+          "saved": {
+            "type": "boolean",
+            "title": "Saved",
+            "description": "`false` while the account never saved any: `preferences` then holds the defaults, and a\nbrowser keeps (and may save) the ones it already applies."
+          },
+          "preferences": {
+            "$ref": "#/components/schemas/InterfacePreferences",
+            "description": "The saved preferences, or the defaults when `saved` is `false`."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "saved",
+          "preferences"
+        ],
+        "title": "AccountPreferences",
+        "description": "An account's interface preferences, and whether it saved them."
+      },
       "AccountProvider": {
         "properties": {
           "name": {
@@ -14512,6 +14721,112 @@
         ],
         "title": "HostKind",
         "description": "Where the repository is hosted; `git` is any other HTTPS/SSH git server."
+      },
+      "InterfacePreferences": {
+        "properties": {
+          "theme": {
+            "type": "string",
+            "enum": [
+              "light",
+              "dark",
+              "system"
+            ],
+            "title": "Theme",
+            "description": "Colour scheme: `light`, `dark`, or `system` to follow the operating system. Default\n`system`."
+          },
+          "contrast": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "more"
+            ],
+            "title": "Contrast",
+            "description": "Contrast of text and controls: `standard` or `more`. Default `standard`."
+          },
+          "text_scale": {
+            "type": "integer",
+            "enum": [
+              90,
+              100,
+              110,
+              125,
+              150
+            ],
+            "title": "Text Scale",
+            "description": "Text size in percent of the default size: 90, 100, 110, 125 or 150. Default 100."
+          },
+          "text_spacing": {
+            "type": "string",
+            "enum": [
+              "standard",
+              "wide"
+            ],
+            "title": "Text Spacing",
+            "description": "Spacing of lines, words and letters: `standard`, or `wide` (WCAG 1.4.12's minimums).\nDefault `standard`."
+          },
+          "motion": {
+            "type": "string",
+            "enum": [
+              "system",
+              "reduced",
+              "full"
+            ],
+            "title": "Motion",
+            "description": "Animations: `system` follows the operating system's reduced-motion setting; `reduced` and\n`full` override it. Default `system`."
+          },
+          "font": {
+            "type": "string",
+            "enum": [
+              "default",
+              "hyperlegible",
+              "dyslexic",
+              "system"
+            ],
+            "title": "Font",
+            "description": "Typeface: `default`, `hyperlegible` (a typeface for low vision), `dyslexic` (one for\ndyslexic readers) or `system` (the operating system's). Default `default`."
+          },
+          "underline_links": {
+            "type": "boolean",
+            "title": "Underline Links",
+            "description": "Whether every link is underlined, not only told apart by its colour. Default `false`."
+          },
+          "large_targets": {
+            "type": "boolean",
+            "title": "Large Targets",
+            "description": "Whether buttons and links get larger hit areas. Default `false`."
+          },
+          "language": {
+            "type": "string",
+            "enum": [
+              "system",
+              "en",
+              "pl"
+            ],
+            "title": "Language",
+            "description": "Interface language: `en` (English), `pl` (Polish), or `system` to follow the browser's.\nDefault `system`."
+          },
+          "library_logos": {
+            "type": "boolean",
+            "title": "Library Logos",
+            "description": "Whether libraries show their logos, and generic icons where they have none; `false` hides\nboth. Default `true`."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "theme",
+          "contrast",
+          "text_scale",
+          "text_spacing",
+          "motion",
+          "font",
+          "underline_links",
+          "large_targets",
+          "language",
+          "library_logos"
+        ],
+        "title": "InterfacePreferences",
+        "description": "How a person wants the interface to look and behave. Every setting is required."
       },
       "JobList": {
         "properties": {

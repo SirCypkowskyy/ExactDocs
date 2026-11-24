@@ -32,6 +32,7 @@ from exactdocs.identity.dtos import (
     AccessLogPage,
     AccessLogQuery,
     AccountLinkStart,
+    AccountPreferences,
     AccountProviders,
     AccountSummary,
     AuthenticateQuery,
@@ -41,8 +42,10 @@ from exactdocs.identity.dtos import (
     CreateUserCommand,
     ExternalSignInResult,
     FinishExternalSignInCommand,
+    GetPreferencesQuery,
     GrantLibraryRoleCommand,
     GrantListQuery,
+    InterfacePreferences,
     LibraryAccessLogQuery,
     LibraryGrantList,
     LibraryGrantRequest,
@@ -56,6 +59,7 @@ from exactdocs.identity.dtos import (
     PasswordReset,
     ResetPasswordCommand,
     RevokeLibraryRoleCommand,
+    SavePreferencesCommand,
     SessionState,
     SetUserDisabledCommand,
     StartAccountLinkCommand,
@@ -83,6 +87,7 @@ from exactdocs.identity.ports.driving import (
     CreateToken,
     CreateUser,
     FinishExternalSignIn,
+    GetPreferences,
     GetProviderIcon,
     GetSessionState,
     GrantLibraryRole,
@@ -99,6 +104,7 @@ from exactdocs.identity.ports.driving import (
     ResetPassword,
     RevokeLibraryRole,
     RevokeToken,
+    SavePreferences,
     SetUserDisabled,
     SignIn,
     SignOut,
@@ -1202,6 +1208,67 @@ def build_grants_router(
                 library=f"/{owner}/{repo}",
                 **query.model_dump(exclude_unset=True),
             )
+        )
+
+    return router
+
+
+def build_preferences_router(
+    *,
+    get_preferences: GetPreferences,
+    save_preferences: SavePreferences,
+    caller: CurrentCaller,
+) -> APIRouter:
+    """Expose ``/account/preferences``: the caller's interface preferences.
+
+    A session or an API token may call them: a token acts as its account, as on the library
+    routes. Each account has its own; nobody reads or saves another's.
+
+    Args:
+        get_preferences: The driving port that reads an account's preferences.
+        save_preferences: The driving port that saves them.
+        caller: The dependency that names the calling account.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["identity"], dependencies=[Depends(caller)])
+    account = Annotated[AccountSummary, Depends(caller)]
+
+    @router.get("/account/preferences", name="get_account_preferences")
+    async def get_account_preferences(who: account) -> AccountPreferences:
+        """Return the caller's interface preferences.
+
+        `saved` is `false` while the account never saved any: `preferences` then holds the
+        defaults, and a browser signing in keeps the preferences it already applies (and saves
+        them). Once `saved` is `true`, the account's preferences win over a browser's.
+
+        Args:
+            who: The caller.
+
+        Returns:
+            The preferences, and whether the account saved them.
+        """
+        return await get_preferences(GetPreferencesQuery(account_id=who.id))
+
+    @router.put("/account/preferences", name="save_account_preferences")
+    async def save_account_preferences(
+        preferences: InterfacePreferences, who: account
+    ) -> AccountPreferences:
+        """Save the caller's interface preferences, replacing the ones it had.
+
+        Every preference is required. An unknown key or a value the interface does not offer is
+        a 422 `validation_error` naming the field, and nothing is saved.
+
+        Args:
+            preferences: The new preferences.
+            who: The caller.
+
+        Returns:
+            The preferences as saved (`saved` is `true`).
+        """
+        return await save_preferences(
+            SavePreferencesCommand(account_id=who.id, preferences=preferences)
         )
 
     return router
