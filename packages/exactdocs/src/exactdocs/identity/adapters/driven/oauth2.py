@@ -2,6 +2,7 @@
 
 import base64
 import json
+import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from http import HTTPStatus
@@ -22,6 +23,9 @@ from exactdocs.identity.errors import (
     ProviderUnavailableError,
 )
 from exactdocs.identity.models import ExternalClaims, ExternalGrant
+from exactdocs_kernel import redact_url
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -250,7 +254,12 @@ async def request_json(
         async with client.stream(method, url, follow_redirects=False, **kwargs) as response:
             content = await _read_capped(response)
             status, headers = response.status_code, response.headers
-    except httpx2.HTTPError:
+    except httpx2.HTTPError as error:
+        # The transport's text names a proxy that failed and the host (#538).
+        host = httpx2.URL(url).host
+        logger.warning(
+            "%s cannot be reached (%s: %s)", host, type(error).__name__, redact_url(str(error))
+        )
         raise ProviderUnavailableError from None
     try:
         return status, headers, json.loads(content)
