@@ -331,6 +331,35 @@ class InvalidImageTypeError(ValidationError):
         super().__init__(f"{content_type!r} is not an image type the catalog stores")
 
 
+class InvalidLogoError(ValidationError):
+    """A library logo is empty, too big, or of a type the catalog does not serve."""
+
+    def __init__(self, content_type: str, size: int) -> None:
+        """Name the logo's type and size.
+
+        Args:
+            content_type: Its media type.
+            size: Its size in bytes.
+        """
+        super().__init__(
+            f"a {content_type!r} logo of {size} bytes is not one the catalog keeps: "
+            "a PNG, JPEG, WebP or SVG image of at most 512 KiB"
+        )
+
+
+class LogoNotFoundError(NotFoundError):
+    """The library has no logo: the importer found none in its default version, or none yet."""
+
+    def __init__(self, library_id: str) -> None:
+        """Name the library.
+
+        Args:
+            library_id: The library ID.
+        """
+        super().__init__(f"library {library_id!r} has no logo")
+        self.library_id = library_id
+
+
 class InvalidInstructionFileError(ValidationError):
     """An instruction file is too long, a manifest keeps too many, or one path twice."""
 

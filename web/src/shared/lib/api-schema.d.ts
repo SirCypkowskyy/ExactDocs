@@ -518,6 +518,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/libraries/{owner}/{repo}/logo": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Library Logo
+         * @description Serve the library's project logo, found by the importer in its default version.
+         *
+         *     From ExactDocs' own origin, never from the repository's host. The `ETag` is the logo's
+         *     version (the library's `logo` field). Asked for with `?v=` set to that version, it is
+         *     cached for a year; otherwise the browser asks again (`no-cache`) and gets a 304 while the
+         *     logo is the same. An SVG is served as an attachment (an `<img>` still shows it) under a
+         *     CSP that forbids scripts and any request. 404 `not_found` when the library has no logo.
+         */
+        readonly get: operations["catalog-get_library_logo"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries/{owner}/{repo}/default-version": {
         readonly parameters: {
             readonly query?: never;
@@ -3842,6 +3868,13 @@ export interface components {
              *     answer. Untrusted repository text.
              */
             readonly rules?: readonly string[];
+            /**
+             * Logo
+             * @description Version of the library's project logo (hex digits of its SHA-256); null when the importer
+             *     found none in the default version. The image is `GET /api/v1/libraries/{owner}/{repo}/logo`;
+             *     with `?v=<logo>` a browser may keep it until the logo changes.
+             */
+            readonly logo: string | null;
         };
         /**
          * LibraryFacetOut
@@ -4417,6 +4450,13 @@ export interface components {
              * @description When any version was last imported; null while none is.
              */
             readonly last_imported_at: string | null;
+            /**
+             * Logo
+             * @description Version of the library's project logo (hex digits of its SHA-256); null when the importer
+             *     found none in the default version. The image is `GET /api/v1/libraries/{owner}/{repo}/logo`;
+             *     with `?v=<logo>` a browser may keep it until the logo changes.
+             */
+            readonly logo: string | null;
             /**
              * Article Count
              * @description The articles of the default version (its active manifest's entries); 0 while none is
@@ -8945,6 +8985,96 @@ export interface operations {
                     readonly "image/png": unknown;
                     readonly "image/jpeg": unknown;
                     readonly "image/gif": unknown;
+                    readonly "image/webp": unknown;
+                    readonly "image/svg+xml": unknown;
+                };
+            };
+            /** @description The caller's copy (`If-None-Match`) is current. */
+            readonly 304: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "catalog-get_library_logo": {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The library's `logo` version: when it is the current one, the answer may be cached for a year (the URL changes with the logo). */
+                readonly v?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The logo's bytes: a PNG, JPEG or WebP as the repository has it, or an SVG as the importer cleaned it. */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "image/png": unknown;
+                    readonly "image/jpeg": unknown;
                     readonly "image/webp": unknown;
                     readonly "image/svg+xml": unknown;
                 };

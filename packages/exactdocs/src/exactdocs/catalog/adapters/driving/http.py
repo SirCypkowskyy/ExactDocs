@@ -4,7 +4,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 
-from exactdocs.catalog.constants import _ASSET_HEADERS, _SVG, ARTICLE_SORT_FIELDS
+from exactdocs.catalog.constants import _ASSET_HEADERS, _LOGO_CACHED, _SVG, ARTICLE_SORT_FIELDS
 from exactdocs.catalog.dtos import (
     Article,
     ArticleList,
@@ -12,6 +12,7 @@ from exactdocs.catalog.dtos import (
     GetArticleQuery,
     GetAssetQuery,
     GetLibraryQuery,
+    GetLogoQuery,
     LibraryDetail,
     LibraryList,
     LibraryPatch,
@@ -38,6 +39,7 @@ from exactdocs.catalog.ports.driving import (
     GetArticle,
     GetAsset,
     GetLibrary,
+    GetLogo,
     ListArticles,
     ListLibraries,
     ListTags,
@@ -63,6 +65,7 @@ def build_router(
     get_asset: GetAsset,
     update_library: UpdateLibrary,
     pin_default_version: PinDefaultVersion,
+    get_logo: GetLogo,
 ) -> APIRouter:
     """Expose the catalog's driving ports under ``/libraries``.
 
@@ -78,12 +81,14 @@ def build_router(
         get_asset: Reads one image.
         update_library: Sets a library's title or description.
         pin_default_version: Pins or unpins a library's default version.
+        get_logo: Reads a library's logo.
 
     Returns:
         The router.
     """
     router = APIRouter(prefix="/libraries", tags=["catalog"])
     router.include_router(_asset_router(get_asset))
+    router.include_router(_logo_router(get_logo))
     router.include_router(_default_router(pin_default_version))
     router.include_router(_versions_router(list_versions))
 
@@ -498,5 +503,77 @@ def _asset_router(get_asset: GetAsset) -> APIRouter:
         if asset.unchanged:
             return Response(status_code=304, headers=headers)
         return Response(asset.data, media_type=asset.content_type, headers=headers)
+
+    return router
+
+
+def _logo_router(get_logo: GetLogo) -> APIRouter:
+    """Build the route that serves a library's logo (#504; see ``_ASSET_HEADERS``).
+
+    Args:
+        get_logo: Reads a library's logo.
+
+    Returns:
+        The router.
+    """
+    router = APIRouter(tags=["catalog"])
+
+    @router.get(
+        "/{owner}/{repo}/logo",
+        response_class=Response,
+        responses={
+            200: {
+                "description": (
+                    "The logo's bytes: a PNG, JPEG or WebP as the repository has it, or an SVG as "
+                    "the importer cleaned it."
+                ),
+                "content": {"image/png": {}, "image/jpeg": {}, "image/webp": {}, _SVG: {}},
+            },
+            304: {"description": "The caller's copy (`If-None-Match`) is current."},
+        },
+    )
+    async def get_library_logo(
+        request: Request,
+        owner: str,
+        repo: str,
+        v: Annotated[
+            str | None,
+            Query(
+                max_length=MAX_NAME,
+                description=(
+                    "The library's `logo` version: when it is the current one, the answer may be "
+                    "cached for a year (the URL changes with the logo)."
+                ),
+            ),
+        ] = None,
+    ) -> Response:
+        """Serve the library's project logo, found by the importer in its default version.
+
+        From ExactDocs' own origin, never from the repository's host. The `ETag` is the logo's
+        version (the library's `logo` field). Asked for with `?v=` set to that version, it is
+        cached for a year; otherwise the browser asks again (`no-cache`) and gets a 304 while the
+        logo is the same. An SVG is served as an attachment (an `<img>` still shows it) under a
+        CSP that forbids scripts and any request. 404 `not_found` when the library has no logo.
+
+        Args:
+            request: The request, for its `If-None-Match` header.
+            owner: The library ID's owner.
+            repo: The library ID's repository.
+            v: The logo version the caller expects.
+
+        Returns:
+            The logo's bytes, or a 304 when the caller's copy is current.
+        """
+        sent = request.headers.get("if-none-match", "")
+        known = [t.strip().removeprefix("W/").strip('"') for t in sent.split(",") if t.strip()]
+        logo = await get_logo(GetLogoQuery(library=f"/{owner}/{repo}", known_digests=known))
+        headers = {**_ASSET_HEADERS, "ETag": f'"{logo.digest}"'}
+        if v == logo.digest:
+            headers["Cache-Control"] = _LOGO_CACHED
+        if logo.content_type == _SVG:
+            headers["Content-Disposition"] = 'attachment; filename="logo.svg"'
+        if logo.unchanged:
+            return Response(status_code=304, headers=headers)
+        return Response(logo.data, media_type=logo.content_type, headers=headers)
 
     return router
