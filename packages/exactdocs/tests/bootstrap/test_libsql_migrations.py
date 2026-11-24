@@ -23,6 +23,7 @@ import pytest
 from sqlalchemy import Connection, create_engine
 from sqlalchemy.pool import StaticPool
 
+import integration
 import libsql_backends
 from exactdocs.bootstrap.constants import MIGRATIONS
 from exactdocs.bootstrap.database import _upgrade
@@ -92,7 +93,7 @@ OTHERS = ("test_", "behave_", "libsql_")
 libSQL's (``libsql_vector_meta_shadow``, made with the first vector index)."""
 
 
-@pytest.mark.skipif(libsql_backends.LIBSQL_URL is None, reason="needs EXACTDOCS_TEST_LIBSQL_URL")
+@integration.LIBSQL
 def test_every_revision_runs_on_a_libsql_server(tmp_path: Path) -> None:
     driver: Any = importlib.import_module("libsql")
     assert libsql_backends.LIBSQL_URL is not None

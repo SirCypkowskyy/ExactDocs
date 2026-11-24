@@ -9,7 +9,8 @@ import asyncio
 
 import pytest
 
-from databases import ADMIN_URL, SECRET_KEY, postgres_database
+import integration
+from databases import SECRET_KEY, postgres_database
 from exactdocs.bootstrap.bridges import RetrievalVersionEmbedder
 from exactdocs.bootstrap.container import Container, vector_index
 from exactdocs.bootstrap.embedding import SaveProviderThenEmbed
@@ -211,7 +212,7 @@ async def test_the_bridge_marks_the_batches_worth_trying_again(
 # ---------------------------------------------------------------- PostgreSQL with pgvector (#243)
 
 
-@pytest.mark.skipif(ADMIN_URL is None, reason="needs EXACTDOCS_TEST_POSTGRES_URL")
+@integration.POSTGRES
 async def test_a_version_is_embedded_into_pgvector_by_its_job(on_postgres: object) -> None:
     del on_postgres
     with gateway() as endpoint:
@@ -239,7 +240,7 @@ async def test_a_version_is_embedded_into_pgvector_by_its_job(on_postgres: objec
     assert any(s.path.endswith("/embeddings") for s in endpoint.seen)
 
 
-@pytest.mark.skipif(ADMIN_URL is None, reason="needs EXACTDOCS_TEST_POSTGRES_URL")
+@integration.POSTGRES
 async def test_without_pgvector_embed_jobs_send_nothing_and_the_estimate_still_counts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

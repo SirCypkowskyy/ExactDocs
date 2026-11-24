@@ -42,7 +42,7 @@ def fake_options(service: FakeSearchService | None = None, **more: Any) -> dict[
 
 
 def real_url() -> str | None:
-    """The real service's endpoint, or ``None`` (its cases are left out)."""
+    """The real service's endpoint, or ``None`` (its integration cases skip, #507)."""
     url = os.environ.get(URL_VARIABLE) or None
     if url is None and os.environ.get(REQUIRE_VARIABLE) == "1":
         message = f"{REQUIRE_VARIABLE}=1 but {URL_VARIABLE} names no service"
@@ -119,7 +119,11 @@ def _vector_case(
 
 
 def cases() -> list[tuple[str, Factory[SearchBackend] | None, Factory[VectorBackend]]]:
-    """``(name, search, vectors)`` of every Azure AI Search case: the fake's, a service's."""
+    """``(name, search, vectors)`` of every Azure AI Search case: the fake's, a service's.
+
+    The service's are always listed: ``index_backends`` marks them integration cases, which run
+    with ``--integration`` and ``EXACTDOCS_TEST_AZURE_SEARCH_URL`` (the manual workflow).
+    """
     found: list[tuple[str, Factory[SearchBackend] | None, Factory[VectorBackend]]] = [
         (
             "azure_search_fake",
@@ -133,18 +137,18 @@ def cases() -> list[tuple[str, Factory[SearchBackend] | None, Factory[VectorBack
             _vector_case(fake_options, fake=True, hybrid=True, semantic=True),
         ),
     ]
-    if real_url() is not None:
-        found += [
-            (
-                "azure_search",
-                _search_case(real_options, fake=False),
-                _vector_case(real_options, fake=False, hybrid=True),
-            ),
-            ("azure_search_plain", None, _vector_case(real_options, fake=False, hybrid=False)),
-            (
-                "azure_search_semantic",
-                None,
-                _vector_case(real_options, fake=False, hybrid=True, semantic=True),
-            ),
-        ]
+    real_url()  # EXACTDOCS_REQUIRE_AZURE_SEARCH=1 without it: an error
+    found += [
+        (
+            "azure_search",
+            _search_case(real_options, fake=False),
+            _vector_case(real_options, fake=False, hybrid=True),
+        ),
+        ("azure_search_plain", None, _vector_case(real_options, fake=False, hybrid=False)),
+        (
+            "azure_search_semantic",
+            None,
+            _vector_case(real_options, fake=False, hybrid=True, semantic=True),
+        ),
+    ]
     return found

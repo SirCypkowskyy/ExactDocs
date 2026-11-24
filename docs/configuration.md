@@ -468,11 +468,12 @@ service's region must offer the semantic ranker (its Free plan's requests are pl
 ```bash
 EXACTDOCS_TEST_AZURE_SEARCH_URL=https://<service>.search.windows.net \
 EXACTDOCS_TEST_AZURE_SEARCH_KEY=<admin key> \
-  uv run pytest packages/exactdocs/tests/retrieval -k "azure_search and not fake"
+  uv run pytest --integration packages/exactdocs/tests/retrieval -k "azure_search and not fake"
 ```
 
 (Without `EXACTDOCS_TEST_AZURE_SEARCH_KEY`, the tests sign in with `DefaultAzureCredential`,
-e.g. after `az login`.)
+e.g. after `az login`. The real service's cases are integration tests: `--integration` turns them
+on, see [Fast and integration tests](releasing.md#fast-and-integration-tests).)
 
 ### Chroma
 
@@ -1181,7 +1182,7 @@ EXACTDOCS_VECTOR_BACKEND=pinecone EXACTDOCS_INDEX_BACKENDS__PINECONE__HOST=http:
 ```
 
 The contract tests run on it with `EXACTDOCS_TEST_PINECONE_URL=http://localhost:5081` (an index of
-at least 256 dimensions). CI runs them on Pinecone Local (the image above, 256 dimensions,
+at least 256 dimensions) and `--integration` (they are integration tests). CI's integration job runs them on Pinecone Local (the image above, 256 dimensions,
 `dotproduct`), which ignores sparse values; the manual **Pinecone** workflow runs them, hybrid
 included, against a real index (repository secret `PINECONE_API_KEY`, its host as the workflow's
 input). CI never calls Pinecone itself.
