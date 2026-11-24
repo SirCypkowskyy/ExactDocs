@@ -12,7 +12,10 @@ the machine. #381 changed the default chunking and ran it again: the numbers are
 new names (`default` is what was `h3-max-4000`, and `h6` what was `default`). The golden set's
 review (#490) added expected sections to some cases, so it was recorded again on 23 November 2026
 (on Linux, 4 CPUs): only the counts of expected sections and the coverage moved, every other
-number is the same. The lists of sections that start no chunk, and examples of each problem, are in
+number is the same. #503 fixed how a hit is matched to an expected section at a coarser chunking
+(a chunk now counts for every section it holds, [Method](method.md#chunking-configurations)), so
+it was recorded again on 24 November 2026: only BM25 at `h2` and `merge-400` moved, to 82.8% and
+81.7% recall@5 from 76.0% and 74.2%. The lists of sections that start no chunk, and examples of each problem, are in
 [`results/ingestion.md`](https://github.com/SirCypkowskyy/ExactDocs/blob/develop/packages/exactdocs/evals/results/ingestion.md).
 
 What it shows:
@@ -28,16 +31,16 @@ What it shows:
   headings, Pydantic keeps `{#id}` attributes in heading paths, MkDocs admonitions and tabs read
   as code blocks, and Pydantic v1's includes stay unexpanded.
 - The BM25 column is this benchmark's own run. The [retrieval results](retrieval.md) measure BM25
-  again at each chunking in a separate run, and their numbers differ (for `h2`, 76.0% recall@5
-  there against 81.3% here). The defaults are chosen from the retrieval run.
+  again at each chunking in a separate run, with the same match rule and the same numbers. The
+  defaults are chosen from the retrieval run.
 
 <!-- bench:ingestion -->
 | configuration | coverage | held | cut fence / table / list | lost chars | tokens p50 / p95 / max | small | multi-top | empty / wrong path | headings missed / extra | BM25 recall@5 (exact) | MRR |
 |---|---|---|---|---|---|---|---|---|---|---|---|
 | `default` | 91.6% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 114 / 738 / 8645 | 23.1% | 0.0% | 723 / 102 | 60 / 3 | 81.7% (76.8%) | 0.651 |
 | `h6` | 100.0% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 88 / 516 / 8645 | 32.2% | 0.0% | 723 / 103 | 60 / 3 | 79.8% (79.8%) | 0.626 |
-| `h2` | 53.0% | 381/381 | 3 / 0 / 0 | 11446 of 7940351 | 179 / 1699 / 8645 | 14.3% | 0.6% | 726 / 95 | 60 / 3 | 76.0% (39.3%) | 0.626 |
-| `merge-400` | 77.4% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 183 / 654 / 8645 | 3.0% | 5.1% | 723 / 88 | 60 / 3 | 74.2% (65.2%) | 0.602 |
+| `h2` | 53.0% | 381/381 | 3 / 0 / 0 | 11446 of 7940351 | 179 / 1699 / 8645 | 14.3% | 0.6% | 726 / 95 | 60 / 3 | 82.8% (39.3%) | 0.677 |
+| `merge-400` | 77.4% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 183 / 654 / 8645 | 3.0% | 5.1% | 723 / 88 | 60 / 3 | 81.7% (65.2%) | 0.662 |
 
 - `default`: today's default (#381): # to ### start a chunk; one over 4,000 characters is cut again at deeper headings.
 - `h6`: every heading starts a chunk; nothing is merged or bounded (the default before #381).

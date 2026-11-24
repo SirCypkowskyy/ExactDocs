@@ -1,13 +1,7 @@
 import { AlertDialog, Dialog } from "radix-ui";
 import type * as React from "react";
 import { cn } from "@/shared/lib/utils";
-
-const overlay =
-  "fixed inset-0 z-50 bg-overlay transition-none data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:duration-(--dur) data-[state=open]:ease-(--ease-out) data-[state=closed]:duration-(--dur-fast)";
-
-// Centered (a modal is not anchored to a trigger); fast exit, slightly slower enter.
-const panel =
-  "fixed top-1/2 left-1/2 z-50 max-sm:top-4 max-sm:translate-y-0 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-xl border border-border bg-card p-6 text-card-foreground shadow-lg outline-none transition-none data-[state=open]:animate-in data-[state=open]:fade-in-0 motion-safe:data-[state=open]:zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 motion-safe:data-[state=closed]:zoom-out-95 data-[state=open]:duration-(--dur) data-[state=open]:ease-(--ease-out) data-[state=closed]:duration-(--dur-fast)";
+import { dialogOverlay, dialogPanel } from "./recipes";
 
 export const DialogRoot = Dialog.Root;
 export const DialogTrigger = Dialog.Trigger;
@@ -24,8 +18,8 @@ export const DialogDescription = ({
 export function DialogContent({ className, ...p }: React.ComponentProps<typeof Dialog.Content>) {
   return (
     <Dialog.Portal>
-      <Dialog.Overlay className={overlay} />
-      <Dialog.Content className={cn(panel, className)} {...p} />
+      <Dialog.Overlay className={dialogOverlay} />
+      <Dialog.Content className={cn(dialogPanel, className)} {...p} />
     </Dialog.Portal>
   );
 }
@@ -55,8 +49,8 @@ export function ConfirmContent({
 }: React.ComponentProps<typeof AlertDialog.Content>) {
   return (
     <AlertDialog.Portal>
-      <AlertDialog.Overlay className={overlay} />
-      <AlertDialog.Content className={cn(panel, className)} {...p} />
+      <AlertDialog.Overlay className={dialogOverlay} />
+      <AlertDialog.Content className={cn(dialogPanel, className)} {...p} />
     </AlertDialog.Portal>
   );
 }

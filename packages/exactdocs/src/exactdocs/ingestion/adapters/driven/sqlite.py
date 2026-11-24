@@ -1,7 +1,7 @@
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import (
@@ -18,6 +18,7 @@ from sqlalchemy import (
     delete,
     func,
     insert,
+    literal_column,
     or_,
     select,
     text,
@@ -52,9 +53,11 @@ from exactdocs.ingestion.models import (
     Credential,
     FileProblem,
     Job,
+    JobDayCount,
     JobFilter,
     JobId,
     JobState,
+    Person,
     ProblemCode,
     RefKind,
     VersionOrigin,
@@ -98,9 +101,15 @@ jobs = Table(
     # Who cancelled the job and when; only `cancel` writes them (never `save`).
     Column("cancelled_by", Text),
     Column("cancelled_at", Text),
+    # Who queued the job (#512): their account ID and the user name it had then; null when no
+    # person did, and on the rows of jobs queued before.
+    Column("created_by_id", Text),
+    Column("created_by_name", Text),
     # A page of a library's jobs is a range of this index (see `list_page_for_library`).
     Index("ingestion_jobs_library_id", "library", "id"),
     Index("ingestion_jobs_state", "state"),
+    # The job statistics count the jobs of a range of days (#512).
+    Index("ingestion_jobs_created_at", "created_at"),
     # A library's unfinished jobs, newest first, without reading its finished ones (#329).
     Index(
         "ingestion_jobs_unfinished",
@@ -355,6 +364,8 @@ class SqliteJobRepository:
             query = query.where(jobs.c.state.in_(sorted(s.value for s in job_filter.states)))
         if job_filter.kinds:
             query = query.where(jobs.c.kind.in_(sorted(job_filter.kinds)))
+        if job_filter.origins:
+            query = query.where(jobs.c.origin.in_(sorted(o.value for o in job_filter.origins)))
         if job_filter.version is not None:
             query = query.where(jobs.c.version == job_filter.version)
         if job_filter.created_after is not None:
@@ -474,6 +485,57 @@ class SqliteJobRepository:
         )
         async with self.engine.connect() as connection:
             return [_job(row) for row in await connection.execute(query)]
+
+    async def sync_states(self) -> Mapping[str, JobState]:
+        """Return the state of every library's newest ``import`` or ``refresh`` job, in one query.
+
+        Job IDs are time-ordered, so the greatest ID of a library's imports is its latest sync;
+        only those rows' states are read.
+
+        Returns:
+            The state by library, as spelled in the jobs.
+        """
+        newest = (
+            select(func.max(jobs.c.id))
+            .where(jobs.c.kind.in_(sorted(IMPORT_KINDS)))
+            .group_by(jobs.c.library)
+        )
+        query = select(jobs.c.library, jobs.c.state).where(jobs.c.id.in_(newest))
+        async with self.engine.connect() as connection:
+            rows = await connection.execute(query)
+            return {row.library: JobState(row.state) for row in rows}
+
+    async def daily_counts(self, *, start: datetime, end: datetime) -> Sequence[JobDayCount]:
+        """Count the jobs queued in ``[start, end)`` by UTC day, state and kind, in one query.
+
+        ``created_at`` is stored as UTC ISO-8601 text, so its first ten characters are the UTC
+        day and the range is a text range of the ``ingestion_jobs_created_at`` index.
+
+        Args:
+            start: The first moment counted.
+            end: The first moment no longer counted.
+
+        Returns:
+            One count per (day, state, kind) that has jobs.
+        """
+        # Literal positions: PostgreSQL groups by the expression only if it is spelled the same.
+        day = func.substr(jobs.c.created_at, literal_column("1"), literal_column("10"))
+        query = (
+            select(day.label("day"), jobs.c.state, jobs.c.kind, func.count().label("jobs"))
+            .where(jobs.c.created_at >= _utc_text(start), jobs.c.created_at < _utc_text(end))
+            .group_by(day, jobs.c.state, jobs.c.kind)
+        )
+        async with self.engine.connect() as connection:
+            rows = await connection.execute(query)
+            return [
+                JobDayCount(
+                    day=date.fromisoformat(row.day),
+                    state=JobState(row.state),
+                    kind=row.kind,
+                    count=row.jobs,
+                )
+                for row in rows
+            ]
 
     async def delete_for(self, library: str, version: str | None = None) -> None:
         """Delete the library's jobs (only those of ``version`` when given), never a running one.
@@ -618,6 +680,8 @@ def _values(job: Job) -> Mapping[str, Any]:
         "finished_at": _text(job.finished_at),
         "cancelled_by": job.cancelled_by,
         "cancelled_at": _text(job.cancelled_at),
+        "created_by_id": None if job.created_by is None else job.created_by.id,
+        "created_by_name": None if job.created_by is None else job.created_by.username,
     }
 
 
@@ -699,6 +763,11 @@ def _job(row: Row) -> Job:
         finished_at=_moment(row.finished_at),
         cancelled_by=row.cancelled_by,
         cancelled_at=_moment(row.cancelled_at),
+        created_by=(
+            None
+            if row.created_by_id is None
+            else Person(id=row.created_by_id, username=row.created_by_name or row.created_by_id)
+        ),
     )
 
 

@@ -1,8 +1,9 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Suspense } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { TestRouter } from "@/shared/lib/test-router";
 import { PlaygroundPage } from "./index";
 import {
@@ -14,11 +15,14 @@ import {
 
 const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
 
+const LOGO = "0123456789abcdef";
+
 const summary = (id: string, default_version: string | null = "v1") => ({
   id,
   title: id,
   description: "",
   default_version,
+  logo: id === "/acme/payments" ? LOGO : null,
 });
 
 const hit = (library: string, over: Record<string, unknown> = {}) => ({
@@ -95,14 +99,32 @@ function renderPage() {
   );
 }
 
+/** Picks libraries in the Libraries combobox, then closes it. */
+async function choose(user: ReturnType<typeof userEvent.setup>, ...ids: string[]) {
+  await user.click(await screen.findByRole("button", { name: /^(Libraries|Biblioteki)/ }));
+  for (const id of ids) await user.click(await screen.findByRole("option", { name: id }));
+  await user.keyboard("{Escape}");
+}
+
 const searches = (fetchMock: ReturnType<typeof serve>) =>
   fetchMock.mock.calls
     .map(([input]) => new URL(input, "http://localhost"))
     .filter((u) => u.pathname.endsWith("/v1/search"));
 
+// The picker's Recent group lives in this browser; each test starts without one.
+beforeEach(() => localStorage.removeItem("exactdocs-recent-libraries"));
+
 describe("search playground", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("names the tab and puts focus on its heading when it opens", async () => {
+    serve(() => Response.json(result("hybrid", [])));
+    renderPage();
+    const heading = await screen.findByRole("heading", { level: 1, name: "Search playground" });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(document.title).toBe("Search playground - ExactDocs");
   });
 
   it("searches the chosen libraries in the chosen mode and shows each result's ranks", async () => {
@@ -117,9 +139,12 @@ describe("search playground", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText("/acme/payments"));
-    await user.click(screen.getByLabelText("/acme/billing"));
-    expect(screen.queryByLabelText("/x/empty")).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Libraries All libraries" }));
+    expect(await screen.findByRole("option", { name: "/acme/billing" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "/x/empty" })).not.toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await choose(user, "/acme/payments", "/acme/billing");
+    expect(screen.getByRole("button", { name: "Libraries 2 libraries chosen" })).toBeVisible();
     await user.type(screen.getByLabelText("Query"), "retry failed calls");
     await user.click(screen.getByRole("button", { name: "Search" }));
 
@@ -139,6 +164,28 @@ describe("search playground", () => {
     expect(sent?.searchParams.get("q")).toBe("retry failed calls");
   });
 
+  it("shows each library's logo in the picker and on its results, from the list it loaded", async () => {
+    const fetchMock = serve(() =>
+      Response.json(result("hybrid", [hit("/acme/payments"), hit("/acme/billing")])),
+    );
+    const user = userEvent.setup();
+    renderPage();
+    const src = `/api/v1/libraries/acme/payments/logo?v=${LOGO}`;
+    await user.click(await screen.findByRole("button", { name: "Libraries All libraries" }));
+    const payments = await screen.findByRole("option", { name: "/acme/payments" });
+    expect(payments.querySelector("img")).toHaveAttribute("src", src);
+    expect(screen.getByRole("option", { name: "/acme/billing" }).querySelector("img")).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.type(screen.getByLabelText("Query"), "retry");
+    await user.click(screen.getByRole("button", { name: "Search" }));
+    const list = await screen.findByRole("list", { name: "Hybrid (BM25 + vectors) results" });
+    const [first, second] = within(list).getAllByRole("listitem");
+    expect(first?.querySelector("img")).toHaveAttribute("src", src);
+    expect(second?.querySelector("img")).toBeNull();
+    // The logos come with the list: the browser asks for the images, the page for nothing else.
+    expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("/logo"))).toHaveLength(0);
+  });
+
   it("counts only the chosen libraries in the summary, not every library counted (#479)", async () => {
     // The API counts every readable library's matches (`libraries_searched: 2`) even when one
     // library is chosen; the results come from the chosen one only.
@@ -153,7 +200,7 @@ describe("search playground", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText("/acme/payments"));
+    await choose(user, "/acme/payments");
     await user.type(screen.getByLabelText("Query"), "how do I retry failed calls");
     await user.click(screen.getByLabelText("Compare two modes side by side"));
     await user.click(screen.getByRole("button", { name: "Search" }));
@@ -320,7 +367,7 @@ describe("agent answer in the playground", () => {
     const user = userEvent.setup();
     renderPage();
 
-    await user.click(await screen.findByLabelText("/acme/payments"));
+    await choose(user, "/acme/payments");
     await user.type(screen.getByLabelText("Query"), "retry failed calls");
     await user.selectOptions(
       screen.getByLabelText("Mode"),
@@ -406,5 +453,79 @@ describe("playground model", () => {
 
   it("explains a fallback in a sentence", () => {
     expect(fallbackSentence("embedding_unavailable")).toMatch(/embedding model failed/);
+  });
+});
+
+describe("playground in Polish", () => {
+  beforeEach(() => setPreferences({ language: "pl" }));
+  afterEach(() => {
+    resetPreferences();
+    vi.unstubAllGlobals();
+  });
+
+  it("labels the form, the results and the fallback in Polish", async () => {
+    serve((url) =>
+      Response.json(
+        result(
+          url.searchParams.get("mode") ?? "bm25",
+          [
+            hit("/acme/payments", { bm25_rank: 1, vector_rank: 3 }),
+            hit("/acme/payments", { chunk_id: "c-2", bm25_rank: 2 }),
+          ],
+          { fallback_reason: "embedding_in_progress" },
+        ),
+      ),
+    );
+    const user = userEvent.setup();
+    renderPage();
+
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "Piaskownica wyszukiwania" }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "Biblioteki Wszystkie biblioteki" }),
+    ).toBeInTheDocument();
+    await choose(user, "/acme/payments");
+    await user.type(screen.getByLabelText("Zapytanie"), "retry");
+    expect(screen.getByLabelText("Tryb")).toHaveValue("hybrid");
+    expect(screen.getByLabelText("Porównaj dwa tryby obok siebie")).not.toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Szukaj" }));
+
+    const list = await screen.findByRole("list", { name: "Wyniki: Hybrydowe (BM25 + wektory)" });
+    const [first] = within(list).getAllByRole("listitem");
+    expect(within(first as HTMLElement).getByText("wektorowe #3")).toBeInTheDocument();
+    expect(within(first as HTMLElement).getByText("punktacja 0,5000")).toBeInTheDocument();
+    expect(screen.getByText(/2 wyniki z/)).toHaveTextContent(
+      /^Odpowiedział tryb hybrid · 2 wyniki z 1 biblioteki$/,
+    );
+    expect(
+      screen.getByText(/Zamiast tego odpowiedział BM25: Żadna z wybranych bibliotek/),
+    ).toBeInTheDocument();
+  });
+
+  it("shows the agent's progress, answer and spend in Polish", async () => {
+    serve(() => Response.json(result("bm25", [])), {
+      availability: { available: true, reason: null, max_tool_calls: 20 },
+      stream: () => events(["answer", answered()]),
+    });
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(await screen.findByLabelText("Zapytanie"), "retry");
+    await user.selectOptions(
+      screen.getByLabelText("Tryb"),
+      await screen.findByRole("option", { name: "Odpowiedź agenta (LLM czyta i odpowiada)" }),
+    );
+    expect(screen.getByText(/LLM przeszukuje i czyta wybrane biblioteki/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Zapytaj agenta" }));
+
+    expect(await screen.findByText("Use RetryPolicy.")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Odpowiedź agenta" })).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /^3 z 20 wywołań narzędzi · 2 żądania do modelu, tokeny: 1200 wejściowe \/ 80 wyjściowe, 0,0123\sUSD$/,
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Źródła" })).toBeInTheDocument();
   });
 });

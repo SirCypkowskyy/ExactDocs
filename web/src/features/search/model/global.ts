@@ -1,5 +1,6 @@
 import type { components } from "@/shared/lib/api-schema";
-import { resultsNoun } from "./search";
+import { currentLanguage, type Language, messagesFor } from "@/shared/lib/i18n";
+import { messages } from "../messages";
 
 export type GlobalResults = components["schemas"]["SearchAllResult"];
 export type GlobalHit = components["schemas"]["LibrarySearchResultOut"];
@@ -17,9 +18,13 @@ export function totalMatches(data: GlobalResults, library: string | undefined): 
 }
 
 /** "3 results", "Showing 3 of 5", "Top 20 of 87": the visible count next to the facet totals. */
-export function countLine(shown: number, total: number, complete: boolean): string {
-  if (total <= shown) return resultsNoun(shown, complete);
-  return `${complete ? "Showing" : "Top"} ${shown} of ${total}`;
+export function countLine(
+  shown: number,
+  total: number,
+  complete: boolean,
+  language: Language = currentLanguage(),
+): string {
+  return messagesFor(messages, language).results.countLine(shown, total, complete);
 }
 
 /** The one sentence the live region announces once a result set settles. */
@@ -28,7 +33,7 @@ export function statusLine(
   q: string,
   library: string | undefined,
   complete: boolean,
-) {
-  const what = shown === 0 ? "No results" : resultsNoun(shown, complete);
-  return `${what} for “${q}” ${library ? `in ${library}` : "in all libraries"}`;
+  language: Language = currentLanguage(),
+): string {
+  return messagesFor(messages, language).status.all(shown, q, library, complete);
 }

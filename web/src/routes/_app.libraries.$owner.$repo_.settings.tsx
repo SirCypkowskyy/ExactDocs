@@ -3,17 +3,24 @@ import { createFileRoute } from "@tanstack/react-router";
 import { RouteError } from "@/features/auth";
 import { LibraryNotFound, libraryQueryOptions } from "@/features/browse";
 import { ImportProgress, JobLine, SelectionPreview } from "@/features/libraries";
-import { LibrarySettingsPage, parseVersionsView } from "@/features/library-settings";
+import {
+  LibrarySettingsPage,
+  LibrarySettingsSkeleton,
+  parseVersionsView,
+} from "@/features/library-settings";
 import { HttpError } from "@/shared/lib/http";
 
 // The job and preview views come from `libraries`, the page from `library-settings`: a route is where slices meet.
 const jobs = { Import: ImportProgress, Line: JobLine, Preview: SelectionPreview };
 
 export const Route = createFileRoute("/_app/libraries/$owner/$repo_/settings")({
-  // The versions table's view (filter, kind, sort), so a reload or a shared link keeps it.
+  // The versions table's view (search, filters, sort, page, size), so a reload or a shared link
+  // keeps it. Not a loader dependency: the table loads its own pages under the page's skeleton.
   validateSearch: parseVersionsView,
   loader: ({ context, params }) =>
     context.queryClient.ensureQueryData(libraryQueryOptions(params.owner, params.repo)),
+  pendingMs: 150,
+  pendingComponent: LibrarySettingsSkeleton,
   errorComponent: function SettingsError(props) {
     const { owner, repo } = Route.useParams();
     if (props.error instanceof HttpError && props.error.status === 404) {

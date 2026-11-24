@@ -1,12 +1,16 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Check, CircleAlert } from "lucide-react";
+import { ArrowRight, Check, CircleAlert, RefreshCw, RotateCcw } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import { relativeTime } from "@/shared/lib/time";
+import { useNow } from "@/shared/lib/use-now";
 import { Button } from "@/shared/ui/button";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { refreshLibraries, reimportVersion, syncLibrary } from "../api/settings";
-import { useNow } from "../hooks/use-now";
+import { pageMessages } from "../messages/page";
+import { sharedMessages } from "../messages/shared";
+import { syncMessages } from "../messages/sync";
 import {
   type Activity,
   explainReimport,
@@ -23,7 +27,6 @@ import {
   syncHeadline,
 } from "../model/settings";
 import { SettingsSection } from "./settings-section";
-import { secondary } from "./styles";
 
 interface Props {
   owner: string;
@@ -45,6 +48,9 @@ function Reimport({
   v: SyncedVersion;
   onReimported: (r: ReimportedVersion) => void;
 }) {
+  const language = useLanguage();
+  const t = syncMessages[language];
+  const shared = sharedMessages[language];
   const queryClient = useQueryClient();
   const [problem, setProblem] = useState<Problem>();
   const reimport = useMutation({
@@ -54,7 +60,7 @@ function Reimport({
       onReimported(data);
       refreshLibraries(queryClient);
     },
-    onError: (error) => setProblem(explainReimport(error)),
+    onError: (error) => setProblem(explainReimport(error, language)),
   });
   return (
     <div className="mt-2">
@@ -67,10 +73,12 @@ function Reimport({
           onClick={() => {
             if (!reimport.isPending) reimport.mutate();
           }}
-          className={`${secondary} min-w-32`}
+          variant="outline"
+          className="min-w-32"
         >
-          {reimport.isPending ? "Queueing" : "Re-import the new commit"}{" "}
-          <span className="sr-only">of {v.ref}</span>
+          <RotateCcw aria-hidden="true" data-icon-motion="refresh" />
+          {reimport.isPending ? shared.queueing : t.reimport}{" "}
+          <span className="sr-only">{t.reimportOf(v.ref)}</span>
         </Button>
       )}
       <div className={problem ? "mt-3" : undefined}>
@@ -94,6 +102,8 @@ interface RowProps {
 }
 
 function Row({ owner, repo, v, Line, onReimported }: RowProps) {
+  const language = useLanguage();
+  const t = syncMessages[language];
   const live = (v.status === "queued" || v.status === "importing") && v.job_id;
   const failed = v.status === "failed";
   return (
@@ -110,7 +120,7 @@ function Row({ owner, repo, v, Line, onReimported }: RowProps) {
               <Check aria-hidden="true" className="size-4 shrink-0 text-route" />
             )}
             <span className={failed ? "font-medium text-destructive" : undefined}>
-              {statusWords(v.status)}
+              {statusWords(v.status, language)}
             </span>
           </span>
         )}
@@ -120,10 +130,12 @@ function Row({ owner, repo, v, Line, onReimported }: RowProps) {
           {shortSha(v.previous_commit_sha)}
           <ArrowRight aria-hidden="true" className="size-3" />
           {shortSha(v.commit_sha)}
-          <span className="sr-only"> (previous commit to new commit)</span>
+          <span className="sr-only"> {t.commitChange}</span>
         </p>
       )}
-      {failed && <p className="mt-0.5 text-body text-muted-foreground">{failureWords(v)}</p>}
+      {failed && (
+        <p className="mt-0.5 text-body text-muted-foreground">{failureWords(v, language)}</p>
+      )}
       {failed && v.error_code === "tag_moved" && (
         <Reimport owner={owner} repo={repo} v={v} onReimported={onReimported} />
       )}
@@ -138,6 +150,9 @@ function Row({ owner, repo, v, Line, onReimported }: RowProps) {
 
 /** Asks the remote where each branch is now and shows what each version did, with live progress. */
 export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
+  const language = useLanguage();
+  const t = syncMessages[language];
+  const { sections } = useMessages(pageMessages);
   const queryClient = useQueryClient();
   const now = useNow();
   const [result, setResult] = useState<{ data: SyncedLibrary; at: string }>();
@@ -151,14 +166,14 @@ export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
     onSuccess: (data) => {
       setProblem(undefined);
       setResult({ data, at: new Date().toISOString() });
-      toast.success("Re-sync finished", { description: syncHeadline(data) });
+      toast.success(t.finished, { description: syncHeadline(data, language) });
       refreshLibraries(queryClient);
     },
     onError: (error) => {
       setResult(undefined);
-      const p = explainSync(error);
+      const p = explainSync(error, language);
       setProblem(p);
-      toast.error("Re-sync failed", { description: p.message });
+      toast.error(t.failed, { description: p.message });
       // A 409 means something is importing: the sync badges on the list should show it.
       refreshLibraries(queryClient);
     },
@@ -170,16 +185,13 @@ export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
   const pinned = shown?.data.versions.filter((v) => v.status === "pinned") ?? [];
 
   return (
-    <SettingsSection
-      id="sync"
-      title="Re-sync"
-      description="Check the repository for new commits on each branch version and import only what changed. Tags and commits are pinned: a tag that moved upstream is reported, and re-imported only when you confirm it."
-    >
+    <SettingsSection id="sync" title={sections.sync} description={t.description}>
       <div>
         <Button
           type="button"
           variant="outline"
-          pending={sync.isPending}
+          // The arrows turn while the remote is asked (icon-motion.css, `refresh`).
+          aria-busy={sync.isPending}
           aria-disabled={sync.isPending}
           onClick={() => {
             if (sync.isPending) return;
@@ -188,7 +200,8 @@ export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
           }}
           className="min-w-32"
         >
-          {sync.isPending ? "Checking" : "Re-sync now"}
+          <RefreshCw aria-hidden="true" data-icon-motion="refresh" />
+          {sync.isPending ? t.checking : t.syncNow}
         </Button>
       </div>
       <div className={shownProblem ? "mt-4" : undefined}>
@@ -203,15 +216,15 @@ export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
       <p role="status" className={shown ? "mt-4 font-medium" : undefined}>
         {shown && (
           <span className="fade-in">
-            {syncHeadline(shown.data)}{" "}
+            {syncHeadline(shown.data, language)}{" "}
             <span className="font-normal text-muted-foreground">
-              Checked <time dateTime={shown.at}>{relativeTime(shown.at, now)}</time>.
+              {t.checked(<time dateTime={shown.at}>{relativeTime(shown.at, now, language)}</time>)}
             </span>
           </span>
         )}
       </p>
       {rows.length > 0 && (
-        <ul aria-label="Versions" className="fade-in mt-2 divide-y divide-rule">
+        <ul aria-label={t.versions} className="fade-in mt-2 divide-y divide-rule">
           {rows.map((v) => (
             <Row
               key={v.ref}
@@ -239,8 +252,7 @@ export function SyncSection({ owner, repo, Line, activity, onStart }: Props) {
       )}
       {pinned.length > 0 && (
         <p className="fade-in mt-3 text-body text-muted-foreground [overflow-wrap:anywhere]">
-          {pinned.map((v) => v.ref).join(", ")} {pinned.length === 1 ? "is" : "are"} pinned and{" "}
-          {pinned.length === 1 ? "never changes" : "never change"}.
+          {t.pinned(pinned.map((v) => v.ref).join(", "), pinned.length)}
         </p>
       )}
     </SettingsSection>

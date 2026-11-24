@@ -23,6 +23,7 @@ from exactdocs.bootstrap.caller import (
 from exactdocs.bootstrap.constants import APP_RENDERER_URI, RESOURCE_NOT_FOUND, SKILL_PATH
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.mcp_oauth import build_mcp_auth
+from exactdocs.bootstrap.usage_meter import UsageMeter, counted
 from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driving import mcp as catalog_mcp
 from exactdocs.catalog.constants import MAX_LISTED_RESOURCES, RESOURCE_PAGE_SIZE
@@ -174,11 +175,14 @@ def build_mcp(container: Container) -> FastMCP:
         The MCP server.
     """
     auth = build_mcp_auth(container.settings, container.identity)
-    return _build(container.catalog, container.retrieval, auth)
+    meter = UsageMeter(record_usage=container.usage.record_usage)
+    return _build(container.catalog, container.retrieval, auth, meter=meter)
 
 
 def build_stdio_mcp(container: ReadOnlyContainer) -> FastMCP:
     """Build the same tools over a read-only database, with no authentication (local process).
+
+    Nothing is counted: the process may not write the database.
 
     Args:
         container: The read-only wiring.
@@ -186,11 +190,15 @@ def build_stdio_mcp(container: ReadOnlyContainer) -> FastMCP:
     Returns:
         The MCP server.
     """
-    return _build(container.catalog, container.retrieval, None)
+    return _build(container.catalog, container.retrieval, None, meter=None)
 
 
 def _build(
-    catalog: CatalogModule, retrieval: RetrievalModule, auth: AuthProvider | None
+    catalog: CatalogModule,
+    retrieval: RetrievalModule,
+    auth: AuthProvider | None,
+    *,
+    meter: UsageMeter | None,
 ) -> FastMCP:
     """Build the MCP server: its instructions, the usage skill, every tool and the resources.
 
@@ -198,10 +206,12 @@ def _build(
         catalog: The catalog module, for the browsing tools and the article resources.
         retrieval: The retrieval module, for the search and reading tools.
         auth: What authenticates HTTP callers (API tokens, maybe OAuth), or ``None`` for none.
+        meter: Counts the reads and searches served (#510); ``None`` counts nothing.
 
     Returns:
         The MCP server.
     """
+    reads = counted(catalog, retrieval, meter)
     mcp = ExactDocsMCP(
         name="ExactDocs",
         version=__version__,
@@ -260,24 +270,24 @@ def _build(
         mcp,
         list_libraries=catalog.list_libraries,
         list_articles=catalog.list_articles,
-        get_article=catalog.get_article,
+        get_article=reads.get_article,
         app=app,
     )
     mcp.listing = catalog_mcp.register_resources(
         mcp,
         list_libraries=catalog.list_libraries,
         list_articles=catalog.list_articles,
-        get_article=catalog.get_article,
+        get_article=reads.get_article,
         caller=_resource_caller,
     )
     retrieval_mcp.register_tools(
         mcp,
-        search_docs=retrieval.search_docs,
-        search_all_libraries=retrieval.search_all_libraries,
-        read_chunk=retrieval.read_chunk,
+        search_docs=reads.search_docs,
+        search_all_libraries=reads.search_all_libraries,
+        read_chunk=reads.read_chunk,
         article_outline=retrieval.article_outline,
         resolve_library_id=retrieval.resolve_library_id,
-        query_docs=retrieval.query_docs,
+        query_docs=reads.query_docs,
         caller=_token_account,
         app=app,
     )

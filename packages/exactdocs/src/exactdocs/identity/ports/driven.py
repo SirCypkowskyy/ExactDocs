@@ -16,12 +16,14 @@ from exactdocs.identity.models import (
     ExternalIdentity,
     FailedSignIns,
     LibraryGrant,
+    Preferences,
     Role,
     Session,
     SignInAttempt,
     SubjectKind,
     Username,
 )
+from exactdocs_kernel import Sort, SortValue
 
 
 class AccountRepository(Protocol):
@@ -113,6 +115,17 @@ class AccountRepository(Protocol):
 
         Returns:
             ``True`` once an account exists.
+        """
+        ...
+
+    async def record_activity(self, account_id: AccountId, hour: datetime) -> None:
+        """Move the account's ``last_active_at`` forward to ``hour``, never back.
+
+        One conditional write: a later hour recorded meanwhile (another process) stays.
+
+        Args:
+            account_id: The account's id.
+            hour: The hour it was active (``activity_hour``).
         """
         ...
 
@@ -213,6 +226,25 @@ class TokenRepository(Protocol):
 
         Returns:
             The tokens, newest first.
+        """
+        ...
+
+    async def list_all(self) -> list[ApiToken]:
+        """Return every account's tokens, expired ones not yet removed included, newest first.
+
+        Returns:
+            The tokens, newest first.
+        """
+        ...
+
+    async def count_by_account(self, now: datetime) -> Mapping[AccountId, int]:
+        """Count each account's tokens that have not expired at ``now``, in one query.
+
+        Args:
+            now: The current time.
+
+        Returns:
+            The count per account; an account without a live token is absent.
         """
         ...
 
@@ -525,12 +557,19 @@ LinkOutcome = Literal["created", "username_taken", "already_linked"]
 """What became of storing a new account with its link: stored, refused because the username is
 taken, or refused because another sign-in linked the identity first."""
 
+AttachOutcome = Literal["linked", "identity_taken", "provider_taken"]
+"""What became of linking an identity to an existing account: stored, refused because the
+identity is linked already (to whichever account), or refused because the account has an identity
+of the provider already."""
+
 
 class ExternalIdentityRepository(Protocol):
     """Links between external identities and accounts, with each account's groups.
 
     Shares the accounts' storage: creating a linked account and recording a sign-in change the
-    account (its row, its role) in the same transaction as the link.
+    account (its row, its role) in the same transaction as the link. An account has at most one
+    identity per provider, and at most one *origin* (the identity it was created through,
+    ``linked_at`` unset); the role, the groups and the access are the origin's alone.
     """
 
     async def get(self, issuer: str, subject: str) -> ExternalIdentity | None:
@@ -546,13 +585,59 @@ class ExternalIdentityRepository(Protocol):
         ...
 
     async def get_for_account(self, account_id: AccountId) -> ExternalIdentity | None:
-        """Return the link of this account, or ``None`` (a local account has none).
+        """Return the account's origin, or ``None`` (a local account has none).
 
         Args:
             account_id: The account's id.
 
         Returns:
-            The link, or ``None``.
+            The identity the account was created through, or ``None``.
+        """
+        ...
+
+    async def list_for_account(self, account_id: AccountId) -> list[ExternalIdentity]:
+        """Return every identity linked to the account: its origin first, then by provider.
+
+        Args:
+            account_id: The account's id.
+
+        Returns:
+            The identities.
+        """
+        ...
+
+    async def link(self, identity: ExternalIdentity) -> AttachOutcome:
+        """Link an identity to an existing account (``linked_at`` set), atomically.
+
+        Args:
+            identity: The identity, its ``account_id`` the account's.
+
+        Returns:
+            ``linked``; ``identity_taken`` when the identity is linked already (to any account);
+            ``provider_taken`` when the account has an identity of the provider (nothing is
+            stored then).
+        """
+        ...
+
+    async def unlink(self, account_id: AccountId, provider: str) -> bool:
+        """Remove the account's identity of a provider, never its origin.
+
+        Args:
+            account_id: The account.
+            provider: The provider's name.
+
+        Returns:
+            ``True`` when one was removed; ``False`` when the account has none of the provider
+            that is not its origin.
+        """
+        ...
+
+    async def record_linked_sign_in(self, identity: ExternalIdentity, at: datetime) -> None:
+        """Note a sign-in through an identity linked from Account settings (its time only).
+
+        Args:
+            identity: The identity.
+            at: When it signed in.
         """
         ...
 
@@ -615,7 +700,7 @@ class ExternalIdentityRepository(Protocol):
         ...
 
     async def revoke(self, account_id: AccountId, now: datetime) -> None:
-        """End the account's access at ``now`` and drop its sealed tokens and groups.
+        """End the account's access at ``now`` (its origin's) and drop its sealed tokens and groups.
 
         Args:
             account_id: The account.
@@ -650,10 +735,10 @@ class ExternalIdentityRepository(Protocol):
         ...
 
     async def groups_by_account(self) -> Mapping[AccountId, tuple[str, list[str]]]:
-        """Return the provider and the groups of every linked account.
+        """Return the provider and the groups of every account created through a provider.
 
         Returns:
-            For each linked account: its provider's name and its groups, sorted.
+            For each account with an origin: the origin's provider name and its groups, sorted.
         """
         ...
 
@@ -776,19 +861,30 @@ class AccessLog(Protocol):
         """
         ...
 
-    async def newest(
-        self, where: AccessLogFilter, *, older_than: str | None, limit: int, offset: int = 0
+    async def search(
+        self,
+        where: AccessLogFilter,
+        *,
+        sort: Sort,
+        after: tuple[SortValue, str] | None,
+        limit: int,
+        offset: int = 0,
     ) -> list[AccessEvent]:
-        """Return the newest events that match, newest first.
+        """Return the events that match, in ``sort`` order, after the ``after`` key.
+
+        The order is the sort field's value (``AccessEvent.sort_value``), then the ID, both in
+        the sort's direction.
 
         Args:
             where: Which events.
-            older_than: Only events recorded before the one with this ID (a page's cursor).
+            sort: The order (a field of ``ACCESS_LOG_SORT_FIELDS``).
+            after: The sort value and ID of the last event of the previous page; ``None``
+                starts at the first.
             limit: Most events returned.
-            offset: How many of the matching events, newest first, to skip first.
+            offset: How many of the matching events in order (after ``after``) to skip first.
 
         Returns:
-            Up to ``limit`` events, by ID descending.
+            Up to ``limit`` events, in order.
         """
         ...
 
@@ -800,5 +896,41 @@ class AccessLog(Protocol):
 
         Returns:
             How many there are.
+        """
+        ...
+
+
+class PreferencesRepository(Protocol):
+    """The interface preferences of each account."""
+
+    async def get(self, account_id: AccountId) -> Preferences | None:
+        """Return the preferences an account saved, or ``None`` when it never saved any.
+
+        Args:
+            account_id: The account.
+
+        Returns:
+            Its preferences, or ``None``.
+        """
+        ...
+
+    async def put(self, account_id: AccountId, preferences: Preferences) -> None:
+        """Save an account's preferences, replacing the ones it had.
+
+        Args:
+            account_id: The account, which exists.
+            preferences: Its new preferences.
+        """
+        ...
+
+    async def opted_in(self, account_ids: Collection[AccountId]) -> frozenset[AccountId]:
+        """Return the accounts among these that agreed to be on the people leaderboard (#510).
+
+        Args:
+            account_ids: The accounts to ask about.
+
+        Returns:
+            Those whose saved preferences say ``leaderboard_opt_in``; one that never saved any
+            has not agreed.
         """
         ...

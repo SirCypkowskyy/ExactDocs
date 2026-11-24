@@ -9,24 +9,33 @@ is significant on the same cases (McNemar's test, p under 5%;
 <!-- bench:defaults -->
 | budget | configuration | chunking | USD / 1000 questions | why |
 |---|---|---|---|---|
-| none | `bm25` | `default` | $0.0000 | best none configuration: `bm25` at `default`: recall@5 81.7%, nDCG@10 0.705, MRR 0.651, wrong-version rate 0, p95 58 ms, $0.0000 per 1000 questions |
-| local | `bm25` | `default` | $0.0000 | best local configuration: `hybrid:bge-small-en-v1.5` at `h6`: recall@5 84.6%, nDCG@10 0.738, MRR 0.676, wrong-version rate 0, p95 109 ms, $0.0000 per 1000 questions; +3.0 points of recall@5 over `bm25`, under the 5-point margin (McNemar mid-p 0.108): the cheaper `bm25` at `default` stays the default |
+| none | `bm25` | `h2` | $0.0000 | best none configuration: `bm25` at `h2`: recall@5 82.8%, nDCG@10 0.714, MRR 0.677, wrong-version rate 0, p95 28 ms, $0.0000 per 1000 questions |
+| local | `bm25` | `h2` | $0.0000 | best local configuration: `hybrid:bge-small-en-v1.5` at `h6`: recall@5 84.6%, nDCG@10 0.738, MRR 0.676, wrong-version rate 0, p95 109 ms, $0.0000 per 1000 questions; +1.9 points of recall@5 over `bm25`, under the 5-point margin (McNemar mid-p 0.405): the cheaper `bm25` at `h2` stays the default |
 | hosted | not measured yet: needs a real-providers run | - | - | - |
 <!-- /bench -->
 
 ## No models
 
-Use **BM25 at chunking `default`**: library settings `split_level` 3 and `max_chars` 4,000
-(headings `#` to `###` start a chunk; a chunk over 4,000 characters is cut again at deeper
+Use **BM25 at chunking `default`**, the shipped default. Since #503 scores a chunk for every
+section it holds, BM25 at `h2` (only `#` and `##` start a chunk) comes first in the table above:
+82.8% recall@5 against 81.7% at `default`, a lead of 3 questions out of 267 that is not
+significant on any metric (recall@5 p 0.58, recall@1 p 0.18, MRR p 0.11, nDCG@10 p 0.48;
+[Retrieval results](retrieval.md#against-the-budgets-default)). `h2` also returns about twice
+the text per question (7,065 estimated tokens in ten results against 3,464). Between chunkings
+of one budget the benchmark names the best outright, so the table says `h2`; a change of the
+shipped default needs a significant gain, and this is not one. `merge-400` ties `default`
+(81.7%).
+
+`default` is library settings `split_level` 3 and `max_chars` 4,000 (headings `#` to `###` start a chunk; a chunk over 4,000 characters is cut again at deeper
 headings). It reaches 81.7% recall@5 on the golden set against 79.8% for BM25 at `h6`, where every
 heading starts a chunk, and it answers faster (p95 57 ms against 91 ms).
 
 The gain is 1.9 points, 5 more questions out of 267, and on its own it is not significant
-(McNemar mid-p 0.07, 95% interval of the difference 0.0 to 3.8 points; [Retrieval
-results](retrieval.md#against-the-budgets-default)). The other measures point the same way and
-are significant: at `default`, recall@10 (+2.2 points), MRR (+0.025) and nDCG@10 (+0.021) are
-better than at `h6` (p 0.016, 0.017 and 0.004), and `h2` and `merge-400` are worse than `default`
-on recall@5. That changed the shipped default
+(McNemar mid-p 0.07, 95% interval of the difference 0.0 to 3.8 points). The other measures point
+the same way and are significant: at `default`, recall@10 (+2.2 points), MRR (+0.025) and nDCG@10
+(+0.023) are better than at `h6` (p 0.016, 0.017 and 0.003). In the run #381 compared, `h2` and
+`merge-400` also scored below `default`, but under the rule #503 fixed, which undercounted them.
+That changed the shipped default
 ([#381](https://github.com/SirCypkowskyy/ExactDocs/issues/381)): **a library added without
 chunking settings gets this chunking.** A library stores its chunking, so the change re-chunks
 none of the libraries that exist. Those added with ExactDocs 0.4 or earlier keep `h6`
@@ -36,8 +45,9 @@ none of the libraries that exist. Those added with ExactDocs 0.4 or earlier keep
 ## Local models
 
 Keep **BM25 at `default`**. The best local configuration, hybrid search on
-`BAAI/bge-small-en-v1.5` at `h6`, reaches 84.6% recall@5: 3.0 points more, under the 5-point
-margin, and not significant on the same cases (McNemar mid-p 0.11). It also needs the corpus
+`BAAI/bge-small-en-v1.5` at `h6`, reaches 84.6% recall@5: 3.0 points more than BM25 at `default`
+(1.9 more than at `h2`, the no-model pick above), under the 5-point margin, and not significant
+on the same cases (McNemar mid-p 0.11 against `default`, 0.41 against `h2`). It also needs the corpus
 embedded first (30 minutes for the whole golden corpus at `h6` on a 4-CPU runner) and a p95 of
 109 ms there. Hybrid at `default` scores about the same (84.3%), so the default chunking does not
 hurt an instance that turns hybrid on; there it ranks the answer higher (MRR and nDCG@10 are

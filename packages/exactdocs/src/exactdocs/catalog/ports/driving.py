@@ -6,6 +6,7 @@ from exactdocs.catalog.dtos import (
     ActivatedManifest,
     ActivateManifestCommand,
     ActiveManifest,
+    ApplyLogoCommand,
     ApplyManualTagsCommand,
     ApplyReadmeCommand,
     Article,
@@ -28,6 +29,7 @@ from exactdocs.catalog.dtos import (
     GetAssetQuery,
     GetInstructionFilesQuery,
     GetLibraryQuery,
+    GetLogoQuery,
     GetManifestStatesQuery,
     GetVersionTagsQuery,
     InstructionFiles,
@@ -38,6 +40,7 @@ from exactdocs.catalog.dtos import (
     ListRenamesQuery,
     ListTagsQuery,
     ListVersionsQuery,
+    Logo,
     ManifestStates,
     ManualTagsOut,
     PinDefaultVersionCommand,
@@ -278,6 +281,25 @@ class GetAsset(Protocol):
         ...
 
 
+class GetLogo(Protocol):
+    """Read a library's logo (#504).
+
+    Raises ``LibraryNotFoundError`` (also for a library the caller may not read) or
+    ``LogoNotFoundError`` (the importer found none in its default version).
+    """
+
+    async def __call__(self, query: GetLogoQuery) -> Logo:
+        """Run the use case.
+
+        Args:
+            query: The library and the logo versions the caller holds.
+
+        Returns:
+            The logo, or ``unchanged`` without bytes when the caller holds it.
+        """
+        ...
+
+
 class GetArticle(Protocol):
     """Read one article of a version (default version without a ref).
 
@@ -485,6 +507,21 @@ class ApplyReadme(Protocol):
 
         Args:
             command: The version imported and what it says about the library.
+        """
+        ...
+
+
+class ApplyLogo(Protocol):
+    """Keep the logo a just-imported version has, or remove the library's when it has none.
+
+    Only the default version's logo counts (#504). Raises ``LibraryNotFoundError``.
+    """
+
+    async def __call__(self, command: ApplyLogoCommand) -> None:
+        """Run the use case.
+
+        Args:
+            command: The version imported and its logo, if any.
         """
         ...
 

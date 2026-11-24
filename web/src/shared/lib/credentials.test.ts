@@ -4,8 +4,10 @@ import {
   credentialOf,
   explainInvalidCredential,
   hasPassphrase,
+  hostKeyChanged,
   normalizeKey,
   PASSPHRASE,
+  refusedCredential,
   validateCredential,
 } from "./credentials";
 
@@ -124,5 +126,23 @@ describe("keys with a passphrase", () => {
         "not a usable credential: the deploy key has a passphrase: use a key without one",
       ),
     ).toBe(PASSPHRASE);
+  });
+});
+
+describe("credential words in Polish", () => {
+  it("say the checks in Polish and keep the server's reason as sent", () => {
+    expect(validateCredential("token", { secret: "", username: "" }, "pl")).toBe(
+      "Wklej token dostępu.",
+    );
+    expect(
+      validateCredential("ssh_key", { secret: "ssh-ed25519 AAAA", username: "" }, "pl"),
+    ).toMatch(/^To nie jest klucz prywatny/);
+    expect(
+      explainInvalidCredential("not a usable credential: the key is not a private key", "pl"),
+    ).toBe("Serwer nie może go użyć: the key is not a private key.");
+    expect(explainInvalidCredential("it has a passphrase", "pl")).toMatch(/chroniony hasłem/);
+    expect(refusedCredential("ssh_key", "pl")).toMatch(/^Repozytorium odrzuciło ten klucz/);
+    expect(hostKeyChanged("pl")).toMatch(/^Serwer SSH repozytorium/);
+    expect(hostKeyChanged("en")).toMatch(/^The repository's SSH server/);
   });
 });

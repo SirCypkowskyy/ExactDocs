@@ -1,5 +1,7 @@
 import type { components } from "@/shared/lib/api-schema";
 import { HttpError } from "@/shared/lib/http";
+import { currentLanguage, type Language } from "@/shared/lib/i18n";
+import { listMessages } from "../messages/list";
 
 export type Library = components["schemas"]["LibrarySummary"];
 export type LibrariesResponse = components["schemas"]["LibraryList"];
@@ -9,51 +11,61 @@ export type JobList = components["schemas"]["JobList"];
 export type LatestJob = components["schemas"]["LatestJob"];
 export type LatestJobs = components["schemas"]["LatestJobs"];
 export type ReimportedVersion = components["schemas"]["ReimportedVersion"];
+export type SyncedLibrary = components["schemas"]["SyncedLibrary"];
 
 /** Why confirming a moved tag queued nothing; `final` refusals will not change on a retry. */
-export function explainReimport(error: unknown): {
+export function explainReimport(
+  error: unknown,
+  language: Language = currentLanguage(),
+): {
   message: string;
   tone?: "info";
   final?: boolean;
 } {
-  const kept = "The version keeps serving what it had.";
-  if (!(error instanceof HttpError)) {
-    return { message: "Can't reach the server. Check your connection and try again." };
-  }
-  if (error.status === 401) return { message: "Your session ended. Sign in and try again." };
-  if (error.status === 403) return { message: "Your account isn't allowed to change libraries." };
+  const t = listMessages[language].reimport;
+  const kept = (why: string) => `${why} ${t.kept}`;
+  if (!(error instanceof HttpError)) return { message: t.offline };
+  if (error.status === 401) return { message: t.sessionEnded };
+  if (error.status === 403) return { message: t.forbidden };
   switch (error.code) {
     case "not_found":
-      return { message: "This version no longer exists.", final: true };
+      return { message: t.notFound, final: true };
     case "tag_not_moved":
-      return {
-        tone: "info",
-        final: true,
-        message: "The tag points at the commit this version serves again: nothing to re-import.",
-      };
+      return { tone: "info", final: true, message: t.tagNotMoved };
     case "ref_deleted":
-      return { final: true, message: `The tag is gone from the repository now. ${kept}` };
+      return { final: true, message: kept(t.refDeleted) };
     case "version_importing":
-      return { tone: "info", message: "This version is being imported right now." };
+      return { tone: "info", message: t.importing };
     case "not_a_tag":
-      return {
-        final: true,
-        message: "Only a tag is re-imported this way: a branch is updated with a sync.",
-      };
+      return { final: true, message: t.notATag };
     case "host_key_changed":
-      return {
-        message: `The SSH host key of the repository's server has changed, so nothing was fetched. ${kept}`,
-      };
+      return { message: kept(t.hostKeyChanged) };
     case "credentials_required":
     case "repository_auth_required":
-      return { message: `The stored credentials were refused or can't be read. ${kept}` };
+      return { message: kept(t.credentials) };
     default:
       return error.status === 422
-        ? { message: `The repository couldn't be read, so nothing changed. ${kept}` }
-        : {
-            message: `Something went wrong on the server (${error.status}). Try again in a moment.`,
-          };
+        ? { message: kept(t.unreadable) }
+        : { message: t.server(error.status) };
   }
+}
+
+/** What a sync did: queued an import, found nothing to do, or could not sync a version. */
+export function syncOutcome(result: SyncedLibrary | null): "queued" | "upToDate" | "failed" {
+  // A 202 may come without a body: something was queued.
+  if (!result) return "queued";
+  const statuses = result.versions.map((v) => v.status);
+  if (statuses.some((s) => s === "queued" || s === "importing")) return "queued";
+  return statuses.includes("failed") ? "failed" : "upToDate";
+}
+
+/** Why a sync was refused, in words. */
+export function explainSync(error: unknown, language: Language = currentLanguage()): string {
+  const t = listMessages[language].actions;
+  if (!(error instanceof HttpError)) return t.syncOffline;
+  if (error.status === 401) return listMessages[language].reimport.sessionEnded;
+  if (error.status === 403) return t.syncForbidden;
+  return t.syncServer(error.status);
 }
 
 /** What the newest job of every version of a library says about its sync. */
@@ -82,48 +94,4 @@ export function syncOf(jobs: readonly LatestJob[]): Sync {
   return { kind: "ok", job: last, skipped: jobs.reduce((n, j) => n + j.skipped, 0) };
 }
 
-/** `v2.10.0` -> [2, 10, 0]; null when the ref is not a dotted number. */
-function semver(ref: string): number[] | null {
-  const m = /^v?(\d+(?:\.\d+)*)/.exec(ref);
-  return m?.[1] ? m[1].split(".").map(Number) : null;
-}
-
-function byVersionDesc(a: string, b: string): number {
-  const x = semver(a);
-  const y = semver(b);
-  if (x && y) {
-    for (let i = 0; i < Math.max(x.length, y.length); i++) {
-      const d = (y[i] ?? 0) - (x[i] ?? 0);
-      if (d !== 0) return d;
-    }
-    return 0;
-  }
-  return x ? -1 : y ? 1 : a.localeCompare(b);
-}
-
-/** The default version first, then tags by semver descending, then branches and commits. */
-export function orderedVersions(library: Library): string[] {
-  const kinds = new Map(library.refs.map((r) => [r.ref, r.kind]));
-  const rest = library.refs.map((r) => r.ref).filter((v) => v !== library.default_version);
-  const tags = rest.filter((v) => (kinds.get(v) ?? "tag") === "tag").sort(byVersionDesc);
-  const others = rest.filter((v) => (kinds.get(v) ?? "tag") !== "tag").sort();
-  return [...(library.default_version ? [library.default_version] : []), ...tags, ...others];
-}
-
-/** Libraries whose sync failed first; otherwise the API's order. */
-export function failedFirst<T extends { id: string }>(
-  libraries: readonly T[],
-  failed: (id: string) => boolean,
-): T[] {
-  return [...libraries].sort((a, b) => Number(failed(b.id)) - Number(failed(a.id)));
-}
-
 export const shortSha = (sha: string) => sha.slice(0, 7);
-
-/** `https://github.com/acme/payments.git` -> `github.com/acme/payments`. */
-export function sourceLabel(url: string): string {
-  return url
-    .replace(/^[a-z+]+:\/\//i, "")
-    .replace(/\.git$/, "")
-    .replace(/\/$/, "");
-}

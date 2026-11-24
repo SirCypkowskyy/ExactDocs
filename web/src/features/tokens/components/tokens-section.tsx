@@ -1,41 +1,46 @@
-import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { KeyRound, Plus } from "lucide-react";
-import { useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearch } from "@tanstack/react-router";
+import { Copy, KeyRound, Plus, Trash2 } from "lucide-react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import { Button } from "@/shared/ui/button";
-import {
-  ConfirmAction,
-  ConfirmCancel,
-  ConfirmContent,
-  ConfirmDescription,
-  ConfirmRoot,
-  ConfirmTitle,
-} from "@/shared/ui/dialog";
-import { EmptyState } from "@/shared/ui/page";
-import { Skeleton } from "@/shared/ui/skeleton";
+import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
+import { DataTable } from "@/shared/ui/data-table/data-table";
+import { DataTablePagination } from "@/shared/ui/data-table/pagination";
+import { type RowAction, restoreRowFocus } from "@/shared/ui/data-table/row-actions";
+import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
+import { useDataTable } from "@/shared/ui/data-table/use-data-table";
 import { revokeToken, tokensKey, tokensQueryOptions } from "../api/tokens-query";
-import type { TokensView } from "../model/list-view";
+import { messages } from "../messages";
+import { parseTokensView, TOKENS_TABLE } from "../model/list-view";
 import { explainTokenError, isAlreadyGone, MAX_TOKENS, type Token } from "../model/token";
 import { CreateTokenDialog } from "./create-token-dialog";
 import { McpConfig } from "./mcp-config";
-import { TokenList } from "./token-list";
+import { columnsOf, filtersOf } from "./token-list";
 
-const NO_VIEW: TokensView = {};
-const ignore = () => {};
-
-/** API tokens: the account's list, create-once-and-copy, and confirmed revoke. */
-export function TokensSection({
-  view = NO_VIEW,
-  onView = ignore,
-}: {
-  /** The search and sort, held in the URL by the route. */
-  view?: TokensView;
-  onView?: (view: TokensView) => void;
-}) {
+/*
+ * API tokens (blocks-map §2.3 and §3): the account's tokens in DataTable v2's client mode (one
+ * request, at most 50), the view in the URL; create-once-and-copy, and a confirmed revoke from the
+ * row's menu or its context menu.
+ */
+export function TokensSection() {
+  const view = parseTokensView(useSearch({ strict: false }) as Record<string, unknown>);
   const queryClient = useQueryClient();
-  const tokens = useInfiniteQuery(tokensQueryOptions(view));
-  const loaded = tokens.data?.pages.flatMap((p) => p.tokens) ?? [];
-  const total = tokens.data?.pages.at(-1)?.total ?? 0;
+  const language = useLanguage();
+  const m = useMessages(messages);
+  const t = m.section;
+  const tokens = useQuery(tokensQueryOptions());
+  const columns = useMemo(() => columnsOf(m), [m]);
+  const filters = useMemo(() => filtersOf(m), [m]);
+  const model = useDataTable({
+    config: TOKENS_TABLE,
+    search: view,
+    columns,
+    getRowId: (token) => token.id,
+    filters,
+    query: tokens,
+  });
   const [creating, setCreating] = useState(false);
   const [revoking, setRevoking] = useState<Token>();
   const [announcement, setAnnouncement] = useState("");
@@ -50,16 +55,45 @@ export function TokensSection({
       }),
     onSettled: () => queryClient.invalidateQueries({ queryKey: tokensKey }),
     onSuccess: (_, id) => {
-      const name = revoking?.id === id ? revoking.name : "Token";
+      const name = revoking?.id === id ? revoking.name : undefined;
       focusHeadingAfterClose.current = true;
       setRevoking(undefined);
-      setAnnouncement(`${name} revoked.`);
-      toast.success(`${name} revoked`);
+      setAnnouncement(t.revoked(name));
+      toast.success(t.revokedToast(name));
     },
   });
 
-  // A search narrows `total`, so the limit is only known without one (the server says 409 anyway).
-  const full = !view.q && total >= MAX_TOKENS;
+  // Every token is here (filters or not), so the limit is known exactly.
+  const full = (tokens.data?.length ?? 0) >= MAX_TOKENS;
+  // "No token name contains …" is only true when the search box is the only filter.
+  const searchOnly = view.q && !view.libraries && !view.expires && !view.used;
+
+  const actions = (token: Token): RowAction<Token>[] => [
+    {
+      id: "copy-prefix",
+      label: m.actions.copyPrefix,
+      icon: Copy,
+      motion: "pop",
+      onSelect: () => {
+        void navigator.clipboard?.writeText(token.prefix).then(
+          () => toast.success(m.actions.copied),
+          () => {},
+        );
+      },
+    },
+    {
+      id: "revoke",
+      label: m.actions.revoke,
+      icon: Trash2,
+      motion: "warn",
+      destructive: true,
+      group: true,
+      onSelect: () => {
+        revoke.reset();
+        setRevoking(token);
+      },
+    },
+  ];
 
   return (
     <section aria-labelledby="tokens-heading" className="flex flex-col gap-8">
@@ -70,14 +104,12 @@ export function TokensSection({
               id="tokens-heading"
               ref={heading}
               tabIndex={-1}
-              className="text-section font-semibold outline-none"
+              className="flex items-center gap-2 text-section font-semibold outline-none"
             >
-              API tokens
+              <KeyRound aria-hidden="true" className="size-4 text-muted-foreground" />
+              {t.heading}
             </h2>
-            <p className="mt-1 text-body text-muted-foreground">
-              Connect an agent to ExactDocs without signing in. A token is shown once, when you
-              create it.
-            </p>
+            <p className="mt-1 text-body text-muted-foreground">{t.description}</p>
           </div>
           <Button
             aria-disabled={full}
@@ -85,59 +117,46 @@ export function TokensSection({
             className="aria-disabled:cursor-not-allowed aria-disabled:bg-primary/60 aria-disabled:hover:bg-primary/60"
             onClick={() => !full && setCreating(true)}
           >
-            <Plus aria-hidden="true" />
-            New token
+            <Plus aria-hidden="true" data-icon-motion="turn" />
+            {t.newToken}
           </Button>
         </div>
         {full && (
           <p id="token-limit" className="mb-3 text-body text-muted-foreground">
-            You have {MAX_TOKENS} of {MAX_TOKENS} tokens. Revoke one you no longer use to create
-            another.
+            {t.limit(MAX_TOKENS)}
           </p>
         )}
         <p role="status" className="sr-only">
           {announcement}
         </p>
 
-        {tokens.isPending ? (
-          <TokenSkeleton />
-        ) : tokens.isError && !tokens.data ? (
-          <div
-            role="alert"
-            className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 rounded-lg bg-destructive-soft py-1.5 pr-1.5 pl-4"
-          >
-            <p className="text-body font-medium text-destructive-ink">
-              {explainTokenError(tokens.error)}
-            </p>
-            <Button variant="ghost" onClick={() => tokens.refetch()}>
-              Try again
-            </Button>
-          </div>
-        ) : total === 0 && !view.q ? (
-          <EmptyState
-            icon={<KeyRound aria-hidden="true" />}
-            title="No tokens yet"
-            action={
+        <DataTableToolbar
+          model={model}
+          search={{ label: m.list.find, placeholder: m.list.namePlaceholder }}
+        />
+        <DataTable
+          model={model}
+          label={m.list.label}
+          rowActions={actions}
+          rowLabel={(token) => token.name}
+          empty={{
+            icon: KeyRound,
+            title: t.emptyTitle,
+            body: t.emptyBody,
+            action: (
               <Button variant="outline" onClick={() => setCreating(true)}>
-                Create your first token
+                <Plus aria-hidden="true" data-icon-motion="turn" />
+                {t.createFirst}
               </Button>
-            }
-          >
-            Create one, then give it to your agent as a bearer token. The config below shows where
-            it goes.
-          </EmptyState>
-        ) : (
-          <TokenList
-            tokens={loaded}
-            view={view}
-            onView={onView}
-            total={total}
-            hasMore={tokens.hasNextPage}
-            loadingMore={tokens.isFetchingNextPage}
-            onLoadMore={() => void tokens.fetchNextPage()}
-            onRevoke={setRevoking}
-          />
-        )}
+            ),
+          }}
+          noMatch={{
+            title: m.list.noMatchTitle,
+            body: searchOnly ? m.list.noMatch(view.q ?? "") : undefined,
+          }}
+          errorMessage={tokens.isError ? explainTokenError(tokens.error, language) : undefined}
+        />
+        <DataTablePagination model={model} />
       </div>
 
       <McpConfig />
@@ -146,12 +165,12 @@ export function TokensSection({
         open={creating}
         onOpenChange={setCreating}
         onCreated={(name) => {
-          setAnnouncement(`Token ${name} created.`);
-          toast.success(`Token ${name} created`);
+          setAnnouncement(t.created(name));
+          toast.success(t.createdToast(name));
         }}
       />
 
-      <ConfirmRoot
+      <ConfirmDialog
         open={revoking !== undefined}
         onOpenChange={(open) => {
           if (!open) {
@@ -159,68 +178,27 @@ export function TokensSection({
             revoke.reset();
           }
         }}
-      >
-        <ConfirmContent
-          onCloseAutoFocus={(event) => {
-            // The revoked row is gone, so there is nothing to return to: land on the section.
-            if (focusHeadingAfterClose.current) {
-              event.preventDefault();
-              focusHeadingAfterClose.current = false;
-              heading.current?.focus();
-            }
-          }}
-        >
-          <ConfirmTitle>Revoke “{revoking?.name}”?</ConfirmTitle>
-          <ConfirmDescription>
-            Anything using{" "}
-            {revoking ? <code className="text-foreground">{revoking.prefix}…</code> : "it"} stops
-            working at once. This can't be undone.
-          </ConfirmDescription>
-          <p
-            role="alert"
-            className="mt-4 rounded-md bg-destructive-soft px-3 py-2.5 text-body font-medium text-destructive-ink empty:hidden"
-          >
-            {revoke.isError && explainTokenError(revoke.error)}
-          </p>
-          <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <ConfirmCancel asChild>
-              <Button variant="ghost">Cancel</Button>
-            </ConfirmCancel>
-            <ConfirmAction asChild>
-              <Button
-                variant="destructive-solid"
-                pending={revoke.isPending}
-                onClick={(event) => {
-                  event.preventDefault(); // stay open until the server answers
-                  if (revoking && !revoke.isPending) revoke.mutate(revoking.id);
-                }}
-              >
-                Revoke
-              </Button>
-            </ConfirmAction>
-          </div>
-        </ConfirmContent>
-      </ConfirmRoot>
+        title={t.confirmTitle(revoking?.name ?? "")}
+        description={t.confirmDescription(
+          revoking ? <code className="text-foreground">{revoking.prefix}…</code> : undefined,
+        )}
+        confirmLabel={t.revoke}
+        pending={revoke.isPending}
+        error={revoke.isError ? explainTokenError(revoke.error, language) : undefined}
+        onConfirm={() => {
+          if (revoking && !revoke.isPending) revoke.mutate(revoking.id);
+        }}
+        onCloseAutoFocus={(event) => {
+          // The revoked row is gone, so there is nothing to return to: land on the section.
+          if (focusHeadingAfterClose.current) {
+            event.preventDefault();
+            focusHeadingAfterClose.current = false;
+            heading.current?.focus();
+          } else {
+            restoreRowFocus(event);
+          }
+        }}
+      />
     </section>
-  );
-}
-
-function TokenSkeleton() {
-  return (
-    <div aria-busy="true">
-      <span className="sr-only">Loading tokens</span>
-      <div aria-hidden="true" className="divide-y divide-rule border-y border-border">
-        {[0, 1, 2].map((i) => (
-          <div key={i} className="flex items-start justify-between gap-3 py-4">
-            <div>
-              <Skeleton className="h-5 w-32" />
-              <Skeleton className="mt-1.5 h-4 w-48 max-w-full" />
-              <Skeleton className="mt-2 h-4 w-64 max-w-full" />
-            </div>
-            <Skeleton className="h-8 w-16" />
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }

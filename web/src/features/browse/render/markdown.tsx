@@ -9,6 +9,8 @@ import {
 } from "lucide-react";
 import type { Token } from "markdown-it";
 import { Fragment, type ReactNode, useEffect, useMemo, useState } from "react";
+import { useMessages } from "@/shared/lib/i18n";
+import { messages } from "../messages";
 import { CodeBlock } from "./code-block";
 import { type Budget, createBudget } from "./limits";
 import { anchorsOf, inertMdx, md, type Variant, variantOf } from "./parse";
@@ -61,7 +63,11 @@ function tree(tokens: readonly Token[], count = { next: 0 }): Node[] {
   return root;
 }
 
+/** The renderer's own words (labels around the text, never the text itself). */
+type Texts = (typeof messages)["en"]["render"];
+
 const ICONS = { note: Info, tip: Lightbulb, warning: TriangleAlert, danger: OctagonAlert };
+/** A callout without a title shows its kind as the file wrote it: that is the document's word. */
 const titled = (kind: string) => kind.charAt(0).toUpperCase() + kind.slice(1);
 
 function Callout({
@@ -77,6 +83,7 @@ function Callout({
   collapsible?: boolean;
   open?: boolean;
 }) {
+  const t = useMessages(messages).render;
   const variant: Variant = variantOf(kind);
   const Icon = ICONS[variant];
   const head = (
@@ -84,7 +91,7 @@ function Callout({
       <Icon aria-hidden="true" className="size-4 shrink-0" />
       <span>
         {/* A title replaces the type's name: screen readers still hear which kind of note it is. */}
-        {title ? <span className="sr-only">{titled(variant)}: </span> : null}
+        {title ? <span className="sr-only">{t.variant[variant]}: </span> : null}
         {title || titled(kind)}
       </span>
     </>
@@ -121,6 +128,7 @@ interface Ctx {
   budget: Budget;
   /** The anchor the URL points at, if any. */
   target: string;
+  t: Texts;
 }
 
 function many(nodes: readonly Node[], ctx: Ctx): ReactNode[] {
@@ -180,19 +188,20 @@ function link(node: Node, ctx: Ctx) {
           {kids}
         </a>
       ) : (
-        <>{kids}</>
+        kids
       );
     }
     default:
-      return <>{kids}</>;
+      return kids;
   }
 }
 
 function NoImage({ alt }: { alt: string }) {
+  const t = useMessages(messages).render;
   return (
     <span className="doc-noimage">
       <ImageOff aria-hidden="true" className="size-4 shrink-0" />
-      <span>Image not available: {alt || "Image"}</span>
+      <span>{t.noImage(alt)}</span>
     </span>
   );
 }
@@ -240,7 +249,7 @@ function heading(node: Node, ctx: Ctx) {
     >
       {many(node.children, ctx)}
       {found?.anchor ? (
-        <a href={`#${found.anchor}`} className="doc-anchor" aria-label={`Link to ${found.text}`}>
+        <a href={`#${found.anchor}`} className="doc-anchor" aria-label={ctx.t.linkTo(found.text)}>
           #
         </a>
       ) : null}
@@ -309,9 +318,9 @@ function one(node: Node, ctx: Ctx): ReactNode {
       return (
         <li className={task === "done" ? "doc-task doc-task-done" : "doc-task"}>
           {task === "done" ? (
-            <SquareCheck role="img" aria-label="Done" />
+            <SquareCheck role="img" aria-label={ctx.t.done} />
           ) : (
-            <Square role="img" aria-label="Not done" />
+            <Square role="img" aria-label={ctx.t.notDone} />
           )}
           <div>{kids()}</div>
         </li>
@@ -332,7 +341,7 @@ function one(node: Node, ctx: Ctx): ReactNode {
       const name = first ? textOf(first).trim() : "";
       return (
         // biome-ignore lint/a11y/noNoninteractiveTabindex: a table wider than the screen scrolls
-        <section className="doc-table" aria-label={name ? `Table: ${name}` : "Table"} tabIndex={0}>
+        <section className="doc-table" aria-label={ctx.t.table(name)} tabIndex={0}>
           <table>{kids()}</table>
         </section>
       );
@@ -371,6 +380,7 @@ export function Markdown({
   where: Where;
   hash?: string;
 }) {
+  const t = useMessages(messages).render;
   const parsed = useMemo(() => {
     const tokens = md.parse(mdx ? inertMdx(source) : source, {});
     return { nodes: tree(tokens), anchors: anchorsOf(tokens), budget: createBudget() };
@@ -385,5 +395,5 @@ export function Markdown({
   useEffect(() => {
     if (target) document.getElementById(idOf(target))?.scrollIntoView();
   }, [target]);
-  return <div className="doc">{many(parsed.nodes, { where, target, ...parsed })}</div>;
+  return <div className="doc">{many(parsed.nodes, { where, target, t, ...parsed })}</div>;
 }

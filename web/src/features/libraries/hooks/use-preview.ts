@@ -1,7 +1,9 @@
 import { useMemo, useRef, useState } from "react";
 import type { Credential } from "@/shared/lib/credentials";
+import { useLanguage } from "@/shared/lib/i18n";
 import { lines, validatePatterns } from "@/shared/lib/path-selection";
 import { addVersion, previewRepository } from "../api/add-library";
+import { addMessages } from "../messages/add";
 import {
   type AddProblem,
   buildFileTree,
@@ -47,6 +49,7 @@ function prefillOf(result: RepositoryPreview, form: PreviewForm) {
 
 /** The dry run of the add form: one preview on screen, only the latest request lands. */
 export function usePreview({ onFail, onPrefill, onStart }: Callbacks) {
+  const language = useLanguage();
   const [preview, setPreview] = useState<Previewed>();
   // The run being waited for; a forgotten or replaced run never touches the screen again.
   const [waiting, setWaiting] = useState<number>();
@@ -63,7 +66,8 @@ export function usePreview({ onFail, onPrefill, onStart }: Callbacks) {
 
   async function start(form: PreviewForm) {
     if (waiting !== undefined) return;
-    const paths = validatePatterns(form.include) ?? validatePatterns(form.exclude);
+    const paths =
+      validatePatterns(form.include, language) ?? validatePatterns(form.exclude, language);
     if (paths) return onFail({ field: "paths", message: paths });
     const mine = ++run.current;
     onStart();
@@ -88,7 +92,7 @@ export function usePreview({ onFail, onPrefill, onStart }: Callbacks) {
       });
     } catch (error) {
       if (run.current === mine) {
-        onFail(explainPreviewError(error, form.ref, form.credential?.kind));
+        onFail(explainPreviewError(error, form.ref, form.credential?.kind, language));
       }
     } finally {
       setWaiting((w) => (w === mine ? undefined : w));
@@ -126,6 +130,7 @@ export interface Extra {
 
 /** Queues the ticked older versions once the library exists; each one shows how it went. */
 export function useOlderVersions() {
+  const language = useLanguage();
   const [extras, setExtras] = useState<Extra[]>([]);
   const run = useRef(0);
   const library = useRef("");
@@ -137,8 +142,12 @@ export function useOlderVersions() {
     return addVersion(library.current, tag).then(
       (v) => settle({ tag, jobId: v.job_id }),
       (error: unknown) => {
-        const why = explainOlderVersionError(error, tag);
-        settle({ tag, error: `Not queued. ${why.message}`, retry: why.retry });
+        const why = explainOlderVersionError(error, tag, language);
+        settle({
+          tag,
+          error: addMessages[language].preview.older.notQueued(why.message),
+          retry: why.retry,
+        });
       },
     );
   }

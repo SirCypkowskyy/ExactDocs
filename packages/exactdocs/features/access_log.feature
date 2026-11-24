@@ -39,3 +39,30 @@ Feature: Access log
     Given "bob" is a viewer of "/fixture/docs-repo"
     When the operator removes the library "/fixture/docs-repo"
     Then the operator's access log shows that "admin" deleted "/fixture/docs-repo"
+
+  Scenario: An operator filters the access log by actor, subject and date, oldest first
+    Given these access changes to "/fixture/docs-repo" were recorded:
+      | days ago | actor | change  | kind  | subject | role        |
+      | 10       | alice | granted | user  | bob     | viewer      |
+      | 5        | alice | granted | user  | bob     | contributor |
+      | 4        | carol | granted | user  | bob     | admin       |
+      | 3        | alice | granted | user  | dave    | viewer      |
+      | 2        | alice | granted | group | bob     | viewer      |
+      | 1        | alice | revoked | user  | bob     | admin       |
+    When the operator filters the access log by actor "alice", subject "bob" and the last 7 days, oldest first
+    Then the operator gets these entries, with a total of 3:
+      | days ago | actor | change  | kind  | subject | role        |
+      | 5        | alice | granted | user  | bob     | contributor |
+      | 2        | alice | granted | group | bob     | viewer      |
+      | 1        | alice | revoked | user  | bob     | admin       |
+    And "carol", an admin of "/fixture/docs-repo", gets the same entries from its access log
+
+  Scenario: A cursor only goes on with the sort it was made for
+    Given these access changes to "/fixture/docs-repo" were recorded:
+      | days ago | actor | change  | kind | subject | role   |
+      | 2        | alice | granted | user | bob     | viewer |
+      | 1        | alice | revoked | user | bob     | viewer |
+    When the operator reads the access log one entry at a time, oldest first
+    And the operator asks for the next page newest first with that cursor
+    Then the response status is 422
+    And the error code is "invalid_cursor"

@@ -24,7 +24,11 @@ export function FormAlert({ id, message, link, tone = "error" }: FormAlertProps)
           {tone === "info" ? (
             <Info aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-route" />
           ) : (
-            <CircleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+            <CircleAlert
+              aria-hidden="true"
+              data-icon-motion="alert"
+              className="mt-0.5 size-4 shrink-0"
+            />
           )}
           <span>
             {message}

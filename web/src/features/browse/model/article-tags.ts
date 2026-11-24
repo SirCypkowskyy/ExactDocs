@@ -1,4 +1,6 @@
+import { currentLanguage, type Language, messagesFor } from "@/shared/lib/i18n";
 import { isTagShaped, MAX_TAGS, sameTag } from "@/shared/lib/tags";
+import { messages } from "../messages";
 import type { Article } from "./browse";
 
 export type ManualTag = Article["manual_tags"][number];
@@ -82,9 +84,10 @@ export const withoutTag = (manual: readonly ManualTag[], removed: ManualTag): st
 export function keptNotice(
   article: Pick<Article, "tag_origins">,
   removed: string | undefined,
+  language: Language = currentLanguage(),
 ): string | undefined {
   if (removed === undefined) return undefined;
   const kept = article.tag_origins.find((t) => t.tag === removed);
   if (kept === undefined || kept.origins.includes("manual")) return undefined;
-  return `${removed} stays on this article: its import gives it too.`;
+  return messagesFor(messages, language).tags.kept(removed);
 }

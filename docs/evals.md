@@ -540,10 +540,16 @@ misses of the golden set's answerable cases, with the suite's own evaluators.
 **Matching a hit across chunking depths.** A configuration that cuts coarser or finer than the
 golden set's sections would otherwise lose every hit to a heading path that no longer exists. So a
 returned chunk of the expected version and article answers the expected section when its heading
-path is the expected one; or the expected path is a non-empty prefix of it (a finer cut: the chunk
-is part of the section); or its path is a prefix of the expected one and the chunk holds the
-expected heading (a coarser cut merged the section into it). `recall_at_5_exact` is recall@5 with
-only the exact heading path, for comparison. The rule is `golden_run.nested_match`.
+path is the expected one (the section, or a part of it split at its blocks); or the expected path
+is a non-empty prefix of it (a finer cut: the chunk is part of the section with its subsections);
+or the chunk holds the expected heading. The last is read from what the chunk holds, not guessed
+from heading paths: the chunker records every heading it puts in a chunk (`headings` of the stored
+chunk), the benchmark reads those records by chunk ID once the corpus is imported, and each
+returned hit carries its chunk ID. So a coarser cut that keeps the section inside its parent, a cut
+at `max_chars` that keeps it in a sibling's chunk, and sections merged by `min_chars` all count
+(#503; until then only a chunk named after a parent of the section counted, and `h2` and
+`merge-400` lost 6 to 7 points of recall@5 to it). `recall_at_5_exact` is recall@5 with only the
+exact heading path, for comparison. The rule is `golden_run.held_match`.
 
 ### The JSON report
 
@@ -563,7 +569,7 @@ and `schema_version` changes when a field is renamed or removed.
 `retrieval_eval/golden_run.py` is the golden set's multi-library runner: `golden_retriever` sends
 each question to its project's library through the suite's `SearchDocsRetriever`, and
 `run_golden` scores the whole set with the suite's evaluators and `evaluate_mode`, with the exact
-or the nested match rule. The ingestion benchmark runs BM25 through it, and the retrieval
+or the held match rule. The ingestion benchmark runs BM25 through it, and the retrieval
 benchmark (below) every mode.
 
 ## The retrieval benchmark
@@ -585,7 +591,9 @@ of its own (the ingestion benchmark's import). Then every configuration runs on 
 directory in a container built with only the model roles it calls, embeds the corpus the first
 time an embedding model is used (as the `embed` jobs would, timed and costed as `index`), and asks
 every golden question in its project's library (`golden_run`), one at a time. Hits are matched
-with the nested rule, so a coarser or finer chunking is not penalised for cutting at another depth.
+by the headings their chunk holds (`golden_run.held_match`, in
+[the ingestion benchmark](#the-ingestion-benchmark)), so a coarser or finer chunking is not
+penalised for cutting at another depth or merging sections.
 It writes `retrieval.json` and `retrieval.md` to `reports/evals/` (or `--out`), prints the summary
 (and appends it to `$GITHUB_STEP_SUMMARY`), and exits with 1 when a configuration returned a result
 of another version, read outside its version (agentic traces), or failed on a question.
@@ -752,6 +760,20 @@ arctic-embed-s is below BM25 (75.3%). The review (#490) did not change any case'
 section, so recall@k and MRR match the run it replaces (13 November 2026, before the review, on a
 10-core laptop) for every configuration both ran.
 
+**BM25 scored again for #503.** The match rule then counted a coarser chunk only when it was named
+after a parent of the expected section, and missed a chunk holding it next to a sibling. BM25 is
+deterministic, so its four results were run again with the fixed rule (24 November 2026, Linux
+x86_64, 4 CPUs, `just retrieval-bench --offline --configs bm25`) and put into the recorded run:
+each case's ranks, nDCG and section ranks from the new run, its search time from the recorded one
+(so the latencies stay the runner's), then the recommendations and paired tests derived again. At
+`h6` no case changed (the same results, scored the same), at `default` one, at `h2` 24 and at
+`merge-400` 34: BM25's recall@5 is now 82.8% at `h2` and 81.7% at `merge-400` (from 76.0% and
+74.2%), and 81.7% at `default` as before. `h2` comes first by the benchmark's ordering, so the
+summary names BM25 at `h2` for the no-model and the local budget, but its lead over `default` is
+not significant on any metric (recall@5 +1.1 points, McNemar mid-p 0.58), and the shipped default
+stays `default`. The model results keep the old rule, so hybrid at `h2` and `merge-400` and the
+cross-encoder at `h2` are undercounted; they are recorded again with #501.
+
 ### Running it with local models
 
 ```bash
@@ -829,8 +851,8 @@ just text-bench --offline --chunkings default,h6,h2,merge-400 --out packages/exa
   of the section's own text (the section is inside it: a coarser result, such as a chunk of
   several sections), or when at least 80% of its own shingles are in the section with its
   subsections (it is a part of the section: a finer result, such as a window of it or a part of a
-  long section). These are the text forms of the nested rule chunk-ID scoring matches hits with
-  (`golden_run.nested_match`, in [the ingestion benchmark](#the-ingestion-benchmark)), so both
+  long section). These are the text forms of the rule chunk-ID scoring matches hits with
+  (`golden_run.held_match`, in [the ingestion benchmark](#the-ingestion-benchmark)), so both
   scorings count the same hits.
 - **Version.** For a question about version V, a result is *right* when its text matches sections
   of V and of no other pinned version; *version-neutral* when it matches sections of V and of
@@ -881,7 +903,7 @@ says how much of what a tool returned no check on the text alone can attribute.
 each chunking configuration it imports the corpus as the ingestion benchmark does, asks every
 golden question with BM25 in its project's library, reads each result back by its chunk ID and
 keeps the chunk's content as the result's text. Then it scores the results both ways, chunk IDs
-with the retrieval benchmark's nested rule. A decision is where an expected section of an
+with the retrieval benchmark's rule (`golden_run.held_match`). A decision is where an expected section of an
 answerable case is in the top 10 (its rank), or that it is not; the two agree on a decision when
 they give the same rank, or both a miss. The criterion is 98% agreement at `default`, the
 chunking ExactDocs ships (`MIN_AGREEMENT`, `GATED_CHUNKING`); below it the command exits with 1.
@@ -890,35 +912,44 @@ The report (`text-scorer.json` and `text-scorer.md`, in `reports/evals/` or `--o
 - the agreement on hit or miss alone, whatever the rank;
 - the agreement on the same results rendered as plain text (the Markdown rendered and the tags
   dropped), as a tool that renders its results returns them;
-- the agreement with a chunk-ID rule that also counts a chunk holding the expected section's
-  heading under another heading path (below);
 - the agreement on each case's wrong-version decision;
 - the agreement at each threshold from 0.5 to 1, on the results as returned and as rendered;
 - both scorings' metrics side by side, the text-only metrics, and every disagreement with what
   the result at the earlier rank is.
 
 **The recorded calibration** is `packages/exactdocs/evals/results/text-scorer.json` and
-`text-scorer.md`, on the whole golden set (321 cases, 384 decisions), about two minutes per
-chunking on 4 CPUs:
+`text-scorer.md`, on the whole reviewed golden set (321 cases, 404 decisions), about two minutes
+per chunking on 4 CPUs:
 
-| chunking | same rank | hit / miss | rendered as plain text | counting held headings | BM25 recall@5, text (chunk ID) |
-|---|---|---|---|---|---|
-| `default` | **99.5%** | 99.7% | 99.5% | 99.7% | 81.7% (81.7%) |
-| `h6` | 99.7% | 100.0% | 99.7% | 99.7% | 79.8% (79.8%) |
-| `h2` | 93.2% | 93.5% | 93.0% | 99.7% | 82.8% (76.0%) |
-| `merge-400` | 90.9% | 91.4% | 90.9% | 99.5% | 81.7% (74.2%) |
+| chunking | same rank | hit / miss | rendered as plain text | BM25 recall@5, text (chunk ID) |
+|---|---|---|---|---|
+| `default` | **99.8%** | 100.0% | 99.8% | 81.7% (81.7%) |
+| `h6` | 99.8% | 100.0% | 99.8% | 79.8% (79.8%) |
+| `h2` | 99.8% | 100.0% | 99.5% | 82.8% (82.8%) |
+| `merge-400` | 99.5% | 99.8% | 99.5% | 81.7% (81.7%) |
 
-The criterion is met at `default`. Both scorings take the same wrong-version decision on every
-case at every chunking (BM25 returns nothing of another version, and no result's text is only in
-another version). At `default`, 72% of BM25's results are version-neutral; its ten results hold
-3,464 tokens of context on average, 736 of them up to the first hit; they hold 87% of the cases'
-facts, where the expected sections' own text holds 80% and another question's results 25%.
+The criterion is met at `default`, and the agreement is above it at every chunking. Both
+scorings take the same wrong-version decision on every case at every chunking (BM25 returns
+nothing of another version, and no result's text is only in another version). At `default`, 72%
+of BM25's results are version-neutral; its ten results hold 3,464 tokens of context on average,
+736 of them up to the first hit; they hold 87% of the cases' facts, where the expected sections'
+own text holds 81% and another question's results 25%.
 
 The threshold is 0.8 because of the sweep: below it, results of other articles that share part of
-a section's text count as hits (at `default`, 98.4% agreement at 0.7, 97.1% at 0.5); above it the
-results as returned agree as well, but rendered ones less (99.2% at 0.9, 89.8% at 1), since a
+a section's text count as hits (at `default`, 98.8% agreement at 0.7, 97.5% at 0.5); above it the
+results as returned agree as well, but rendered ones less (99.5% at 0.9, 90.3% at 1), since a
 rendering loses a little text. Shingles of 5 words are the usual size for near-duplicate text; in
 trial runs, 3 to 9 words moved the agreement at 0.8 by less than a point.
+
+Until #503, chunk-ID scoring counted a coarser chunk only when it was named after a parent of the
+expected section. The calibration showed what that missed: at `h2` and `merge-400` the two
+scorings agreed on only 93.2% and 90.9% of the decisions, and in 25 of `h2`'s 26 disagreements and
+33 of `merge-400`'s 35 the returned chunk held the expected section next to another one (a section
+with its subsections; small sections merged with the next), as did one at `default`: Starlette's
+1.0.0rc1 release notes are longer than 4,000 characters, so they are cut again at their `####`
+headings, and the chunk `1.0.0rc1 > Removed` also holds `Fixed`. Chunk-ID scoring now reads what
+each chunk holds, and BM25's recall@5 at `h2` and `merge-400` went from 76.0% and 74.2% to the
+82.8% and 81.7% the text gives.
 
 What still disagrees, and why:
 
@@ -926,30 +957,21 @@ What still disagrees, and why:
   `useSuspenseQuery` in `guides/suspense.md` and again, nearly word for word, in
   `guides/advanced-ssr.md`. BM25 returns the second at rank 1 and the expected one at rank 7; the
   text scorer finds the expected section's text at rank 1. Text alone cannot say which article a
-  result came from; a tool that returns it does answer the question.
-- **A section held under another heading path.** At `default`, Starlette's 1.0.0rc1 release notes
-  are longer than 4,000 characters, so they are cut again at their `####` headings and the chunk
-  `1.0.0rc1 > Removed` also holds `Added`, `Fixed` and `Changed`. The question about Jinja2
-  autoescaping expects `Fixed`: the text scorer finds it in that chunk at rank 8, the nested rule
-  does not, since it counts a chunk for its own section, the sections inside it and its parents,
-  not for a sibling it holds. `h2` and `merge-400` put sibling sections into one chunk far more
-  often (a section with all its subsections; small sections merged with the next), which is 25 of
-  `h2`'s 26 disagreements and 33 of `merge-400`'s 35: with the rule that counts held headings they
-  agree on 99.7% and 99.5%. The text scorer is right there, and the nested rule undercounts those
-  chunkings' hits: scored from text, BM25's recall@5 is 82.8% at `h2` and 81.7% at `merge-400`,
-  not 76.0% and 74.2%.
-- **A part of a section that runs past it.** At `merge-400`, one chunk named after a subsection
-  of the expected section was merged with the start of the next section: the nested rule counts
-  it as part of the expected section, the text scorer does not, since less than 80% of its text
-  is.
+  result came from; a tool that returns it does answer the question. This is the one
+  disagreement at `default`, `h6` and `h2`.
+- **A part of a section that runs past it.** At `merge-400`, Electron's chunk
+  `Signing & notarizing macOS builds > Signing Mac App Store applications`, a subsection of the
+  expected section, was merged with the start of the next section: chunk-ID scoring counts it as
+  part of the expected section, the text scorer does not, since less than 80% of its text is.
 
 ### The JSON report
 
-`text-scorer.json` (`schema_version` 1) records `golden` (the golden set's fingerprint), `cases`,
+`text-scorer.json` (`schema_version` 2) records `golden` (the golden set's fingerprint), `cases`,
 `projects`, `corpus` (every pinned version's commit), `environment` (as the retrieval benchmark
 records it), `scorer` (`shingle_words`, `threshold`, `fact_share`, `min_agreement`,
-`gated_chunking`) and, per chunking, in `calibrations`: `agreement`, `held_agreement` and
-`rendered_agreement` (each `decisions`, `agreed`, `rate`, `hit_miss_rate`),
+`gated_chunking`) and, per chunking, in `calibrations`: `agreement` and `rendered_agreement`
+(each `decisions`, `agreed`, `rate`, `hit_miss_rate`; version 1 also had `held_agreement`, the
+agreement with a rule that counted held headings, which chunk-ID scoring does itself since #503),
 `wrong_version_agreement`, `sweep` (`threshold`, `rate`, `rendered_rate`), `disagreements`
 (`case`, `section`, `chunk_id_rank`, `text_rank`, `why`), `chunk_id` (the retrieval benchmark's
 metrics), `text` (the same scored from text, with the metrics only text gives),

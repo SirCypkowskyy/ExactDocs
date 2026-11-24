@@ -1,247 +1,371 @@
-import { useInfiniteQuery } from "@tanstack/react-query";
-import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import type { ColumnDef, Table } from "@tanstack/react-table";
-import { useCallback, useId } from "react";
-import { absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
+import { useNavigate, useSearch } from "@tanstack/react-router";
+import type { ColumnDef } from "@tanstack/react-table";
+import { Activity, ArrowRight, Ban, Copy, ListFilter } from "lucide-react";
+import { useMemo, useState } from "react";
+import { toast } from "sonner";
+import { formatDuration } from "@/shared/lib/format";
+import { useLanguage, useMessages } from "@/shared/lib/i18n";
+import { useNow } from "@/shared/lib/use-now";
 import { usePageTitle } from "@/shared/lib/use-page-title";
-import { usePrefetchedPages } from "@/shared/lib/use-prefetched-pages";
-import { cn } from "@/shared/lib/utils";
-import { Button } from "@/shared/ui/button";
+import { Badge } from "@/shared/ui/badge";
 import {
-  ColumnsMenu,
-  DataTable,
-  ListFooter,
-  SearchFilter,
-  useServerTable,
-} from "@/shared/ui/data-table";
-import { EmptyState, Page, PageHeader } from "@/shared/ui/page";
-import { SelectField } from "@/shared/ui/select-field";
-import { jobsQueryOptions } from "../api/libraries-query";
-import { useNow } from "../hooks/use-libraries";
+  LibraryCell,
+  Person,
+  Progress,
+  RelativeTime,
+  STATE_LOOKS,
+  StateBadge,
+  VersionCell,
+} from "@/shared/ui/data-table/cells";
+import { DataTable } from "@/shared/ui/data-table/data-table";
+import { DataTablePagination } from "@/shared/ui/data-table/pagination";
+import type { RowAction } from "@/shared/ui/data-table/row-actions";
+import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
+import {
+  type TableFilter,
+  type TableParam,
+  useDataTable,
+} from "@/shared/ui/data-table/use-data-table";
+import { LibraryCombobox } from "@/shared/ui/library-combobox";
+import { Page, PageHeader } from "@/shared/ui/page";
+import { Tooltip } from "@/shared/ui/tooltip";
+import { jobsSource, pickerLibrariesQueryOptions } from "../api/libraries-query";
+import { jobsMessages } from "../messages/jobs";
 import {
   JOB_KINDS,
+  JOB_ORIGINS,
   JOB_STATES,
-  type JobsView,
-  jobsFiltered,
+  JOBS_TABLE,
   parseJobsView,
+  QUEUED_WITHIN,
 } from "../model/jobs-view";
 import type { Job } from "../model/library";
+import { CancelJobDialog } from "./cancel-job-dialog";
 
-function When({ iso }: { iso: string | null | undefined }) {
-  const now = useNow();
-  return iso ? (
-    <time dateTime={iso} title={absoluteTimeWithZone(iso)}>
-      {relativeTime(iso, now)}
-    </time>
-  ) : (
-    <span className="text-muted-foreground">–</span>
-  );
-}
+/*
+ * Every job the caller may see (blocks-map §2.3, the DataTable v2 pilot): numbered pages sorted
+ * and filtered by the server, the view in the URL, row actions in a kebab and a context menu.
+ */
 
-function LibraryLink({ id }: { id: string }) {
-  const [, owner = "", repo = ""] = id.split("/");
+type JobsMessages = (typeof jobsMessages)["en"];
+
+/** A state or kind the API sends, by its name; one this client does not know shows as sent. */
+const nameOf = (names: Readonly<Record<string, string>>, value: string) => names[value] ?? value;
+
+/** What a job's `done` / `total` count. */
+const unitOf = (kind: string) =>
+  kind === "embed"
+    ? "chunks"
+    : kind === "reprocess" || kind === "retag" || kind === "rechunk"
+      ? "versions"
+      : kind === "collect"
+        ? "steps"
+        : "files";
+
+const live = (job: Job) => job.state === "queued" || job.state === "running";
+
+function StateCell({ job }: { job: Job }) {
+  const t = useMessages(jobsMessages);
   return (
-    <Link
-      to="/libraries/$owner/$repo"
-      params={{ owner, repo }}
-      className="rounded font-mono text-mono underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      {id}
-    </Link>
+    <span className="flex flex-col items-start gap-1">
+      <StateBadge state={job.state} label={nameOf(t.states, job.state)} />
+      {job.state === "failed" && job.error_code && (
+        <Tooltip label={job.error ?? job.error_code}>
+          <span className="font-mono text-small text-muted-foreground">
+            {job.error_code}
+            {job.error && <span className="sr-only">: {job.error}</span>}
+          </span>
+        </Tooltip>
+      )}
+      {job.state === "failed" && !job.error_code && job.error && (
+        <span className="max-w-56 truncate text-small text-muted-foreground">{job.error}</span>
+      )}
+      {job.state === "cancelled" && job.cancelled_by && (
+        <span className="text-small text-muted-foreground">{t.cancelledBy(job.cancelled_by)}</span>
+      )}
+      {job.state === "running" && job.cancelled_at && (
+        <span className="text-small text-muted-foreground">{t.stopping}</span>
+      )}
+    </span>
   );
 }
 
-// Module level on purpose: a cell is rendered as a component, so a new function would remount it.
-const columns: ColumnDef<Job>[] = [
+function ProgressCell({ job }: { job: Job }) {
+  const t = useMessages(jobsMessages);
+  const skipped = job.problems.filter((p) => p.is_skip).length;
+  if (job.state === "queued") return <span className="text-muted-foreground">–</span>;
+  return (
+    <span className="flex flex-col gap-1">
+      <Progress
+        done={job.done}
+        total={job.total}
+        unit={unitOf(job.kind)}
+        label={t.progressOf(nameOf(t.kinds, job.kind), job.library)}
+        meter={job.state === "running"}
+      />
+      {skipped > 0 && (
+        <span className="text-small text-muted-foreground">{t.skipped(skipped)}</span>
+      )}
+    </span>
+  );
+}
+
+/** The person whose request queued the job; the instance's own work, or nobody recorded, muted. */
+function StartedBy({ job }: { job: Job }) {
+  const t = useMessages(jobsMessages);
+  if (job.created_by) return <Person name={job.created_by.username} />;
+  if (job.origin === "auto") return <span className="text-muted-foreground">{t.automatic}</span>;
+  return (
+    <Tooltip label={t.notRecordedHint}>
+      <span className="text-muted-foreground">
+        {t.notRecorded}
+        <span className="sr-only">: {t.notRecordedHint}</span>
+      </span>
+    </Tooltip>
+  );
+}
+
+function Took({ job }: { job: Job }) {
+  const t = useMessages(jobsMessages);
+  const language = useLanguage();
+  const now = useNow(30_000);
+  if (!job.started_at) return <span className="text-muted-foreground">–</span>;
+  const start = Date.parse(job.started_at);
+  if (job.state === "running") {
+    return (
+      <span className="whitespace-nowrap text-muted-foreground">
+        {t.runningFor(formatDuration(now - start, language))}
+      </span>
+    );
+  }
+  if (!job.finished_at) return <span className="text-muted-foreground">–</span>;
+  return (
+    <span className="num whitespace-nowrap">
+      {formatDuration(Date.parse(job.finished_at) - start, language)}
+    </span>
+  );
+}
+
+// Built once per language: a cell is rendered as a component, so a new function would remount it.
+const columnsOf = (t: JobsMessages): ColumnDef<Job>[] => [
   {
-    accessorKey: "library",
-    header: "Library",
-    enableHiding: false,
-    cell: ({ row }) => <LibraryLink id={row.original.library} />,
-  },
-  {
-    accessorKey: "version",
-    header: "Version",
-    enableSorting: false,
-    cell: ({ row }) => <span className="font-mono">{row.original.version ?? "all"}</span>,
-  },
-  { accessorKey: "kind", header: "Kind", meta: { className: "max-md:hidden" } },
-  {
-    accessorKey: "state",
-    header: "State",
-    enableHiding: false,
+    accessorKey: "id",
+    header: "#",
+    sortDescFirst: true,
+    meta: { label: t.columns.id, skeleton: "mono", className: "max-lg:hidden" },
     cell: ({ row }) => (
-      <span
-        title={row.original.error ?? undefined}
-        className={cn(row.original.state === "failed" && "font-medium text-destructive")}
-      >
-        {row.original.state}
+      <span className="font-mono text-mono text-muted-foreground">
+        {/* The end of the ID: its start is a timestamp, the same for jobs queued together. */}
+        {row.original.id.slice(-8)}
       </span>
     ),
   },
   {
-    accessorKey: "created_at",
-    header: "Queued",
-    sortDescFirst: true,
-    cell: ({ row }) => <When iso={row.original.created_at} />,
+    accessorKey: "library",
+    header: t.columns.library,
+    enableHiding: false,
+    meta: { priority: 1, skeleton: "avatar" },
+    cell: ({ row }) => <LibraryCell id={row.original.library} />,
   },
   {
-    accessorKey: "finished_at",
-    header: "Finished",
+    accessorKey: "version",
+    header: t.columns.version,
+    enableSorting: false,
+    meta: { priority: 2, skeleton: "mono" },
+    cell: ({ row }) => (
+      <VersionCell
+        version={row.original.version}
+        sha={row.original.commit_sha}
+        empty={t.allVersions}
+      />
+    ),
+  },
+  {
+    accessorKey: "kind",
+    header: t.columns.kind,
+    meta: { priority: 3, skeleton: "pill" },
+    cell: ({ row }) => <Badge>{nameOf(t.kinds, row.original.kind)}</Badge>,
+  },
+  {
+    accessorKey: "state",
+    header: t.columns.state,
+    enableHiding: false,
+    meta: { priority: 2, skeleton: "pill" },
+    cell: ({ row }) => <StateCell job={row.original} />,
+  },
+  {
+    id: "progress",
+    header: t.columns.progress,
+    enableSorting: false,
+    meta: { skeleton: "meter", className: "max-md:hidden" },
+    cell: ({ row }) => <ProgressCell job={row.original} />,
+  },
+  {
+    accessorKey: "origin",
+    header: t.columns.origin,
+    enableSorting: false,
+    meta: { className: "max-xl:hidden" },
+    cell: ({ row }) => (
+      <span className="text-muted-foreground">{nameOf(t.origins, row.original.origin)}</span>
+    ),
+  },
+  {
+    id: "created_by",
+    header: t.columns.startedBy,
+    enableSorting: false,
+    meta: { skeleton: "avatar", className: "max-lg:hidden" },
+    cell: ({ row }) => <StartedBy job={row.original} />,
+  },
+  {
+    accessorKey: "created_at",
+    header: t.columns.queued,
+    sortDescFirst: true,
+    meta: { priority: 3 },
+    cell: ({ row }) => <RelativeTime iso={row.original.created_at} />,
+  },
+  {
+    id: "took",
+    header: t.columns.took,
     enableSorting: false,
     meta: { className: "max-md:hidden" },
-    cell: ({ row }) => <When iso={row.original.finished_at} />,
+    cell: ({ row }) => <Took job={row.original} />,
   },
 ];
 
-function JobsToolbar({
-  view,
-  onView,
-  table,
-}: {
-  view: JobsView;
-  onView: (next: JobsView) => void;
-  table: Table<Job>;
-}) {
-  const id = useId();
-  return (
-    <search className="mb-4 flex flex-wrap items-end gap-3">
-      <SearchFilter
-        id={`${id}-q`}
-        label="Find a job"
-        placeholder="Library, version or error"
-        value={view.q}
-        onCommit={(q) => onView({ ...view, q })}
-      />
-      <div className="w-36">
-        <SelectField
-          id={`${id}-state`}
-          label="State"
-          value={view.state ?? ""}
-          onChange={(e) =>
-            onView({ ...view, state: parseJobsView({ state: e.target.value }).state })
-          }
-        >
-          <option value="">Any</option>
-          {JOB_STATES.map((s) => (
-            <option key={s} value={s}>
-              {s}
-            </option>
-          ))}
-        </SelectField>
-      </div>
-      <div className="w-36">
-        <SelectField
-          id={`${id}-kind`}
-          label="Kind"
-          value={view.kind ?? ""}
-          onChange={(e) => onView({ ...view, kind: parseJobsView({ kind: e.target.value }).kind })}
-        >
-          <option value="">Any</option>
-          {JOB_KINDS.map((k) => (
-            <option key={k} value={k}>
-              {k}
-            </option>
-          ))}
-        </SelectField>
-      </div>
-      <ColumnsMenu table={table} />
-    </search>
-  );
-}
+const filtersOf = (t: JobsMessages): TableFilter[] => [
+  {
+    id: "state",
+    title: t.state,
+    options: JOB_STATES.map((s) => ({
+      value: s,
+      label: t.states[s],
+      ...(STATE_LOOKS[s] && { icon: STATE_LOOKS[s].icon }),
+    })),
+  },
+  {
+    id: "kind",
+    title: t.kind,
+    options: JOB_KINDS.map((k) => ({ value: k, label: t.kinds[k] })),
+  },
+  {
+    id: "origin",
+    title: t.columns.origin,
+    options: JOB_ORIGINS.map((o) => ({ value: o, label: nameOf(t.origins, o) })),
+  },
+  {
+    id: "created",
+    title: t.columns.queued,
+    single: true,
+    options: QUEUED_WITHIN.map((w) => ({ value: w, label: t.within[w] })),
+  },
+];
 
-function NoJobs({ view, onView }: { view: JobsView; onView: (next: JobsView) => void }) {
-  if (!jobsFiltered(view)) {
-    return (
-      <EmptyState title="No jobs yet">
-        <p>Imports and other library work show up here once they are queued.</p>
-      </EmptyState>
-    );
-  }
-  return (
-    <EmptyState title="No jobs match">
-      <p>Nothing matches these filters.</p>
-      <Button variant="ghost" className="mt-3" onClick={() => onView({ sort: view.sort })}>
-        Clear filters
-      </Button>
-    </EmptyState>
-  );
-}
+const paramsOf = (t: JobsMessages): TableParam[] => [
+  { id: "library", title: t.columns.library, mono: true },
+  { id: "version", title: t.columns.version, mono: true },
+];
 
-/** Every job the caller may see, sorted and filtered by the server; the view lives in the URL. */
 export function JobsPage() {
   const view = parseJobsView(useSearch({ strict: false }) as Record<string, unknown>);
+  const t = useMessages(jobsMessages);
+  const heading = usePageTitle(t.title);
   const navigate = useNavigate();
-  const onView = useCallback(
-    (next: JobsView) => void navigate({ to: "/jobs", search: { ...next }, replace: true }),
-    [navigate],
-  );
-  const query = useInfiniteQuery(jobsQueryOptions(view));
-  const { pages, hasMore, loadingMore, loadMore } = usePrefetchedPages(query, view);
-  const jobs = pages.flatMap((p) => p.jobs);
-  const total = pages.at(-1)?.total ?? 0;
-  const heading = usePageTitle("Jobs");
-  const table = useServerTable({
-    data: jobs,
+  const now = useNow();
+  const columns = useMemo(() => columnsOf(t), [t]);
+  const filters = useMemo(() => filtersOf(t), [t]);
+  const params = useMemo(() => paramsOf(t), [t]);
+  const model = useDataTable({
+    config: JOBS_TABLE,
+    search: view,
     columns,
     getRowId: (job) => job.id,
-    sort: view.sort,
-    onSort: (sort) => onView({ ...view, sort }),
+    filters,
+    params,
+    source: jobsSource(view, now),
   });
+  const [cancelling, setCancelling] = useState<Job>();
+
+  const actions = (job: Job): RowAction<Job>[] => {
+    const [, owner = "", repo = ""] = job.library.split("/");
+    return [
+      {
+        id: "open",
+        label: t.actions.open,
+        icon: ArrowRight,
+        motion: "forward",
+        onSelect: () => void navigate({ to: "/libraries/$owner/$repo", params: { owner, repo } }),
+      },
+      {
+        id: "library-jobs",
+        label: t.actions.libraryJobs,
+        icon: ListFilter,
+        motion: "tilt",
+        onSelect: () => model.setParam("library", job.library),
+      },
+      {
+        id: "copy-id",
+        label: t.actions.copyId,
+        icon: Copy,
+        motion: "pop",
+        onSelect: () => {
+          void navigator.clipboard?.writeText(job.id).then(
+            () => toast.success(t.actions.copied),
+            () => {},
+          );
+        },
+      },
+      ...(job.cancellable && live(job) && !job.cancelled_at
+        ? [
+            {
+              id: "cancel",
+              label: t.actions.cancel,
+              icon: Ban,
+              motion: "warn" as const,
+              destructive: true,
+              group: true,
+              onSelect: () => setCancelling(job),
+            },
+          ]
+        : []),
+    ];
+  };
 
   return (
     <Page width="wide">
       <PageHeader
-        title="Jobs"
+        title={t.title}
+        icon={<Activity />}
         headingRef={heading}
         description={
-          query.data && (
+          model.total !== undefined && (
             <p role="status" className="num">
-              {total} {total === 1 ? "job" : "jobs"}
+              {t.count(model.total)}
             </p>
           )
         }
       />
-      <JobsToolbar view={view} onView={onView} table={table} />
-      {view.library && (
-        <p className="mb-3 text-body text-muted-foreground">
-          Jobs of <span className="font-mono text-foreground">{view.library}</span>.{" "}
-          <button
-            type="button"
-            onClick={() => onView({ ...view, library: undefined })}
-            className="cursor-pointer font-medium text-foreground underline underline-offset-2"
-          >
-            Show every library
-          </button>
-        </p>
-      )}
-      {query.isError && !query.data ? (
-        <p role="alert">
-          Couldn't load jobs.{" "}
-          <button
-            type="button"
-            onClick={() => void query.refetch()}
-            className="cursor-pointer font-medium underline"
-          >
-            Retry
-          </button>
-        </p>
-      ) : query.data && jobs.length === 0 ? (
-        <NoJobs view={view} onView={onView} />
-      ) : (
-        <>
-          <DataTable table={table} label="Jobs" loadingMore={loadingMore || query.isPending} />
-          {query.data && (
-            <ListFooter
-              shown={jobs.length}
-              total={total}
-              hasMore={hasMore}
-              loadingMore={loadingMore}
-              onLoadMore={loadMore}
-            />
-          )}
-        </>
-      )}
+      <DataTableToolbar model={model} search={{ label: t.find, placeholder: t.findPlaceholder }}>
+        <LibraryCombobox
+          variant="filter"
+          label={t.columns.library}
+          query={pickerLibrariesQueryOptions}
+          value={model.param("library")}
+          onChange={(library) => model.setParam("library", library)}
+        />
+      </DataTableToolbar>
+      <DataTable
+        model={model}
+        label={t.title}
+        rowActions={actions}
+        rowLabel={(job) =>
+          t.row(job.library, job.version ?? t.allVersions, nameOf(t.kinds, job.kind))
+        }
+        empty={{ icon: Activity, title: t.empty.title, body: t.empty.body }}
+        noMatch={{ title: t.noMatch.title, body: t.noMatch.body }}
+        errorMessage={t.loadFailed}
+      />
+      <DataTablePagination model={model} />
+      <CancelJobDialog job={cancelling} onClose={() => setCancelling(undefined)} />
     </Page>
   );
 }

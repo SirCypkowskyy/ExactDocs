@@ -1,8 +1,11 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { UserPlus } from "lucide-react";
 import { type FormEvent, useState } from "react";
+import { useMessages } from "@/shared/lib/i18n";
 import { Field } from "@/shared/ui/field";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { setUp } from "../api/session-query";
+import { messages } from "../messages";
 import { explainError, type FormProblem } from "../model/errors";
 import { MIN_PASSWORD_LENGTH, validateSetup } from "../model/session";
 import { AuthLayout } from "./auth-layout";
@@ -11,6 +14,7 @@ import { FORM_ALERT_ID, SubmitButton } from "./form-parts";
 
 export function SetupPage({ onDone }: { onDone: () => void }) {
   const queryClient = useQueryClient();
+  const t = useMessages(messages);
   const [pending, setPending] = useState(false);
   const [problem, setProblem] = useState<FormProblem>({});
 
@@ -43,16 +47,13 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
   }
 
   return (
-    <AuthLayout
-      title="Create the admin account"
-      intro="First run. This account becomes the admin of this server."
-    >
+    <AuthLayout title={t.setup.title} intro={t.setup.intro}>
       <form onSubmit={submit} noValidate>
         <FormAlert id={FORM_ALERT_ID} message={problem.message} link={problem.link} />
         <div className="flex flex-col gap-5">
           <Field
             id="username"
-            label="Username"
+            label={t.setup.username}
             autoComplete="username"
             autoCapitalize="none"
             spellCheck={false}
@@ -60,23 +61,24 @@ export function SetupPage({ onDone }: { onDone: () => void }) {
           />
           <Field
             id="password"
-            label="Password"
+            label={t.setup.password}
             type="password"
             autoComplete="new-password"
-            hint={`At least ${MIN_PASSWORD_LENGTH} characters. A short phrase of unrelated words works well.`}
+            hint={t.setup.passwordHint(MIN_PASSWORD_LENGTH)}
             error={problem.fields?.password}
           />
           <Field
             id="confirm"
-            label="Repeat the password"
+            label={t.setup.confirm}
             type="password"
             autoComplete="new-password"
             error={problem.fields?.confirm}
           />
           <SubmitButton
             pending={pending}
-            idle="Create account and sign in"
-            busy="Creating account"
+            idle={t.setup.submit}
+            busy={t.setup.busy}
+            icon={<UserPlus aria-hidden="true" data-icon-motion="pop" />}
           />
         </div>
       </form>
