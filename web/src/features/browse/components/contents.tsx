@@ -1,7 +1,9 @@
 import { Link } from "@tanstack/react-router";
 import { ChevronRight } from "lucide-react";
 import { type RefObject, useEffect, useState } from "react";
+import { useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
+import { messages } from "../messages";
 
 /*
  * "On this page": the article's h2 and h3 sections, read from the rendered text, with the one in
@@ -123,15 +125,16 @@ function List({
 
 /** The sticky column (xl and up). Renders nothing for an article with fewer than two sections. */
 export function ContentsRail(props: ContentsProps) {
+  const t = useMessages(messages).article;
   const headings = useHeadings(props.article);
   const active = useActive(headings);
   if (headings.length < 2) return null;
   return (
     <nav
-      aria-label="On this page"
+      aria-label={t.onThisPage}
       className="sticky top-17 hidden max-h-[calc(100dvh-6rem)] overflow-y-auto xl:block"
     >
-      <p className="mb-2 text-small font-medium text-muted-foreground">On this page</p>
+      <p className="mb-2 text-small font-medium text-muted-foreground">{t.onThisPage}</p>
       <List headings={headings} active={active} link={props} />
     </nav>
   );
@@ -139,6 +142,7 @@ export function ContentsRail(props: ContentsProps) {
 
 /** The same list folded under the title, for screens without the column. */
 export function ContentsDisclosure(props: ContentsProps) {
+  const t = useMessages(messages).article;
   const headings = useHeadings(props.article);
   const active = useActive(headings);
   if (headings.length < 2) return null;
@@ -149,12 +153,12 @@ export function ContentsDisclosure(props: ContentsProps) {
           aria-hidden="true"
           className="size-4 text-muted-foreground transition-transform duration-(--dur) ease-(--ease-out) group-open:rotate-90 motion-reduce:transition-none"
         />
-        On this page
+        {t.onThisPage}
         <span className="text-small font-normal text-muted-foreground">
-          {headings.length} sections
+          {t.sections(headings.length)}
         </span>
       </summary>
-      <nav aria-label="On this page" className="px-3 pb-3">
+      <nav aria-label={t.onThisPage} className="px-3 pb-3">
         <List headings={headings} active={active} link={props} />
       </nav>
     </details>

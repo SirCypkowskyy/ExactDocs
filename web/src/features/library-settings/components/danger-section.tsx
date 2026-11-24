@@ -1,12 +1,16 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
+import { Trash2 } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
+import { useLanguage } from "@/shared/lib/i18n";
 import { Button } from "@/shared/ui/button";
+import { TypedConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { forgetLibrary, refreshLibraries, removeLibrary } from "../api/settings";
-import { explainRemove, isAlreadyGone, type SettingsLibrary } from "../model/settings";
+import { errorMessages } from "../messages/errors";
+import { pageMessages } from "../messages/page";
+import { explainRemove, isAlreadyGone, listed, type SettingsLibrary } from "../model/settings";
 import { SettingsSection } from "./settings-section";
-import { TypedConfirm } from "./typed-confirm";
 
 const LISTED = 5;
 
@@ -22,6 +26,8 @@ export function DangerSection({
   library: SettingsLibrary;
   onStart: () => void;
 }) {
+  const language = useLanguage();
+  const t = pageMessages[language];
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -39,25 +45,25 @@ export function DangerSection({
       // Leave first: while this page is mounted, dropping the library's cache would refetch it.
       setOpen(false);
       await navigate({ to: "/" });
-      toast.success(`Removed ${library.id}`, {
-        description: "It is gone from browse, search and agents. The repository was not touched.",
+      toast.success(t.danger.removedToast(library.id), {
+        description: t.danger.removedDescription,
       });
       forgetLibrary(queryClient, owner, repo);
     },
     onError: () => refreshLibraries(queryClient),
   });
+  const problem = remove.isError
+    ? explainRemove(remove.error, errorMessages[language].remove.library, language)
+    : undefined;
 
   return (
-    <SettingsSection
-      id="danger"
-      title="Remove library"
-      description="Take the library out of ExactDocs. The repository itself is never touched."
-    >
+    <SettingsSection id="danger" title={t.sections.danger} description={t.danger.description}>
       <div className="rounded-lg border border-destructive/30 p-5">
         <p className="text-body">
-          Remove <span className="font-mono text-small [overflow-wrap:anywhere]">{library.id}</span>
-          {count > 0 && ` and its ${count === 1 ? "version" : `${count} versions`}`} from browse,
-          search and agents. You can add it again later.
+          {t.danger.body(
+            <span className="font-mono text-small [overflow-wrap:anywhere]">{library.id}</span>,
+            count,
+          )}
         </p>
         <div className="mt-4">
           <Button
@@ -70,34 +76,40 @@ export function DangerSection({
               setOpen(true);
             }}
           >
-            Remove library…
+            <Trash2 aria-hidden="true" data-icon-motion="warn" />
+            {t.danger.button}
           </Button>
         </div>
       </div>
-      <TypedConfirm
+      <TypedConfirmDialog
         open={open}
         onOpenChange={setOpen}
-        title={
-          <>
-            Remove <span className="font-mono">{library.id}</span>?
-          </>
+        title={t.confirm.title(
+          <span className="font-mono [overflow-wrap:anywhere]">{library.id}</span>,
+        )}
+        description={
+          <span className="text-foreground">
+            {count > 0
+              ? t.danger.lossVersions(count, listed(refs, language, LISTED))
+              : t.danger.lossLibrary}
+          </span>
         }
-        loss={
-          count > 0
-            ? `${count === 1 ? "Its version" : `All ${count} versions`} (${refs.slice(0, LISTED).join(", ")}${count > LISTED ? `, and ${count - LISTED} more` : ""}) and their articles disappear from browse, search and agents now.`
-            : "The library disappears from browse, search and agents now."
-        }
-        safe="Nothing in the repository changes. Content that other libraries share stays available. You can add the library again."
         phrase={library.id}
-        confirmLabel="Remove library"
+        initialFocus="phrase"
+        confirmLabel={t.danger.confirm}
+        pendingLabel={t.confirm.removing}
         pending={remove.isPending}
-        problem={remove.isError ? explainRemove(remove.error, "this library") : undefined}
+        error={problem?.message}
+        errorTone={problem?.tone}
+        errorLink={problem?.link}
         onConfirm={() => remove.mutate()}
         onCloseAutoFocus={(event) => {
           event.preventDefault();
           button.current?.focus();
         }}
-      />
+      >
+        <p className="mt-1.5">{t.danger.safe}</p>
+      </TypedConfirmDialog>
     </SettingsSection>
   );
 }

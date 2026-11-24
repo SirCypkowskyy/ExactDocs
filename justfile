@@ -202,3 +202,10 @@ e2e: web-build
     rm -rf packages/exactdocs/src/exactdocs/_web
     cp -r {{ web }}/dist packages/exactdocs/src/exactdocs/_web
     cd e2e && pnpm install --frozen-lockfile && pnpm exec playwright install chromium && python3 run.py
+
+# Screenshots of the README and the docs from the real UI, light and dark, into docs/assets/screenshots/ (e2e/screenshots.py)
+screenshots *args: web-build
+    rm -rf packages/exactdocs/src/exactdocs/_web
+    cp -r {{ web }}/dist packages/exactdocs/src/exactdocs/_web
+    cd e2e && pnpm install --frozen-lockfile && pnpm exec playwright install chromium
+    uv run python e2e/screenshots.py {{ args }}

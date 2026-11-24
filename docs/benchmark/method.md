@@ -25,11 +25,13 @@ gives the definitions the result pages rely on.
 `h6`, and the recorded runs took the new names when it changed.
 
 The golden set names sections as `h6` cuts them: every heading. A configuration that cuts
-coarser or finer would lose every hit to a heading path that no longer exists, so a returned chunk of the right
-version and article answers an expected section when its heading path is the expected one, when
-it is a section inside the expected one (a finer cut), or when it is a parent of the expected one
-and holds its heading (a coarser cut). The ingestion results also show recall@5 with exact paths
-only, for comparison.
+coarser or finer would lose every hit to a heading path that no longer exists, so a returned chunk
+of the right version and article answers an expected section when its heading path is the
+expected one, when it is a section inside the expected one (a finer cut), or when the chunk holds
+the expected section's heading. What a chunk holds is what the chunker recorded for it, read by
+chunk ID: a section kept inside its parent (`h2`), kept with a sibling when a long section is cut
+again at 4,000 characters (`default`), or merged with its neighbours (`merge-400`) all count
+(#503). The ingestion results also show recall@5 with exact paths only, for comparison.
 
 ## Retrieval metrics
 

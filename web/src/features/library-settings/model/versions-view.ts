@@ -1,30 +1,89 @@
-import { oneOf, pickSort, textParam } from "@/shared/lib/list-sort";
+import {
+  parseChoice,
+  parseFacet,
+  parseTableSearch,
+  type TableConfig,
+  type TableSearch,
+} from "@/shared/ui/data-table/table-search";
 
 /** The versions table's view: what the settings URL holds and what `GET .../versions` is asked for. */
 export const REF_KINDS = ["tag", "branch", "commit"] as const;
-const SORT_FIELDS = ["ref", "kind", "imported_at", "origin"];
+export const VERSION_ORIGINS = ["manual", "auto"] as const;
+/** "Imported within" presets of the date filter. */
+export const IMPORTED_WITHIN = ["24h", "7d", "30d"] as const;
 
-export interface VersionsView {
-  q?: string | undefined;
-  kind?: (typeof REF_KINDS)[number] | undefined;
-  sort?: string | undefined;
+type RefKind = (typeof REF_KINDS)[number];
+type VersionOrigin = (typeof VERSION_ORIGINS)[number];
+type ImportedWithin = (typeof IMPORTED_WITHIN)[number];
+
+/** The versions table (DataTable v2): sortable by the API's fields, by ref unless told. */
+export const VERSIONS_TABLE: TableConfig = {
+  id: "versions",
+  sortFields: ["ref", "kind", "imported_at", "origin"],
+  defaultSort: "ref",
+};
+
+export interface VersionsView extends TableSearch {
+  kind?: RefKind[] | undefined;
+  origin?: VersionOrigin[] | undefined;
+  imported?: ImportedWithin | undefined;
 }
 
 /** Anything unknown in a shared or hand-edited URL is dropped, never sent to the API. */
 export const parseVersionsView = (search: Record<string, unknown>): VersionsView => ({
-  q: textParam(search.q),
-  kind: oneOf(search.kind, REF_KINDS),
-  sort: pickSort(search.sort, SORT_FIELDS),
+  ...parseTableSearch(search, VERSIONS_TABLE),
+  kind: parseFacet(search.kind, REF_KINDS),
+  origin: parseFacet(search.origin, VERSION_ORIGINS),
+  imported: parseChoice(search.imported, IMPORTED_WITHIN),
 });
 
-export const versionsFiltered = (v: VersionsView) => Boolean(v.q || v.kind);
+const WITHIN_MS: Record<ImportedWithin, number> = {
+  "24h": 24 * 3_600_000,
+  "7d": 7 * 86_400_000,
+  "30d": 30 * 86_400_000,
+};
 
-/** The query string of `GET /v1/libraries/{owner}/{repo}/versions` for a view and a cursor. */
-export function versionsParams(view: VersionsView, cursor?: string | null): string {
-  const p = new URLSearchParams({ limit: "50" });
-  if (view.q) p.set("q", view.q);
-  if (view.kind) p.set("kind", view.kind);
-  if (view.sort) p.set("sort", view.sort);
-  if (cursor) p.set("cursor", cursor);
+/** What `GET .../versions` filters and sorts by: the view without its page and size. */
+export interface VersionsFilters {
+  q?: string;
+  kind?: readonly string[];
+  origin?: readonly string[];
+  imported_after?: string;
+  sort?: string;
+}
+
+/**
+ * The view's filters for the API. An "imported within" preset counts back from `now` rounded down
+ * to the minute, so every render within a minute asks for the same thing.
+ */
+export function versionsFilters(view: VersionsView, now: number): VersionsFilters {
+  const minute = Math.floor(now / 60_000) * 60_000;
+  return {
+    ...(view.q && { q: view.q }),
+    ...(view.kind && { kind: view.kind }),
+    ...(view.origin && { origin: view.origin }),
+    ...(view.imported && {
+      imported_after: new Date(minute - WITHIN_MS[view.imported]).toISOString(),
+    }),
+    ...(view.sort && { sort: view.sort }),
+  };
+}
+
+/** The query string of `GET /v1/libraries/{owner}/{repo}/versions` for some filters and one request. */
+export function versionsParams(
+  filters: VersionsFilters,
+  limit: number,
+  cursor?: string | null,
+  offset?: number,
+): string {
+  const p = new URLSearchParams({ limit: String(limit) });
+  if (filters.q) p.set("q", filters.q);
+  for (const kind of filters.kind ?? []) p.append("kind", kind);
+  for (const origin of filters.origin ?? []) p.append("origin", origin);
+  if (filters.imported_after) p.set("imported_after", filters.imported_after);
+  if (filters.sort) p.set("sort", filters.sort);
+  // A page by offset (0 to 10000) or after a cursor, never both (422 `cursor_with_offset`).
+  if (offset !== undefined) p.set("offset", String(offset));
+  else if (cursor) p.set("cursor", cursor);
   return p.toString();
 }

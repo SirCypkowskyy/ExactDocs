@@ -106,7 +106,8 @@ class VersionAndRank(Evaluator[Question, Answer, CaseInfo]):
 
     matches: SectionMatch = same_section
     """When a hit counts as the expected section: the same heading path by default; the golden
-    benchmarks pass a rule that holds across chunking depths (``golden_run.nested_match``)."""
+    benchmarks pass a rule that holds whatever a chunking puts in a chunk
+    (``golden_run.held_match``)."""
 
     def evaluate(
         self, ctx: EvaluatorContext[Question, Answer, CaseInfo]

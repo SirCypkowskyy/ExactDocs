@@ -17,10 +17,13 @@ import { Route as AppAccessLogRouteImport } from './routes/_app.access-log'
 import { Route as AppAccountRouteImport } from './routes/_app.account'
 import { Route as AppAiRouteImport } from './routes/_app.ai'
 import { Route as AppJobsRouteImport } from './routes/_app.jobs'
+import { Route as AppLeaderboardRouteImport } from './routes/_app.leaderboard'
+import { Route as AppOverviewRouteImport } from './routes/_app.overview'
 import { Route as AppPlaygroundRouteImport } from './routes/_app.playground'
 import { Route as AppSearchRouteImport } from './routes/_app.search'
 import { Route as AppUsersRouteImport } from './routes/_app.users'
 import { Route as AppLibrariesNewRouteImport } from './routes/_app.libraries.new'
+import { Route as AppUsersTokensRouteImport } from './routes/_app.users_.tokens'
 import { Route as AppLibrariesOwnerRepoRouteImport } from './routes/_app.libraries.$owner.$repo'
 import { Route as AppLibrariesOwnerRepoAccessLogRouteImport } from './routes/_app.libraries.$owner.$repo_.access-log'
 import { Route as AppLibrariesOwnerRepoSettingsRouteImport } from './routes/_app.libraries.$owner.$repo_.settings'
@@ -65,6 +68,16 @@ const AppJobsRoute = AppJobsRouteImport.update({
   path: '/jobs',
   getParentRoute: () => AppRoute,
 } as any)
+const AppLeaderboardRoute = AppLeaderboardRouteImport.update({
+  id: '/leaderboard',
+  path: '/leaderboard',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppOverviewRoute = AppOverviewRouteImport.update({
+  id: '/overview',
+  path: '/overview',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppPlaygroundRoute = AppPlaygroundRouteImport.update({
   id: '/playground',
   path: '/playground',
@@ -83,6 +96,11 @@ const AppUsersRoute = AppUsersRouteImport.update({
 const AppLibrariesNewRoute = AppLibrariesNewRouteImport.update({
   id: '/libraries/new',
   path: '/libraries/new',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppUsersTokensRoute = AppUsersTokensRouteImport.update({
+  id: '/users_/tokens',
+  path: '/users/tokens',
   getParentRoute: () => AppRoute,
 } as any)
 const AppLibrariesOwnerRepoRoute = AppLibrariesOwnerRepoRouteImport.update({
@@ -117,10 +135,13 @@ export interface FileRoutesByFullPath {
   '/account': typeof AppAccountRoute
   '/ai': typeof AppAiRoute
   '/jobs': typeof AppJobsRoute
+  '/leaderboard': typeof AppLeaderboardRoute
+  '/overview': typeof AppOverviewRoute
   '/playground': typeof AppPlaygroundRoute
   '/search': typeof AppSearchRoute
   '/users': typeof AppUsersRoute
   '/libraries/new': typeof AppLibrariesNewRoute
+  '/users/tokens': typeof AppUsersTokensRoute
   '/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
   '/libraries/$owner/$repo/access-log': typeof AppLibrariesOwnerRepoAccessLogRoute
   '/libraries/$owner/$repo/settings': typeof AppLibrariesOwnerRepoSettingsRoute
@@ -133,11 +154,14 @@ export interface FileRoutesByTo {
   '/account': typeof AppAccountRoute
   '/ai': typeof AppAiRoute
   '/jobs': typeof AppJobsRoute
+  '/leaderboard': typeof AppLeaderboardRoute
+  '/overview': typeof AppOverviewRoute
   '/playground': typeof AppPlaygroundRoute
   '/search': typeof AppSearchRoute
   '/users': typeof AppUsersRoute
   '/': typeof AppIndexRoute
   '/libraries/new': typeof AppLibrariesNewRoute
+  '/users/tokens': typeof AppUsersTokensRoute
   '/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
   '/libraries/$owner/$repo/access-log': typeof AppLibrariesOwnerRepoAccessLogRoute
   '/libraries/$owner/$repo/settings': typeof AppLibrariesOwnerRepoSettingsRoute
@@ -152,11 +176,14 @@ export interface FileRoutesById {
   '/_app/account': typeof AppAccountRoute
   '/_app/ai': typeof AppAiRoute
   '/_app/jobs': typeof AppJobsRoute
+  '/_app/leaderboard': typeof AppLeaderboardRoute
+  '/_app/overview': typeof AppOverviewRoute
   '/_app/playground': typeof AppPlaygroundRoute
   '/_app/search': typeof AppSearchRoute
   '/_app/users': typeof AppUsersRoute
   '/_app/': typeof AppIndexRoute
   '/_app/libraries/new': typeof AppLibrariesNewRoute
+  '/_app/users_/tokens': typeof AppUsersTokensRoute
   '/_app/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
   '/_app/libraries/$owner/$repo_/access-log': typeof AppLibrariesOwnerRepoAccessLogRoute
   '/_app/libraries/$owner/$repo_/settings': typeof AppLibrariesOwnerRepoSettingsRoute
@@ -172,10 +199,13 @@ export interface FileRouteTypes {
     | '/account'
     | '/ai'
     | '/jobs'
+    | '/leaderboard'
+    | '/overview'
     | '/playground'
     | '/search'
     | '/users'
     | '/libraries/new'
+    | '/users/tokens'
     | '/libraries/$owner/$repo'
     | '/libraries/$owner/$repo/access-log'
     | '/libraries/$owner/$repo/settings'
@@ -188,11 +218,14 @@ export interface FileRouteTypes {
     | '/account'
     | '/ai'
     | '/jobs'
+    | '/leaderboard'
+    | '/overview'
     | '/playground'
     | '/search'
     | '/users'
     | '/'
     | '/libraries/new'
+    | '/users/tokens'
     | '/libraries/$owner/$repo'
     | '/libraries/$owner/$repo/access-log'
     | '/libraries/$owner/$repo/settings'
@@ -206,11 +239,14 @@ export interface FileRouteTypes {
     | '/_app/account'
     | '/_app/ai'
     | '/_app/jobs'
+    | '/_app/leaderboard'
+    | '/_app/overview'
     | '/_app/playground'
     | '/_app/search'
     | '/_app/users'
     | '/_app/'
     | '/_app/libraries/new'
+    | '/_app/users_/tokens'
     | '/_app/libraries/$owner/$repo'
     | '/_app/libraries/$owner/$repo_/access-log'
     | '/_app/libraries/$owner/$repo_/settings'
@@ -281,6 +317,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppJobsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/leaderboard': {
+      id: '/_app/leaderboard'
+      path: '/leaderboard'
+      fullPath: '/leaderboard'
+      preLoaderRoute: typeof AppLeaderboardRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/overview': {
+      id: '/_app/overview'
+      path: '/overview'
+      fullPath: '/overview'
+      preLoaderRoute: typeof AppOverviewRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/playground': {
       id: '/_app/playground'
       path: '/playground'
@@ -307,6 +357,13 @@ declare module '@tanstack/react-router' {
       path: '/libraries/new'
       fullPath: '/libraries/new'
       preLoaderRoute: typeof AppLibrariesNewRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/users_/tokens': {
+      id: '/_app/users_/tokens'
+      path: '/users/tokens'
+      fullPath: '/users/tokens'
+      preLoaderRoute: typeof AppUsersTokensRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/libraries/$owner/$repo': {
@@ -345,11 +402,14 @@ interface AppRouteChildren {
   AppAccountRoute: typeof AppAccountRoute
   AppAiRoute: typeof AppAiRoute
   AppJobsRoute: typeof AppJobsRoute
+  AppLeaderboardRoute: typeof AppLeaderboardRoute
+  AppOverviewRoute: typeof AppOverviewRoute
   AppPlaygroundRoute: typeof AppPlaygroundRoute
   AppSearchRoute: typeof AppSearchRoute
   AppUsersRoute: typeof AppUsersRoute
   AppIndexRoute: typeof AppIndexRoute
   AppLibrariesNewRoute: typeof AppLibrariesNewRoute
+  AppUsersTokensRoute: typeof AppUsersTokensRoute
   AppLibrariesOwnerRepoRoute: typeof AppLibrariesOwnerRepoRoute
   AppLibrariesOwnerRepoAccessLogRoute: typeof AppLibrariesOwnerRepoAccessLogRoute
   AppLibrariesOwnerRepoSettingsRoute: typeof AppLibrariesOwnerRepoSettingsRoute
@@ -361,11 +421,14 @@ const AppRouteChildren: AppRouteChildren = {
   AppAccountRoute: AppAccountRoute,
   AppAiRoute: AppAiRoute,
   AppJobsRoute: AppJobsRoute,
+  AppLeaderboardRoute: AppLeaderboardRoute,
+  AppOverviewRoute: AppOverviewRoute,
   AppPlaygroundRoute: AppPlaygroundRoute,
   AppSearchRoute: AppSearchRoute,
   AppUsersRoute: AppUsersRoute,
   AppIndexRoute: AppIndexRoute,
   AppLibrariesNewRoute: AppLibrariesNewRoute,
+  AppUsersTokensRoute: AppUsersTokensRoute,
   AppLibrariesOwnerRepoRoute: AppLibrariesOwnerRepoRoute,
   AppLibrariesOwnerRepoAccessLogRoute: AppLibrariesOwnerRepoAccessLogRoute,
   AppLibrariesOwnerRepoSettingsRoute: AppLibrariesOwnerRepoSettingsRoute,

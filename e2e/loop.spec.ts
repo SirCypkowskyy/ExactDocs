@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+import { settled, signIn as signInAs } from "./helpers";
 
 const FIXTURE_REPO_URL = process.env.FIXTURE_REPO_URL;
 if (!FIXTURE_REPO_URL) throw new Error("FIXTURE_REPO_URL is not set: run the test through e2e/run.py");
@@ -67,13 +68,7 @@ test("setup, add the fixture repository, browse an article, search a term", asyn
   await page.screenshot({ path: "shots/4-section.png" });
 });
 
-async function signIn(page: Page) {
-  await page.goto("/sign-in");
-  await page.getByLabel("Username").fill("ada");
-  await page.getByLabel("Password").fill(PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Libraries" })).toBeVisible();
-}
+const signIn = (page: Page) => signInAs(page, "ada", PASSWORD);
 
 // #426: the main pages in both themes, screenshotted, with no axe violation (contrast included).
 // Runs after the test above, in the same worker: it reads the library that test imported.
@@ -112,24 +107,26 @@ test("the main pages read in the light and the dark theme", async ({ browser }) 
     await context.close();
   }
 
-  // The switch in the header: Dark sticks across a reload, on a light system.
+  // The button in the band (#486): Dark sticks across a reload, on a light system, and the button
+  // then offers the light theme.
   const context = await browser.newContext({ baseURL, colorScheme: "light" });
   const page = await context.newPage();
   await signIn(page);
-  await page.getByRole("button", { name: /^Theme:/ }).click();
-  await page.getByRole("menuitemradio", { name: "Dark" }).click();
+  await page.getByRole("button", { name: "Dark theme" }).click();
   await expect(page.locator("html")).toHaveClass(/\bdark\b/);
   await page.reload();
   await expect(page.locator("html")).toHaveClass(/\bdark\b/);
-  await expect(page.getByRole("button", { name: "Theme: Dark" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Light theme" })).toBeVisible();
+  // Back to following the system: the account keeps a choice, and the tests below set their own.
+  const saved = await (await page.request.get("/api/v1/account/preferences")).json();
+  const reset = await page.request.put("/api/v1/account/preferences", {
+    data: { ...saved.preferences, theme: "system" },
+  });
+  expect(reset.ok()).toBe(true);
   await context.close();
 });
 
 const AXE_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
-
-// A fade that is still running would be measured half transparent: let every animation finish.
-const settled = (page: Page) =>
-  page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
 
 async function expectNoViolations(page: Page, name: string) {
   await settled(page);
@@ -158,6 +155,10 @@ test("the redesigned pages and their dialogs have no axe violation", async ({ br
     ["article", "/libraries/fixture/docs-repo?version=v1.4.0&path=docs%2Fguide%2Fresilience.md"],
     ["settings", "/libraries/fixture/docs-repo/settings"],
     ["sharing", "/libraries/fixture/docs-repo/sharing"],
+    ["access-log", "/access-log"],
+    ["jobs", "/jobs"],
+    ["overview", "/overview"],
+    ["interface", "/account?tab=interface"],
   ] as const;
   const widths = [
     ["desktop", { width: 1280, height: 900 }],
@@ -185,6 +186,11 @@ test("the redesigned pages and their dialogs have no axe violation", async ({ br
           fullPage: true,
         });
         await expectNoViolations(page, `${name} ${colorScheme} ${size}`);
+        // Nothing pushes the page sideways (#486: the sharing page's actions did at 390 px).
+        const overflow = await page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        );
+        expect(overflow, `${name} ${colorScheme} ${size} scrolls sideways`).toBeLessThanOrEqual(0);
       }
 
       // The playground with results, and the new-token dialog with its secret.
@@ -201,7 +207,7 @@ test("the redesigned pages and their dialogs have no axe violation", async ({ br
 
       await page.goto("/account");
       await page.getByRole("button", { name: "New token" }).click();
-      await page.getByLabel("Name").fill("axe");
+      await page.getByRole("textbox", { name: "Name" }).fill("axe");
       await expectNoViolations(page, `new-token dialog ${colorScheme} ${size}`);
       await page.getByRole("button", { name: "Create token" }).click();
       await expect(page.getByText("Copy your token now")).toBeVisible();
@@ -217,6 +223,13 @@ test("the redesigned pages and their dialogs have no axe violation", async ({ br
       await page.getByRole("button", { name: "Transfer ownership" }).click();
       await expect(page.getByRole("dialog")).toBeVisible();
       await expectNoViolations(page, `transfer dialog ${colorScheme} ${size}`);
+      await page.keyboard.press("Escape");
+
+      // An open menu hides nothing that stays focusable (#486: menus are not modal).
+      await page.goto("/");
+      await page.getByRole("button", { name: "More actions for /fixture/docs-repo" }).click();
+      await expect(page.getByRole("menu")).toBeVisible();
+      await expectNoViolations(page, `row menu ${colorScheme} ${size}`);
       await page.keyboard.press("Escape");
       await context.close();
     }
@@ -347,11 +360,11 @@ test("the library list and the file tree stay responsive with large libraries", 
     id: `/bulk/lib-${i}`,
     title: `Library ${i}`,
   }));
-  // The API pages by cursor (an offset here); the list asks for 50 at a time.
+  // The list is numbered pages (#486), each one request by offset (or after a cursor).
   await page.route(/\/api\/v1\/libraries\?/, (route) => {
     const q = new URL(route.request().url()).searchParams;
-    const from = Number(q.get("cursor") ?? 0);
-    const limit = Number(q.get("limit") ?? 50);
+    const from = Number(q.get("offset") ?? q.get("cursor") ?? 0);
+    const limit = Number(q.get("limit") ?? 20);
     return route.fulfill({
       json: {
         ...real,
@@ -363,22 +376,29 @@ test("the library list and the file tree stay responsive with large libraries", 
   });
   const started = Date.now();
   await page.goto("/");
-  // The first page is 50 libraries of 300, and says so; the rest is one button away.
-  await expect(page.getByText("Showing 50 of 300")).toBeVisible();
-  await expect(page.getByRole("link", { name: "Library 49", exact: true })).toBeVisible();
+  // The first page is 20 libraries of 300, and says so; any other page is one request away.
+  const pagination = page.getByRole("navigation", { name: "Pagination" });
+  await expect(pagination.getByText("1–20 of 300")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Library 19", exact: true })).toBeVisible();
   await expect(page.getByRole("link", { name: "Library 299", exact: true })).toHaveCount(0);
   const firstMs = Date.now() - started;
-  for (let shown = 50; shown < 300; shown += 50) {
-    await page.getByRole("button", { name: "Load more" }).click();
-    await expect(page.getByText(`Showing ${shown + 50} of 300`)).toBeVisible();
-  }
+  // The largest page, the next one, then straight to the last one.
+  await pagination.getByLabel("Rows per page").selectOption("100");
+  await expect(pagination.getByText("1–100 of 300")).toBeVisible();
+  await pagination.getByRole("button", { name: "Next page" }).click();
+  await expect(pagination.getByText("101–200 of 300")).toBeVisible();
+  await pagination.getByRole("button", { name: "Last page" }).click();
+  await expect(pagination.getByText("201–300 of 300")).toBeVisible();
   await expect(page.getByRole("link", { name: "Library 299", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Load more" })).toHaveCount(0);
+  await expect(pagination.getByRole("button", { name: "Next page" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   const listMs = Date.now() - started;
   const nodes = await page.evaluate(() => document.querySelectorAll("*").length);
   const list = await scrollFrames(page, null, 1500);
   console.log(
-    `300 libraries in pages of 50: first page in ${firstMs} ms, all loaded in ${listMs} ms, ${nodes} DOM nodes, longest task ${Math.round(await longest(page))} ms, scroll frames p95 ${Math.round(list.p95)} ms max ${Math.round(list.max)} ms`,
+    `300 libraries in pages of 20 and 100: first page in ${firstMs} ms, last page in ${listMs} ms, ${nodes} DOM nodes, longest task ${Math.round(await longest(page))} ms, scroll frames p95 ${Math.round(list.p95)} ms max ${Math.round(list.max)} ms`,
   );
   expect(firstMs).toBeLessThan(4000);
   expect(listMs).toBeLessThan(8000);

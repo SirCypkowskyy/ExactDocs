@@ -1,4 +1,6 @@
 import type { components } from "@/shared/lib/api-schema";
+import { currentLanguage, type Language } from "@/shared/lib/i18n";
+import { messages } from "../messages";
 
 export type SessionState = components["schemas"]["SessionState"];
 export type Account = components["schemas"]["AccountSummary"];
@@ -7,7 +9,7 @@ export type SignInProvider = components["schemas"]["SignInProviderSummary"];
 
 // Mirrors the backend's rules (identity/dtos.py, identity/model); the server stays the authority.
 export const MIN_PASSWORD_LENGTH = 12;
-const MAX_PASSWORD_LENGTH = 1024;
+export const MAX_PASSWORD_LENGTH = 1024;
 const MAX_USERNAME_LENGTH = 64;
 
 /** Where a visitor may be: behind the session (`app`), or on one of the two public pages. */
@@ -55,24 +57,31 @@ export type Credentials = components["schemas"]["CreateFirstAdminCommand"];
 
 export type FieldErrors = Partial<Record<"username" | "password" | "confirm", string>>;
 
-export function validateSignIn({ username, password }: Credentials): FieldErrors {
+export function validateSignIn(
+  { username, password }: Credentials,
+  language: Language = currentLanguage(),
+): FieldErrors {
+  const t = messages[language].validation;
   const errors: FieldErrors = {};
-  if (!username.trim()) errors.username = "Enter your username.";
-  if (!password) errors.password = "Enter your password.";
+  if (!username.trim()) errors.username = t.enterUsername;
+  if (!password) errors.password = t.enterPassword;
   return errors;
 }
 
-export function validateSetup(values: Credentials & { confirm: string }): FieldErrors {
+export function validateSetup(
+  values: Credentials & { confirm: string },
+  language: Language = currentLanguage(),
+): FieldErrors {
+  const t = messages[language].validation;
   const errors: FieldErrors = {};
   const username = values.username.trim();
-  if (!username) errors.username = "Choose a username.";
-  else if (username.length > MAX_USERNAME_LENGTH)
-    errors.username = `Use at most ${MAX_USERNAME_LENGTH} characters.`;
-  else if (/\s/.test(username)) errors.username = "No spaces, please.";
+  if (!username) errors.username = t.chooseUsername;
+  else if (username.length > MAX_USERNAME_LENGTH) errors.username = t.atMost(MAX_USERNAME_LENGTH);
+  else if (/\s/.test(username)) errors.username = t.noSpaces;
   if (values.password.length < MIN_PASSWORD_LENGTH)
-    errors.password = `Use at least ${MIN_PASSWORD_LENGTH} characters.`;
+    errors.password = t.atLeast(MIN_PASSWORD_LENGTH);
   else if (values.password.length > MAX_PASSWORD_LENGTH)
-    errors.password = `Use at most ${MAX_PASSWORD_LENGTH} characters.`;
-  if (values.confirm !== values.password) errors.confirm = "The passwords don't match.";
+    errors.password = t.atMost(MAX_PASSWORD_LENGTH);
+  if (values.confirm !== values.password) errors.confirm = t.mismatch;
   return errors;
 }

@@ -44,7 +44,7 @@ from exactdocs.retrieval.models import RerankWith, RetrievalMode
 from exactdocs.retrieval.ports.driven import AgentReads
 from fixture_import import embed_fixture
 from fixture_repo import git
-from retrieval_eval.dataset import Answer, Hit, Question, RetrievalDataset, fingerprint
+from retrieval_eval.dataset import Answer, Question, RetrievalDataset, fingerprint
 from retrieval_eval.evaluators import SectionMatch
 from retrieval_eval.fixture import instance_spend, model_free_container
 from retrieval_eval.golden import (
@@ -58,8 +58,8 @@ from retrieval_eval.golden import (
     load_golden,
 )
 from retrieval_eval.golden_cli import import_corpus, selected
-from retrieval_eval.golden_run import golden_retriever, nested_match, run_golden
-from retrieval_eval.ingestion_cli import CONFIGURATIONS, Configuration, stored_chunks
+from retrieval_eval.golden_run import golden_retriever, held_match, run_golden
+from retrieval_eval.ingestion_cli import CONFIGURATIONS, Configuration, held_headings
 from retrieval_eval.retrieval_bench import (
     Budget,
     ConfigResult,
@@ -347,31 +347,6 @@ class _Recording:
         return found
 
 
-type _Held = dict[tuple[str, str, tuple[str, ...]], set[tuple[str, ...]]]
-"""The heading paths each ``(commit, article, heading path)``'s chunks hold."""
-
-
-async def _held(container: Container, projects: Sequence[Project]) -> _Held:
-    """Read which headings each stored chunk holds, for the nested match rule.
-
-    Args:
-        container: The container, running, with the corpus imported.
-        projects: The projects.
-
-    Returns:
-        The heading paths by chunk.
-    """
-    held: _Held = {}
-    for project in projects:
-        for pinned in project.versions:
-            stored = await stored_chunks(container.engine, project.library, pinned.name)
-            for path, cut in stored.items():
-                for chunk in cut:
-                    key = (pinned.commit, path, chunk.heading_path)
-                    held.setdefault(key, set()).update((chunk.heading_path, *chunk.headings))
-    return held
-
-
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _Run:
     """What every configuration of one chunking shares."""
@@ -407,30 +382,6 @@ async def _index(container: Container) -> IndexCost:
         tokens=after[0] - tokens,
         usd=round(after[1] - usd, 6),
     )
-
-
-def _matcher(held: _Held) -> SectionMatch:
-    """The nested match rule over the chunks a chunking stored.
-
-    Args:
-        held: The heading paths each chunk holds.
-
-    Returns:
-        The rule (``golden_run.nested_match``).
-    """
-
-    def holds(hit: Hit) -> frozenset[tuple[str, ...]]:
-        """The heading paths a hit's chunk holds.
-
-        Args:
-            hit: A returned hit.
-
-        Returns:
-            Every heading path of the chunk with its commit, article and heading path.
-        """
-        return frozenset(held.get((hit.commit_sha or "", hit.article, tuple(hit.heading_path)), ()))
-
-    return nested_match(holds)
 
 
 async def _run_config(config: BenchConfig, run: _Run) -> ConfigResult:
@@ -602,7 +553,7 @@ async def bench(
                     names = ", ".join(f"{r.project} {r.version}" for r in wrong)
                     message = f"not imported at the pinned commit: {names}"
                     raise RuntimeError(message)
-                held = await _held(importer, projects)
+                held = await held_headings(importer.engine, projects)
             run = _Run(
                 projects=projects,
                 dataset=dataset,
@@ -611,7 +562,7 @@ async def bench(
                 models=models,
                 allow_providers=allow_providers,
                 build=build,
-                matches=_matcher(held),
+                matches=held_match(held),
                 indexes={},
             )
             for config in configs:

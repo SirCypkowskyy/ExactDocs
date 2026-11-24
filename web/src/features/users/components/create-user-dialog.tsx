@@ -1,16 +1,18 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
+import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { Button } from "@/shared/ui/button";
 import { DialogContent, DialogDescription, DialogRoot, DialogTitle } from "@/shared/ui/dialog";
 import { Field } from "@/shared/ui/field";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { SelectField } from "@/shared/ui/select-field";
 import { createUser, usersKey } from "../api/users-query";
+import { messages } from "../messages";
 import {
   explainUserError,
   type FieldErrors,
   MIN_PASSWORD_LENGTH,
-  ROLE_LABELS,
+  ROLES,
   type Role,
   validateNewUser,
 } from "../model/user";
@@ -34,8 +36,12 @@ export function CreateUserDialog({ open, onOpenChange, onCreated }: Props) {
 
 function Body({ onDone, onCreated }: { onDone: () => void; onCreated: (name: string) => void }) {
   const queryClient = useQueryClient();
+  const language = useLanguage();
+  const { create: t, roles } = useMessages(messages);
+  const c = useMessages(common);
   const [fields, setFields] = useState<FieldErrors>({});
-  const [problem, setProblem] = useState<string>();
+  // The failure itself, so its words follow the language if it changes meanwhile.
+  const [failure, setFailure] = useState<{ error: unknown }>();
   const [pending, setPending] = useState(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -48,9 +54,9 @@ function Body({ onDone, onCreated }: { onDone: () => void; onCreated: (name: str
       confirm: String(form.get("new-confirm") ?? ""),
       role: String(form.get("new-role") ?? "user") as Role,
     };
-    const found = validateNewUser(values);
+    const found = validateNewUser(values, language);
     setFields(found);
-    setProblem(undefined);
+    setFailure(undefined);
     const first = (["username", "password", "confirm"] as const).find((k) => found[k]);
     if (first) {
       document.getElementById(`new-${first}`)?.focus();
@@ -66,7 +72,7 @@ function Body({ onDone, onCreated }: { onDone: () => void; onCreated: (name: str
       onCreated(created.username);
       onDone();
     } catch (error) {
-      setProblem(explainUserError(error));
+      setFailure({ error });
     } finally {
       setPending(false);
       void queryClient.invalidateQueries({ queryKey: usersKey });
@@ -75,17 +81,18 @@ function Body({ onDone, onCreated }: { onDone: () => void; onCreated: (name: str
 
   return (
     <form onSubmit={submit} noValidate>
-      <DialogTitle>New user</DialogTitle>
-      <DialogDescription>
-        Choose a first password and pass it on to its owner. They sign in with it right away.
-      </DialogDescription>
+      <DialogTitle>{t.title}</DialogTitle>
+      <DialogDescription>{t.description}</DialogDescription>
       <div className="mt-5">
-        <FormAlert id="new-user-alert" message={problem} />
+        <FormAlert
+          id="new-user-alert"
+          message={failure && explainUserError(failure.error, language)}
+        />
       </div>
       <div className="flex flex-col gap-4">
         <Field
           id="new-username"
-          label="Username"
+          label={t.username}
           autoComplete="off"
           autoCapitalize="none"
           spellCheck={false}
@@ -93,38 +100,33 @@ function Body({ onDone, onCreated }: { onDone: () => void; onCreated: (name: str
         />
         <Field
           id="new-password"
-          label="Password"
+          label={t.password}
           type="password"
           autoComplete="new-password"
-          hint={`At least ${MIN_PASSWORD_LENGTH} characters.`}
+          hint={t.passwordHint(MIN_PASSWORD_LENGTH)}
           error={fields.password}
         />
         <Field
           id="new-confirm"
-          label="Repeat password"
+          label={t.repeat}
           type="password"
           autoComplete="new-password"
           error={fields.confirm}
         />
-        <SelectField
-          id="new-role"
-          label="Role"
-          defaultValue="user"
-          hint="An admin also manages user accounts."
-        >
-          {(Object.keys(ROLE_LABELS) as Role[]).map((role) => (
+        <SelectField id="new-role" label={t.role} defaultValue="user" hint={t.roleHint}>
+          {ROLES.map((role) => (
             <option key={role} value={role}>
-              {ROLE_LABELS[role]}
+              {roles[role]}
             </option>
           ))}
         </SelectField>
       </div>
       <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <Button variant="ghost" aria-disabled={pending} onClick={() => !pending && onDone()}>
-          Cancel
+          {c.cancel}
         </Button>
         <Button type="submit" pending={pending}>
-          Create user
+          {t.submit}
         </Button>
       </div>
     </form>

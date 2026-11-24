@@ -1,3 +1,9 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../docs/assets/logo/exactdocs-lockup-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../docs/assets/logo/exactdocs-lockup-light.svg">
+  <img src="../../docs/assets/logo/exactdocs-lockup-light.svg" alt="ExactDocs" width="220">
+</picture>
+
 # Self-hosted runners (GB10)
 
 > **What runs here (#478)** depends on the repository variable `RUNNER_MODE`
@@ -58,6 +64,16 @@ token=$(gh api -X POST repos/SirCypkowskyy/ExactDocs/actions/runners/registratio
 ssh dellpromaxgb10.local "~/exactdocs-runners/register.sh SirCypkowskyy/ExactDocs $token"
 gh api repos/SirCypkowskyy/ExactDocs/actions/runners --jq '.runners[] | [.name, .status] | @tsv'
 ```
+
+`register.sh` also installs `job-started.sh` as the runner's job-started hook
+(`ACTIONS_RUNNER_HOOK_JOB_STARTED` in `/opt/actions-runner/.env`; its output is in each job's
+*Set up runner* step). A job that ends without its own cleanup (cancelled, its runner lost, the
+disk full) leaves its service containers, `exactdocs-supabase-<run>` or a release's buildx
+builder behind, and the next job on that VM inherits them: the hook removes every container,
+anonymous volume and buildx builder state before each job, since a runner takes one job at a
+time, and at 80% disk or more also build cache and images older than 72 hours. Named volumes
+such as `exactdocs-ci-data` and recent layers stay. Runners registered before the hook existed
+get it from another `register.sh` run with a fresh token (`--replace` keeps their names).
 
 Add a third runner: `create-vms.sh 3`, then `RUNNERS=3 register.sh ...`.
 

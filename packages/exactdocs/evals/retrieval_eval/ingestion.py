@@ -60,6 +60,8 @@ class Chunk:
     """Its Markdown, verbatim."""
     headings: tuple[tuple[str, ...], ...] = ()
     """The heading path of every heading it holds, the one it starts with included."""
+    chunk_id: str = ""
+    """Its ID in the version's manifest (empty when not read from one)."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

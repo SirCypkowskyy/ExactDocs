@@ -69,6 +69,10 @@ commit is visible on the image tag and in the release instead.
 
 Any other tag shape, or a tag on the wrong branch, fails the workflow before anything is published.
 
+Before a stable release, run `just screenshots` on `develop` and merge the retaken pictures in
+`docs/assets/screenshots/` if they changed (with their alt texts in the README and the docs, if
+what they show changed), so the README and the docs show the UI being released.
+
 ```bash
 # stable
 git switch main && git pull && git tag v0.1.3 && git push origin v0.1.3

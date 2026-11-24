@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createMemoryHistory, RouterProvider } from "@tanstack/react-router";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createAppRouter } from "./router";
 
@@ -82,8 +83,12 @@ describe("the session guard", () => {
       json(url.endsWith("/users") ? { users: [] } : url.endsWith("/libraries") ? libraries : state);
     mount("/users", api(signedIn));
     expect(await screen.findByRole("heading", { name: "Users" })).toBeInTheDocument();
+    // Users lives in the Admin panel: the trigger is lit, and the open panel marks the page.
     const nav = screen.getByRole("navigation", { name: "Main" });
-    expect(within(nav).getByRole("link", { name: "Users" })).toHaveAttribute(
+    const admin = within(nav).getByRole("button", { name: "Admin" });
+    expect(admin).toHaveAttribute("data-active", "true");
+    await userEvent.setup().click(admin);
+    expect(await within(nav).findByRole("link", { name: /^Users/ })).toHaveAttribute(
       "aria-current",
       "page",
     );
@@ -92,8 +97,8 @@ describe("the session guard", () => {
     mount("/users", api(member));
     expect(await screen.findByRole("heading", { name: "Page not found" })).toBeInTheDocument();
     expect(
-      within(screen.getByRole("navigation", { name: "Main" })).queryByRole("link", {
-        name: "Users",
+      within(screen.getByRole("navigation", { name: "Main" })).queryByRole("button", {
+        name: "Admin",
       }),
     ).not.toBeInTheDocument();
   });
@@ -150,5 +155,34 @@ describe("route errors", () => {
         : json(signedIn),
     );
     await waitFor(() => expect(router.state.location.pathname).toBe("/sign-in"));
+  });
+});
+
+describe("account tabs", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const api = (url: string) =>
+    json(
+      url.includes("/tokens?")
+        ? { tokens: [], next_cursor: null, total: 0 }
+        : { ...signedIn, account: { ...account, has_password: true } },
+    );
+
+  it("opens the Sign-in tab from the URL, with the password form", async () => {
+    mount("/account?tab=sign-in", api);
+    const tab = await screen.findByRole("tab", { name: "Sign-in" });
+    expect(tab).toHaveAttribute("aria-selected", "true");
+    expect(await screen.findByRole("heading", { name: "Password" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Current password")).toBeInTheDocument();
+  });
+
+  it("keeps the chosen tab in the URL; API tokens stays the default without one", async () => {
+    const { router } = mount("/account", api);
+    const tokens = await screen.findByRole("tab", { name: "API tokens" });
+    expect(tokens).toHaveAttribute("aria-selected", "true");
+    await userEvent.click(screen.getByRole("tab", { name: "Sign-in" }));
+    await waitFor(() => expect(router.state.location.search).toEqual({ tab: "sign-in" }));
+    await userEvent.click(screen.getByRole("tab", { name: "API tokens" }));
+    await waitFor(() => expect(router.state.location.search).toEqual({}));
   });
 });
