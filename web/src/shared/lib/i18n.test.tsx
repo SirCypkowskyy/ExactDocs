@@ -1,5 +1,6 @@
 import { act, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
+import { formatBytes } from "./format";
 import { defineMessages, formatNumber, plural, useMessages } from "./i18n";
 import { resetPreferences, setPreferences } from "./preferences";
 import { relativeTime } from "./time";
@@ -82,5 +83,16 @@ describe("relativeTime", () => {
     expect(ahead("2028-11-23T12:00:00Z")).toBe("in 2 years");
     expect(ahead("2026-12-05T12:00:00Z", "pl")).toBe("za 12 dni");
     expect(ahead("2026-11-23T12:00:20Z", "pl")).toBe("za chwilę");
+  });
+});
+
+describe("formatBytes", () => {
+  it("writes sizes with short units in both languages, never the word byte", () => {
+    expect(formatBytes(900, "en")).toBe("900 B");
+    expect(formatBytes(900, "pl")).toBe("900 B");
+    expect(formatBytes(0, "en")).toBe("0 B");
+    expect(formatBytes(12_400, "en")).toBe("12.4 kB");
+    expect(formatBytes(12_400, "pl")).toBe("12,4 kB");
+    expect(formatBytes(3_100_000, "en")).toBe("3.1 MB");
   });
 });

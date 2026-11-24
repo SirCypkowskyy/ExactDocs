@@ -15,6 +15,8 @@ export function formatBytes(bytes: number, language: Language = currentLanguage(
     value /= 1000;
     unit += 1;
   }
+  // Intl writes English bytes as a word ("900 byte"); a size reads "900 B" in both languages.
+  if (unit === 0) return `${formatNumber(Math.round(value), language)} B`;
   return formatNumber(value, language, {
     style: "unit",
     unit: BYTE_UNITS[unit],
