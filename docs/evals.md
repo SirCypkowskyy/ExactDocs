@@ -540,10 +540,16 @@ misses of the golden set's answerable cases, with the suite's own evaluators.
 **Matching a hit across chunking depths.** A configuration that cuts coarser or finer than the
 golden set's sections would otherwise lose every hit to a heading path that no longer exists. So a
 returned chunk of the expected version and article answers the expected section when its heading
-path is the expected one; or the expected path is a non-empty prefix of it (a finer cut: the chunk
-is part of the section); or its path is a prefix of the expected one and the chunk holds the
-expected heading (a coarser cut merged the section into it). `recall_at_5_exact` is recall@5 with
-only the exact heading path, for comparison. The rule is `golden_run.nested_match`.
+path is the expected one (the section, or a part of it split at its blocks); or the expected path
+is a non-empty prefix of it (a finer cut: the chunk is part of the section with its subsections);
+or the chunk holds the expected heading. The last is read from what the chunk holds, not guessed
+from heading paths: the chunker records every heading it puts in a chunk (`headings` of the stored
+chunk), the benchmark reads those records by chunk ID once the corpus is imported, and each
+returned hit carries its chunk ID. So a coarser cut that keeps the section inside its parent, a cut
+at `max_chars` that keeps it in a sibling's chunk, and sections merged by `min_chars` all count
+(#503; until then only a chunk named after a parent of the section counted, and `h2` and
+`merge-400` lost 6 to 7 points of recall@5 to it). `recall_at_5_exact` is recall@5 with only the
+exact heading path, for comparison. The rule is `golden_run.held_match`.
 
 ### The JSON report
 
@@ -563,7 +569,7 @@ and `schema_version` changes when a field is renamed or removed.
 `retrieval_eval/golden_run.py` is the golden set's multi-library runner: `golden_retriever` sends
 each question to its project's library through the suite's `SearchDocsRetriever`, and
 `run_golden` scores the whole set with the suite's evaluators and `evaluate_mode`, with the exact
-or the nested match rule. The ingestion benchmark runs BM25 through it, and the retrieval
+or the held match rule. The ingestion benchmark runs BM25 through it, and the retrieval
 benchmark (below) every mode.
 
 ## The retrieval benchmark
@@ -585,7 +591,9 @@ of its own (the ingestion benchmark's import). Then every configuration runs on 
 directory in a container built with only the model roles it calls, embeds the corpus the first
 time an embedding model is used (as the `embed` jobs would, timed and costed as `index`), and asks
 every golden question in its project's library (`golden_run`), one at a time. Hits are matched
-with the nested rule, so a coarser or finer chunking is not penalised for cutting at another depth.
+by the headings their chunk holds (`golden_run.held_match`, in
+[the ingestion benchmark](#the-ingestion-benchmark)), so a coarser or finer chunking is not
+penalised for cutting at another depth or merging sections.
 It writes `retrieval.json` and `retrieval.md` to `reports/evals/` (or `--out`), prints the summary
 (and appends it to `$GITHUB_STEP_SUMMARY`), and exits with 1 when a configuration returned a result
 of another version, read outside its version (agentic traces), or failed on a question.
@@ -829,8 +837,8 @@ just text-bench --offline --chunkings default,h6,h2,merge-400 --out packages/exa
   of the section's own text (the section is inside it: a coarser result, such as a chunk of
   several sections), or when at least 80% of its own shingles are in the section with its
   subsections (it is a part of the section: a finer result, such as a window of it or a part of a
-  long section). These are the text forms of the nested rule chunk-ID scoring matches hits with
-  (`golden_run.nested_match`, in [the ingestion benchmark](#the-ingestion-benchmark)), so both
+  long section). These are the text forms of the rule chunk-ID scoring matches hits with
+  (`golden_run.held_match`, in [the ingestion benchmark](#the-ingestion-benchmark)), so both
   scorings count the same hits.
 - **Version.** For a question about version V, a result is *right* when its text matches sections
   of V and of no other pinned version; *version-neutral* when it matches sections of V and of
@@ -881,7 +889,7 @@ says how much of what a tool returned no check on the text alone can attribute.
 each chunking configuration it imports the corpus as the ingestion benchmark does, asks every
 golden question with BM25 in its project's library, reads each result back by its chunk ID and
 keeps the chunk's content as the result's text. Then it scores the results both ways, chunk IDs
-with the retrieval benchmark's nested rule. A decision is where an expected section of an
+with the retrieval benchmark's rule (`golden_run.held_match`). A decision is where an expected section of an
 answerable case is in the top 10 (its rank), or that it is not; the two agree on a decision when
 they give the same rank, or both a miss. The criterion is 98% agreement at `default`, the
 chunking ExactDocs ships (`MIN_AGREEMENT`, `GATED_CHUNKING`); below it the command exits with 1.
@@ -890,8 +898,6 @@ The report (`text-scorer.json` and `text-scorer.md`, in `reports/evals/` or `--o
 - the agreement on hit or miss alone, whatever the rank;
 - the agreement on the same results rendered as plain text (the Markdown rendered and the tags
   dropped), as a tool that renders its results returns them;
-- the agreement with a chunk-ID rule that also counts a chunk holding the expected section's
-  heading under another heading path (below);
 - the agreement on each case's wrong-version decision;
 - the agreement at each threshold from 0.5 to 1, on the results as returned and as rendered;
 - both scorings' metrics side by side, the text-only metrics, and every disagreement with what
