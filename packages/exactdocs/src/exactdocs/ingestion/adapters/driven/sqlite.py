@@ -379,6 +379,7 @@ class SqliteJobRepository:
         sort: Sort,
         after: tuple[SortValue, str] | None,
         limit: int,
+        offset: int = 0,
     ) -> Sequence[Job]:
         """Return up to ``limit`` of the jobs that pass the filter, in ``sort`` order.
 
@@ -386,12 +387,14 @@ class SqliteJobRepository:
         columns compare by code point on both databases (PostgreSQL's are collated ``C`` by the
         migration), as Python compares str. A page of one library's jobs by ID keeps the range
         scan of ``list_page_for_library`` (the library bounds the row comparison on both ends).
+        An offset is the database's ``OFFSET`` over the same order.
 
         Args:
             job_filter: Which jobs.
             sort: The order.
             after: The sort value and ID of the last job of the previous page.
             limit: At most this many jobs.
+            offset: How many of the jobs in order (after ``after``) to skip first.
 
         Returns:
             The jobs in order, with their problems.
@@ -421,10 +424,11 @@ class SqliteJobRepository:
         elif after is not None:
             row, bound = tuple_(column, jobs.c.id), tuple_(*after)
             query = query.where(row < bound if sort.descending else row > bound)
+        query = query.order_by(*order).limit(limit)
+        if offset:
+            query = query.offset(offset)
         async with self.engine.connect() as connection:
-            return [
-                _job(row) for row in await connection.execute(query.order_by(*order).limit(limit))
-            ]
+            return [_job(row) for row in await connection.execute(query)]
 
     async def count(self, job_filter: JobFilter) -> int:
         """Count the jobs that pass the filter.

@@ -70,6 +70,7 @@ from exactdocs_kernel import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
     MAX_NAME,
+    MAX_OFFSET,
     MAX_PATH,
     MAX_TAG_INPUT,
     MAX_TAGS,
@@ -397,6 +398,9 @@ class JobListQuery(_Dto):
     cursor: str | None = None
     """The `next_cursor` of the previous page, which only works with the same `sort` and filters;
     null for the first page."""
+    offset: Annotated[int, Field(ge=0, le=MAX_OFFSET)] | None = None
+    """Jump to a page: skip this many matches, in the order and with the filters of the cursor
+    walk. Not with `cursor`; the page's `next_cursor` goes on from it."""
 
     @field_validator("created_after", "created_before")
     @classmethod

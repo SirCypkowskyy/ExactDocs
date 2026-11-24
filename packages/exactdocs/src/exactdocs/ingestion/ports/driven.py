@@ -35,6 +35,7 @@ from exactdocs.ingestion.models import (
     ParsedArticle,
     PathSelection,
     ProblemCode,
+    ProjectLogo,
     ProposedId,
     RemoteRefs,
     Removed,
@@ -166,6 +167,7 @@ class JobRepository(Protocol):
         sort: Sort,
         after: tuple[SortValue, str] | None,
         limit: int,
+        offset: int = 0,
     ) -> Sequence[Job]:
         """Return up to ``limit`` of the jobs that pass the filter, in ``sort`` order.
 
@@ -177,6 +179,7 @@ class JobRepository(Protocol):
             sort: The order.
             after: The sort value and ID of the last job of the previous page; ``None`` starts.
             limit: At most this many jobs.
+            offset: How many of the jobs in order (after ``after``) to skip first.
 
         Returns:
             The jobs in order, with their problems.
@@ -881,6 +884,38 @@ class GuidancePolicy(Protocol):
 
         Returns:
             ``KEEP`` when the library's repo guidance is on; ``DROP`` (the default) otherwise.
+        """
+        ...
+
+
+class LibraryLogos(Protocol):
+    """Where a library's logo is kept (the catalog, in ingestion's words, #504)."""
+
+    async def wants_logo(self, library: str, ref: str) -> bool:
+        """Tell whether a logo found in this version would be kept: it is the default version.
+
+        An import asks before it looks for a logo, so only the default version's import reads
+        the files. Raises ``NotFoundError`` for a library that is gone.
+
+        Args:
+            library: The library ID.
+            ref: The activated version.
+
+        Returns:
+            True when the version is the library's default version now.
+        """
+        ...
+
+    async def offer_logo(self, *, library: str, ref: str, logo: ProjectLogo | None) -> None:
+        """Offer the logo an activated version has, or that it has none the importer can use.
+
+        The catalog takes only the default version's (it checks again), and ``None`` then
+        removes the library's logo: a logo never outlives the default version that had it.
+
+        Args:
+            library: The library ID.
+            ref: The activated version.
+            logo: The logo found, checked and cleaned; ``None`` when there is none.
         """
         ...
 

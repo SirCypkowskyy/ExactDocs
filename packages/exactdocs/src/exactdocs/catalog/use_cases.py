@@ -21,6 +21,7 @@ from exactdocs.catalog.dtos import (
     ActivatedManifest,
     ActivateManifestCommand,
     ActiveManifest,
+    ApplyLogoCommand,
     ApplyManualTagsCommand,
     ApplyReadmeCommand,
     Article,
@@ -48,6 +49,7 @@ from exactdocs.catalog.dtos import (
     GetAssetQuery,
     GetInstructionFilesQuery,
     GetLibraryQuery,
+    GetLogoQuery,
     GetManifestStatesQuery,
     GetVersionTagsQuery,
     InstructionFileOut,
@@ -55,10 +57,12 @@ from exactdocs.catalog.dtos import (
     LibraryDetail,
     LibraryList,
     ListArticlesQuery,
+    ListedVersion,
     ListLibrariesQuery,
     ListRenamesQuery,
     ListTagsQuery,
     ListVersionsQuery,
+    Logo,
     ManifestStates,
     ManualTagsOut,
     PinDefaultVersionCommand,
@@ -85,7 +89,6 @@ from exactdocs.catalog.dtos import (
     TagList,
     UpdateLibraryCommand,
     VersionList,
-    VersionOut,
     VersionTags,
 )
 from exactdocs.catalog.errors import (
@@ -97,6 +100,7 @@ from exactdocs.catalog.errors import (
     LibraryCreationDeniedError,
     LibraryNotEmptyError,
     LibraryNotFoundError,
+    LogoNotFoundError,
     ManifestNotFoundError,
     VersionNotFoundError,
 )
@@ -108,6 +112,7 @@ from exactdocs.catalog.models import (
     ImportedTags,
     Library,
     LibraryId,
+    LibraryLogo,
     LibrarySettings,
     Manifest,
     ManifestEntry,
@@ -128,10 +133,12 @@ from exactdocs.catalog.models import (
 )
 from exactdocs.catalog.ports.driven import (
     AccessPolicy,
+    ArticleCounts,
     ArticleTitleFinder,
     EntrySearch,
     ImportedTagWriter,
     InstructionFileReader,
+    LibraryLogos,
     LibraryRepository,
     ManifestCopier,
     ManifestRepository,
@@ -141,6 +148,7 @@ from exactdocs_kernel import (
     Clock,
     decode_sort_cursor,
     encode_sort_cursor,
+    page_offset,
     parse_sort,
     section_link,
     sorted_page,
@@ -197,6 +205,8 @@ class ListLibrariesUseCase:
 
     repository: LibraryRepository
     """Stores the libraries, their versions, settings and manual tags."""
+    articles: ArticleCounts
+    """Counts the articles of the page's default versions, in one query."""
     access: AccessPolicy
     """Decides what the caller may do with the library."""
 
@@ -244,8 +254,13 @@ class ListLibrariesUseCase:
             key=lambda lib: lib.id.value,
             limit=query.limit,
             cursor=query.cursor,
+            offset=query.offset,
         )
-        return LibraryList.from_page(page)
+        defaults = [(lib.id, d.ref) for lib in page.items if (d := lib.default_version())]
+        counts = await self.articles.count_articles(defaults) if defaults else {}
+        return LibraryList.from_page(
+            page, article_counts={lib.value: n for (lib, _), n in counts.items()}
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -254,6 +269,8 @@ class ListVersionsUseCase:
 
     repository: LibraryRepository
     """Stores the libraries, their versions, settings and manual tags."""
+    articles: ArticleCounts
+    """Counts the articles of the page's versions, in one query."""
     access: AccessPolicy
     """Decides what the caller may do with the library."""
 
@@ -264,7 +281,8 @@ class ListVersionsUseCase:
             query: The library, the filters, the sort and the page.
 
         Returns:
-            The page, the next cursor and the count of every match.
+            The page, the next cursor and the count of every match. Each version carries its
+            article count; its chunk counts are the search index's, which the caller adds.
 
         Raises:
             LibraryNotFoundError: The library is not in the catalog.
@@ -299,10 +317,21 @@ class ListVersionsUseCase:
             key=lambda v: str(v.ref),
             limit=query.limit,
             cursor=query.cursor,
+            offset=query.offset,
+        )
+        counts = (
+            await self.articles.count_articles([(library.id, v.ref) for v in page.items])
+            if page.items
+            else {}
         )
         return VersionList(
             library=str(library.id),
-            versions=[VersionOut.from_model(v, is_default=v == default) for v in page.items],
+            versions=[
+                ListedVersion.listed(
+                    v, is_default=v == default, articles=counts.get((library.id, v.ref), 0)
+                )
+                for v in page.items
+            ],
             next_cursor=page.next_cursor,
             total=len(found),
         )
@@ -556,6 +585,50 @@ class ApplyReadmeUseCase:
             description=command.description or "",
             rules=tuple(command.rules),
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ApplyLogoUseCase:
+    """Implements ``ports.driving.ApplyLogo``."""
+
+    repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
+    logos: LibraryLogos
+    """Keeps each library's logo."""
+
+    async def __call__(self, command: ApplyLogoCommand) -> None:
+        """Follow the default version's logo: keep it, or remove the library's when it has none.
+
+        The logo of any other version is ignored, as its README is (``ApplyReadme``), so a
+        library shows the logo of the version its ID resolves to, and the newest import of an old
+        tag never replaces it. The same bytes are not written again (a branch synced often).
+        The caller does not retry: if this fails the library keeps its logo until the default
+        version is imported again.
+
+        Args:
+            command: The version imported and its logo, if any.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog.
+        """
+        library = await self.repository.get(LibraryId(command.library))
+        if library is None:
+            raise LibraryNotFoundError(command.library)
+        default = library.default_version()
+        if default is None or default.ref != VersionRef(command.ref):
+            return
+        if command.logo is None:
+            if library.logo is not None:
+                await self.logos.remove(library.id)
+            return
+        logo = LibraryLogo(
+            content_type=command.logo.content_type,
+            data=command.logo.data,
+            path=command.logo.path,
+            ref=default.ref,
+        )
+        if logo.digest != library.logo:
+            await self.logos.put(library.id, logo)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1162,6 +1235,7 @@ class ListArticlesUseCase:
         if manifest is None:
             raise ArticleNotFoundError(str(library.id), str(version.ref), None)
         sort = parse_sort(query.sort, allowed=ARTICLE_SORT_FIELDS, default="path")
+        skip = page_offset(cursor=query.cursor, offset=query.offset)
         after = (
             decode_sort_cursor(query.cursor, sort, key_field="path")
             if query.cursor is not None
@@ -1176,6 +1250,7 @@ class ListArticlesUseCase:
             text=query.q,
             sort=sort,
             after=after,
+            offset=skip,
             limit=query.limit + 1,  # one more than asked tells whether another page follows
         )
         page = entries[: query.limit]
@@ -1506,6 +1581,44 @@ class GetAssetUseCase:
         if image is None:
             raise AssetNotFoundError(str(library.id), str(version.ref), query.path)
         return Asset(blob_sha=image.blob_sha, content_type=image.content_type, data=image.data)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GetLogoUseCase:
+    """Implements ``ports.driving.GetLogo``."""
+
+    repository: LibraryRepository
+    """Stores the libraries, their versions, settings and manual tags."""
+    logos: LibraryLogos
+    """Keeps each library's logo."""
+    access: AccessPolicy
+    """Decides what the caller may do with the library."""
+
+    async def __call__(self, query: GetLogoQuery) -> Logo:
+        """Read the library's logo, or only say the caller's copy is current.
+
+        Args:
+            query: The library and the logo versions the caller holds.
+
+        Returns:
+            The logo, or ``unchanged`` without bytes when its version is one the caller holds.
+
+        Raises:
+            LibraryNotFoundError: The library is not in the catalog (or hidden from the caller).
+            LogoNotFoundError: The library has no logo.
+        """
+        await _require(self.access, query.library, Access.READ)
+        library_id = LibraryId(query.library)
+        logo = await self.logos.get(library_id)
+        if logo is None:
+            if await self.repository.get(library_id) is None:
+                raise LibraryNotFoundError(query.library)
+            raise LogoNotFoundError(str(library_id))
+        if logo.digest in query.known_digests:
+            return Logo(
+                digest=logo.digest, content_type=logo.content_type, data=b"", unchanged=True
+            )
+        return Logo(digest=logo.digest, content_type=logo.content_type, data=logo.data)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

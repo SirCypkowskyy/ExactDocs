@@ -79,7 +79,7 @@ flowchart TD
     boot --> catalog & identity & retrieval & ingestion & usage
     catalog & identity & retrieval & ingestion & usage --> kernel
     retrieval -. "bridges: SearchableVersions,<br/>article titles" .-> catalog
-    ingestion -. "bridges: library sources,<br/>version publisher, removals" .-> catalog
+    ingestion -. "bridges: library sources,<br/>version publisher, logos, removals" .-> catalog
     ingestion -. "bridges: chunk index,<br/>version embedder" .-> retrieval
     catalog & retrieval & ingestion -. "bridge: AccessPolicy<br/>(library roles)" .-> identity
     usage -. "bridges: People (opt-in),<br/>LibraryAccess (library roles)" .-> identity
@@ -111,6 +111,13 @@ domain for their own needs, and nothing calls ingestion or usage, so the domain 
 cycles. An architecture test (`tests/architecture/test_bridge_direction.py`) reads the
 imports of every bridge class in `bootstrap/bridges.py`: the consumer's `models` / `ports.driven`
 on one side, the provider's `ports.driving` / `dtos` on the other, and only the edges above pass.
+
+**When the catalog's answer needs another domain's data**, the composition root composes it
+instead of a bridge against the direction: it wraps the catalog's driving port and asks the
+other domain's driving port once per page. `ListLibrariesByAi` (`bootstrap/library_filters.py`)
+turns retrieval's AI switch into the IDs the catalog lists; `ListVersionsWithChunks`
+(`bootstrap/version_counts.py`) adds retrieval's chunk and embedded-chunk counts of a whole page
+of versions (`CountVersionChunks`) to the catalog's list, which counts the articles itself (#513).
 
 **Secrets every domain seals: one box, one port per domain.** The instance's secret box
 (`bootstrap/secret_box.py:FernetSecretBox`: Fernet keyed from `EXACTDOCS_SECRET_KEY` with HKDF,
@@ -292,6 +299,9 @@ only holds each process's git work folders and `known_hosts`. What changes:
   period, then `CollectGarbage` deletes them and the contents no manifest uses. `RemoveVersion` and
   `RemoveLibrary` delete a version's manifests at once (no grace: nothing serves them), and
   ingestion's `collect` job then runs each domain's collector, catalog first.
+- **Library logos (#504):** `catalog_library_logos` keeps one logo per library (its bytes, type,
+  digest and where it was found), deleted with the library; written through the `LibraryLogos`
+  port, read into `Library.logo` by the library repository. See *Project logos* under the import.
 - **Manual tags (E4-06):** `catalog_manual_tags` holds the tags users set by hand per library and
   article path (`SetManualTags`). A manifest entry keeps `tags` as every tag of the article (what
   listings filter and count), `manual_tags` (each with the path it was set on, which is where it is
@@ -1161,8 +1171,9 @@ that last step, which is one transaction in the catalog.
   read, even if they were edited in between, `STEPS_VERSION` `jobs-4`); list the selected
   files; parse and chunk them `EXACTDOCS_IMPORT_BATCH_FILES` (100) at a time; read the README and
   the images; fetch the images outside the selection; detect renames; publish (store, index,
-  activate). What follows the publish (renewing a newer version's rename map, #216, and the
-  README/`context7.json` text) is no step: it never fails the import, works on what is imported
+  activate). What follows the publish (renewing a newer version's rename map, #216, the
+  README/`context7.json` text and the default version's logo, #504) is no step: it never fails
+  the import, works on what is imported
   now and replaces whole maps, so a run killed there simply does it again. A killed import resumes at its first unfinished step: an import killed after 120 of
   200 files (batches of 20) parses and chunks files 121 to 200 only, and the version has each
   article once. A step's result carries everything later steps and the job's progress depend on
@@ -1306,6 +1317,46 @@ that last step, which is one transaction in the catalog.
   opened directly it is an attachment under that CSP, so a hostile SVG can neither run nor
   phone home. SVGs declaring entities are refused. Not stored: images in raw HTML, MDX
   components or front matter.
+- **Project logos (#504).** A library carries the logo of its **default version**, as it takes
+  that version's title and description (LIB-07), so an import of an older tag never replaces it.
+  *Where it is found:* after the publish, an import or re-sync of the version that is the default
+  then (`LibraryLogos.wants_logo`, so no other import reads anything) looks, in order, at the
+  images at the top of the root README (before the first heading below H1) whose `src` or `alt`
+  says "logo" and that are no badge, Markdown or HTML `<img>` (also in an `<h1>` or a
+  `<picture>`), at most 4 (`ReadmeSummary.logos`, read with the README); a relative `src` resolves
+  against the root, and an absolute URL counts only when it points into the library's own GitHub
+  repository (`raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>`, `github.com/.../raw|blob/
+  <ref>/<path>`), which names `<path>` of the **imported commit**: no URL is ever fetched. Then the
+  conventional files `LOGO_FILES` (`logo.svg`, `.github/logo.png`, `assets/logo.*`,
+  `docs/public/logo.svg`, `docs/assets/logo.png`, `static/img/logo.svg`, ...). All candidates
+  are read in one `RepositoryFiles.read_files` (the commit's trees, then each existing file's
+  blob, also outside the selected paths), at most `MAX_LOGO_BYTES` (512 KiB) each. *What is
+  kept* (`check_logo`, in a thread): the first candidate whose sniffed type is PNG, JPEG, WebP or
+  SVG (no GIF). A raster image is kept byte for byte when its header (never decoded) says 16 to
+  4096 pixels a side and at most 2048 x 2048 pixels in all, so a 1 x 1 spacer is no logo and a
+  decompression bomb is refused. An SVG is **cleaned** (`clean_svg`): expat parses it and refuses
+  any DTD internal subset, entity declaration or undeclared entity before anything is expanded,
+  and more than 10,000 elements; only SVG-namespace shapes, text, paint servers, clipping, masks,
+  filters and `<style>` are kept (scripts, `foreignObject`, `image`, animations, metadata and
+  editors' elements go with their content), event handlers and foreign-namespace attributes go,
+  any value or `<style>` with `url()` to another document, `javascript:`, `@import`, an
+  expression or a CSS escape goes, `href` stays only as `#fragment`, and `<use>` may neither copy
+  another `<use>` nor copy more than 10,000 elements in all (copies of copies multiply). The
+  result is written anew as UTF-8. *Never fatal:* the logo step is no durable step (like the
+  README text it reads what is imported now and replaces the logo whole); any failure (the
+  remote, the catalog) is logged and the library keeps the logo it had. A version with no usable
+  candidate removes the library's logo. `ReadmeSummary.logos` changed the import's step results:
+  `STEPS_VERSION` `jobs-12`.
+  *Stored:* `catalog_library_logos` (one row per library: `digest`, `content_type`, `data`,
+  `path`, `ref`; foreign key to `catalog_libraries` with `ON DELETE CASCADE`, so a removed
+  library loses it) behind the catalog's `LibraryLogos` port (`ApplyLogo` re-checks type and
+  size, keeps only the default version's and skips identical bytes). The library repository
+  reads the digest with a left join into `Library.logo`, so `LibrarySummary` and
+  `LibraryDetail` carry `logo` (16 hex digits of the SHA-256) without reading the bytes.
+  *Served:* `GET /api/v1/libraries/{owner}/{repo}/logo` (`GetLogo`, library read access) with
+  the asset headers above; `?v=<logo>` makes it `immutable` for a year, so a list of libraries
+  costs no request once seen. Pinning another default or removing the default version does not
+  re-derive the logo until that version is imported again, as for the title.
 - **Relative links and images in the UI.** A link to `.md`/`.mdx` stays in the app (same
   version, resolved path, same `#anchor`); any other repository file opens on the host's blob page
   at the commit; a link to an article the import left out lands on "Not in this version", which

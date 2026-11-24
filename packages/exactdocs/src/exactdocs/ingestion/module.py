@@ -62,6 +62,7 @@ from exactdocs.ingestion.ports.driven import (
     KnownLibraries,
     LibraryIds,
     LibraryLocks,
+    LibraryLogos,
     LibrarySettingsStore,
     LibrarySources,
     LibraryTexts,
@@ -998,6 +999,7 @@ def import_job(
     guidance: GuidancePolicy | None = None,
     files: RepositoryFiles | None = None,
     converter: MarkupConverter | None = None,
+    logos: LibraryLogos | None = None,
 ) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
     """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions.
 
@@ -1010,7 +1012,8 @@ def import_job(
     chunked); without it an interrupted import starts over. ``guidance`` says which libraries
     keep their ``AGENTS.md`` / ``CLAUDE.md`` files with each version (RET-08), read with
     ``files``; without both none do. ``converter`` writes reStructuredText articles as Markdown;
-    without it they are skipped.
+    without it they are skipped. ``logos`` keeps the default version's logo (#504), read with
+    ``files``; without both none is looked for.
 
     Args:
         gateway: Fetches a commit's files.
@@ -1033,6 +1036,7 @@ def import_job(
         guidance: Which libraries keep their instruction files.
         files: Reads the instruction files.
         converter: Writes reStructuredText articles as Markdown.
+        logos: Keeps the logo of a library's default version.
 
     Returns:
         The handlers and the recovery hooks, by job kind.
@@ -1055,6 +1059,7 @@ def import_job(
         guidance=guidance,
         files=files,
         converter=converter,
+        logos=logos,
     )
     # A cancelled job stops before its next step; each step leaves nothing half done.
     importer = replace(importer, checkpoints=StopOnCancel(inner=checkpoints or _InlineSteps()))

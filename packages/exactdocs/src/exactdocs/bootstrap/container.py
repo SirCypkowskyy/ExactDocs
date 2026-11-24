@@ -32,6 +32,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogKnownLibraries,
     CatalogLibraries,
     CatalogLibraryIds,
+    CatalogLibraryLogos,
     CatalogLibrarySettings,
     CatalogLibrarySources,
     CatalogManualTags,
@@ -105,19 +106,22 @@ from exactdocs.bootstrap.sign_in import (
 from exactdocs.bootstrap.telemetry import agent_reads as telemetry_agent_reads
 from exactdocs.bootstrap.telemetry import search_tracer, traced_job, traced_jobs
 from exactdocs.bootstrap.usage_meter import flushing
+from exactdocs.bootstrap.version_counts import ListVersionsWithChunks
 from exactdocs.bootstrap.workdirs import held, new_work_root, sweep_abandoned_work
 from exactdocs.catalog import CatalogModule
 from exactdocs.catalog.adapters.driven.sqlite import (
+    SqliteArticleCounts,
     SqliteArticleTitles,
     SqliteEntrySearch,
     SqliteImportedTags,
     SqliteInstructionFiles,
+    SqliteLibraryLogos,
     SqliteLibraryRepository,
     SqliteManifestCopier,
     SqliteManifestRepository,
     SqliteStoredArticles,
 )
-from exactdocs.catalog.ports.driving import ListLibraries
+from exactdocs.catalog.ports.driving import ListLibraries, ListVersions
 from exactdocs.identity import IdentityModule
 from exactdocs.identity.adapters.driven.argon2id import Argon2idPasswordHasher
 from exactdocs.identity.adapters.driven.memory import InMemoryFailedSignInLog
@@ -705,6 +709,8 @@ def _build_read_side(
         instruction_files=SqliteInstructionFiles(engine=engine),
         access=access,
         entry_search=SqliteEntrySearch(engine=engine),
+        logos=SqliteLibraryLogos(engine=engine),
+        article_counts=SqliteArticleCounts(engine=engine),
     )
     choice = None
     search: SqliteSearchIndex | PostgresSearchChoice = SqliteSearchIndex(engine=engine)
@@ -1063,6 +1069,8 @@ class Container:
     """Runs the queued jobs (imports, syncs, embeddings) in ``running(jobs=True)``."""
     list_libraries: ListLibraries
     """Catalog's ``list_libraries`` with the ``ai_enabled`` filter resolved from retrieval."""
+    list_versions: ListVersions
+    """Catalog's ``list_versions`` with each version's chunk counts from retrieval (#513)."""
     save_provider: SaveProvider
     """Retrieval's ``save_provider``, then the embedding queued when the embedding role's profile
     changed (REST ``/ai/providers``)."""
@@ -1215,6 +1223,9 @@ class Container:
                 get_library_retrieval=read.retrieval.get_library_retrieval
             ),
             files=files,
+            logos=CatalogLibraryLogos(
+                get_library=read.catalog.get_library, apply_logo=read.catalog.apply_logo
+            ),
         )
         ingestion = IngestionModule.build(
             jobs=SqliteJobRepository(engine=engine),
@@ -1296,6 +1307,10 @@ class Container:
             list_libraries=ListLibrariesByAi(
                 list_libraries=read.catalog.list_libraries,
                 settings=SqliteLibraryModes(engine=engine),
+            ),
+            list_versions=ListVersionsWithChunks(
+                list_versions=read.catalog.list_versions,
+                count_version_chunks=read.retrieval.count_version_chunks,
             ),
             save_provider=SaveProviderThenEmbed(
                 save_provider=read.retrieval.save_provider,
