@@ -57,8 +57,8 @@ language = "en"
 logo = "assets/logo/exactdocs-mark-small.svg"
 favicon = "assets/logo/favicon.svg"
 # The web UI's faces (web/DESIGN.md, "Typography").
-font.text = "IBM Plex Sans"
-font.code = "IBM Plex Mono"
+font.text = "Schibsted Grotesk"
+font.code = "JetBrains Mono"
 features = [
   "content.action.edit",
   "content.code.annotate",
