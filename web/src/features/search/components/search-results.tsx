@@ -6,6 +6,7 @@ import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { parseTags } from "@/shared/lib/tags";
 import { cn } from "@/shared/lib/utils";
 import { Button, buttonVariants } from "@/shared/ui/button";
+import { EmptyState } from "@/shared/ui/page";
 import { kbd, pill, pillTone } from "@/shared/ui/recipes";
 import { searchQueryOptions } from "../api/search-queries";
 import { useSearchNav } from "../hooks/use-search-nav";
@@ -62,50 +63,56 @@ function NoResults({ ctx, q }: { ctx: SearchContext; q: string }) {
   const t = useMessages(messages);
   const update = useSearchNav(ctx.owner, ctx.repo);
   const tags = parseTags(ctx.tags);
+  const others = ctx.otherRefs.slice(0, 3);
   return (
-    <div className="max-w-xl">
-      <SearchX aria-hidden="true" strokeWidth={1.5} className="mb-3 size-8 text-muted-foreground" />
-      <h2 className="text-title font-semibold">{t.empty.noResultsIn(ctx.ref)}</h2>
-      <p className="mt-2 text-body text-muted-foreground">
-        {t.empty.nothingIn(
-          <span className="font-mono text-foreground">{ctx.ref}</span>,
-          <span className="font-medium text-foreground [overflow-wrap:anywhere]">
-            {t.results.quote(q)}
-          </span>,
-          tags,
-          ctx.match === "all",
-        )}
-      </p>
-      <div className="mt-4 flex flex-wrap gap-2">
-        {tags.length > 0 && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => void update({ tags: undefined, match: undefined })}
-          >
-            <FunnelX aria-hidden="true" data-icon-motion="tilt" />
-            {t.empty.removeTagFilter}
-          </Button>
-        )}
-        {ctx.otherRefs.slice(0, 3).map((ref) => (
-          <Link
-            key={ref}
-            to="/libraries/$owner/$repo"
-            params={{ owner: ctx.owner, repo: ctx.repo }}
-            search={{
-              version: ref,
-              q,
-              tags: ctx.tags,
-              match: ctx.match === "all" ? "all" : undefined,
-            }}
-            className={retry}
-          >
-            <Search aria-hidden="true" data-icon-motion="tilt" />
-            {t.empty.searchInstead(<span className="font-mono">{ref}</span>)}
-          </Link>
-        ))}
-      </div>
-    </div>
+    <EmptyState
+      icon={<SearchX aria-hidden="true" />}
+      headingLevel={2}
+      title={t.empty.noResultsIn(ctx.ref)}
+      className="max-w-xl"
+      action={
+        (tags.length > 0 || others.length > 0) && (
+          <div className="flex flex-wrap gap-2">
+            {tags.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => void update({ tags: undefined, match: undefined })}
+              >
+                <FunnelX aria-hidden="true" data-icon-motion="tilt" />
+                {t.empty.removeTagFilter}
+              </Button>
+            )}
+            {others.map((ref) => (
+              <Link
+                key={ref}
+                to="/libraries/$owner/$repo"
+                params={{ owner: ctx.owner, repo: ctx.repo }}
+                search={{
+                  version: ref,
+                  q,
+                  tags: ctx.tags,
+                  match: ctx.match === "all" ? "all" : undefined,
+                }}
+                className={retry}
+              >
+                <Search aria-hidden="true" data-icon-motion="tilt" />
+                {t.empty.searchInstead(<span className="font-mono">{ref}</span>)}
+              </Link>
+            ))}
+          </div>
+        )
+      }
+    >
+      {t.empty.nothingIn(
+        <span className="font-mono text-foreground">{ctx.ref}</span>,
+        <span className="font-medium text-foreground [overflow-wrap:anywhere]">
+          {t.results.quote(q)}
+        </span>,
+        tags,
+        ctx.match === "all",
+      )}
+    </EmptyState>
   );
 }
 
@@ -154,19 +161,21 @@ function Failed({ refName, onRetry }: { refName: string; onRetry: () => void }) 
   const t = useMessages(messages);
   const c = useMessages(common);
   return (
-    <div role="alert" className="max-w-xl">
-      <CircleAlert
-        aria-hidden="true"
-        strokeWidth={1.5}
-        className="mb-3 size-8 text-muted-foreground"
-      />
-      <h2 className="text-title font-semibold">{t.failed.title}</h2>
-      <p className="mt-2 text-body text-muted-foreground">{t.failed.version(refName)}</p>
-      <Button variant="outline" size="sm" className="mt-3" onClick={onRetry}>
-        <RotateCcw aria-hidden="true" data-icon-motion="refresh" />
-        {c.retry}
-      </Button>
-    </div>
+    <EmptyState
+      role="alert"
+      icon={<CircleAlert aria-hidden="true" />}
+      headingLevel={2}
+      title={t.failed.title}
+      className="max-w-xl"
+      action={
+        <Button variant="outline" size="sm" onClick={onRetry}>
+          <RotateCcw aria-hidden="true" data-icon-motion="refresh" />
+          {c.retry}
+        </Button>
+      }
+    >
+      {t.failed.version(refName)}
+    </EmptyState>
   );
 }
 

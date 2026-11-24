@@ -138,30 +138,50 @@ export function Section({
   );
 }
 
-/** An empty or first-run state that says what to do next; it keeps the block's frame. */
+/**
+ * An empty or first-run state that says what to do next; it keeps the block's frame. The icon is
+ * large and muted (32 px, a 1.5 stroke, like a table's empty frame) and does not move.
+ */
 export function EmptyState({
   title,
   children,
   action,
   icon,
   className,
+  headingLevel,
+  role,
 }: {
   title: ReactNode;
   children?: ReactNode;
   action?: ReactNode;
   icon?: ReactNode;
   className?: string;
+  /** The title as a heading (the page's main answer, e.g. "No results"); a line of text otherwise. */
+  headingLevel?: 2 | 3;
+  /** `alert` when it says something failed. */
+  role?: "alert";
 }) {
+  const Heading = headingLevel === 2 ? "h2" : headingLevel === 3 ? "h3" : "p";
   return (
     <div
+      role={role}
       className={cn(
         "flex flex-col items-start gap-3 rounded-lg border border-dashed border-input px-5 py-6",
         className,
       )}
     >
-      {icon && <div className="text-muted-foreground [&_svg]:size-5">{icon}</div>}
+      {icon && (
+        <div
+          data-slot="empty-icon"
+          className="text-muted-foreground [&_svg]:size-8 [&_svg]:[stroke-width:1.5]"
+        >
+          {icon}
+        </div>
+      )}
       <div>
-        <p className="text-body font-medium">{title}</p>
+        <Heading className={headingLevel ? "text-section font-semibold" : "text-body font-medium"}>
+          {title}
+        </Heading>
         {children && (
           <div className="mt-1 max-w-[60ch] text-body text-muted-foreground">{children}</div>
         )}

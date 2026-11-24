@@ -146,7 +146,7 @@ describe("search in Polish", () => {
     expect(
       await screen.findByRole("heading", { level: 2, name: "Brak wyników w v1" }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/nic nie pasuje do/).closest("p") as HTMLElement).toHaveTextContent(
+    expect(screen.getByText(/nic nie pasuje do/).closest("div") as HTMLElement).toHaveTextContent(
       "W v1 nic nie pasuje do „retry” wśród artykułów z tagiem auth lub billing. Wpisz mniej słów lub inne.",
     );
     expect(screen.getByRole("button", { name: "Usuń filtr tagów" })).toBeInTheDocument();

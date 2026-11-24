@@ -253,38 +253,37 @@ function NoResults({
 }) {
   const t = useMessages(messages);
   return (
-    <div className="flex max-w-2xl flex-col items-start gap-3 rounded-lg border border-dashed border-input px-5 py-6">
-      <SearchX aria-hidden="true" strokeWidth={1.5} className="size-8 text-muted-foreground" />
-      <div>
-        <h2 className="text-section font-semibold">
-          {unavailable
-            ? t.empty.unavailableTitle
-            : library
-              ? t.empty.noResultsIn(library)
-              : t.empty.noResults}
-        </h2>
-        <p className="mt-1 max-w-[60ch] text-body text-muted-foreground">
-          {unavailable
-            ? t.empty.unavailable(
-                <span className="font-mono text-foreground [overflow-wrap:anywhere]">
-                  {library}
-                </span>,
-              )
-            : t.empty.nothing(
-                <span className="font-medium text-foreground [overflow-wrap:anywhere]">
-                  {t.results.quote(q)}
-                </span>,
-                Boolean(library),
-              )}
-        </p>
-      </div>
-      {library && (
-        <Link to="/search" search={{ q }} className={buttonVariants({ variant: "outline" })}>
-          <Search aria-hidden="true" data-icon-motion="tilt" />
-          {t.box.searchAll}
-        </Link>
-      )}
-    </div>
+    <EmptyState
+      icon={<SearchX aria-hidden="true" />}
+      headingLevel={2}
+      className="max-w-2xl"
+      title={
+        unavailable
+          ? t.empty.unavailableTitle
+          : library
+            ? t.empty.noResultsIn(library)
+            : t.empty.noResults
+      }
+      action={
+        library && (
+          <Link to="/search" search={{ q }} className={buttonVariants({ variant: "outline" })}>
+            <Search aria-hidden="true" data-icon-motion="tilt" />
+            {t.box.searchAll}
+          </Link>
+        )
+      }
+    >
+      {unavailable
+        ? t.empty.unavailable(
+            <span className="font-mono text-foreground [overflow-wrap:anywhere]">{library}</span>,
+          )
+        : t.empty.nothing(
+            <span className="font-medium text-foreground [overflow-wrap:anywhere]">
+              {t.results.quote(q)}
+            </span>,
+            Boolean(library),
+          )}
+    </EmptyState>
   );
 }
 
@@ -308,19 +307,21 @@ function Failed({ onRetry, pending }: { onRetry: () => void; pending: boolean })
   const t = useMessages(messages);
   const c = useMessages(common);
   return (
-    <div role="alert" className="max-w-xl rounded-lg border border-rule px-5 py-5">
-      <CircleAlert
-        aria-hidden="true"
-        strokeWidth={1.5}
-        className="mb-3 size-8 text-muted-foreground"
-      />
-      <h2 className="text-section font-semibold">{t.failed.title}</h2>
-      <p className="mt-2 text-body text-muted-foreground">{t.failed.all}</p>
-      <Button variant="outline" size="sm" className="mt-3" pending={pending} onClick={onRetry}>
-        {!pending && <RotateCcw aria-hidden="true" data-icon-motion="refresh" />}
-        {c.retry}
-      </Button>
-    </div>
+    <EmptyState
+      role="alert"
+      icon={<CircleAlert aria-hidden="true" />}
+      headingLevel={2}
+      title={t.failed.title}
+      className="max-w-xl"
+      action={
+        <Button variant="outline" size="sm" pending={pending} onClick={onRetry}>
+          {!pending && <RotateCcw aria-hidden="true" data-icon-motion="refresh" />}
+          {c.retry}
+        </Button>
+      }
+    >
+      {t.failed.all}
+    </EmptyState>
   );
 }
 

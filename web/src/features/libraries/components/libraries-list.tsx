@@ -81,7 +81,7 @@ export function FirstRun() {
   };
   return (
     <EmptyState
-      icon={<LibraryBig aria-hidden="true" className="size-8!" strokeWidth={1.5} />}
+      icon={<LibraryBig aria-hidden="true" />}
       title={t.title}
       action={<AddLibraryLink />}
       className="max-w-2xl"

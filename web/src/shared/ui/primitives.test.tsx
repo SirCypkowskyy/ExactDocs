@@ -38,6 +38,7 @@ import { FormAlert } from "./form-alert";
 import { ThemeButton } from "./interface-controls";
 import { LibraryMark } from "./library-mark";
 import { Meter } from "./meter";
+import { EmptyState } from "./page";
 import { TagChips } from "./tag-chips";
 import { ToggleGroup, ToggleGroupItem } from "./toggle-group";
 
@@ -424,6 +425,26 @@ describe("ToggleGroup", () => {
     render(<Period />);
     await userEvent.click(screen.getByRole("radio", { name: "Week" }));
     expect(screen.getByRole("radio", { name: "Week" })).toBeChecked();
+  });
+});
+
+describe("EmptyState", () => {
+  it("draws its icon large and muted, like a table's empty frame, and can title the page's answer", () => {
+    render(
+      <EmptyState icon={<Plus aria-hidden="true" />} title="No results" headingLevel={2}>
+        Try fewer words.
+      </EmptyState>,
+    );
+    expect(screen.getByRole("heading", { level: 2, name: "No results" })).toBeInTheDocument();
+    const icon = document.querySelector("[data-slot=empty-icon]");
+    expect(icon).toHaveClass("[&_svg]:size-8", "[&_svg]:[stroke-width:1.5]");
+    expect(icon?.querySelector("svg")).not.toHaveAttribute("data-icon-motion");
+  });
+
+  it("is a line of text by default, and an alert when it says something failed", () => {
+    render(<EmptyState title="Search failed" role="alert" />);
+    expect(screen.queryByRole("heading")).not.toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("Search failed");
   });
 });
 
