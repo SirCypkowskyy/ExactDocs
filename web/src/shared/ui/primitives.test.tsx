@@ -82,6 +82,16 @@ describe("FormAlert", () => {
     render(<FormAlert id="alert" message="Taken." link={{ href: "/x", label: "Open it" }} />);
     expect(screen.getByRole("link", { name: "Open it" })).toHaveAttribute("href", "/x");
   });
+
+  it("nudges its error icon once on arrival, but not a neutral wait", () => {
+    const { rerender } = render(<FormAlert id="alert" message="Wrong password." />);
+    expect(screen.getByRole("alert").querySelector("svg")).toHaveAttribute(
+      "data-icon-motion",
+      "alert",
+    );
+    rerender(<FormAlert id="alert" message="Still importing." tone="info" />);
+    expect(screen.getByRole("alert").querySelector("svg")).not.toHaveAttribute("data-icon-motion");
+  });
 });
 
 function Chips({
