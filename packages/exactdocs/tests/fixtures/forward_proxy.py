@@ -13,7 +13,7 @@ import contextlib
 import socket
 import socketserver
 import threading
-from collections.abc import Iterator
+from collections.abc import Generator
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
 
@@ -23,6 +23,12 @@ from exactdocs_kernel import OUTBOUND_VARIABLES
 
 HEAD_LIMIT = 64 * 1024
 """Longest request head the proxy reads."""
+DENIED = (
+    b"HTTP/1.1 407 Proxy Authentication Required\r\n"
+    b'Proxy-Authenticate: Basic realm="test"\r\n'
+    b"Content-Length: 0\r\nConnection: close\r\n\r\n"
+)
+"""The answer to a request without the proxy's credentials."""
 
 
 @dataclass(slots=True)
@@ -80,56 +86,76 @@ def _pipe(source: socket.socket, sink: socket.socket) -> None:
         sink.shutdown(socket.SHUT_WR)
 
 
+@dataclass(frozen=True, slots=True)
+class _Request:
+    """The head of one request a client sent the proxy."""
+
+    method: str
+    target: str
+    version: str
+    headers: list[tuple[str, str]]
+    rest: bytes
+    """What the client sent after the head (a body, or a TLS hello)."""
+
+    def header(self, name: str) -> str | None:
+        return next((v.strip() for k, v in self.headers if k.lower() == name), None)
+
+
+def _read_head(client: socket.socket) -> _Request | None:
+    head = b""
+    while b"\r\n\r\n" not in head and len(head) < HEAD_LIMIT:
+        chunk = client.recv(65536)
+        if not chunk:
+            return None
+        head += chunk
+    head, _, rest = head.partition(b"\r\n\r\n")
+    lines = head.decode("latin-1").split("\r\n")
+    method, target, version = lines[0].split(" ", 2)
+    headers = [(k, v) for k, _, v in (line.partition(":") for line in lines[1:] if ":" in line)]
+    return _Request(method, target, version, headers, rest)
+
+
+def _forwarded(request: _Request, origin: str) -> bytes:
+    """The request as the origin server gets it: origin-form, no proxy headers, then closed."""
+    dropped = {"proxy-authorization", "proxy-connection", "connection"}
+    kept = [f"{k}:{v}" for k, v in request.headers if k.lower() not in dropped]
+    head = "\r\n".join([f"{request.method} {origin} {request.version}", *kept])
+    return f"{head}\r\nConnection: close\r\n\r\n".encode("latin-1") + request.rest
+
+
 def _handler(proxy: ForwardProxy) -> type[socketserver.BaseRequestHandler]:
+    wanted = (
+        None
+        if proxy.credentials is None
+        else "Basic " + base64.b64encode(proxy.credentials.encode()).decode()
+    )
+
     class Handler(socketserver.BaseRequestHandler):
         def handle(self) -> None:
             client: socket.socket = self.request
-            head = b""
-            while b"\r\n\r\n" not in head and len(head) < HEAD_LIMIT:
-                chunk = client.recv(65536)
-                if not chunk:
-                    return
-                head += chunk
-            head, _, rest = head.partition(b"\r\n\r\n")
-            lines = head.decode("latin-1").split("\r\n")
-            method, target, version = lines[0].split(" ", 2)
-            headers = [line.split(":", 1) for line in lines[1:] if ":" in line]
-            proxy.seen.append(f"{method} {target}")
-            if proxy.credentials is not None:
-                wanted = "Basic " + base64.b64encode(proxy.credentials.encode()).decode()
-                given = next(
-                    (v.strip() for k, v in headers if k.lower() == "proxy-authorization"), None
-                )
-                if given != wanted:
-                    client.sendall(
-                        b"HTTP/1.1 407 Proxy Authentication Required\r\n"
-                        b'Proxy-Authenticate: Basic realm="test"\r\n'
-                        b"Content-Length: 0\r\nConnection: close\r\n\r\n"
-                    )
-                    return
-            if method == "CONNECT":
-                authority = target.lower()
-                origin = None
+            request = _read_head(client)
+            if request is None:
+                return
+            proxy.seen.append(f"{request.method} {request.target}")
+            asked = proxy.credentials is not None  # read now: a test may change it
+            if asked and request.header("proxy-authorization") != wanted:
+                client.sendall(DENIED)
+                return
+            if request.method == "CONNECT":
+                authority, first = request.target.lower(), request.rest
             else:
-                parts = urlsplit(target)
+                parts = urlsplit(request.target)
                 authority = f"{parts.hostname}:{parts.port or 80}".lower()
                 origin = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+                first = _forwarded(request, origin)
             address = proxy.routes.get(authority)
             if address is None:
                 client.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
                 return
             with socket.create_connection(address, timeout=30) as upstream:
-                if origin is None:
+                if request.method == "CONNECT":
                     client.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
-                else:
-                    kept = [
-                        f"{k}:{v}"
-                        for k, v in headers
-                        if k.lower() not in {"proxy-authorization", "proxy-connection", "connection"}
-                    ]
-                    request = "\r\n".join([f"{method} {origin} {version}", *kept])
-                    upstream.sendall(f"{request}\r\nConnection: close\r\n\r\n".encode("latin-1"))
-                upstream.sendall(rest)
+                upstream.sendall(first)
                 back = threading.Thread(target=_pipe, args=(upstream, client), daemon=True)
                 back.start()
                 _pipe(client, upstream)
@@ -146,7 +172,7 @@ class _Server(socketserver.ThreadingTCPServer):
 @contextlib.contextmanager
 def forward_proxy(
     routes: dict[str, tuple[str, int]] | None = None, *, credentials: str | None = None
-) -> Iterator[ForwardProxy]:
+) -> Generator[ForwardProxy]:
     """Run a forward proxy on a free loopback port until the block ends.
 
     Args:

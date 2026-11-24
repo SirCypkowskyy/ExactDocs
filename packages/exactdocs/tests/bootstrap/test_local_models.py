@@ -394,9 +394,7 @@ def test_the_pull_command_pulls_the_two_defaults_when_none_is_named(
 ) -> None:
     monkeypatch.setenv("EXACTDOCS_MODELS_DIR", str(tmp_path))
     asked: list[Sequence[str]] = []
-    monkeypatch.setattr(
-        cli, "pull_models", lambda models, _into, **_: asked.append(models) or []
-    )
+    monkeypatch.setattr(cli, "pull_models", lambda models, _into, **_: asked.append(models) or [])
 
     cli.app(["models", "pull"], exit_on_error=False, result_action="return_value")
 

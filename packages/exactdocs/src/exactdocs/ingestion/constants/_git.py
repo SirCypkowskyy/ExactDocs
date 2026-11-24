@@ -130,7 +130,9 @@ _PROXY_TROUBLE: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
         "CONNECT tunnel failed, HTTP {}",
     ),
     (
-        re.compile(r"ssl certificate problem|certificate verify failed|unable to get local issuer"),
+        re.compile(
+            r"ssl certificate problem|certificate verif\w* failed|unable to get local issuer"
+        ),
         "TLS certificate not trusted",
     ),
     (

@@ -21,6 +21,7 @@ from types import ModuleType
 from exactdocs.bootstrap.ai_endpoint import Endpoint
 from exactdocs.bootstrap.constants import AI_SDK_MODULE, CHECK_TEXT, ENTRA_URL
 from exactdocs.bootstrap.local_models import LocalModels
+from exactdocs.bootstrap.outbound import proxy_cause
 from exactdocs.bootstrap.settings import AiSettings, BudgetSettings
 from exactdocs.retrieval.adapters.driven.ai_embeddings import PydanticAiEmbeddingModels
 from exactdocs.retrieval.adapters.driven.local_models import LocalEmbedder, LocalEmbeddingModels
@@ -219,7 +220,7 @@ class PydanticAiModels:
         """
         url = sdk.base_url(profile)
         tokens = (
-            sdk.entra_token_provider(profile, instance_proxy=self._instance_proxy(ENTRA_URL))
+            sdk.entra_token_provider(profile, instance_proxy=self.instance_proxy(ENTRA_URL))
             if profile.auth is AzureAuth.ENTRA
             else None
         )
@@ -229,14 +230,14 @@ class PydanticAiModels:
             profile,
             url,
             bearer=bearer,
-            instance_proxy=self._instance_proxy(url),
+            instance_proxy=self.instance_proxy(url),
             network=self.network,
         )
         return Endpoint(
             profile=profile, base_url=url, key=key, client=client, token_provider=tokens
         )
 
-    def _instance_proxy(self, url: str) -> str | None:
+    def instance_proxy(self, url: str) -> str | None:
         """The instance's outbound proxy for a URL, when profiles use it.
 
         Args:
@@ -357,7 +358,10 @@ class PydanticAiModels:
         try:
             served, dimensions = await self._call(sdk, profile, model, role, thinking)
         except sdk.call_errors() as error:  # a check reports a failed call, it never raises
-            return self._failed(profile, model, role, started, f"{type(error).__name__}: {error}")
+            # A failure on the way through a proxy names it and the host (#538): the SDK's own
+            # error only says "Connection error."
+            reason = f"{type(error).__name__}: {proxy_cause(error) or error}"
+            return self._failed(profile, model, role, started, reason)
         except ProviderUnsupportedError as error:
             return self._failed(profile, model, role, started, str(error))
         return ModelCheck(

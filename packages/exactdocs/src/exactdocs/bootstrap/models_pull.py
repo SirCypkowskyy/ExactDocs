@@ -26,11 +26,10 @@ from exactdocs.bootstrap.constants import (
     LOCAL_SDK_MODULE,
     MODEL_MARKER,
     PINNED_MODEL_REVISIONS,
-    PROXY_FAILURE_MARKERS,
     TOKENIZER_FILES,
 )
 from exactdocs.bootstrap.local_models import LocalModelInfo, model_folder, read_marker
-from exactdocs.bootstrap.outbound import tls_verify
+from exactdocs.bootstrap.outbound import proxy_cause, tls_verify
 from exactdocs_kernel import OutboundNetwork, redact_url
 
 type Download = Callable[[str, Sequence[str], Path, str | None], str]
@@ -196,11 +195,5 @@ def download_failure(error: BaseException) -> str:
     Returns:
         The message, without credentials.
     """
-    seen: list[BaseException] = []
-    cause: BaseException | None = error
-    while cause is not None and cause not in seen:
-        seen.append(cause)
-        cause = cause.__cause__ or cause.__context__
-    named = next((e for e in seen if any(m in str(e) for m in PROXY_FAILURE_MARKERS)), None)
-    shown = named or error
+    shown = proxy_cause(error) or str(error)
     return redact_url(f"could not download from the Hugging Face Hub: {shown}")

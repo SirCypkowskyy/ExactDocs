@@ -30,7 +30,11 @@ from pathlib import Path
 
 import httpx2
 
-from exactdocs.bootstrap.constants import DEFAULT_PORTS, OUTBOUND_OVERRIDES
+from exactdocs.bootstrap.constants import (
+    DEFAULT_PORTS,
+    OUTBOUND_OVERRIDES,
+    PROXY_FAILURE_MARKERS,
+)
 from exactdocs_kernel import OutboundNetwork, proxy_failure, resolve_outbound
 
 type Route = Callable[[str], str | None]
@@ -222,6 +226,28 @@ class RoutedTransport(httpx2.AsyncBaseTransport):
         self._inner.clear()
         for transport in inner:
             await transport.aclose()
+
+
+def proxy_cause(error: BaseException) -> str | None:
+    """Find, along an error's causes, the one that names a proxy and a host.
+
+    An SDK wraps a transport's error in its own ("Connection error."); the error a
+    ``RoutedTransport`` raised is still its cause.
+
+    Args:
+        error: What a call raised.
+
+    Returns:
+        That error's message, or ``None`` when no proxy was on the way.
+    """
+    seen: set[int] = set()
+    cause: BaseException | None = error
+    while cause is not None and id(cause) not in seen:
+        seen.add(id(cause))
+        if any(marker in str(cause) for marker in PROXY_FAILURE_MARKERS):
+            return str(cause)
+        cause = cause.__cause__ or cause.__context__
+    return None
 
 
 def routed_transport(network: OutboundNetwork, *, retries: int = 0) -> RoutedTransport:

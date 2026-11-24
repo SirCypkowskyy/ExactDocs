@@ -242,7 +242,7 @@ class MilvusVectorBackend:
     _setting_up: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     """Lets one task create or load a collection at a time."""
 
-    def _channel(self) -> dict[str, Any]:
+    def channel_options(self) -> dict[str, Any]:
         """The gRPC channel's proxy and trust, from the outbound settings (#538).
 
         gRPC would otherwise read the proxy variables itself: the channel is told the proxy
@@ -283,7 +283,7 @@ class MilvusVectorBackend:
                 token=self.token or "",
                 db_name=self.db_name or "",
                 timeout=self.timeout,
-                **self._channel(),
+                **self.channel_options(),
             )
             try:
                 client.get_server_version(timeout=self.timeout)

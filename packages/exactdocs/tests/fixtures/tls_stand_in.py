@@ -7,12 +7,12 @@ system's certificates know nothing of it.
 """
 
 import contextlib
-import datetime
+import datetime as dt
 import http.server
 import ipaddress
 import ssl
 import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -21,7 +21,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
-VALID = datetime.timedelta(days=2)
+VALID = dt.timedelta(days=2)
 """How long the certificates are valid (from a day ago)."""
 
 
@@ -59,7 +59,7 @@ def company_ca(folder: Path, names: Sequence[str]) -> CompanyCa:
     Returns:
         The files.
     """
-    now = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)
+    now = dt.datetime.now(dt.UTC) - dt.timedelta(days=1)
     ca_key = ec.generate_private_key(ec.SECP256R1())
     ca_name = _name("ExactDocs test company CA")
     ca = (
@@ -73,12 +73,18 @@ def company_ca(folder: Path, names: Sequence[str]) -> CompanyCa:
         .add_extension(x509.BasicConstraints(ca=True, path_length=None), critical=True)
         .add_extension(
             x509.KeyUsage(
-                digital_signature=True, key_cert_sign=True, crl_sign=True,
-                content_commitment=False, key_encipherment=False, data_encipherment=False,
-                key_agreement=False, encipher_only=False, decipher_only=False,
+                digital_signature=True,
+                key_cert_sign=True,
+                crl_sign=True,
+                content_commitment=False,
+                key_encipherment=False,
+                data_encipherment=False,
+                key_agreement=False,
+                encipher_only=False,
+                decipher_only=False,
             ),
             critical=True,
-        )  # fmt: skip
+        )
         .add_extension(x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()), False)
         .sign(ca_key, hashes.SHA256())
     )
@@ -128,7 +134,7 @@ def company_ca(folder: Path, names: Sequence[str]) -> CompanyCa:
 @contextlib.contextmanager
 def https_server(
     ca: CompanyCa, handler: type[http.server.BaseHTTPRequestHandler]
-) -> Iterator[tuple[str, int]]:
+) -> Generator[tuple[str, int]]:
     """Serve a handler over TLS on 127.0.0.1 with the CA's server certificate.
 
     Args:
