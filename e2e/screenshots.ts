@@ -74,12 +74,13 @@ async function ready(page: Page) {
   );
 }
 
-/** The viewport as `<name>-<scheme>.png`, once it is ready and nothing is hovered. */
-async function shoot(page: Page, name: string, scheme: string) {
+/** The viewport (or the whole page) as `<name>-<scheme>.png`, ready and with nothing hovered. */
+async function shoot(page: Page, name: string, scheme: string, fullPage: boolean) {
   const { width, height } = page.viewportSize() ?? { width: WIDTH, height: 900 };
   await page.mouse.move(width - 2, height - 2); // off whatever was clicked
   await ready(page);
-  await page.screenshot({ path: `${OUT}/${name}-${scheme}.png`, animations: "disabled" });
+  const path = `${OUT}/${name}-${scheme}.png`;
+  await page.screenshot({ path, fullPage, animations: "disabled" });
 }
 
 /** A `query-docs` call of screenshots.py and the text blocks of its reply. */
@@ -143,8 +144,16 @@ function mcpFigure(replies: Reply[]): string {
 
 const READER = "/libraries/acme/payments?version=v1.4.0&path=docs%2Fguide%2Fresilience.md";
 
-/** Each picture: its name, the viewport's height, and how to bring the page to it. */
-const SHOTS: { name: string; height: number; open: (page: Page) => Promise<void> }[] = [
+/**
+ * Each picture: its name, the viewport's height (the least, with `fullPage`: then the whole page
+ * is taken, for a page whose end belongs in the picture), and how to bring the page to it.
+ */
+const SHOTS: {
+  name: string;
+  height: number;
+  fullPage?: boolean;
+  open: (page: Page) => Promise<void>;
+}[] = [
   {
     name: "libraries",
     height: 520,
@@ -181,7 +190,8 @@ const SHOTS: { name: string; height: number; open: (page: Page) => Promise<void>
   {
     // Before the playground: its searches would add to the spend shown here.
     name: "ai",
-    height: 1120,
+    height: 900,
+    fullPage: true,
     open: async (page) => {
       await page.goto("/ai");
       await expect(page.getByText("100%")).toBeVisible();
@@ -190,6 +200,7 @@ const SHOTS: { name: string; height: number; open: (page: Page) => Promise<void>
   {
     name: "connect",
     height: 800,
+    fullPage: true,
     open: async (page) => {
       await page.goto("/account");
       await expect(page.getByRole("heading", { name: "Connect an agent" })).toBeVisible();
@@ -224,11 +235,11 @@ test("the README's and the documentation's screenshots", async ({ browser }) => 
     pages.push([colorScheme, page]);
   }
   // A picture at a time in both themes, so both show the instance in the same state.
-  for (const { name, height, open } of SHOTS) {
+  for (const { name, height, fullPage = false, open } of SHOTS) {
     for (const [scheme, page] of pages) {
       await page.setViewportSize({ width: WIDTH, height }); // before the page lays out
       await open(page);
-      await shoot(page, name, scheme);
+      await shoot(page, name, scheme, fullPage);
     }
   }
   // The MCP figure: the two real replies, drawn with the UI's own colours and type.
