@@ -333,31 +333,35 @@ export function AccessLogTable({ view, config, source, everyLibrary = false }: P
     <>
       <DataTableToolbar model={model}>
         <CustomDates model={model} />
-        {everyLibrary && (
-          <LibraryCombobox
-            label={t.list.library}
-            hint={t.list.libraryHint}
-            query={filterLibrariesQueryOptions}
-            custom={isLibraryId}
-            value={model.param("library")}
-            onChange={(library) => model.setParam("library", library)}
-            className="flex-1 basis-60"
+        {/* The text fields on a row of their own, under the buttons and Columns, top-aligned:
+            the library's hint hangs below its box without pushing the others' boxes down. */}
+        <div className="order-last flex basis-full flex-wrap items-start gap-2">
+          {everyLibrary && (
+            <LibraryCombobox
+              label={t.list.library}
+              hint={t.list.libraryHint}
+              query={filterLibrariesQueryOptions}
+              custom={isLibraryId}
+              value={model.param("library")}
+              onChange={(library) => model.setParam("library", library)}
+              className="flex-1 basis-60"
+            />
+          )}
+          <SearchFilter
+            id={`${id}-actor`}
+            label={t.list.actor}
+            placeholder={t.list.actorPlaceholder}
+            value={model.param("actor")}
+            onCommit={(actor) => model.setParam("actor", actor)}
           />
-        )}
-        <SearchFilter
-          id={`${id}-actor`}
-          label={t.list.actor}
-          placeholder={t.list.actorPlaceholder}
-          value={model.param("actor")}
-          onCommit={(actor) => model.setParam("actor", actor)}
-        />
-        <SearchFilter
-          id={`${id}-subject`}
-          label={t.list.subject}
-          placeholder={t.list.subjectPlaceholder}
-          value={model.param("subject")}
-          onCommit={(subject) => model.setParam("subject", subject)}
-        />
+          <SearchFilter
+            id={`${id}-subject`}
+            label={t.list.subject}
+            placeholder={t.list.subjectPlaceholder}
+            value={model.param("subject")}
+            onCommit={(subject) => model.setParam("subject", subject)}
+          />
+        </div>
       </DataTableToolbar>
       <DataTable
         model={model}
