@@ -12,7 +12,10 @@ the machine. #381 changed the default chunking and ran it again: the numbers are
 new names (`default` is what was `h3-max-4000`, and `h6` what was `default`). The golden set's
 review (#490) added expected sections to some cases, so it was recorded again on 23 November 2026
 (on Linux, 4 CPUs): only the counts of expected sections and the coverage moved, every other
-number is the same. The lists of sections that start no chunk, and examples of each problem, are in
+number is the same. #503 fixed how a hit is matched to an expected section at a coarser chunking
+(a chunk now counts for every section it holds, [Method](method.md#chunking-configurations)), so
+it was recorded again on 24 November 2026: only BM25 at `h2` and `merge-400` moved, to 82.8% and
+81.7% recall@5 from 76.0% and 74.2%. The lists of sections that start no chunk, and examples of each problem, are in
 [`results/ingestion.md`](https://github.com/SirCypkowskyy/ExactDocs/blob/develop/packages/exactdocs/evals/results/ingestion.md).
 
 What it shows:
@@ -28,8 +31,8 @@ What it shows:
   headings, Pydantic keeps `{#id}` attributes in heading paths, MkDocs admonitions and tabs read
   as code blocks, and Pydantic v1's includes stay unexpanded.
 - The BM25 column is this benchmark's own run. The [retrieval results](retrieval.md) measure BM25
-  again at each chunking in a separate run, and their numbers differ (for `h2`, 76.0% recall@5
-  there against 81.3% here). The defaults are chosen from the retrieval run.
+  again at each chunking in a separate run, with the same match rule and the same numbers. The
+  defaults are chosen from the retrieval run.
 
 <!-- bench:ingestion -->
 | configuration | coverage | held | cut fence / table / list | lost chars | tokens p50 / p95 / max | small | multi-top | empty / wrong path | headings missed / extra | BM25 recall@5 (exact) | MRR |

@@ -760,6 +760,20 @@ arctic-embed-s is below BM25 (75.3%). The review (#490) did not change any case'
 section, so recall@k and MRR match the run it replaces (13 November 2026, before the review, on a
 10-core laptop) for every configuration both ran.
 
+**BM25 scored again for #503.** The match rule then counted a coarser chunk only when it was named
+after a parent of the expected section, and missed a chunk holding it next to a sibling. BM25 is
+deterministic, so its four results were run again with the fixed rule (24 November 2026, Linux
+x86_64, 4 CPUs, `just retrieval-bench --offline --configs bm25`) and put into the recorded run:
+each case's ranks, nDCG and section ranks from the new run, its search time from the recorded one
+(so the latencies stay the runner's), then the recommendations and paired tests derived again. At
+`h6` no case changed (the same results, scored the same), at `default` one, at `h2` 24 and at
+`merge-400` 34: BM25's recall@5 is now 82.8% at `h2` and 81.7% at `merge-400` (from 76.0% and
+74.2%), and 81.7% at `default` as before. `h2` comes first by the benchmark's ordering, so the
+summary names BM25 at `h2` for the no-model and the local budget, but its lead over `default` is
+not significant on any metric (recall@5 +1.1 points, McNemar mid-p 0.58), and the shipped default
+stays `default`. The model results keep the old rule, so hybrid at `h2` and `merge-400` and the
+cross-encoder at `h2` are undercounted; they are recorded again with #501.
+
 ### Running it with local models
 
 ```bash

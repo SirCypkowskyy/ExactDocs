@@ -23,6 +23,17 @@ recall@k and MRR equal those of the run this one replaces (13 November 2026, bef
 for every configuration both ran; nDCG@10, section recall and the per-kind numbers count the
 sections and kinds the review fixed.
 
+**BM25 was scored again for #503.** Until then a chunk counted for an expected section only when
+it was the section, part of it, or named after one of its parents; a chunk that held the section
+next to a sibling (`h2`, `merge-400`, and a long section cut again at `default`) was scored a
+miss ([Method](method.md#chunking-configurations)). BM25 is deterministic, so it ran again at
+every chunking on 24 November 2026 (Linux x86_64, 4 CPUs) with the fixed rule: the same results
+for every case, re-scored, with the recorded runner's search times kept, so the latencies are
+still that runner's. At `h6` no case changed; at `default` one; at `h2` 24 and at `merge-400` 34.
+**The model results still have the old rule**: hybrid at `h2` and `merge-400` and the
+cross-encoder at `h2` are undercounted until they are recorded again with
+[#501](https://github.com/SirCypkowskyy/ExactDocs/issues/501).
+
 **Every hosted configuration is not measured yet**: hybrid on a hosted embedding model, HyDE,
 agentic search and every configuration reranked by the LLM judge. They run only from the manual
 *Retrieval eval (real providers)* workflow (`.github/workflows/eval-providers.yml`) with the
@@ -56,15 +67,15 @@ agentic search and every configuration reranked by the LLM judge. They run only 
 
 ## What it shows
 
-- BM25 is best at `default` (split level 3, 4,000 characters): 81.7% recall@5 (95% interval
-  76.8% to 86.1%), against 79.8% at `h6`, where every heading starts a chunk. That recall@5 gap
-  alone is not significant (p 0.07), but recall@10, MRR and nDCG@10 are significantly better at
-  `default`, and `h2` and `merge-400` significantly worse. #381 made it the default for new
-  libraries.
-- Hybrid search on bge-small is the best local configuration, at `h6`, but only 3 points of
-  recall@5 above BM25 at `default`, under the 5-point margin and not significant (p 0.11). At
-  `default` it ranks the answer higher (MRR and nDCG@10 significantly better than BM25's) without
-  finding more answers in the top 5.
+- BM25 scores alike at `h2`, `default` and `merge-400`: 82.8%, 81.7% and 81.7% recall@5. `h2`
+  comes first by the benchmark's ordering, so the summary names it, but its lead over `default`
+  is not significant on any metric (recall@5 +1.1 points, p 0.58; MRR p 0.11), and its chunks are
+  about twice as long (7,065 estimated tokens in a question's ten results against 3,464,
+  [text calibration](../evals.md#calibration)). `h6`, where every heading starts a chunk, is
+  below them: 79.8%, and significantly worse than `h2` on recall@10, MRR and nDCG@10. The
+  shipped default stays `default` (#381); a non-significant lead does not change it.
+- Hybrid search on bge-small is the best local configuration, at `h6`, but only 1.9 points of
+  recall@5 above BM25 at `h2`, under the 5-point margin and not significant (p 0.41).
 - The intervals per kind and per project are about twice as wide as the whole set's (around
   ±10 points of recall@5 on some 50 cases): differences of a few points there say little.
 - The cross-encoder on BM25 matches hybrid at `h6` and at `default` (84.6%, not significant
