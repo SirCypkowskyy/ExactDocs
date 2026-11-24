@@ -349,6 +349,7 @@ export function LibraryCombobox<K extends QueryKey>(props: LibraryComboboxProps<
         <LibraryMark id={option.id} logo={option.logo} size="sm" />
         <span className="flex min-w-0 flex-1 items-baseline gap-2">
           <span className="min-w-0 truncate font-mono text-mono">{option.id}</span>
+          {title && " "}
           {title && (
             <span className="min-w-0 shrink-[2] truncate text-small text-muted-foreground">
               {title}
@@ -358,7 +359,7 @@ export function LibraryCombobox<K extends QueryKey>(props: LibraryComboboxProps<
         {option.detail !== undefined && (
           <span className="num ml-auto shrink-0 text-small text-muted-foreground">
             <span aria-hidden={option.detailLabel ? true : undefined}>{option.detail}</span>
-            {option.detailLabel && <span className="sr-only">{option.detailLabel}</span>}
+            {option.detailLabel && <span className="sr-only">, {option.detailLabel}</span>}
           </span>
         )}
         {!props.multiple && (

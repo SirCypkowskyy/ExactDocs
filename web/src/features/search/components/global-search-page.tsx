@@ -1,12 +1,13 @@
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { CircleAlert, RotateCcw, Search, SearchX } from "lucide-react";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { ChevronDown, CircleAlert, RotateCcw, Search, SearchX } from "lucide-react";
 import { useId } from "react";
 import { HttpError } from "@/shared/lib/http";
 import { common, formatNumber, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { normalizeQuery } from "@/shared/lib/search-query";
 import { cn } from "@/shared/lib/utils";
 import { Button, buttonVariants } from "@/shared/ui/button";
+import { LibraryCombobox } from "@/shared/ui/library-combobox";
 import { LibraryMark } from "@/shared/ui/library-mark";
 import { EmptyState, Page, PageHeader } from "@/shared/ui/page";
 import { kbd } from "@/shared/ui/recipes";
@@ -85,6 +86,7 @@ function FacetLink({
 function Facets({ data, q, library }: { data: GlobalResults; q: string; library?: string }) {
   const t = useMessages(messages);
   const language = useLanguage();
+  const navigate = useNavigate();
   const total = data.libraries.reduce((sum, f) => sum + f.matches, 0);
   const shown = data.libraries.filter((f, i) => i < VISIBLE_FACETS || f.library === library);
   const shownIds = new Set(shown.map((f) => f.library));
@@ -111,16 +113,26 @@ function Facets({ data, q, library }: { data: GlobalResults; q: string; library?
         ))}
       </ul>
       {rest.length > 0 && (
-        <details>
-          <summary className="inline-flex h-11 cursor-pointer items-center rounded-md px-1 text-body text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring lg:h-9 can-hover:hover:text-foreground">
+        // The rest of the libraries with matches, in the library combobox: typed to, not scrolled.
+        <LibraryCombobox
+          label={t.facets.label}
+          options={rest.map((f) => ({
+            id: f.library,
+            detail: formatNumber(f.matches, language),
+            detailLabel: t.facets.matches(f.matches),
+          }))}
+          value={undefined}
+          onChange={(id) => id && void navigate({ to: "/search", search: { q, library: id } })}
+        >
+          <Button
+            variant="ghost"
+            size="sm"
+            className="px-1 font-normal text-muted-foreground can-hover:hover:text-foreground lg:h-9"
+          >
             {t.facets.more(rest.length)}
-          </summary>
-          <ul className="mt-1 flex flex-wrap gap-x-2 gap-y-2 lg:flex-col lg:gap-y-1">
-            {rest.map((f) => (
-              <FacetLink key={f.library} f={f} q={q} {...(library && { library })} />
-            ))}
-          </ul>
-        </details>
+            <ChevronDown aria-hidden="true" />
+          </Button>
+        </LibraryCombobox>
       )}
     </nav>
   );

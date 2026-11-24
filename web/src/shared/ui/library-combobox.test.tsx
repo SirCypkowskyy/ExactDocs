@@ -131,7 +131,7 @@ describe("LibraryCombobox", () => {
     await userEvent.click(screen.getByRole("button", { name: "Library" }));
     await userEvent.keyboard("payments");
     expect(screen.getAllByRole("option").map((o) => o.textContent)).toEqual([
-      "/acme/paymentsPayments SDK",
+      "/acme/payments Payments SDK",
     ]);
     await userEvent.clear(screen.getByRole("combobox"));
     await userEvent.keyboard("docs");
@@ -161,7 +161,7 @@ describe("LibraryCombobox", () => {
     await userEvent.click(trigger());
     const recent = screen.getByRole("group", { name: "Recent" });
     expect(within(recent).getAllByRole("option").map((o) => o.textContent)).toEqual([
-      "/fixture/docs-repoDocs",
+      "/fixture/docs-repo Docs",
     ]);
     expect(screen.getByRole("group", { name: "All libraries" })).toBeInTheDocument();
     // Typing searches every library; the shortcut steps aside.
