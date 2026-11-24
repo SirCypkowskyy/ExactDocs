@@ -149,11 +149,15 @@ ignore = [
 "packages/exactdocs/evals/run_agent_bench.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_bench_pages.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_text_bench.py" = ["implicit-namespace-package"]
+"packages/exactdocs/evals/run_grounded_bench.py" = ["implicit-namespace-package"]
 "**/features/**" = ["assert", "D", "DOC", "ANN", "FBT", "implicit-namespace-package"]
 # Alembic revisions are generated from migrations/script.py.mako: no per-function docstrings.
 "**/migrations/versions/**" = ["D"]
 # Every test must start in its own empty data directory (see packages/exactdocs/tests/conftest.py).
 "**/conftest.py" = ["pytest-fixture-autouse"]
+# The Grounded Docs benchmark (#492) runs node and npm, resolved to absolute paths, with fixed
+# arguments and a pinned package, on purpose.
+"packages/exactdocs/evals/retrieval_eval/grounded_docs_cli.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
 # The fixture builder runs git (a fixed binary, test-controlled arguments) on purpose.
 "**/tests/fixtures/fixture_repo.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
 # The CI artifact guard is a standalone stdlib script that runs docker and reports on stdout.
