@@ -6,7 +6,15 @@ import { PHONE_QUERY, useMediaQuery } from "@/shared/lib/use-media-query";
 import { cn } from "@/shared/lib/utils";
 import { messages } from "../messages";
 import { Skeleton } from "../skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "../table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableRowHeader,
+} from "../table";
 import { columnLabel, SortHeader } from "./columns";
 import { type RowActions, RowActionsMenu, RowContextMenu } from "./row-actions";
 import { SkeletonRows, TableEmpty, TableError, TableNoMatch } from "./states";
@@ -121,10 +129,21 @@ interface RowsProps<T> {
   fresh: ReadonlySet<string>;
 }
 
-/** From `md` up: the rows of one page in a table, the header sorting on the server or here. */
+/** The column that names a row: its `priority: 1` column (a phone card's title), else the first. */
+function titleColumn<T>(model: DataTableModel<T>): string | undefined {
+  const visible = model.table.getVisibleLeafColumns();
+  return visible.find((c) => c.columnDef.meta?.priority === 1)?.id ?? visible[0]?.id;
+}
+
+/**
+ * From `md` up: the rows of one page in a table, the header sorting on the server or here. The
+ * title column's cells are row headers (`<th scope="row">`), so a screen reader names the row as
+ * it moves along it.
+ */
 function DesktopRows<T>({ model, label, actions, actionsOf, nameOf, fresh }: RowsProps<T>) {
   const t = useMessages(messages).dataTable;
   const { table, status, rows } = model;
+  const title = titleColumn(model);
   return (
     <Table
       aria-label={label}
@@ -176,11 +195,14 @@ function DesktopRows<T>({ model, label, actions, actionsOf, nameOf, fresh }: Row
                   aria-rowindex={model.offset + i + 2}
                   className={cn(fresh.has(row.id) && "row-in", model.busy && "opacity-60")}
                 >
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id} className={cellClass(cell)}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
-                  ))}
+                  {row.getVisibleCells().map((cell) => {
+                    const Cell = cell.column.id === title ? TableRowHeader : TableCell;
+                    return (
+                      <Cell key={cell.id} className={cellClass(cell)}>
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </Cell>
+                    );
+                  })}
                   {actions && (
                     <TableCell className="w-0 text-right">
                       <RowActionsMenu
@@ -222,8 +244,7 @@ function PhoneRows<T>(props: RowsProps<T>) {
 /** Below `md`: each row a card, its title cell first, its meta cells under it, the kebab on the right. */
 function Cards<T>({ model, label, actionsOf, nameOf, fresh }: RowsProps<T>) {
   const visible = model.table.getVisibleLeafColumns();
-  const title =
-    visible.find((c) => c.columnDef.meta?.priority === 1)?.id ?? visible[0]?.id ?? undefined;
+  const title = titleColumn(model);
   const meta = visible
     .filter((c) => c.columnDef.meta?.priority === 2 || c.columnDef.meta?.priority === 3)
     .sort((a, b) => (a.columnDef.meta?.priority ?? 0) - (b.columnDef.meta?.priority ?? 0))

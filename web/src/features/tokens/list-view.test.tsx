@@ -56,7 +56,7 @@ const names = () =>
   within(screen.getByRole("table", { name: "API tokens" }))
     .getAllByRole("row")
     .slice(1)
-    .map((row) => within(row).getAllByRole("cell")[0]?.textContent);
+    .map((row) => within(row).getByRole("rowheader").textContent);
 
 describe("the token table", () => {
   beforeEach(() => {
@@ -171,7 +171,7 @@ describe("the token table", () => {
     renderSection();
     await screen.findByText("1–4 of 4");
     const row = (name: string) =>
-      screen.getByRole("cell", { name: new RegExp(`^${name}$`) }).closest("tr") as HTMLElement;
+      screen.getByRole("rowheader", { name: new RegExp(`^${name}$`) }).closest("tr") as HTMLElement;
     expect(within(row("laptop")).getByText("in 3 days")).toBeInTheDocument();
     expect(within(row("ci-main")).getByText("Expired")).toBeInTheDocument();
     expect(row("desk")).toHaveTextContent("No libraries");

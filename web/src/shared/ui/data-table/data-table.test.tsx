@@ -163,7 +163,7 @@ const rowNames = () =>
   within(screen.getByRole("table", { name: "Things" }))
     .getAllByRole("row")
     .slice(1)
-    .map((row) => within(row).getAllByRole("cell")[0]?.textContent);
+    .map((row) => within(row).getByRole("rowheader").textContent);
 
 beforeEach(() => {
   localStorage.clear();
@@ -301,6 +301,20 @@ describe("DataTable v2 in client mode", () => {
   });
 });
 
+describe("DataTable v2's row headers", () => {
+  it("makes the title column's cell the row's header, the others plain cells", async () => {
+    renderAt("/things", () => <ClientThings query={ready(THINGS)} />);
+    await screen.findByText("1–20 of 23");
+    const row = screen.getByRole("rowheader", { name: "Thing 01" }).closest("tr") as HTMLElement;
+    expect(within(row).getByRole("rowheader")).toHaveAttribute("scope", "row");
+    expect(
+      within(row)
+        .getAllByRole("cell")
+        .map((c) => c.textContent),
+    ).toEqual(["queued", ""]);
+  });
+});
+
 describe("DataTable v2's states", () => {
   it("says what the list is for when it is empty, and how to get back when nothing matches", async () => {
     renderAt("/things", () => <ClientThings query={ready([])} />);
@@ -359,7 +373,7 @@ describe("DataTable v2's row actions", () => {
     await userEvent.keyboard("{Escape}");
     await waitFor(() => expect(screen.queryByRole("menu")).not.toBeInTheDocument());
 
-    const row = screen.getByRole("cell", { name: "Thing 02" }).closest("tr") as HTMLElement;
+    const row = screen.getByRole("rowheader", { name: "Thing 02" }).closest("tr") as HTMLElement;
     fireEvent.contextMenu(row);
 
     const context = await screen.findByRole("menu");

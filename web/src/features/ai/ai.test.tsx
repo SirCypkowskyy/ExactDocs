@@ -419,7 +419,7 @@ describe("instance AI page", () => {
       screen
         .getAllByRole("row")
         .slice(1)
-        .map((r) => r.querySelector("td")?.textContent);
+        .map((r) => within(r).getByRole("rowheader").textContent);
 
     await userEvent.click(screen.getByRole("button", { name: "Sort by Today" }));
     expect(history.location.search).toContain("sort=-day");

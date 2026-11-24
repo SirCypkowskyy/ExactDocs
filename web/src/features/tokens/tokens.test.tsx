@@ -64,7 +64,7 @@ function renderSection() {
 /** A token's row in the table. */
 async function rowOf(name: string): Promise<HTMLElement> {
   const table = await screen.findByRole("table", { name: /API tokens|Tokeny API/ });
-  const cell = await within(table).findByRole("cell", { name: new RegExp(`^${name}$`) });
+  const cell = await within(table).findByRole("rowheader", { name: new RegExp(`^${name}$`) });
   return cell.closest("tr") as HTMLElement;
 }
 

@@ -98,6 +98,18 @@ function TableCell({ className, ...props }: React.ComponentProps<"td">) {
   );
 }
 
+/** A body cell that names its row (`<th scope="row">`), set like any other cell. */
+function TableRowHeader({ className, ...props }: React.ComponentProps<"th">) {
+  return (
+    <th
+      data-slot="table-cell"
+      scope="row"
+      className={cn("px-3 py-3 text-left align-top font-normal first:pl-4 last:pr-4", className)}
+      {...props}
+    />
+  );
+}
+
 function TableCaption({ className, ...props }: React.ComponentProps<"caption">) {
   return (
     <caption
@@ -108,4 +120,14 @@ function TableCaption({ className, ...props }: React.ComponentProps<"caption">) 
   );
 }
 
-export { Table, TableBody, TableCaption, TableCell, TableFooter, TableHead, TableHeader, TableRow };
+export {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableFooter,
+  TableHead,
+  TableHeader,
+  TableRow,
+  TableRowHeader,
+};
