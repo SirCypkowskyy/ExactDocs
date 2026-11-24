@@ -2,16 +2,19 @@
 
 <!-- impeccable:product-schema 1 -->
 
-Facts below come from the repository (README.md, docs/user-stories.md) and from the maintainer's
-brief for issues #426, #427 and #434. Lines marked *(inferred)* were not confirmed in an interview:
-no question channel reached the maintainer when this was written, so they follow the brief and the
-code and should be checked.
+Facts below come from the repository (README.md, docs/user-stories.md), the maintainer's brief for
+issues #426, #427 and #434, and an interview with the maintainer on 2026-11-23. Lines marked
+*(inferred)* have not been confirmed.
 
 ## Platform
 
 web
 
 ## Users
+
+The primary customer is an organisation: a platform or developer-experience team deploys one
+instance for many engineers (confirmed 2026-11-23). A solo developer on localhost or a homelab is a
+secondary audience and must keep working with zero external services.
 
 - **Operators (admins)** of a self-hosted instance: developers or platform engineers who add git
   repositories as libraries, choose which paths import, watch import and embedding jobs, configure
@@ -55,7 +58,14 @@ the same MCP tools.
 - Stack: React 19, TanStack Router and Query, shadcn/ui on Tailwind v4, Vite. The built UI loads
   nothing from another origin (`scripts/check-dist.mjs`): fonts are self-hosted.
 - The repository will be public: free shadcn/ui and free shadcnblocks.com blocks only, never premium
-  code.
+  code (confirmed 2026-11-23: no Pro licence; shadcn/ui is the component base, free blocks plus own
+  compositions).
+- Interface preferences (confirmed 2026-11-23): theme, contrast, text size, text spacing, reduced
+  motion, a readable (dyslexia-friendly) font, always-underlined links, larger targets and the default
+  UI font. Theme and text size switch directly from buttons in the top band; the rest from a dropdown
+  in the band, whose last item opens the full "Interface" tab on the account page. Preferences are
+  kept in the browser until the person signs in, then sync with the preferences stored for their
+  account in the database.
 - Terminology: library, version (a git ref resolved to a SHA), default version, article, chunk,
   tag, job, retrieval mode (BM25, hybrid, rerank, judge).
 
@@ -80,5 +90,8 @@ the same MCP tools.
 
 ## Accessibility & Inclusion
 
-Keyboard navigation, visible focus, WCAG AA contrast (axe clean) in both themes, and
-`prefers-reduced-motion` respected (#426, #427).
+WCAG 2.2 Level AA is required (confirmed 2026-11-23): keyboard navigation, visible focus (2.4.11),
+target size (2.5.8), text spacing (1.4.12), reflow and resize to 200 %, AA contrast (axe clean) in
+both themes, and `prefers-reduced-motion` respected (#426, #427). People can go further per account:
+higher contrast, larger text, wider spacing, reduced motion independent of the OS, a
+dyslexia-friendly font, underlined links and larger targets.

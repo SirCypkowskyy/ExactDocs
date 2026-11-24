@@ -1,11 +1,22 @@
 import { Link } from "@tanstack/react-router";
-import { History, Users } from "lucide-react";
+import { History, Share2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { cn } from "@/shared/lib/utils";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "@/shared/ui/breadcrumb";
 import { buttonVariants } from "@/shared/ui/button";
+import { LibraryMark } from "@/shared/ui/library-mark";
 import { Page, PageHeader } from "@/shared/ui/page";
-import { LibraryBullet } from "@/shared/ui/route";
+import { pageMessages } from "../messages/page";
+import { SECTIONS } from "../model/sections";
 import type { Activity, JobViews, SettingsLibrary } from "../model/settings";
 import { AiSection } from "./ai-section";
 import { DangerSection } from "./danger-section";
@@ -22,20 +33,6 @@ interface Props {
   library: SettingsLibrary;
   jobs: JobViews;
 }
-
-const crumb =
-  "-ml-1 inline-flex min-h-11 items-center rounded px-1 outline-none transition-colors duration-(--dur-fast) hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring lg:min-h-7";
-
-/** [heading id, label, the id its form reports unsaved edits under]. */
-const SECTIONS = [
-  ["details-heading", "Details", "details"],
-  ["paths-heading", "Files and tags", "paths"],
-  ["versions-heading", "Versions", "versions"],
-  ["ai-heading", "Retrieval and AI", "ai"],
-  ["sync-heading", "Re-sync", "sync"],
-  ["sharing-heading", "Sharing", "sharing"],
-  ["danger-heading", "Remove library", "danger"],
-] as const;
 
 /** The section being read: the last heading above the top third of the viewport. */
 function useActiveSection(): string {
@@ -58,13 +55,14 @@ function useActiveSection(): string {
 }
 
 function SectionNav() {
+  const t = useMessages(pageMessages);
   const dirty = useDirtySections();
   const active = useActiveSection();
   return (
-    <nav aria-label="On this page" className="hidden lg:block">
+    <nav aria-label={t.onThisPage} className="hidden lg:block">
       <div className="sticky top-17">
         <ul className="space-y-0.5">
-          {SECTIONS.map(([id, label, key]) => (
+          {SECTIONS.map(([id, key]) => (
             <li key={id}>
               <a
                 href={`#${id}`}
@@ -74,11 +72,11 @@ function SectionNav() {
                   active === id && "bg-accent font-medium text-foreground",
                 )}
               >
-                {label}
+                {t.sections[key]}
                 {dirty.has(key) && (
                   <>
                     <span aria-hidden="true" className="size-2 flex-none rounded-full bg-route" />
-                    <span className="sr-only">(unsaved changes)</span>
+                    <span className="sr-only">{t.unsavedMark}</span>
                   </>
                 )}
               </a>
@@ -90,7 +88,7 @@ function SectionNav() {
             role="status"
             className="mt-4 rounded-md bg-route-soft px-2.5 py-2 text-small text-foreground"
           >
-            {dirty.size === 1 ? "1 section has" : `${dirty.size} sections have`} unsaved changes.
+            {t.unsaved(dirty.size)}
           </p>
         )}
       </div>
@@ -98,10 +96,51 @@ function SectionNav() {
   );
 }
 
+/** Libraries / the library's ID / Settings. */
+export function SettingsBreadcrumb({
+  owner,
+  repo,
+  id,
+}: {
+  owner: string;
+  repo: string;
+  id: string;
+}) {
+  const t = useMessages(pageMessages);
+  return (
+    <Breadcrumb>
+      <BreadcrumbList>
+        <BreadcrumbItem>
+          <BreadcrumbLink asChild>
+            <Link to="/">{t.libraries}</Link>
+          </BreadcrumbLink>
+        </BreadcrumbItem>
+        <BreadcrumbSeparator />
+        <BreadcrumbItem>
+          <BreadcrumbLink asChild>
+            <Link
+              to="/libraries/$owner/$repo"
+              params={{ owner, repo }}
+              className="font-mono text-small [overflow-wrap:anywhere]"
+            >
+              {id}
+            </Link>
+          </BreadcrumbLink>
+        </BreadcrumbItem>
+        <BreadcrumbSeparator />
+        <BreadcrumbItem>
+          <BreadcrumbPage>{t.settings}</BreadcrumbPage>
+        </BreadcrumbItem>
+      </BreadcrumbList>
+    </Breadcrumb>
+  );
+}
+
 /** Everything a person can change about one library, on one page. */
 export function LibrarySettingsPage({ owner, repo, library, jobs }: Props) {
+  const t = useMessages(pageMessages);
   const name = library.title || library.id;
-  const heading = usePageTitle(`${name} settings`);
+  const heading = usePageTitle(t.title(name));
   // Each section clears its old notices when another one starts something.
   const [activity, setActivity] = useState<Activity>({ by: "", n: 0 });
   const start = (by: string) => () => setActivity((a) => ({ by, n: a.n + 1 }));
@@ -111,41 +150,17 @@ export function LibrarySettingsPage({ owner, repo, library, jobs }: Props) {
         <PageHeader
           headingRef={heading}
           title={name}
-          description="Library settings"
-          above={
-            <nav aria-label="Breadcrumb" className="text-body text-muted-foreground">
-              <ol className="flex flex-wrap items-center gap-x-1.5">
-                <li>
-                  <Link to="/" className={crumb}>
-                    Libraries
-                  </Link>
-                </li>
-                <li aria-hidden="true">/</li>
-                <li className="inline-flex items-center gap-1.5">
-                  <LibraryBullet id={library.id} size="sm" />
-                  <Link
-                    to="/libraries/$owner/$repo"
-                    params={{ owner, repo }}
-                    className={`${crumb} font-mono text-small`}
-                  >
-                    {library.id}
-                  </Link>
-                </li>
-                <li aria-hidden="true">/</li>
-                <li aria-current="page" className="text-foreground">
-                  Settings
-                </li>
-              </ol>
-            </nav>
-          }
+          description={t.description}
+          mark={<LibraryMark id={library.id} logo={library.logo} size="lg" />}
+          above={<SettingsBreadcrumb owner={owner} repo={repo} id={library.id} />}
         />
         <div className="lg:grid lg:grid-cols-[11rem_minmax(0,1fr)] lg:gap-12">
           <SectionNav />
           <div>
             <SettingsSection
               id="details"
-              title="Details"
-              description="The title and description people see for this library."
+              title={t.sections.details}
+              description={t.details.description}
             >
               <DetailsForm
                 owner={owner}
@@ -182,8 +197,8 @@ export function LibrarySettingsPage({ owner, repo, library, jobs }: Props) {
             />
             <SettingsSection
               id="sharing"
-              title="Sharing"
-              description="Who can find, read, change and manage this library. Its admins share it; its creator hands it over. The access log records every change."
+              title={t.sections.sharing}
+              description={t.sharing.description}
             >
               <div className="flex flex-wrap gap-2">
                 <Link
@@ -191,16 +206,16 @@ export function LibrarySettingsPage({ owner, repo, library, jobs }: Props) {
                   params={{ owner, repo }}
                   className={buttonVariants({ variant: "outline" })}
                 >
-                  <Users aria-hidden="true" />
-                  Manage sharing
+                  <Share2 aria-hidden="true" data-icon-motion="out" />
+                  {t.sharing.manage}
                 </Link>
                 <Link
                   to="/libraries/$owner/$repo/access-log"
                   params={{ owner, repo }}
                   className={buttonVariants({ variant: "outline" })}
                 >
-                  <History aria-hidden="true" />
-                  Access log
+                  <History aria-hidden="true" data-icon-motion="refresh" />
+                  {t.sharing.accessLog}
                 </Link>
               </div>
             </SettingsSection>

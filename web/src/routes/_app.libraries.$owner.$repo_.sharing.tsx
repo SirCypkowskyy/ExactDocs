@@ -2,14 +2,28 @@ import { useSuspenseQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { RouteError } from "@/features/auth";
 import { LibraryNotFound, libraryQueryOptions } from "@/features/browse";
-import { parseSharingView, SharingPage } from "@/features/sharing";
+import {
+  grantsPageQueryOptions,
+  parseSharingView,
+  SharingPage,
+  SharingSkeleton,
+  sharingSummaryQueryOptions,
+} from "@/features/sharing";
 import { HttpError } from "@/shared/lib/http";
 
 export const Route = createFileRoute("/_app/libraries/$owner/$repo_/sharing")({
-  // The grants table's view (filter, kind, role, sort), so a reload or a shared link keeps it.
+  // The grants table's view (filter, kinds, roles, sort, page, size), so a reload or a shared link
+  // keeps it.
   validateSearch: parseSharingView,
-  loader: ({ context, params }) =>
-    context.queryClient.ensureQueryData(libraryQueryOptions(params.owner, params.repo)),
+  loaderDeps: ({ search }) => search,
+  loader: ({ context, params, deps }) => {
+    // Asked for together with the library; a refusal (not an admin) shows on the page, not here.
+    void context.queryClient.prefetchQuery(sharingSummaryQueryOptions(params.owner, params.repo));
+    void context.queryClient.prefetchQuery(grantsPageQueryOptions(params.owner, params.repo, deps));
+    return context.queryClient.ensureQueryData(libraryQueryOptions(params.owner, params.repo));
+  },
+  pendingMs: 150,
+  pendingComponent: SharingSkeleton,
   errorComponent: function SharingError(props) {
     const { owner, repo } = Route.useParams();
     if (props.error instanceof HttpError && props.error.status === 404) {
@@ -20,16 +34,13 @@ export const Route = createFileRoute("/_app/libraries/$owner/$repo_/sharing")({
   component: function Sharing() {
     const { owner, repo } = Route.useParams();
     const { data } = useSuspenseQuery(libraryQueryOptions(owner, repo));
-    const view = Route.useSearch();
-    const navigate = Route.useNavigate();
     return (
       <SharingPage
         owner={owner}
         repo={repo}
         libraryId={data.id}
         title={data.title}
-        view={view}
-        onView={(next) => void navigate({ search: { ...next }, replace: true })}
+        logo={data.logo}
       />
     );
   },

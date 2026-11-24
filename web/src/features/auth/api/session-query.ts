@@ -2,6 +2,7 @@ import { type QueryClient, queryOptions } from "@tanstack/react-query";
 import { API_BASE_URL } from "@/shared/config/env";
 import { getJson, sendJson } from "@/shared/lib/http";
 import { AdminCreated } from "../model/errors";
+import type { PasswordChange } from "../model/password";
 import type { Account, Credentials, SessionState } from "../model/session";
 
 const sessionKey = ["session"] as const;
@@ -53,4 +54,12 @@ export async function signOut(queryClient: QueryClient) {
   await sendJson<void>("DELETE", "/v1/session");
   forgetAccountData(queryClient);
   queryClient.setQueryData<SessionState>(sessionKey, { state: "signed_out" });
+}
+
+/**
+ * Changes the signed-in account's own password (`PUT /v1/account/password`, 204). Every other
+ * session of the account ends; this one stays, so the cached session is still right.
+ */
+export function changePassword(change: PasswordChange) {
+  return sendJson<void>("PUT", "/v1/account/password", change);
 }

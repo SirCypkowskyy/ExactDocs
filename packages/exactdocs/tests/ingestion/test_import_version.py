@@ -26,11 +26,13 @@ from exactdocs.ingestion.adapters.driven.memory import (
 from exactdocs.ingestion.adapters.driven.restructuredtext import RestructuredTextConverter
 from exactdocs.ingestion.constants import (
     IMPORT_JOB,
+    LOGO_FILES,
     MAX_INCLUDES,
     MAX_INSTRUCTION_DIRS,
     MAX_INSTRUCTION_FILE_BYTES,
     MAX_JOB_NOTES,
     MAX_JOB_PROBLEMS,
+    MAX_LOGO_BYTES,
     MAX_WANTED_IMAGES,
     PARSER_VERSION,
     REFRESH_JOB,
@@ -64,6 +66,7 @@ from exactdocs.ingestion.models import (
     ParsedArticle,
     PathSelection,
     ProblemCode,
+    ProjectLogo,
     ProposedId,
     RefKind,
     RepositoryHost,
@@ -77,6 +80,7 @@ from exactdocs.ingestion.models import (
 from exactdocs.ingestion.module import TagLocks, import_job
 from exactdocs.ingestion.ports import (
     GuidancePolicy,
+    LibraryLogos,
     MarkupConverter,
     RenameSource,
     RepositoryFiles,
@@ -410,6 +414,7 @@ def build_world(
     guidance: GuidancePolicy | None = None,
     reader: RepositoryFiles | None = None,
     converter: MarkupConverter | None = None,
+    logos: LibraryLogos | None = None,
 ) -> World:
     checkout = tmp_path / "checkout"
     checkout.mkdir()
@@ -435,6 +440,7 @@ def build_world(
         guidance=guidance,
         files=reader,
         converter=converter,
+        logos=logos,
     )
     run = handlers[kind]
     return World(run, gateway, catalog, chunks, chunker, Progress())  # ty: ignore[invalid-argument-type]
@@ -2328,3 +2334,146 @@ async def test_a_markdown_only_import_is_the_same_with_or_without_the_converter(
         await world.run(make_job(), world.progress)
 
     assert with_converter.catalog.stored[0].articles == without.catalog.stored[0].articles
+
+
+# ---------------------------------------------------------------- project logos (#504)
+
+
+def png_of(width: int, height: int) -> bytes:
+    """A PNG header that says ``width`` x ``height`` (nothing is decoded)."""
+    return b"\x89PNG\r\n\x1a\n" + b"\0\0\0\rIHDR" + width.to_bytes(4) + height.to_bytes(4)
+
+
+EVIL_LOGO = (
+    b'<svg xmlns="http://www.w3.org/2000/svg" onload="steal()">'
+    b'<script>steal()</script><circle r="4" fill="#f00"/></svg>'
+)
+README_WITH_LOGO = (
+    b'<p align="center"><img src="docs/img/acme-logo.svg" alt="Acme"></p>\n\n'
+    b"# Acme\n\nPayments for everyone.\n"
+)
+
+
+@dataclass(slots=True)
+class Logos:
+    """A ``LibraryLogos`` double: which version is the default, and what was offered."""
+
+    default: str = "v1"
+    offered: list[tuple[str, str, ProjectLogo | None]] = field(default_factory=list)
+    error: Exception | None = None
+
+    async def wants_logo(self, library: str, ref: str) -> bool:
+        del library
+        return ref == self.default
+
+    async def offer_logo(self, *, library: str, ref: str, logo: ProjectLogo | None) -> None:
+        if self.error is not None:
+            raise self.error
+        self.offered.append((library, ref, logo))
+
+
+def _logo_world(
+    tmp_path: Path,
+    held: Mapping[str, FetchedFile],
+    logos: Logos,
+    *,
+    readme: bytes = b"# Acme\n\nPayments.\n",
+    kind: JobKind = IMPORT_JOB,
+) -> tuple[World, Files]:
+    files = Files(held=held)
+    world = build_world(
+        tmp_path,
+        {"README.md": readme, "docs/install.md": INSTALL.encode()},
+        reader=files,
+        logos=logos,
+        kind=kind,
+    )
+    return world, files
+
+
+@pytest.mark.parametrize("kind", [IMPORT_JOB, REFRESH_JOB])
+async def test_the_default_versions_readme_logo_is_offered_cleaned_from_outside_the_selection(
+    tmp_path: Path, kind: JobKind
+) -> None:
+    logos = Logos()
+    held = {
+        "docs/img/acme-logo.svg": FetchedFile(data=EVIL_LOGO),
+        "logo.png": FetchedFile(data=png_of(64, 64)),
+    }
+    world, files = _logo_world(tmp_path, held, logos, readme=README_WITH_LOGO, kind=kind)
+
+    await world.run(make_job(), world.progress)
+
+    ((library, ref, logo),) = logos.offered
+    assert (library, ref) == ("/a/b", "v1")
+    assert logo is not None
+    assert (logo.path, logo.content_type) == ("docs/img/acme-logo.svg", "image/svg+xml")
+    assert b"<circle" in logo.data
+    assert b"script" not in logo.data
+    assert b"onload" not in logo.data
+    # The README's logo first, then the conventional files; each read on its own, bounded.
+    ((asked, most),) = files.asked
+    assert asked == ["docs/img/acme-logo.svg", *LOGO_FILES]
+    assert most == MAX_LOGO_BYTES
+    assert "catalog describe" in world.log  # the version is published as ever
+
+
+async def test_a_conventional_file_is_the_logo_when_the_readme_shows_none(tmp_path: Path) -> None:
+    logos = Logos()
+    held = {
+        "docs/assets/logo.png": FetchedFile(data=png_of(1, 1)),  # a spacer, not a logo
+        ".github/logo.png": FetchedFile(data=png_of(128, 64)),
+    }
+    world, _ = _logo_world(tmp_path, held, logos)
+
+    await world.run(make_job(), world.progress)
+
+    ((_, _, logo),) = logos.offered
+    assert logo is not None
+    assert (logo.path, logo.content_type, logo.data) == (
+        ".github/logo.png",
+        "image/png",
+        png_of(128, 64),
+    )
+
+
+async def test_a_version_without_a_usable_logo_offers_none(tmp_path: Path) -> None:
+    logos = Logos()
+    held = {
+        "logo.svg": FetchedFile(problem="larger than 524288 bytes", code=ProblemCode.TOO_LARGE),
+        "logo.png": FetchedFile(data=b"GIF89a" + b"\0" * 20),
+        "assets/logo.svg": FetchedFile(data=b"<html><script>steal()</script></html>"),
+        "docs/assets/logo.png": FetchedFile(data=png_of(8000, 10)),
+    }
+    world, _ = _logo_world(tmp_path, held, logos)
+
+    await world.run(make_job(), world.progress)
+
+    assert logos.offered == [("/a/b", "v1", None)]
+
+
+async def test_only_the_default_version_looks_for_a_logo(tmp_path: Path) -> None:
+    logos = Logos(default="v2")
+    world, files = _logo_world(tmp_path, {"logo.png": FetchedFile(data=png_of(64, 64))}, logos)
+
+    await world.run(make_job(), world.progress)
+
+    assert files.asked == []
+    assert logos.offered == []
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["files", "catalog"],
+    ids=["the files cannot be read", "the catalog refuses the logo"],
+)
+async def test_a_logo_never_fails_the_import(tmp_path: Path, failure: str) -> None:
+    logos = Logos(error=RuntimeError("catalog down") if failure == "catalog" else None)
+    world, files = _logo_world(tmp_path, {"logo.png": FetchedFile(data=png_of(64, 64))}, logos)
+    if failure == "files":
+        files.error = RepositoryUnreachableError("connection refused")
+
+    await world.run(make_job(), world.progress)
+
+    assert world.log[-2:] == ["catalog activate m1", "catalog describe"]
+    assert logos.offered == []

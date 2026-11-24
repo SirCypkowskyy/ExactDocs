@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HttpError } from "@/shared/lib/http";
+import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { TestRouter } from "@/shared/lib/test-router";
 import { LibrarySettingsPage } from "./index";
 import {
@@ -534,5 +535,58 @@ describe("editing paths and tag rules", () => {
       await s.findByText(/Preview isn't available for a private repository yet/),
     ).toBeInTheDocument();
     expect(s.queryByTestId("preview")).not.toBeInTheDocument();
+  });
+});
+
+describe("in Polish", () => {
+  afterEach(() => resetPreferences());
+
+  it("warns before re-processing and reports the save in Polish", async () => {
+    setPreferences({ language: "pl" });
+    serve();
+    renderPage();
+    const s = within(await screen.findByRole("region", { name: "Pliki i tagi" }));
+    expect(s.getByText("Nic jeszcze nie zmieniono.")).toBeInTheDocument();
+    await userEvent.type(document.getElementById("exclude") as HTMLElement, "docs/archive/**");
+    expect(
+      s.getByText(
+        "Pojawi się prośba o potwierdzenie: każda wersja zostanie przetworzona ponownie.",
+      ),
+    ).toBeInTheDocument();
+    await userEvent.click(s.getByRole("button", { name: "Zapisz ścieżki i tagi" }));
+
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Przetworzyć ponownie każdą wersję?",
+    });
+    expect(dialog).toHaveTextContent(
+      "Każda wersja zostanie ponownie przetworzona, łącznie 2 (v1.2.0, main).",
+    );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Zapisz i przetwórz ponownie" }),
+    );
+    expect(
+      await s.findByText("Zapisano. Każda wersja jest ponownie przetwarzana."),
+    ).toBeInTheDocument();
+    expect(s.getByText("job r1 for wszystkie wersje")).toBeInTheDocument();
+  });
+
+  it("offers to run a failed re-processing again, in Polish", async () => {
+    setPreferences({ language: "pl" });
+    serve(undefined, { jobs: [reprocessJob({ kind: "retag" })] });
+    renderPage();
+    const s = within(await screen.findByRole("region", { name: "Pliki i tagi" }));
+    expect(
+      await s.findByText(
+        "Ostatnie ponowne tagowanie nie powiodło się. Każda wersja nadal udostępnia to, co dotąd.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      s.getByRole("button", {
+        name: /^Uruchom ponownie\s*tagowanie z zapisanymi ścieżkami i regułami tagów$/,
+      }),
+    ).toBeInTheDocument();
+    expect(reprocessWarning("tags", ["a", "b", "c", "d", "e", "f", "g"], false, "pl").what).toMatch(
+      /^Każda wersja zostanie ponownie otagowana, łącznie 7 \(a, b, c, d, e i jeszcze 2\)\. /,
+    );
   });
 });

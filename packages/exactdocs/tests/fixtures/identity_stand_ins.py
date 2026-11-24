@@ -7,6 +7,7 @@ from exactdocs.identity.adapters.driven.memory import (
     InMemoryAccountRepository,
     InMemoryExternalIdentityRepository,
     InMemoryLibraryGrantRepository,
+    InMemoryPreferencesRepository,
     InMemorySignInAttemptRepository,
 )
 
@@ -29,4 +30,5 @@ def no_external_sign_in() -> dict[str, Any]:
         "access_log": InMemoryAccessLog(),
         "attempts": InMemorySignInAttemptRepository(),
         "box": _NoBox(),
+        "preferences": InMemoryPreferencesRepository(),
     }

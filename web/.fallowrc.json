@@ -13,7 +13,7 @@
       "exports": ["*"]
     }
   ],
-  "ignoreDependencies": ["lucide-react", "@tanstack/react-query-devtools"],
+  "ignoreDependencies": ["@tanstack/react-query-devtools"],
   "rules": {
     "boundary-violation": "error",
     "circular-dependencies": "error"

@@ -1,15 +1,19 @@
 import { type UseQueryResult, useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { Search } from "lucide-react";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { ChevronDown, CircleAlert, RotateCcw, Search, SearchX } from "lucide-react";
 import { useId } from "react";
 import { HttpError } from "@/shared/lib/http";
+import { common, formatNumber, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { normalizeQuery } from "@/shared/lib/search-query";
 import { cn } from "@/shared/lib/utils";
 import { Button, buttonVariants } from "@/shared/ui/button";
+import { LibraryCombobox } from "@/shared/ui/library-combobox";
+import { LibraryMark } from "@/shared/ui/library-mark";
 import { EmptyState, Page, PageHeader } from "@/shared/ui/page";
 import { kbd } from "@/shared/ui/recipes";
-import { Commit, LibraryBullet } from "@/shared/ui/route";
+import { Commit } from "@/shared/ui/route";
 import { globalSearchQueryOptions } from "../api/global-search-queries";
+import { messages } from "../messages";
 import {
   countLine,
   type GlobalHit,
@@ -31,7 +35,7 @@ const chip =
 const chipTone = (selected: boolean) =>
   selected
     ? "bg-route text-route-foreground"
-    : "bg-secondary text-secondary-foreground [@media(hover:hover)]:hover:bg-accent";
+    : "bg-secondary text-secondary-foreground can-hover:hover:bg-accent";
 
 /** `owner/repo` with the owner softer and the repo firm; the owner gives way first when it is long. */
 function LibraryName({ id }: { id: string }) {
@@ -53,6 +57,8 @@ function FacetLink({
   q: string;
   library?: string;
 }) {
+  const t = useMessages(messages);
+  const language = useLanguage();
   const selected = library === f.library;
   return (
     <li className="max-w-full min-w-0 lg:w-full">
@@ -60,16 +66,16 @@ function FacetLink({
         to="/search"
         search={{ q, library: f.library }}
         title={f.library}
-        aria-label={`${f.library}, ${f.matches} ${f.matches === 1 ? "match" : "matches"}`}
+        aria-label={t.facets.library(f.library, f.matches)}
         aria-current={selected ? "page" : undefined}
         className={cn(chip, chipTone(selected))}
       >
         <span className="flex min-w-0 items-center gap-2">
-          <LibraryBullet id={f.library} size="sm" />
+          <LibraryMark id={f.library} size="sm" />
           <LibraryName id={f.library} />
         </span>
         <span aria-hidden="true" className="shrink-0 tabular-nums opacity-80">
-          {f.matches}
+          {formatNumber(f.matches, language)}
         </span>
       </Link>
     </li>
@@ -78,24 +84,27 @@ function FacetLink({
 
 /** Libraries with matches: chips above the hits on a phone, a column beside them from `lg`. */
 function Facets({ data, q, library }: { data: GlobalResults; q: string; library?: string }) {
+  const t = useMessages(messages);
+  const language = useLanguage();
+  const navigate = useNavigate();
   const total = data.libraries.reduce((sum, f) => sum + f.matches, 0);
   const shown = data.libraries.filter((f, i) => i < VISIBLE_FACETS || f.library === library);
   const shownIds = new Set(shown.map((f) => f.library));
   const rest = data.libraries.filter((f) => !shownIds.has(f.library));
   return (
-    <nav aria-label="Libraries with matches" className="space-y-2">
+    <nav aria-label={t.facets.label} className="space-y-2">
       <ul className="flex flex-wrap gap-x-2 gap-y-2 lg:flex-col lg:gap-y-1">
         <li className="lg:w-full">
           <Link
             to="/search"
             search={{ q }}
-            aria-label={`All libraries, ${total} matches`}
+            aria-label={t.facets.allLabel(total)}
             aria-current={library ? undefined : "page"}
             className={cn(chip, chipTone(!library))}
           >
-            <span>All libraries</span>
+            <span>{t.facets.all}</span>
             <span aria-hidden="true" className="tabular-nums opacity-80">
-              {total}
+              {formatNumber(total, language)}
             </span>
           </Link>
         </li>
@@ -104,16 +113,26 @@ function Facets({ data, q, library }: { data: GlobalResults; q: string; library?
         ))}
       </ul>
       {rest.length > 0 && (
-        <details>
-          <summary className="inline-flex h-11 cursor-pointer items-center rounded-md px-1 text-body text-muted-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring lg:h-9 [@media(hover:hover)]:hover:text-foreground">
-            +{rest.length} more libraries
-          </summary>
-          <ul className="mt-1 flex flex-wrap gap-x-2 gap-y-2 lg:flex-col lg:gap-y-1">
-            {rest.map((f) => (
-              <FacetLink key={f.library} f={f} q={q} {...(library && { library })} />
-            ))}
-          </ul>
-        </details>
+        // The rest of the libraries with matches, in the library combobox: typed to, not scrolled.
+        <LibraryCombobox
+          label={t.facets.label}
+          options={rest.map((f) => ({
+            id: f.library,
+            detail: formatNumber(f.matches, language),
+            detailLabel: t.facets.matches(f.matches),
+          }))}
+          value={undefined}
+          onChange={(id) => id && void navigate({ to: "/search", search: { q, library: id } })}
+        >
+          <Button
+            variant="ghost"
+            size="sm"
+            className="px-1 font-normal text-muted-foreground can-hover:hover:text-foreground lg:h-9"
+          >
+            {t.facets.more(rest.length)}
+            <ChevronDown aria-hidden="true" />
+          </Button>
+        </LibraryCombobox>
       )}
     </nav>
   );
@@ -144,14 +163,11 @@ function groupByLibrary(hits: readonly GlobalHit[]): Group[] {
   return [...groups.values()];
 }
 
-/** "1 library", "3 libraries". */
-const librariesNoun = (n: number) => `${n} ${n === 1 ? "library" : "libraries"}`;
-
 function Hit({ hit }: { hit: GlobalHit }) {
   const { owner, repo } = splitLibrary(hit.library);
   return (
     // The whole row is the target (the title link stretches over it).
-    <li className="row-in relative rounded-lg px-3 py-4 transition-colors duration-(--dur-fast) [@media(hover:hover)]:hover:bg-raised">
+    <li className="row-in relative rounded-lg px-3 py-4 transition-colors duration-(--dur-fast) can-hover:hover:bg-raised">
       <Link
         data-result=""
         to="/libraries/$owner/$repo"
@@ -172,11 +188,12 @@ function Hit({ hit }: { hit: GlobalHit }) {
 
 /** One library's hits under its route: library, version, commit. */
 function HitGroup({ group }: { group: Group }) {
+  const t = useMessages(messages);
   const { owner, repo } = splitLibrary(group.library);
   return (
     <li>
       <h2 className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-body font-medium">
-        <LibraryBullet id={group.library} size="sm" />
+        <LibraryMark id={group.library} size="sm" />
         <Link
           to="/libraries/$owner/$repo"
           params={{ owner, repo }}
@@ -190,7 +207,7 @@ function HitGroup({ group }: { group: Group }) {
           className="route-draw h-0.5 w-4 flex-none rounded-full bg-route/60"
         />
         <span className="font-mono text-small">
-          <span className="sr-only">version </span>
+          <span className="sr-only">{t.results.version}</span>
           {group.version}
         </span>
         <span
@@ -198,7 +215,7 @@ function HitGroup({ group }: { group: Group }) {
           className="route-draw h-0.5 w-4 flex-none rounded-full bg-route/60"
         />
         <span>
-          <span className="sr-only">commit </span>
+          <span className="sr-only">{t.results.commit}</span>
           <Commit sha={group.commit} />
         </span>
       </h2>
@@ -212,23 +229,25 @@ function HitGroup({ group }: { group: Group }) {
 }
 
 function Notes({ data, library }: { data: GlobalResults; library: string | undefined }) {
+  const t = useMessages(messages);
   const all = data.libraries_searched + data.libraries_omitted;
   return (
     <>
       {!data.coverage.complete && (
         <p className="mt-6 text-body text-muted-foreground">
-          Showing the best {data.results.length}. More sections match:{" "}
-          {library ? "use a more specific word." : "use a library above or a more specific word."}
+          {t.results.bestOfAll(data.results.length, Boolean(library))}
         </p>
       )}
       {data.libraries_omitted > 0 && (
         <p className="mt-2 text-body text-muted-foreground">
-          Searched {data.libraries_searched} of {all} libraries; the other {data.libraries_omitted}{" "}
-          are not searched here.{" "}
-          <Link to="/" className="underline underline-offset-2 hover:text-foreground">
-            Browse them on the Libraries page
-          </Link>
-          .
+          {t.results.omitted(
+            data.libraries_searched,
+            all,
+            data.libraries_omitted,
+            <Link to="/" className="underline underline-offset-2 hover:text-foreground">
+              {t.results.browseLink}
+            </Link>,
+          )}
         </p>
       )}
     </>
@@ -245,39 +264,39 @@ function NoResults({
   library: string | undefined;
   unavailable?: boolean;
 }) {
+  const t = useMessages(messages);
   return (
-    <div className="flex max-w-2xl flex-col items-start gap-3 rounded-lg border border-dashed border-input px-5 py-6">
-      <Search aria-hidden="true" className="size-5 text-muted-foreground" />
-      <div>
-        <h2 className="text-section font-semibold">
-          {unavailable
-            ? "Library not available"
-            : library
-              ? `No results in ${library}`
-              : "No results"}
-        </h2>
-        <p className="mt-1 max-w-[60ch] text-body text-muted-foreground">
-          {unavailable ? (
-            <>
-              <span className="font-mono text-foreground [overflow-wrap:anywhere]">{library}</span>{" "}
-              can't be searched: it was removed, or it has no imported version.
-            </>
-          ) : (
-            <>
-              Nothing {library ? "there" : "in any library's default version"} matches{" "}
-              <span className="font-medium text-foreground [overflow-wrap:anywhere]">“{q}”</span>.
-              Try fewer or different words, or check the spelling.
-              {!library && " To search another version, open the library and use its search box."}
-            </>
+    <EmptyState
+      icon={<SearchX aria-hidden="true" />}
+      headingLevel={2}
+      className="max-w-2xl"
+      title={
+        unavailable
+          ? t.empty.unavailableTitle
+          : library
+            ? t.empty.noResultsIn(library)
+            : t.empty.noResults
+      }
+      action={
+        library && (
+          <Link to="/search" search={{ q }} className={buttonVariants({ variant: "outline" })}>
+            <Search aria-hidden="true" data-icon-motion="tilt" />
+            {t.box.searchAll}
+          </Link>
+        )
+      }
+    >
+      {unavailable
+        ? t.empty.unavailable(
+            <span className="font-mono text-foreground [overflow-wrap:anywhere]">{library}</span>,
+          )
+        : t.empty.nothing(
+            <span className="font-medium text-foreground [overflow-wrap:anywhere]">
+              {t.results.quote(q)}
+            </span>,
+            Boolean(library),
           )}
-        </p>
-      </div>
-      {library && (
-        <Link to="/search" search={{ q }} className={buttonVariants({ variant: "outline" })}>
-          Search all libraries
-        </Link>
-      )}
-    </div>
+    </EmptyState>
   );
 }
 
@@ -285,34 +304,37 @@ type GlobalQuery = UseQueryResult<GlobalResults>;
 
 /** Before a query: what the box searches and what to type into it. */
 function Prompt() {
+  const t = useMessages(messages);
   return (
-    <EmptyState
-      icon={<Search aria-hidden="true" />}
-      title="Search every library at once"
-      className="max-w-2xl"
-    >
-      Type an API name, a config key or an error message, for example{" "}
-      <span className="font-mono text-foreground">retry policy</span> or{" "}
-      <span className="font-mono text-foreground">401 unauthorized</span>. Results come from each
-      library's default version, with its commit.
-      <span className="mt-2 hidden lg:block">
-        Press <kbd className={kbd}>/</kbd> from any page to start typing.
-      </span>
+    <EmptyState icon={<Search aria-hidden="true" />} title={t.prompt.title} className="max-w-2xl">
+      {t.prompt.body(
+        <span className="font-mono text-foreground">retry policy</span>,
+        <span className="font-mono text-foreground">401 unauthorized</span>,
+      )}
+      <span className="mt-2 hidden lg:block">{t.prompt.slash(<kbd className={kbd}>/</kbd>)}</span>
     </EmptyState>
   );
 }
 
 function Failed({ onRetry, pending }: { onRetry: () => void; pending: boolean }) {
+  const t = useMessages(messages);
+  const c = useMessages(common);
   return (
-    <div role="alert" className="max-w-xl rounded-lg border border-rule px-5 py-5">
-      <h2 className="text-section font-semibold">Search failed</h2>
-      <p className="mt-2 text-body text-muted-foreground">
-        Couldn't search. Check your connection or try again.
-      </p>
-      <Button variant="outline" size="sm" className="mt-3" pending={pending} onClick={onRetry}>
-        Try again
-      </Button>
-    </div>
+    <EmptyState
+      role="alert"
+      icon={<CircleAlert aria-hidden="true" />}
+      headingLevel={2}
+      title={t.failed.title}
+      className="max-w-xl"
+      action={
+        <Button variant="outline" size="sm" pending={pending} onClick={onRetry}>
+          {!pending && <RotateCcw aria-hidden="true" data-icon-motion="refresh" />}
+          {c.retry}
+        </Button>
+      }
+    >
+      {t.failed.all}
+    </EmptyState>
   );
 }
 
@@ -325,17 +347,24 @@ function Results({
   library: string | undefined;
   stale: boolean;
 }) {
+  const t = useMessages(messages);
+  const language = useLanguage();
   const groups = groupByLibrary(data.results);
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: arrow keys move between the links inside
     <div onKeyDown={onArrows(focusGlobalInput)}>
       <p aria-hidden="true" className="mb-4 flex h-5 items-center text-body text-muted-foreground">
         <span className="font-medium text-foreground">
-          {countLine(data.results.length, totalMatches(data, library), data.coverage.complete)}
+          {countLine(
+            data.results.length,
+            totalMatches(data, library),
+            data.coverage.complete,
+            language,
+          )}
         </span>
-        &nbsp;in {librariesNoun(groups.length)}
+        &nbsp;{t.results.inLibraries(groups.length)}
         <span className="ml-3 hidden text-small lg:inline">
-          <kbd className={kbd}>↓</kbd> to move through results
+          {t.results.moveHint(<kbd className={kbd}>↓</kbd>)}
         </span>
       </p>
       <ol
@@ -400,6 +429,8 @@ function Body({
 
 /** Results of the global search: hits from every library, grouped per library, with counts. */
 export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; library?: string }) {
+  const t = useMessages(messages);
+  const language = useLanguage();
   const heading = useId();
   const q = normalizeQuery(raw);
   const result = useQuery({
@@ -412,16 +443,11 @@ export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; l
   return (
     <Page>
       <PageHeader
+        icon={<Search />}
         title={
-          q ? (
-            <>
-              Search: <span className="[overflow-wrap:anywhere]">{q}</span>
-            </>
-          ) : (
-            "Search all libraries"
-          )
+          q ? t.page.title(<span className="[overflow-wrap:anywhere]">{q}</span>) : t.box.searchAll
         }
-        description="Searches the default version of every library."
+        description={t.page.description}
       />
       {/* The band's box steps aside on this page (the CSS in GlobalSearchBox): this is the one field.
           Focused while there is no query (Back from an article must not bring the keyboard up). */}
@@ -433,10 +459,12 @@ export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; l
         className="min-w-0"
       >
         <h2 id={heading} className="sr-only">
-          Search results
+          {t.results.heading}
         </h2>
         <p role="status" className="sr-only">
-          {settled && q ? statusLine(data.results.length, q, library, data.coverage.complete) : ""}
+          {settled && q
+            ? statusLine(data.results.length, q, library, data.coverage.complete, language)
+            : ""}
         </p>
         <Body q={q} library={library} result={result} />
       </section>
