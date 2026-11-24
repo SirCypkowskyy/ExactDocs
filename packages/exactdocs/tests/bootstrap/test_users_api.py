@@ -54,7 +54,18 @@ async def test_an_operator_creates_and_lists_users(
     assert created.status_code == 201, created.text
     body = created.json()
     assert (body["username"], body["role"], body["disabled"]) == ("bob", "user", False)
-    assert set(body) == {"id", "username", "role", "created_at", "disabled", "provider", "groups"}
+    assert set(body) == {
+        "id",
+        "username",
+        "role",
+        "created_at",
+        "disabled",
+        "provider",
+        "groups",
+        "last_active_at",
+        "token_count",
+    }
+    assert (body["last_active_at"], body["token_count"]) == (None, 0)  # never active, no tokens
     assert BOB["password"] not in created.text
     listed = (await client.get("/api/v1/users", headers=ada)).json()["users"]
     assert [(u["username"], u["role"]) for u in listed] == [("ada", "admin"), ("bob", "user")]
