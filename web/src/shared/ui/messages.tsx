@@ -29,6 +29,11 @@ export const messages = defineMessages(
       previousPage: "Previous page",
       nextPage: "Next page",
       lastPage: "Last page",
+      page: (page: number) => `Page ${formatNumber(page, "en")}`,
+      outOfReach: (what: string, last: number) =>
+        `${what} (out of reach: jumps stop at page ${formatNumber(last, "en")}; go on with Next page)`,
+      jumpsStop: (last: number) =>
+        `Jumps stop at page ${formatNumber(last, "en")}; later pages open with Next page.`,
       filters: "Filters",
       activeFilters: "Active filters",
       filterSelected: (title: string, n: number) =>
@@ -159,6 +164,11 @@ export const messages = defineMessages(
       previousPage: "Poprzednia strona",
       nextPage: "Następna strona",
       lastPage: "Ostatnia strona",
+      page: (page) => `Strona ${formatNumber(page, "pl")}`,
+      outOfReach: (what, last) =>
+        `${what} (poza zasięgiem: skoki kończą się na stronie ${formatNumber(last, "pl")}; dalej przejdź przyciskiem „Następna strona”)`,
+      jumpsStop: (last) =>
+        `Skoki kończą się na stronie ${formatNumber(last, "pl")}; dalsze strony otwiera przycisk „Następna strona”.`,
       filters: "Filtry",
       activeFilters: "Aktywne filtry",
       filterSelected: (title, n) => (n ? `${title}, wybrano: ${formatNumber(n, "pl")}` : title),

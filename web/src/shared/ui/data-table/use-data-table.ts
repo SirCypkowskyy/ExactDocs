@@ -18,7 +18,7 @@ import {
 } from "@tanstack/react-table";
 import type { LucideIcon } from "lucide-react";
 import { type RefObject, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import { pageQueryOptions, type ServerSource } from "./server-pages";
+import { lastJumpPage, pageQueryOptions, type ServerSource } from "./server-pages";
 import {
   type PageSize,
   pageOf,
@@ -36,7 +36,8 @@ import {
  * DataTable v2's state (blocks-map §2.2): one hook for both modes.
  *
  * - Server mode (`source`): the API sorts, filters and pages; the hook shows one numbered page
- *   (server-pages.ts) and fetches the pages on either side ahead, so Previous and Next are instant.
+ *   (server-pages.ts: by offset, a page is one request) and fetches the pages on either side
+ *   ahead, so Previous and Next are instant.
  * - Client mode (`query`): a bounded list arrives in one request; TanStack sorts, filters, pages
  *   and counts the facets in the browser.
  *
@@ -130,8 +131,16 @@ export interface DataTableModel<T> {
   error: unknown;
   /** Rows of the previous view stay on screen while the new ones load. */
   busy: boolean;
-  /** Any page can be reached in one step: Last is offered. */
+  /**
+   * Pages can be reached in one step (client mode, or a source that pages by offset): numbered
+   * jumps and Last are offered.
+   */
   canJump: boolean;
+  /**
+   * The farthest page a jump reaches: `pageCount`, unless the list goes past the API's offset
+   * bound (more than 10,000 rows); the pages after it are reached with Next.
+   */
+  lastJump: number;
   /** Any filter (the search box included) narrows the list. */
   filtered: boolean;
   /** Changes when what the rows answer changes (view, page or size), not on a refresh. */
@@ -478,6 +487,9 @@ function useTableModel<T>(options: DataTableOptions<T>, write: Write): DataTable
     error: feed.error,
     busy: feed.busy,
     canJump: !server || source.paging === "offset",
+    lastJump: server
+      ? Math.min(pageCount, lastJumpPage(source as ServerSource<unknown>, size))
+      : pageCount,
     filtered: isFiltered(values, filters, params),
     viewKey: JSON.stringify([source?.key, search.q, filterKey, search.sort, page, size]),
     q: search.q,
