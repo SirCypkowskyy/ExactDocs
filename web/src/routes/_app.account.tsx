@@ -1,20 +1,25 @@
 import { createFileRoute, useRouter } from "@tanstack/react-router";
-import { KeyRound, SlidersHorizontal } from "lucide-react";
-import { AccountPanel, usePreferencesStatus } from "@/features/auth";
+import { KeyRound, LogIn, SlidersHorizontal } from "lucide-react";
+import { AccountPanel, SignInSettings, usePreferencesStatus } from "@/features/auth";
 import { parseTokensView, TokensSection } from "@/features/tokens";
 import { useMessages } from "@/shared/lib/i18n";
 import { InterfaceSettings } from "@/shared/ui/interface-settings";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { messages } from "./-messages";
 
-type AccountSearch = ReturnType<typeof parseTokensView> & { tab?: "interface" | undefined };
+/** The tabs besides API tokens, which stays the default (no `tab` in the URL) so old links work. */
+const TABS = ["sign-in", "interface"] as const;
+type Tab = (typeof TABS)[number];
+const isTab = (value: unknown): value is Tab => TABS.includes(value as Tab);
+
+type AccountSearch = ReturnType<typeof parseTokensView> & { tab?: Tab | undefined };
 
 export const Route = createFileRoute("/_app/account")({
   // The URL holds the tab and the token table's view (search, filters, sort, page, size), so a
   // reload keeps them.
   validateSearch: (search: Record<string, unknown>): AccountSearch => ({
     ...parseTokensView(search),
-    ...(search.tab === "interface" ? { tab: "interface" as const } : {}),
+    ...(isTab(search.tab) ? { tab: search.tab } : {}),
   }),
   component: function Account() {
     const router = useRouter();
@@ -28,12 +33,16 @@ export const Route = createFileRoute("/_app/account")({
           value={tab ?? "tokens"}
           onValueChange={(next) =>
             void navigate({
-              search: next === "interface" ? { ...view, tab: "interface" } : view,
+              search: isTab(next) ? { ...view, tab: next } : view,
               replace: true,
             })
           }
         >
           <TabsList aria-label={t.tabs}>
+            <TabsTrigger value="sign-in">
+              <LogIn aria-hidden="true" data-icon-motion="forward" />
+              {t.signIn}
+            </TabsTrigger>
             <TabsTrigger value="tokens">
               <KeyRound aria-hidden="true" data-icon-motion="tilt" />
               {t.tokens}
@@ -43,6 +52,9 @@ export const Route = createFileRoute("/_app/account")({
               {t.interface}
             </TabsTrigger>
           </TabsList>
+          <TabsContent value="sign-in" className="pt-8 outline-none">
+            <SignInSettings />
+          </TabsContent>
           <TabsContent value="tokens" className="pt-8 outline-none">
             <TokensSection />
           </TabsContent>
