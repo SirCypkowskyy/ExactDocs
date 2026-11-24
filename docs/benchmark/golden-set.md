@@ -151,15 +151,19 @@ The 23 wrong cases of the sample are fixed; the other 231 cases were not reviewe
 representative, about 59 of them (41 to 82 at the interval's ends) have problems of the same kinds,
 mostly missing sections.
 
-What this means for the results: recall@k counts a case as found when its **first** expected
-section is in the top k. The review added sections after the first one, so they count for nDCG@10
-and section recall but not for recall@k: a configuration or tool that returns the other answering
-section (often an API reference page) is still scored a miss there. Comparisons with tools that
-favour reference pages should report nDCG@10 and section recall next to recall@k.
+What this means for the results: the sections the review added answer the question as well as
+the one listed, so they are marked as **alternatives** of the part they answer
+(`alternative: true`, #501): 21 sections in the 17 cases; 4 of those cases still need two parts.
+recall@k and MRR count a hit on any section a case lists, and section recall and nDCG@10 count
+each part once, so a configuration or tool that returns the other answering section (often an API
+reference page) is not scored a miss ([Method](method.md#retrieval-metrics)). Until #501,
+recall@k counted only the first listed section, and these sections counted for nDCG@10 and
+section recall as parts the answer also needed.
 
 The fixes changed the golden set's fingerprint (`sha256:39f6f9d5e909d128` to
-`sha256:7dd51c59057c279a`). The [ingestion run](ingestion.md) and the
-[retrieval run](retrieval.md) were both recorded again on the reviewed set.
+`sha256:7dd51c59057c279a`), and marking the alternatives changed it again
+(`sha256:a00997851150e3b0`). The [ingestion run](ingestion.md) and the
+[retrieval run](retrieval.md) were recorded again each time.
 
 ### Wording
 

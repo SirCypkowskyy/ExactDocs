@@ -10,7 +10,7 @@ from pydantic_evals import Case
 
 from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question
 from retrieval_eval.text_bench import TextAnswer, text_metrics, text_row
-from text_corpus import CONFIGURE_V1, INSTALL, LIFESPAN, two_version_index
+from text_corpus import CONFIGURE_V1, CONFIGURE_V2, INSTALL, LIFESPAN, two_version_index
 
 ASKED = "v2"
 UNRELATED = "Kubernetes operators reconcile custom resources against the desired cluster state."
@@ -42,6 +42,31 @@ def step_case(context: Context) -> None:
 @given("a tool returned text results for the question")
 def step_results(context: Context) -> None:
     context.texts = [UNRELATED, INSTALL, LIFESPAN, LIFESPAN]
+
+
+@given("a case whose answer is in section S or, equally, in section T of version V")
+def step_alternative_case(context: Context) -> None:
+    _case(context, "Lifespan")
+    hits = context.case.expected_output.hits
+    also = Hit(
+        version=ASKED,
+        article="docs/guide.md",
+        heading_path=["Guide", "Configure"],
+        alternative=True,
+    )
+    context.case.expected_output = Answer(hits=[*hits, also], reference="r", facts=["f"])
+
+
+@given("a tool returned text results for the question that hold T and not S")
+def step_results_t(context: Context) -> None:
+    context.texts = [UNRELATED, CONFIGURE_V2]
+
+
+@then("the first result whose text holds T counts as a hit at its rank")
+def step_hit_t(context: Context) -> None:
+    assert context.row.row.rank == context.texts.index(CONFIGURE_V2) + 1, context.row
+    assert context.metrics.metrics.recall_at_5 == 1
+    assert context.metrics.metrics.section_recall_at_5 == 1  # T answers the case's one part
 
 
 @given("a result whose text matches a section of another pinned version and no section of V")

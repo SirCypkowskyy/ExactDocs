@@ -72,10 +72,10 @@ jobs:
       EXACTDOCS_AI__RERANK_WITH: ${{ vars.EVAL_RERANK_WITH || 'cross_encoder' }}
       EXTRA_ARGS: ${{ inputs.args }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
       - name: Install
@@ -108,7 +108,7 @@ jobs:
           [ -n "$EXACTDOCS_AI__PROVIDERS__EVAL__KIND" ] || unset "${!EXACTDOCS_AI__PROVIDERS__EVAL__@}"
           # shellcheck disable=SC2086 # EXTRA_ARGS is a list of arguments
           uv run python packages/exactdocs/evals/run_retrieval_eval.py --configured-models --allow-providers $EXTRA_ARGS
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: retrieval-eval-providers
@@ -131,10 +131,10 @@ jobs:
       BENCH_CONFIGS: ${{ inputs.benchmark_configs }}
       BENCH_ARGS: ${{ inputs.benchmark_args }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           enable-cache: true
       - name: Install
@@ -148,7 +148,7 @@ jobs:
               echo "EXACTDOCS_AI__${upper}__MODEL=eval:${!model_var}" >> "$GITHUB_ENV"
             fi
           done
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .models
           key: retrieval-bench-models-${{ hashFiles('packages/exactdocs/evals/retrieval_eval/retrieval_bench_cli.py') }}
@@ -166,7 +166,7 @@ jobs:
           # shellcheck disable=SC2086 # BENCH_ARGS is a list of arguments
           uv run python packages/exactdocs/evals/run_retrieval_bench.py --allow-providers \
             --configs "$BENCH_CONFIGS" --out reports/evals/retrieval-bench $BENCH_ARGS
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: retrieval-bench-providers

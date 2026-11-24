@@ -16,8 +16,8 @@ from typing import Any, Final, Literal, Self
 from pydantic import BaseModel, ConfigDict
 from pydantic_evals import Case
 
-from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question
-from retrieval_eval.evaluators import SectionMatch, rank_of, same_section, wrong_version_hits
+from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question, parts_of
+from retrieval_eval.evaluators import SectionMatch, first_rank, same_section, wrong_version_hits
 from retrieval_eval.stats import DEFAULT as DEFAULT_STATS
 from retrieval_eval.stats import (
     Interval,
@@ -71,13 +71,15 @@ class Row(_Model):
     answerable: bool
     """The version has an answer (the case expects sections)."""
     rank: int | None
-    """Rank of the first expected section (as recall counts it); None when it is not returned."""
+    """Rank of the first hit on any section the case lists (as recall and MRR count it, #501);
+    None when none is returned."""
     ndcg: float
     """nDCG@10 of the answer (0 for an unanswerable case)."""
     sections: int
-    """How many sections the case expects (0 when unanswerable)."""
+    """How many parts a complete answer needs: the sections the case lists that are not
+    alternatives (0 when unanswerable)."""
     section_ranks: tuple[int, ...]
-    """The rank at which each expected section was found in the top 10 (``section_ranks``)."""
+    """The rank at which each part was found in the top 10 (``section_ranks``)."""
     wrong_version: bool
     """A result is of another version."""
     empty: bool
@@ -93,23 +95,24 @@ class Row(_Model):
 def section_ranks(
     expected: Sequence[Hit], hits: Sequence[Hit], matches: SectionMatch = same_section
 ) -> tuple[int, ...]:
-    """The ranks, in the top 10, of the hits that answer an expected section.
+    """The ranks, in the top 10, of the hits that answer a part of the case.
 
-    A hit counts when it answers an expected section no earlier hit answered, so a section found
-    twice counts once.
+    A hit counts when it answers a part no earlier hit answered: one of the part's sections or
+    of its alternatives (#501). So a part found twice, or through two of its alternatives,
+    counts once.
 
     Args:
-        expected: The sections that answer the case.
+        expected: The sections the case lists (``parts_of`` groups them).
         hits: What the configuration returned, best first.
         matches: When a hit answers an expected section.
 
     Returns:
-        One rank per expected section found, ascending.
+        One rank per part found, ascending.
     """
-    left = list(expected)
+    left = parts_of(expected)
     ranks = []
     for rank, hit in enumerate(hits[:NDCG_AT], start=1):
-        found = next((e for e in left if matches(e, hit)), None)
+        found = next((part for part in left if any(matches(e, hit) for e in part)), None)
         if found is not None:
             left.remove(found)
             ranks.append(rank)
@@ -119,13 +122,13 @@ def section_ranks(
 def ndcg_at(
     expected: Sequence[Hit], hits: Sequence[Hit], matches: SectionMatch = same_section
 ) -> float:
-    """nDCG@10 with binary relevance over the expected sections.
+    """nDCG@10 with binary relevance over the parts of the case.
 
     The relevant hits are those of ``section_ranks``. DCG sums ``1 / log2(rank + 1)`` over them;
-    the ideal DCG puts every expected section first (up to 10).
+    the ideal DCG puts every part first (up to 10), alternatives of a part counting as that part.
 
     Args:
-        expected: The sections that answer the case.
+        expected: The sections the case lists.
         hits: What the configuration returned, best first.
         matches: When a hit answers an expected section.
 
@@ -133,7 +136,8 @@ def ndcg_at(
         DCG / ideal DCG, in [0, 1]; 0 when nothing is expected.
     """
     dcg = sum(1 / math.log2(rank + 1) for rank in section_ranks(expected, hits, matches))
-    ideal = sum(1 / math.log2(rank + 1) for rank in range(1, min(len(expected), NDCG_AT) + 1))
+    parts = len(parts_of(expected))
+    ideal = sum(1 / math.log2(rank + 1) for rank in range(1, min(parts, NDCG_AT) + 1))
     return dcg / ideal if ideal else 0.0
 
 
@@ -156,9 +160,9 @@ def row_of(
         kind=case.metadata.kind if case.metadata else "",
         project=case.inputs.project or "",
         answerable=bool(expected),
-        rank=rank_of(expected[0], answer, matches) if expected else None,
+        rank=first_rank(expected, answer, matches) if expected else None,
         ndcg=ndcg_at(expected, answer.hits, matches),
-        sections=len(expected),
+        sections=len(parts_of(expected)),
         section_ranks=section_ranks(expected, answer.hits, matches),
         wrong_version=bool(wrong_version_hits(case.inputs, answer)),
         empty=not answer.hits,
@@ -177,15 +181,16 @@ class BenchMetrics(_Model):
     recall_at_1: float
     recall_at_5: float
     recall_at_10: float
-    """Over answerable cases: the first expected section is in the top k."""
+    """Over answerable cases: a section the case lists is in the top k (any of them, #501)."""
     mrr: float
-    """Over answerable cases: mean of 1 / the rank of the first expected section."""
+    """Over answerable cases: mean of 1 / the rank of the first hit on a section the case lists."""
     ndcg_at_10: float
-    """Over answerable cases: nDCG@10, binary relevance over every expected section."""
+    """Over answerable cases: nDCG@10, binary relevance over every part of the case."""
     section_recall_at_5: float
     section_recall_at_10: float
-    """Over answerable cases: the share of a case's expected sections in the top k, averaged
-    (differs from recall@k only for cases that expect several sections, such as cross-page)."""
+    """Over answerable cases: the share of a case's parts in the top k, each part counted once
+    whichever of its alternatives answered it, averaged (differs from recall@k only for cases
+    that need several parts, such as cross-page)."""
     wrong_version_rate: float
     """Over every case: share with a result of another version; must be 0."""
     unanswerable_clean_rate: float | None
@@ -362,7 +367,7 @@ class ConfigResult(_Model):
     rerank_fallbacks: int = 0
     """Cases with results that a configured reranker did not reorder (failed or timed out)."""
     misses: int = 0
-    """Answerable cases whose first expected section was not in the top 10."""
+    """Answerable cases with no section they list in the top 10."""
     errors: list[str] = []
     wrong_version_cases: list[str] = []
     left_version_cases: list[str] = []

@@ -32,8 +32,9 @@ data/
 .DS_Store
 Thumbs.db
 
-# Claude Code local settings
-.claude/settings.local.json
+# Local agent and tool state (AI coding sessions, caches)
+.claude/
+.cache/
 
 # Browser end-to-end run (e2e/)
 e2e/test-results/

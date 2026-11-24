@@ -5,7 +5,7 @@ needs the network. The real corpus is checked offline when it is already in the 
 (``just golden-validate`` fetches it); CI has no cache and skips that test.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -106,7 +106,7 @@ def _case(
     kind: str = "how-to",
     project: str | None = "demo",
     version: str = "v1",
-    hits: list[tuple[str, str, list[str]]] | None = None,
+    hits: Sequence[tuple[str, str, list[str]] | tuple[str, str, list[str], bool]] | None = None,
     reference: str | None = "Run it.",
     facts: list[str] | None = None,
 ) -> GoldenCase:
@@ -116,7 +116,10 @@ def _case(
         inputs=Question(query="How do I install it?", version=version, project=project),
         metadata=CaseInfo.model_validate({"kind": kind}),
         expected_output=Answer(
-            hits=[Hit(version=v, article=a, heading_path=p) for v, a, p in found],
+            hits=[
+                Hit(version=h[0], article=h[1], heading_path=h[2], alternative=h[3:] == (True,))
+                for h in found
+            ],
             reference=reference,
             facts=["run it"] if facts is None else facts,
         ),
@@ -164,7 +167,26 @@ def test_a_valid_case_and_a_valid_unanswerable_case_have_no_problem(corpus: Corp
                     ("v1", "docs/guide.md", ["Guide", "Install"]),
                 ],
             ),
-            "is cross-page but expects sections of fewer than two articles",
+            "is cross-page but needs parts of fewer than two articles",
+        ),
+        (
+            lambda: _case(
+                kind="cross-page",
+                hits=[
+                    ("v1", "docs/guide.md", ["Guide", "Install"]),
+                    ("v1", "docs/start.md", ["Start"], True),  # another article, as an alternative
+                ],
+            ),
+            "is cross-page but needs parts of fewer than two articles (alternatives aside)",
+        ),
+        (
+            lambda: _case(
+                hits=[
+                    ("v1", "docs/guide.md", ["Guide", "Install"]),
+                    ("v1", "docs/guide.md", ["Guide", "Install"], True),
+                ]
+            ),
+            "lists docs/guide.md [Guide > Install] twice",
         ),
     ],
 )
@@ -176,6 +198,13 @@ def test_a_case_that_breaks_a_rule_is_reported(
     assert len(problems) == 1
     assert problems[0].startswith("demo v1: How do I install it?: ")
     assert problem in problems[0]
+
+
+def test_an_alternative_needs_a_part_listed_before_it() -> None:
+    first = Hit(version="v1", article="docs/guide.md", heading_path=["Guide"], alternative=True)
+
+    with pytest.raises(ValueError, match="the first expected section is a part"):
+        Answer(hits=[first])
 
 
 def test_a_duplicate_name_and_an_unknown_project_are_reported(corpus: Corpus) -> None:

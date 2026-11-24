@@ -4,6 +4,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { thirdPartyNotices } from "./scripts/third-party-notices.ts";
 
 const apiTarget = process.env.EXACTDOCS_API_URL ?? "http://localhost:3000";
 
@@ -14,6 +15,8 @@ export default defineConfig({
     tanstackRouter({ target: "react", autoCodeSplitting: true }),
     react(),
     tailwindcss(),
+    // dist/THIRD_PARTY_NOTICES.txt: the licences of what the bundle holds (#533).
+    thirdPartyNotices(fileURLToPath(new URL(".", import.meta.url))),
   ],
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },

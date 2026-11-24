@@ -189,9 +189,9 @@ of failing. Articles are cut at their headings, never inside a code block or a t
 
 ExactDocs is measured on a [golden set](docs/benchmark/golden-set.md) of 321 questions about the
 docs of Starlette, Pydantic, TanStack Query, Zod and Electron, at three pinned versions each. With
-no model at all, BM25 puts the section that answers in the top 5 for 81.7% of the 267 answerable
-questions, at 57 ms p95. Hybrid search on a small local embedding model (bge-small) reaches up
-to 84.6%. Hosted models and the agent benchmark have not run yet. [Benchmark](docs/benchmark/index.md) has
+no model at all, BM25 puts a section that answers in the top 5 for 87.6% of the 267 answerable
+questions, at 52 ms p95. Hybrid search on a small local embedding model (bge-small) reaches up
+to 91.0%. Hosted models and the agent benchmark have not run yet. [Benchmark](docs/benchmark/index.md) has
 the method, every table and the known weak spots.
 
 ## How it works
@@ -247,4 +247,6 @@ and see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-Apache-2.0. Imported documentation stays under the license of its original repository.
+Apache-2.0. Imported documentation stays under the license of its original repository. The web
+UI bundles third-party code and fonts under their own licences, listed in `THIRD_PARTY_NOTICES.txt`
+next to it (`exactdocs/_web/` in the wheel and the image; see [web/README.md](web/README.md)).
