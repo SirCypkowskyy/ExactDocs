@@ -9,7 +9,7 @@ from databases import SQL_BACKENDS
 from exactdocs.bootstrap.database import _pragma, alembic_config, migrate, open_database
 from exactdocs.bootstrap.settings import Settings
 
-BEFORE, AFTER = "9d4f2b7e1c83", "6f1d3b8a2c47"
+BEFORE, AFTER = "6a1e4c9b2d75", "6f1d3b8a2c47"
 IDENTITY = (
     "INSERT INTO identity_external_identities (issuer, subject, account_id, provider,"
     " signed_in_at, checked_at, next_check_at, access_until{linked_column})"

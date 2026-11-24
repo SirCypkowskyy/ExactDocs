@@ -11,14 +11,14 @@ The unique ``account_id`` was created unnamed with the table: on PostgreSQL it i
 recreated (batch), the reflected constraint named by a naming convention so it can be dropped.
 
 Revision ID: 6f1d3b8a2c47
-Revises: 9d4f2b7e1c83
+Revises: 6a1e4c9b2d75
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "6f1d3b8a2c47"
-down_revision = "9d4f2b7e1c83"
+down_revision = "6a1e4c9b2d75"
 branch_labels = None
 depends_on = None
 
