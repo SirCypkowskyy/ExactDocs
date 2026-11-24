@@ -1,46 +1,367 @@
 /*
- * The site in the web UI's colours (web/DESIGN.md): ink and two greys, one deep-teal route hue for
- * links and place, and the station mark as the logo. The home page's hero and feature grid are
- * the .xd-* classes below; every other page keeps the theme as it is.
+ * The site in the web UI's colours: "The Headlamp" (web/DESIGN.md, Colors; values copied from the
+ * tokens in web/src/app/styles.css, `:root`, `.dark` and `[data-contrast="more"]`). Anthracite ink
+ * with one grey for words, a warm stone frame for the band, a white sheet for the page, and one
+ * light, the lamp: in light mode a pale wash behind the lit item with ink on it, in dark mode the
+ * lamp itself. Links are ink (light) or the lamp (dark), told apart by their underline. The home
+ * page's hero and feature grid are the .xd-* classes at the end.
  */
+
+/* ------------------------------------------------------------- tokens: light */
 
 :root,
 [data-md-color-scheme="default"] {
-  --xd-route: #0b6677; /* oklch(0.47 0.08 215), the UI's --route */
-  --xd-route-soft: #ddf3f9;
-  --xd-ink: #141619;
-  --xd-muted: #595b5e;
-  --xd-raised: #f4f6f9;
-  --md-primary-fg-color: var(--xd-route);
-  --md-primary-fg-color--light: #2a8091;
-  --md-primary-fg-color--dark: #08505d;
-  --md-accent-fg-color: #08505d;
-  --md-accent-fg-color--transparent: #0b667714;
+  --xd-frame: #f3f2ef; /* the band (here the header) */
+  --xd-sheet: #ffffff; /* where the reading happens */
+  --xd-raised: #f7f6f4; /* code blocks */
+  --xd-fill: #efeeeb; /* hover fills, table heads, inline code (accent / secondary) */
+  --xd-ink: #17171a;
+  --xd-muted: #5c5d63; /* the only grey for words: 6.6:1 on white */
+  --xd-border: #e5e4e0;
+  --xd-rule: #efeeea;
+  --xd-input: #b9b8b3; /* control borders */
+  --xd-lamp: #f5c542; /* never text or a thin mark on a light ground */
+  --xd-route: #17171a; /* marks that must read: ink in light mode */
+  --xd-route-soft: #fcefc4; /* the lamp's wash behind the lit item */
+  --xd-tint-note: oklch(0.5 0.1 250);
+  --xd-tint-tip: oklch(0.52 0.11 155);
+  --xd-tint-warning: oklch(0.6 0.13 75);
+  --xd-tint-danger: oklch(0.52 0.19 27); /* destructive */
+
+  --md-default-fg-color: var(--xd-ink);
+  --md-default-fg-color--light: var(--xd-muted);
+  --md-default-fg-color--lighter: rgb(23 23 26 / 0.32);
+  --md-default-fg-color--lightest: rgb(23 23 26 / 0.06);
+  --md-default-bg-color: var(--xd-sheet);
+  --md-default-bg-color--light: rgb(255 255 255 / 0.7);
+  --md-default-bg-color--lighter: rgb(255 255 255 / 0.3);
+  --md-default-bg-color--lightest: rgb(255 255 255 / 0.12);
+
+  /* The primary action is anthracite; the lamp's wash marks the current page. */
+  --md-primary-fg-color: var(--xd-ink);
+  --md-primary-fg-color--light: #3a3a3f;
+  --md-primary-fg-color--dark: #000000;
+  --md-primary-bg-color: #ffffff;
+  --md-primary-bg-color--light: rgb(255 255 255 / 0.7);
+  --md-accent-fg-color: var(--xd-route);
+  --md-accent-fg-color--transparent: var(--xd-route-soft);
+  --md-accent-bg-color: var(--xd-sheet);
+  --md-accent-bg-color--light: rgb(255 255 255 / 0.7);
+
+  --md-typeset-color: var(--xd-ink);
   --md-typeset-a-color: var(--xd-route);
+  --md-typeset-mark-color: var(--xd-route-soft);
+  --md-typeset-table-color: var(--xd-border);
+  --md-typeset-table-color--light: var(--xd-raised);
+  --md-typeset-kbd-color: var(--xd-sheet);
+  --md-typeset-kbd-accent-color: var(--xd-sheet);
+  --md-typeset-kbd-border-color: var(--xd-input);
+
+  /* Code: the raised ground, and the reader's six syntax roles (each 4.5:1+ on it). */
+  --md-code-fg-color: var(--xd-ink);
+  --md-code-bg-color: var(--xd-raised);
+  --md-code-bg-color--light: rgb(247 246 244 / 0.7);
+  --md-code-bg-color--lighter: rgb(247 246 244 / 0.3);
+  --md-code-hl-color: var(--xd-lamp);
+  --md-code-hl-color--light: var(--xd-route-soft);
+  --md-code-hl-comment-color: oklch(0.5 0.01 250);
+  --md-code-hl-keyword-color: oklch(0.45 0.14 255);
+  --md-code-hl-string-color: oklch(0.44 0.1 155);
+  --md-code-hl-number-color: oklch(0.5 0.12 55);
+  --md-code-hl-constant-color: oklch(0.5 0.12 55);
+  --md-code-hl-function-color: oklch(0.45 0.13 330);
+  --md-code-hl-special-color: oklch(0.47 0.12 25);
+  --md-code-hl-operator-color: oklch(0.47 0.01 250);
+  --md-code-hl-punctuation-color: oklch(0.47 0.01 250);
+  --md-code-hl-generic-color: var(--xd-muted);
+  --md-code-hl-variable-color: var(--xd-ink);
+  --md-code-hl-name-color: var(--xd-ink);
+
+  --md-admonition-fg-color: var(--xd-ink);
+  --md-admonition-bg-color: var(--xd-sheet);
+  --md-footer-bg-color: var(--xd-frame);
+  --md-footer-bg-color--dark: var(--xd-frame);
 }
 
+/* -------------------------------------------------------------- tokens: dark */
+
+/* The mole's own colours: the frame darker than the sheet, cream words, the lamp draws the marks. */
 [data-md-color-scheme="slate"] {
-  --xd-route: #62becd; /* oklch(0.75 0.09 210), the UI's dark --route */
-  --xd-route-soft: #0f2b31;
-  --xd-ink: #edeef0;
-  --xd-muted: #a9abad;
-  --xd-raised: #161718;
-  --md-primary-fg-color: var(--xd-route);
-  --md-primary-fg-color--light: #8fd3de;
-  --md-primary-fg-color--dark: #3c9fb0;
-  --md-primary-bg-color: #0f1112;
-  --md-accent-fg-color: #8fd3de;
-  --md-accent-fg-color--transparent: #62becd1f;
+  --xd-frame: #0e0e10;
+  --xd-sheet: #17171a;
+  --xd-raised: #1d1d21;
+  --xd-fill: #26262b;
+  --xd-ink: #f3f1ec;
+  --xd-muted: #a6a6ae;
+  --xd-border: #2a2a30;
+  --xd-rule: #222227;
+  --xd-input: #4a4a52;
+  --xd-lamp: #f5c542;
+  --xd-route: #f5c542; /* the lamp itself: 10:1+ on the sheet */
+  --xd-route-soft: #3b3320;
+  --xd-tint-note: oklch(0.74 0.1 250);
+  --xd-tint-tip: oklch(0.76 0.12 155);
+  --xd-tint-warning: oklch(0.8 0.13 80);
+  --xd-tint-danger: oklch(0.7 0.17 22);
+
+  --md-default-fg-color: var(--xd-ink);
+  --md-default-fg-color--light: var(--xd-muted);
+  --md-default-fg-color--lighter: rgb(243 241 236 / 0.32);
+  --md-default-fg-color--lightest: rgb(243 241 236 / 0.07);
+  --md-default-bg-color: var(--xd-sheet);
+  --md-default-bg-color--light: rgb(23 23 26 / 0.7);
+  --md-default-bg-color--lighter: rgb(23 23 26 / 0.3);
+  --md-default-bg-color--lightest: rgb(23 23 26 / 0.12);
+
+  /* The primary button inverts to cream. */
+  --md-primary-fg-color: var(--xd-ink);
+  --md-primary-fg-color--light: #ffffff;
+  --md-primary-fg-color--dark: #d9d7d2;
+  --md-primary-bg-color: var(--xd-sheet);
+  --md-primary-bg-color--light: rgb(23 23 26 / 0.7);
+  --md-accent-fg-color: var(--xd-route);
+  --md-accent-fg-color--transparent: var(--xd-route-soft);
+  --md-accent-bg-color: var(--xd-sheet);
+  --md-accent-bg-color--light: rgb(23 23 26 / 0.7);
+
+  --md-typeset-color: var(--xd-ink);
   --md-typeset-a-color: var(--xd-route);
+  --md-typeset-mark-color: var(--xd-route-soft);
+  --md-typeset-table-color: var(--xd-border);
+  --md-typeset-table-color--light: var(--xd-raised);
+  --md-typeset-kbd-color: var(--xd-raised);
+  --md-typeset-kbd-accent-color: var(--xd-fill);
+  --md-typeset-kbd-border-color: var(--xd-input);
+
+  --md-code-fg-color: var(--xd-ink);
+  --md-code-bg-color: var(--xd-raised);
+  --md-code-bg-color--light: rgb(29 29 33 / 0.9);
+  --md-code-bg-color--lighter: rgb(29 29 33 / 0.54);
+  --md-code-hl-color: var(--xd-lamp);
+  --md-code-hl-color--light: var(--xd-route-soft);
+  --md-code-hl-comment-color: oklch(0.72 0.01 250);
+  --md-code-hl-keyword-color: oklch(0.79 0.1 255);
+  --md-code-hl-string-color: oklch(0.8 0.11 155);
+  --md-code-hl-number-color: oklch(0.82 0.11 65);
+  --md-code-hl-constant-color: oklch(0.82 0.11 65);
+  --md-code-hl-function-color: oklch(0.8 0.1 330);
+  --md-code-hl-special-color: oklch(0.79 0.11 30);
+  --md-code-hl-operator-color: oklch(0.72 0.01 250);
+  --md-code-hl-punctuation-color: oklch(0.72 0.01 250);
+  --md-code-hl-generic-color: var(--xd-muted);
+  --md-code-hl-variable-color: var(--xd-ink);
+  --md-code-hl-name-color: var(--xd-ink);
+
+  --md-admonition-fg-color: var(--xd-ink);
+  --md-admonition-bg-color: var(--xd-sheet);
+  --md-footer-bg-color: var(--xd-frame);
+  --md-footer-bg-color--dark: var(--xd-frame);
 }
 
-/* The logo is the light mark; on the dark scheme it swaps to the dark one. */
-[data-md-color-scheme="slate"] .md-logo img {
-  content: url("../assets/logo/exactdocs-mark-dark.svg");
+/* ------------------------------------------------------ tokens: more contrast */
+
+/* The UI's "more contrast" preference, here from the system setting: a darker grey, stronger
+   borders and frame. Nothing else changes. */
+@media (prefers-contrast: more) {
+  :root,
+  [data-md-color-scheme="default"] {
+    --xd-muted: #3f4045;
+    --xd-border: #b4b3ae;
+    --xd-rule: #cfcec9;
+    --xd-input: #6f6e69;
+    --xd-frame: #ebeae6;
+    --md-default-fg-color--lighter: rgb(23 23 26 / 0.5);
+    --md-default-fg-color--lightest: rgb(23 23 26 / 0.12);
+  }
+
+  [data-md-color-scheme="slate"] {
+    --xd-muted: #d2d2d8;
+    --xd-border: #55555e;
+    --xd-rule: #3c3c44;
+    --xd-input: #8a8a94;
+    --xd-frame: #060607;
+    --md-default-fg-color--lighter: rgb(243 241 236 / 0.5);
+    --md-default-fg-color--lightest: rgb(243 241 236 / 0.14);
+  }
 }
+
+/* ------------------------------------------------------------------- base */
 
 ::selection {
-  background: color-mix(in srgb, var(--xd-route) 26%, transparent);
+  background: color-mix(in oklab, var(--xd-lamp) 55%, transparent);
+  color: var(--xd-ink);
+}
+
+/* The theme sets headings to pure white in the dark scheme; the UI's words are cream. */
+[data-md-color-scheme="slate"] :is(.md-header__title, h1, h2, h3, h4, h5, h6) {
+  color: var(--xd-ink);
+}
+
+/* The header is the UI's band: the stone frame above the white sheet, with a hairline. */
+.md-header {
+  background-color: var(--xd-frame);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.md-header--shadow {
+  box-shadow: 0 1px 0 var(--xd-border);
+}
+
+/* The mole at band size (the cut has room around it, so it may reach into the button's padding);
+   on the dark scheme it swaps to the cut with a cream edge. */
+.md-header__button.md-logo img {
+  height: 1.9rem;
+  width: auto;
+  margin: -0.35rem -0.25rem;
+}
+
+[data-md-color-scheme="slate"] .md-logo img {
+  content: url("../assets/logo/exactdocs-mark-small-on-dark.svg");
+}
+
+.md-footer-meta {
+  background-color: var(--xd-frame);
+}
+
+/* Links: an underline at 40 % that fills on hover, as in the reader (prose.css). */
+.md-typeset a:not(.md-button, .headerlink) {
+  text-decoration-color: color-mix(in oklab, currentColor 40%, transparent);
+  text-underline-offset: 0.2em;
+}
+
+.md-typeset a:not(.md-button, .headerlink):is(:hover, :focus-visible) {
+  text-decoration-color: currentColor;
+}
+
+/* Inline code on the hover fill, blocks on the raised ground. */
+.md-typeset :not(pre) > code {
+  background-color: var(--xd-fill);
+}
+
+.md-typeset pre > code {
+  border-radius: 0.4rem;
+}
+
+/* --------------------------------------------------------------- tables */
+
+.md-typeset table:not([class]) {
+  font-size: 0.7rem;
+  border-color: var(--xd-border);
+  border-radius: 0.4rem;
+}
+
+.md-typeset table:not([class]) th {
+  background-color: var(--xd-fill);
+  font-weight: 600;
+}
+
+.md-typeset table:not([class]) td {
+  border-top-color: var(--xd-border);
+}
+
+/* ------------------------------------------------------------ admonitions */
+
+/* The reader's callouts: a field tinted 7 % with a 22 % hairline; the title mixes the tint with
+   ink. Note, tip, warning and danger are the reader's tints; the rest borrow the nearest. */
+.md-typeset :is(.admonition, details)[class] {
+  --xd-tint: var(--xd-tint-note);
+  font-size: 0.7rem;
+  background-color: color-mix(in oklab, var(--xd-tint) 7%, var(--xd-sheet));
+  border: 0;
+  border-radius: 0.4rem;
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--xd-tint) 22%, transparent);
+}
+
+.md-typeset :is(.admonition, details):is(.tip, .success, .question) {
+  --xd-tint: var(--xd-tint-tip);
+}
+
+.md-typeset :is(.admonition, details):is(.warning, .attention, .caution) {
+  --xd-tint: var(--xd-tint-warning);
+}
+
+.md-typeset :is(.admonition, details):is(.danger, .error, .failure, .bug) {
+  --xd-tint: var(--xd-tint-danger);
+}
+
+.md-typeset :is(.admonition, details):is(.example, .quote) {
+  --xd-tint: var(--xd-muted);
+}
+
+.md-typeset :is(.admonition, details) > :is(.admonition-title, summary) {
+  color: color-mix(in oklab, var(--xd-tint) 70%, var(--xd-ink));
+  font-weight: 600;
+}
+
+.md-typeset :is(.admonition, details) > :is(.admonition-title, summary)::before,
+.md-typeset :is(.admonition, details) > :is(.admonition-title, summary)::after {
+  color: inherit;
+}
+
+/* Code inside a callout sits on a lighter cut of its field. */
+.md-typeset :is(.admonition, details) :not(pre) > code,
+.md-typeset :is(.admonition, details) pre > code {
+  background-color: color-mix(in oklab, var(--xd-sheet) 65%, color-mix(in oklab, var(--xd-tint) 7%, var(--xd-sheet)));
+}
+
+/* -------------------------------------------------------------- mermaid */
+
+/* Diagrams in ink and grey on the raised ground: no accent on a node. */
+[data-md-color-scheme] {
+  --md-mermaid-node-bg-color: var(--xd-raised);
+  --md-mermaid-node-fg-color: var(--xd-ink);
+  --md-mermaid-edge-color: var(--xd-muted);
+  --md-mermaid-label-fg-color: var(--xd-ink);
+}
+
+/* -------------------------------------------------------------- buttons */
+
+/* The UI's buttons: 6 px corners, weight 500; the primary is anthracite (cream in the dark), the
+   others outlined in the control border and filled on hover. */
+.md-typeset .md-button {
+  padding: 0.5em 1.1em;
+  font-weight: 500;
+  color: var(--xd-ink);
+  background-color: var(--xd-sheet);
+  border: 0;
+  border-radius: 0.3rem;
+  box-shadow: inset 0 0 0 1px var(--xd-input);
+  transition:
+    transform 120ms cubic-bezier(0.23, 1, 0.32, 1),
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.md-typeset .md-button:is(:hover, :focus) {
+  color: var(--xd-ink);
+  background-color: var(--xd-fill);
+  opacity: 1;
+}
+
+.md-typeset .md-button--primary {
+  color: var(--md-primary-bg-color);
+  background-color: var(--md-primary-fg-color);
+  box-shadow: none;
+}
+
+.md-typeset .md-button--primary:is(:hover, :focus) {
+  color: var(--md-primary-bg-color);
+  background-color: var(--md-primary-fg-color--light);
+}
+
+.md-typeset .md-button:active {
+  transform: scale(0.97);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .md-typeset .md-button {
+    transition: none;
+  }
+
+  .md-typeset .md-button:active {
+    transform: none;
+  }
 }
 
 /* ---------------------------------------------------------------- home page */
@@ -55,7 +376,8 @@
 
 .md-typeset .xd-hero h1 {
   margin: 0 0 0.9rem;
-  font-size: clamp(2.1rem, 1.2rem + 3.4vw, 3.3rem);
+  font-size: clamp(1.75rem, 1rem + 3.4vw, 3.3rem);
+  word-break: normal; /* the comma stays with its word on a phone */
   font-weight: 600;
   line-height: 1.04;
   letter-spacing: -0.025em;
@@ -79,15 +401,6 @@
 
 .md-typeset .xd-actions .md-button {
   margin: 0;
-  border-radius: 0.3rem;
-  transition:
-    transform 120ms cubic-bezier(0.23, 1, 0.32, 1),
-    background-color 120ms ease,
-    color 120ms ease;
-}
-
-.md-typeset .xd-actions .md-button:active {
-  transform: scale(0.97);
 }
 
 .md-typeset .xd-hero pre {
@@ -163,6 +476,6 @@
   width: 100%;
   height: auto;
   border-radius: 0.6rem;
-  outline: 1px solid color-mix(in srgb, var(--xd-ink) 9%, transparent);
+  outline: 1px solid var(--xd-border);
   outline-offset: -1px;
 }
