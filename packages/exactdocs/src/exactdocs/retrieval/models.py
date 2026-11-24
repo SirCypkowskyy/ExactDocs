@@ -108,7 +108,13 @@ from exactdocs.retrieval.constants import (
     RRF_K,
     SANDBOX_NOT_BELOW_TIMEOUT,
     SEARCH_DOCS,
+    SPEND_HISTORY_BEFORE_YEAR_ONE,
+    SPEND_HISTORY_DEFAULT_DAYS,
+    SPEND_HISTORY_DEFAULT_MONTHS,
+    SPEND_HISTORY_MAX_DAYS,
+    SPEND_HISTORY_MAX_MONTHS,
     SPEND_INSTANCE_ID,
+    SPEND_INSTANCE_WIDE_KINDS,
     SPEND_SCOPE_EMBEDDING,
     SPEND_SCOPE_INSTANCE,
     SPEND_SCOPE_KINDS,
@@ -128,6 +134,7 @@ from exactdocs.retrieval.errors import (
     InvalidJudgmentError,
     InvalidModelRefError,
     InvalidProviderError,
+    InvalidSpendHistoryError,
     InvalidVectorError,
     LibraryBudgetAboveInstanceError,
     UnavailableModeError,
@@ -3277,8 +3284,67 @@ class SpendWindow(StrEnum):
         Returns:
             The window's first day, in UTC.
         """
-        day = at.astimezone(UTC).date()
+        return self.containing(at.astimezone(UTC).date())
+
+    def containing(self, day: date) -> date:
+        """Find the first day of the window that holds a day.
+
+        Args:
+            day: A UTC day.
+
+        Returns:
+            The day itself for ``day``, the first of its month for ``month``.
+        """
         return day if self is SpendWindow.DAY else day.replace(day=1)
+
+    def shift(self, start: date, windows: int) -> date:
+        """Find the window some windows after (or, when negative, before) another.
+
+        Args:
+            start: A window's first day.
+            windows: How many windows to move.
+
+        Returns:
+            That window's first day.
+        """
+        if self is SpendWindow.DAY:
+            return start + timedelta(days=windows)
+        months = start.year * MONTHS_PER_YEAR + start.month - 1 + windows
+        return date(months // MONTHS_PER_YEAR, months % MONTHS_PER_YEAR + 1, 1)
+
+    def windows_between(self, first: date, last: date) -> int:
+        """Count the windows from one to another, both included.
+
+        Args:
+            first: The first window's first day.
+            last: The last window's first day.
+
+        Returns:
+            How many windows; 0 or less when ``last`` is before ``first``.
+        """
+        if self is SpendWindow.DAY:
+            return (last - first).days + 1
+        return (last.year - first.year) * MONTHS_PER_YEAR + last.month - first.month + 1
+
+    @property
+    def history_limit(self) -> int:
+        """The most windows one spend history shows.
+
+        Returns:
+            ``SPEND_HISTORY_MAX_DAYS`` or ``SPEND_HISTORY_MAX_MONTHS``.
+        """
+        return SPEND_HISTORY_MAX_DAYS if self is SpendWindow.DAY else SPEND_HISTORY_MAX_MONTHS
+
+    @property
+    def history_default(self) -> int:
+        """The windows a spend history shows when it is not told where to start.
+
+        Returns:
+            ``SPEND_HISTORY_DEFAULT_DAYS`` or ``SPEND_HISTORY_DEFAULT_MONTHS``.
+        """
+        if self is SpendWindow.DAY:
+            return SPEND_HISTORY_DEFAULT_DAYS
+        return SPEND_HISTORY_DEFAULT_MONTHS
 
     def kept_since(self, latest: date) -> date:
         """Find the oldest window start whose replay tokens are still kept.
@@ -3436,6 +3502,130 @@ class SpendEntry:
             unpriced=self.unpriced + other.unpriced,
             local_tokens=self.local_tokens + other.local_tokens,
             token=None,
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SpendHistorySpan:
+    """What a spend history shows: one scope's rows of one window kind, over a range of windows.
+
+    Windows are UTC days or months, both ends included, at most ``SpendWindow.history_limit``.
+    """
+
+    scope_kind: str
+    """``instance``, ``embedding``, ``library`` or ``user`` (``SPEND_SCOPE_KINDS``)."""
+    scope_id: str
+    """The library ID (case-folded, as the ledger keeps it) or the account ID; empty for the
+    instance-wide kinds."""
+    window: SpendWindow
+    """Day or month."""
+    first: date
+    """The first window's first day."""
+    last: date
+    """The last window's first day."""
+
+    def __post_init__(self) -> None:
+        """Refuse a span the ledger cannot show.
+
+        Raises:
+            UnknownSpendKeyError: The kind is not one of ``SPEND_SCOPE_KINDS``.
+            InvalidSpendHistoryError: The scope ID does not fit the kind, a day is not a
+                window's first day, the span ends before it starts or holds too many windows.
+        """
+        if self.scope_kind not in SPEND_SCOPE_KINDS:
+            raise UnknownSpendKeyError(self.scope_kind)
+        problem = self._problem()
+        if problem is not None:
+            raise InvalidSpendHistoryError(problem)
+
+    def _problem(self) -> str | None:
+        """Find what keeps the span from being shown.
+
+        Returns:
+            What is wrong, or ``None`` when nothing is.
+        """
+        wide = self.scope_kind in SPEND_INSTANCE_WIDE_KINDS
+        if wide and self.scope_id != SPEND_INSTANCE_ID:
+            return f"the {self.scope_kind} scope takes no ID"
+        if not wide and not self.scope_id:
+            return f"the {self.scope_kind} scope needs an ID"
+        for day in (self.first, self.last):
+            if self.window.containing(day) != day:
+                return f"{day.isoformat()} does not start a month"
+        windows = self.windows
+        if windows < 1:
+            return f"it ends ({self.last.isoformat()}) before it starts ({self.first.isoformat()})"
+        if windows > (most := self.window.history_limit):
+            return f"{windows} {self.window.value}s asked for, at most {most} are shown"
+        return None
+
+    @classmethod
+    def of(
+        cls,
+        *,
+        scope_kind: str,
+        scope_id: str,
+        window: SpendWindow,
+        first: date | None,
+        last: date | None,
+        today: date,
+    ) -> SpendHistorySpan:
+        """Resolve a request for a spend history.
+
+        Any day of a window stands for the window. Without ``last`` the span ends with the
+        window holding today; without ``first`` it starts ``window.history_default`` windows
+        before its end, that one included.
+
+        Args:
+            scope_kind: The scope kind.
+            scope_id: The library ID (any letter case) or the account ID; empty for the
+                instance-wide kinds.
+            window: Day or month.
+            first: A day of the first window; ``None`` for the default.
+            last: A day of the last window; ``None`` for the one holding today.
+            today: Today (UTC).
+
+        Returns:
+            The span.
+
+        Raises:
+            InvalidSpendHistoryError: The default start would be before the first day there is.
+        """
+        end = window.containing(last or today)
+        if first is not None:
+            start = window.containing(first)
+        else:
+            try:
+                start = window.shift(end, 1 - window.history_default)
+            except (OverflowError, ValueError) as error:
+                raise InvalidSpendHistoryError(SPEND_HISTORY_BEFORE_YEAR_ONE) from error
+        if scope_kind == SPEND_SCOPE_LIBRARY:
+            scope_id = scope_id.casefold()
+        return cls(scope_kind=scope_kind, scope_id=scope_id, window=window, first=start, last=end)
+
+    @property
+    def windows(self) -> int:
+        """Count the windows the span holds.
+
+        Returns:
+            Both ends included; less than 1 for a span that ends before it starts.
+        """
+        return self.window.windows_between(self.first, self.last)
+
+    def keys(self) -> tuple[SpendKey, ...]:
+        """Name the row of every window of the span.
+
+        Returns:
+            One key per window, oldest first.
+        """
+        return tuple(
+            SpendKey(
+                scope_kind=self.scope_kind,
+                scope_id=self.scope_id,
+                window=self.window,
+                window_start=self.window.shift(self.first, offset),
+            )
+            for offset in range(self.windows)
         )
 
 

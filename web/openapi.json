@@ -7969,6 +7969,174 @@
         ]
       }
     },
+    "/api/v1/ai/usage/history": {
+      "get": {
+        "tags": [
+          "ai"
+        ],
+        "summary": "Get Ai Spend History",
+        "description": "Show what one scope spent per UTC day or month: one entry per window, zero-filled.\n\n`scope` and `id` name a scope as `GET /ai/usage` does (`library` and `user` need an\n`id`; `instance` and `embedding` take none). Any day of a month stands for the month.\nWithout `to` the range ends today; without `from` it holds 30 days or 12 months. At\nmost 366 days or 60 months (422 `invalid_spend_history`, also when `to` is before\n`from` or the `id` does not fit the scope).",
+        "operationId": "ai-get_ai_spend_history",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "instance",
+                "embedding",
+                "library",
+                "user"
+              ],
+              "type": "string",
+              "default": "instance",
+              "title": "Scope"
+            }
+          },
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 256,
+              "description": "Library or account ID.",
+              "default": "",
+              "title": "Id"
+            },
+            "description": "Library or account ID."
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/SpendWindow",
+              "default": "day"
+            }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A day of the first window (UTC).",
+              "title": "From"
+            },
+            "description": "A day of the first window (UTC)."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "A day of the last window (UTC).",
+              "title": "To"
+            },
+            "description": "A day of the last window (UTC)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpendHistoryOut"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/libraries/{owner}/{repo}/settings": {
       "put": {
         "tags": [
@@ -17987,6 +18155,121 @@
         ],
         "title": "Span",
         "description": "A `[start, end)` range of characters."
+      },
+      "SpendHistoryEntryOut": {
+        "properties": {
+          "input_tokens": {
+            "type": "integer",
+            "title": "Input Tokens",
+            "description": "Tokens sent (an LLM step's total, which the harness does not split, is counted here)."
+          },
+          "output_tokens": {
+            "type": "integer",
+            "title": "Output Tokens",
+            "description": "Tokens received."
+          },
+          "tokens": {
+            "type": "integer",
+            "title": "Tokens",
+            "description": "Both, less `local_tokens`: what token budgets limit."
+          },
+          "local_tokens": {
+            "type": "integer",
+            "title": "Local Tokens",
+            "description": "Of the input and output tokens, those of in-process (`local`) models: they cost nothing,\nso no token budget counts them."
+          },
+          "requests": {
+            "type": "integer",
+            "title": "Requests",
+            "description": "Calls made."
+          },
+          "usd": {
+            "type": "number",
+            "title": "Usd",
+            "description": "Their price in US dollars (whole millionths); unpriced calls add nothing."
+          },
+          "unpriced_requests": {
+            "type": "integer",
+            "title": "Unpriced Requests",
+            "description": "Calls whose model had no known price."
+          },
+          "window_start": {
+            "type": "string",
+            "format": "date",
+            "title": "Window Start",
+            "description": "The window's first day (UTC)."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "input_tokens",
+          "output_tokens",
+          "tokens",
+          "local_tokens",
+          "requests",
+          "usd",
+          "unpriced_requests",
+          "window_start"
+        ],
+        "title": "SpendHistoryEntryOut",
+        "description": "What the scope spent in one window; zero for a window it spent nothing in."
+      },
+      "SpendHistoryOut": {
+        "properties": {
+          "scope": {
+            "type": "string",
+            "enum": [
+              "instance",
+              "embedding",
+              "library",
+              "user"
+            ],
+            "title": "Scope",
+            "description": "The scope kind."
+          },
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The library ID (case-folded) or the account ID; empty for `instance` and `embedding`."
+          },
+          "window": {
+            "$ref": "#/components/schemas/SpendWindow",
+            "description": "`day` or `month`."
+          },
+          "first": {
+            "type": "string",
+            "format": "date",
+            "title": "First",
+            "description": "The first window's first day."
+          },
+          "last": {
+            "type": "string",
+            "format": "date",
+            "title": "Last",
+            "description": "The last window's first day."
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/SpendHistoryEntryOut"
+            },
+            "type": "array",
+            "title": "Entries",
+            "description": "Every window from `first` to `last`, both included, each once."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "scope",
+          "id",
+          "window",
+          "first",
+          "last",
+          "entries"
+        ],
+        "title": "SpendHistoryOut",
+        "description": "What one scope spent per UTC day or month: one entry per window, oldest first."
       },
       "SpendWindow": {
         "type": "string",

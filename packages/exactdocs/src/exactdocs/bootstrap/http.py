@@ -347,6 +347,7 @@ def create_app(container: Container) -> FastAPI:
             estimate_embedding=container.retrieval.estimate_embedding,
             get_embedding_progress=container.retrieval.get_embedding_progress,
             get_ai_usage=container.retrieval.get_ai_usage,
+            get_spend_history=container.retrieval.get_spend_history,
         ),
         dependencies=[
             Depends(

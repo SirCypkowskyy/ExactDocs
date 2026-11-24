@@ -58,6 +58,8 @@ from exactdocs.retrieval.dtos import (
     SearchIndexStateOut,
     SetLibraryRetrievalCommand,
     SetRoleThinkingCommand,
+    SpendHistoryOut,
+    SpendHistoryQuery,
     UnembeddedVersionsOut,
     UnembeddedVersionsQuery,
     VectorStoreStateOut,
@@ -727,6 +729,25 @@ class GetAiUsage(Protocol):
 
         Returns:
             The instance, the embedding budget, then every library and user that spent this month.
+        """
+        ...
+
+
+class GetSpendHistory(Protocol):
+    """Show what one scope spent per UTC day or month over a bounded range (admins).
+
+    Raises ``InvalidSpendHistoryError`` when the scope ID does not fit the kind, or the range
+    ends before it starts or holds more than ``SpendWindow.history_limit`` windows.
+    """
+
+    async def __call__(self, query: SpendHistoryQuery) -> SpendHistoryOut:
+        """Run the use case.
+
+        Args:
+            query: The scope, the window and the range.
+
+        Returns:
+            One entry per window of the range, oldest first, zero where nothing was spent.
         """
         ...
 
