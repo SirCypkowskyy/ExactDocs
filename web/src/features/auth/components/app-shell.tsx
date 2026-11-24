@@ -379,7 +379,16 @@ function MobileNav({ entries, groups }: { entries: Entry[]; groups: Group[] }) {
 }
 
 /** Header band and the sheet for signed-in pages. The auth pages bring their own frame. */
-export function AppShell({ children, search }: { children: ReactNode; search?: ReactNode }) {
+export function AppShell({
+  children,
+  search,
+  banner,
+}: {
+  children: ReactNode;
+  search?: ReactNode;
+  /** Notices at the top of the sheet, above the page (the instance banner). */
+  banner?: ReactNode;
+}) {
   const session = useSession();
   usePreferencesSync(Boolean(session?.account));
   const t = useMessages(messages);
@@ -434,6 +443,7 @@ export function AppShell({ children, search }: { children: ReactNode; search?: R
       {/* The sheet: the page's own <main> lives inside. view-transition-name lets route changes
           cross-fade this region only (styles.css). */}
       <div className="flex min-w-0 flex-1 flex-col bg-background [view-transition-name:page] md:mx-2 md:mb-2 md:rounded-sheet md:border md:border-border">
+        {banner}
         {children}
       </div>
     </div>
