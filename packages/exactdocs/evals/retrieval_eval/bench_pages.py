@@ -149,18 +149,22 @@ def agent_blocks(report: BenchReport) -> dict[str, str]:
     """
     meta = report.meta
     served = ", ".join(f"{name} at `{url}`" for name, url in meta.providers.items())
+    agents = ", ".join(f"`{m}`" for m in meta.agent_models)
+    arms = ", ".join(f"`{a}`" for a in meta.arms)
+    retrieval = ", ".join(f"`{name}`" for name in meta.retrieval) or "none"
     run = [
-        f"- Started {meta.started_at}; ExactDocs `{meta.exactdocs_version}` at "
-        f"`{meta.git_commit[:12]}`.",
-        f"- Agents: {', '.join(f'`{m}`' for m in meta.agent_models)}; judge `{meta.judge_model}`"
-        + (f"; served by {served}" if served else "")
-        + ".",
-        f"- Arms: {', '.join(f'`{a}`' for a in meta.arms)}; retrieval "
-        + (", ".join(f"`{name}`" for name in meta.retrieval) or "none")
-        + ".",
-        f"- Cases: {meta.cases} ({meta.selection}); at most {meta.max_requests} model requests per "
-        f"question; thinking: {meta.thinking}; {meta.concurrency} questions at a time; "
-        f"{meta.max_retries} retries of a failed request.",
+        (
+            f"- Started {meta.started_at}; ExactDocs `{meta.exactdocs_version}` at "
+            f"`{meta.git_commit[:12]}`."
+        ),
+        f"- Agents: {agents}; judge `{meta.judge_model}`"
+        + (f"; served by {served}." if served else "."),
+        f"- Arms: {arms}; retrieval configurations of `exactdocs`: {retrieval}.",
+        (
+            f"- Cases: {meta.cases} ({meta.selection}); at most {meta.max_requests} model "
+            f"requests per question; thinking: {meta.thinking}; {meta.concurrency} questions at "
+            f"a time; {meta.max_retries} retries of a failed request."
+        ),
     ]
     return {"agent-run": "\n".join(run), "agent": _body(agent_markdown(report))}
 
