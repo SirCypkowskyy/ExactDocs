@@ -750,11 +750,11 @@ still 1, and a report without them still reads.
 
 ### The recorded run
 
-Recorded on 23–24 November 2026 for the golden-set review (#490), on the reviewed set
-(`sha256:7dd51c59057c279a`), by the manual *Retrieval eval (real providers)* workflow with
+Recorded on 24 November 2026 for #503 and #501, on the golden set with its alternatives marked
+(`sha256:a00997851150e3b0`), by the manual *Retrieval eval (real providers)* workflow with
 `benchmark` ticked and local configurations only
-([run 45276428449](https://github.com/SirCypkowskyy/ExactDocs/actions/runs/45276428449)): one
-self-hosted runner VM (Linux aarch64, 4 CPUs), ExactDocs `861b5ea`, in 3 h 17 min. A full local
+([run 45353553786](https://github.com/SirCypkowskyy/ExactDocs/actions/runs/45353553786)): one
+self-hosted runner VM (Linux aarch64, 4 CPUs), ExactDocs `8e789e6`, in 3 h 22 min. A full local
 matrix (three embedding models, each with and without the cross-encoder, at four chunkings) would
 take far longer there, so it ran on this subset:
 
@@ -771,30 +771,23 @@ EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
 ```
 
 Every result keeps its per-case `rows`, so every one has intervals and a paired test against its
-budget's default (#489). On that runner, embedding the whole corpus took 24 minutes with
-bge-small at `default` (30 at `h6`, 14 at `h2`, 23 at `merge-400`) and 34 with arctic-embed-s; the
-cross-encoder adds about 2.5 s per question (32 candidates). What it found: BM25 is best at
-`default` (recall@5 81.7%, against 79.8% at `h6`); hybrid on bge-small reaches 84.6% at `h6` and
-the cross-encoder on BM25 84.6% at `default`, both 3 points more, under the 5-point margin and not
-significant (McNemar mid-p 0.11 and 0.18), so BM25 stays the default for both the no-model and the
-local budget; the cross-encoder loses recall at `h2`, whose chunks are longer than its window;
-arctic-embed-s is below BM25 (75.3%). The review (#490) did not change any case's first expected
-section, so recall@k and MRR match the run it replaces (13 November 2026, before the review, on a
-10-core laptop) for every configuration both ran.
+budget's default (#489). On that runner, embedding the whole corpus took 25 minutes with
+bge-small at `default` (32 at `h6`, 14 at `h2`, 23 at `merge-400`) and 35 with arctic-embed-s; the
+cross-encoder adds about 2.5 s per question (32 candidates). What it found: BM25 scores alike at
+`h2`, `default` and `merge-400` (recall@5 89.1%, 87.6%, 87.6%), above `h6` (85.8%); `h2` comes
+first by the benchmark's ordering, so the summary names it for the no-model budget, but its lead
+over `default` is not significant (+1.5 points, McNemar mid-p 0.42), and the shipped default stays
+`default`. Hybrid on bge-small reaches 91.0% at `merge-400`, 1.9 points over BM25 at `h2`, under
+the 5-point margin and not significant (p 0.33), so BM25 stays the default for the local budget
+too; the cross-encoder loses recall at `h2`, whose chunks are longer than its window;
+arctic-embed-s is below BM25 (79.8%).
 
-**BM25 scored again for #503.** The match rule then counted a coarser chunk only when it was named
-after a parent of the expected section, and missed a chunk holding it next to a sibling. BM25 is
-deterministic, so its four results were run again with the fixed rule (24 November 2026, Linux
-x86_64, 4 CPUs, `just retrieval-bench --offline --configs bm25`) and put into the recorded run:
-each case's ranks, nDCG and section ranks from the new run, its search time from the recorded one
-(so the latencies stay the runner's), then the recommendations and paired tests derived again. At
-`h6` no case changed (the same results, scored the same), at `default` one, at `h2` 24 and at
-`merge-400` 34: BM25's recall@5 is now 82.8% at `h2` and 81.7% at `merge-400` (from 76.0% and
-74.2%), and 81.7% at `default` as before. `h2` comes first by the benchmark's ordering, so the
-summary names BM25 at `h2` for the no-model and the local budget, but its lead over `default` is
-not significant on any metric (recall@5 +1.1 points, McNemar mid-p 0.58), and the shipped default
-stays `default`. The model results keep the old rule, so hybrid at `h2` and `merge-400` and the
-cross-encoder at `h2` are undercounted; they are recorded again with #501.
+It replaces a run of 23–24 November 2026 (the same subset on the same runner) scored by the rules
+before #503 and #501, whose numbers are not comparable: a chunk that held the expected section
+next to a sibling was a miss (BM25's recall@5 was 76.0% at `h2` and 74.2% at `merge-400`), and
+recall@k counted only a case's first listed section (81.7% at `default`). Scored that way, BM25's
+results at `default` give the same 81.7%; the alternatives the review marked add 3 cases, and the
+other parts of multi-part cases 13 (8 of them `cross-page`).
 
 ### Running it with local models
 

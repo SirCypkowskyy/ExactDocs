@@ -141,8 +141,8 @@ result's BM25 and vector rank.</figcaption>
 
 The [golden set](benchmark/golden-set.md) is 321 questions about the docs of Starlette, Pydantic,
 TanStack Query, Zod and Electron, at three pinned versions each. With no model at all, BM25 puts
-the section that answers in the top 5 for 81.7% of the 267 answerable questions, at 57 ms p95.
-Hybrid search on a small local embedding model reaches up to 84.6%. Hosted models have not run
+a section that answers in the top 5 for 87.6% of the 267 answerable questions, at 52 ms p95.
+Hybrid search on a small local embedding model reaches up to 91.0%. Hosted models have not run
 yet. [Recommended defaults](benchmark/defaults.md) has the numbers and the known weak spots.
 
 </div>

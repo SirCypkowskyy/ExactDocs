@@ -6,10 +6,11 @@ the default each budget gets is on [Recommended defaults](defaults.md).
 
 ## The recorded run
 
-`packages/exactdocs/evals/results/retrieval.json`, recorded on 23–24 November 2026 on the reviewed
-golden set (#490), on one self-hosted runner VM (Linux aarch64, 4 CPUs), with no provider, in
-3 h 17 min ([the command and the timings](../evals.md#the-recorded-run)). A full local matrix
-would take far longer, so it ran a subset:
+`packages/exactdocs/evals/results/retrieval.json`, recorded on 24 November 2026 for #503 and #501
+on the golden set with its alternatives marked (`sha256:a00997851150e3b0`), on one self-hosted
+runner VM (Linux aarch64, 4 CPUs), with no provider, in 3 h 22 min
+([the command and the timings](../evals.md#the-recorded-run)). A full local matrix would take far
+longer, so it ran a subset:
 
 - `bm25` and `hybrid:bge-small-en-v1.5` at every chunking;
 - `bm25+ce` at `default`, `h6` and `h2`, and `hybrid:bge-small-en-v1.5+ce` at `default` and `h6`;
@@ -18,21 +19,20 @@ would take far longer, so it ran a subset:
 
 Every result keeps each case's outcome, so every one has intervals and a paired test against its
 budget's default ([Intervals and significance](method.md#intervals-and-significance)). The
-latencies are that runner's. The review did not change any case's first expected section, so
-recall@k and MRR equal those of the run this one replaces (13 November 2026, before the review)
-for every configuration both ran; nDCG@10, section recall and the per-kind numbers count the
-sections and kinds the review fixed.
+latencies are that runner's.
 
-**BM25 was scored again for #503.** Until then a chunk counted for an expected section only when
-it was the section, part of it, or named after one of its parents; a chunk that held the section
-next to a sibling (`h2`, `merge-400`, and a long section cut again at `default`) was scored a
-miss ([Method](method.md#chunking-configurations)). BM25 is deterministic, so it ran again at
-every chunking on 24 November 2026 (Linux x86_64, 4 CPUs) with the fixed rule: the same results
-for every case, re-scored, with the recorded runner's search times kept, so the latencies are
-still that runner's. At `h6` no case changed; at `default` one; at `h2` 24 and at `merge-400` 34.
-**The model results still have the old rule**: hybrid at `h2` and `merge-400` and the
-cross-encoder at `h2` are undercounted until they are recorded again with
-[#501](https://github.com/SirCypkowskyy/ExactDocs/issues/501).
+**Two scoring rules changed since the run it replaces** (23–24 November, the same subset on the
+same runner), so its numbers are not comparable with that one's
+([Method](method.md#retrieval-metrics)):
+
+- A chunk counts for every section it holds (#503). Before, a chunk that held the expected section
+  next to a sibling was a miss, which undercounted `h2` and `merge-400` (BM25's recall@5 was 76.0%
+  and 74.2% there).
+- recall@k and MRR count a hit on any section a case lists, and section recall and nDCG@10 count
+  each part of the answer once, an alternative counting as its part (#501). Before, recall@k
+  counted the first listed section only. This alone lifts BM25's recall@5 at `default` from 81.7%
+  to 87.6%: 3 cases by the alternatives the review marked, 13 by the other parts of multi-part
+  cases (8 of them `cross-page`).
 
 **Every hosted configuration is not measured yet**: hybrid on a hosted embedding model, HyDE,
 agentic search and every configuration reranked by the LLM judge. They run only from the manual
@@ -67,26 +67,30 @@ agentic search and every configuration reranked by the LLM judge. They run only 
 
 ## What it shows
 
-- BM25 scores alike at `h2`, `default` and `merge-400`: 82.8%, 81.7% and 81.7% recall@5. `h2`
+- BM25 scores alike at `h2`, `default` and `merge-400`: 89.1%, 87.6% and 87.6% recall@5. `h2`
   comes first by the benchmark's ordering, so the summary names it, but its lead over `default`
-  is not significant on any metric (recall@5 +1.1 points, p 0.58; MRR p 0.11), and its chunks are
-  about twice as long (7,065 estimated tokens in a question's ten results against 3,464,
-  [text calibration](../evals.md#calibration)). `h6`, where every heading starts a chunk, is
-  below them: 79.8%, and significantly worse than `h2` on recall@10, MRR and nDCG@10. The
+  is not significant on any metric (recall@5 +1.5 points, p 0.42; recall@1 p 0.24; MRR p 0.13),
+  and its chunks are about twice as long (7,065 estimated tokens in a question's ten results
+  against 3,464, [text calibration](../evals.md#calibration)). `h6`, where every heading starts a
+  chunk, is below them: 85.8%, with MRR and nDCG@10 significantly worse than at `default`. The
   shipped default stays `default` (#381); a non-significant lead does not change it.
-- Hybrid search on bge-small is the best local configuration, at `h6`, but only 1.9 points of
-  recall@5 above BM25 at `h2`, under the 5-point margin and not significant (p 0.41).
+- Hybrid search on bge-small is the best local configuration, at `merge-400` (91.0%), but only
+  1.9 points of recall@5 above BM25 at `h2`, under the 5-point margin and not significant
+  (p 0.33). At `default`, `h6` and `merge-400` it ranks the answer higher than BM25 at `default`
+  (MRR and nDCG@10 significantly better) without finding significantly more answers in the top 5.
 - The intervals per kind and per project are about twice as wide as the whole set's (around
   ±10 points of recall@5 on some 50 cases): differences of a few points there say little.
-- The cross-encoder on BM25 matches hybrid at `h6` and at `default` (84.6%, not significant
-  over BM25: p 0.16 and 0.18) but adds about 2.5 s per question (p50) on this runner, and loses
-  recall at `h2`, whose chunks are longer than its window. On hybrid it adds nothing.
-- snowflake-arctic-embed-s scores below BM25.
+- The cross-encoder on BM25 reaches 89.5% at `default` and 89.1% at `h6`, not significant over
+  BM25 at `default` (p 0.36 and 0.46), at about 2.5 s per question (p50) on this runner, and loses
+  recall at `h2` (85.4%, significantly below its `default`), whose chunks are longer than its
+  window. On hybrid it adds nothing. At `h6` it ranks the first hit slightly higher than at
+  `default` (recall@1 +1.9 points, significant for both rerankers, recall@5 the same).
+- snowflake-arctic-embed-s scores below BM25 (79.8%).
 - No configuration returned a result of another version, and none signalled "no answer" on any of
   the 54 unanswerable cases: `search_docs` gives a caller no way to tell an unanswerable question
   from an answerable one by its results today.
-- On `cross-page` questions, section recall@5 is up to 19 points below recall@5: the first page
-  of an answer often comes back without the second.
+- On `cross-page` questions, section recall@5 is about a third below recall@5 (33 to 34 points for
+  BM25 and hybrid): a hit on one page of the answer is common, all of its pages much rarer.
 
 <!-- bench:retrieval -->
 ## Every configuration
