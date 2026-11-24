@@ -120,8 +120,8 @@ class World:
     """That network's CIDR range."""
     proxy_url: str
     """The proxy's URL, with its credentials."""
-    access_log: Path
-    """The proxy's access log, on this machine."""
+    proxy: str
+    """The proxy's container, which holds its access log."""
 
 
 def _docker_works() -> str | None:
@@ -253,7 +253,7 @@ def _world(docker: Docker, folder: Path, password: str) -> World:
         corp_ip=docker("inspect", "-f", address, company).strip(),
         corp_range=docker("network", "inspect", "-f", subnet, corp).strip(),
         proxy_url=proxy_url,
-        access_log=logs / "access.log",
+        proxy=proxy,
     )
 
 
@@ -296,7 +296,9 @@ def test_exactdocs_behind_a_proxy_reaches_out_only_through_it(
 
     found = _drill(docker, world, data)
 
-    access = world.access_log.read_text(encoding="utf-8")
+    # Squid writes its log as its own user, readable by no one else (mode 0640), so the log is
+    # read inside the proxy's container: a test that is not root cannot open it on this machine.
+    access = docker("exec", world.proxy, "cat", f"{LOGS}/access.log")
     assert password not in json.dumps(found), "a proxy password was shown"
     assert found["pull"]["code"] == 0, found["pull"]["out"]
     assert "BAAI/bge-small-en-v1.5: ok" in found["pull"]["out"]
