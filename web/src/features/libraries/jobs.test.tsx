@@ -53,6 +53,13 @@ function serve(count = 45) {
     if (init?.method === "POST") {
       return Response.json({ ...all[2], cancelled_at: "2026-11-01T10:02:00Z", cancellable: false });
     }
+    if (url.pathname.endsWith("/v1/libraries")) {
+      const q = url.searchParams.get("q") ?? "";
+      const libraries = ["/acme/lib1", "/acme/lib3", "/azure/storage"]
+        .filter((id) => id.includes(q))
+        .map((id) => ({ id, title: id.split("/")[2], logo: null }));
+      return Response.json({ libraries, next_cursor: null, total: libraries.length, notice: "" });
+    }
     const states = url.searchParams.getAll("state");
     const origins = url.searchParams.getAll("origin");
     const rows = all.filter(
@@ -174,6 +181,40 @@ describe("the jobs table", () => {
       within(chips).getByRole("button", { name: "Remove filter Library: /azure/storage" }),
     ).toBeInTheDocument();
     expect(screen.getByText("1 job")).toBeInTheDocument();
+  });
+
+  it("filters by library with the library combobox, and the chip takes it off", async () => {
+    const fetchMock = serve();
+    const history = renderPage();
+    await screen.findByText("1–20 of 45");
+    const filter = screen.getByRole("button", { name: "Library" });
+    await userEvent.click(filter);
+    // The libraries are asked for only once the list opens.
+    await userEvent.type(screen.getByRole("combobox", { name: "Find a library" }), "lib3");
+    const listbox = screen.getByRole("listbox", { name: "Library" });
+    // The typed text goes to the API (after a short rest), which searches every library.
+    const libraryUrls = () =>
+      fetchMock.mock.calls.map(([u]) => String(u)).filter((u) => u.includes("/v1/libraries?"));
+    await waitFor(() =>
+      expect(libraryUrls()).toEqual([
+        "/api/v1/libraries?limit=200&sort=id",
+        "/api/v1/libraries?limit=200&sort=id&q=lib3",
+      ]),
+    );
+    expect(within(listbox).getAllByRole("option")).toHaveLength(1);
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(history.location.search).toContain("library=%2Facme%2Flib3"));
+    await waitFor(() =>
+      expect(urls(fetchMock).at(-1)).toBe("/api/v1/jobs?limit=20&library=%2Facme%2Flib3&offset=0"),
+    );
+    const trigger = screen.getByRole("button", { name: "Library: /acme/lib3" });
+    await waitFor(() => expect(trigger).toHaveFocus());
+    const chips = screen.getByRole("list", { name: "Active filters" });
+    await userEvent.click(
+      within(chips).getByRole("button", { name: "Remove filter Library: /acme/lib3" }),
+    );
+    await waitFor(() => expect(history.location.search).not.toContain("library"));
+    expect(screen.getByRole("button", { name: "Library" })).toBeInTheDocument();
   });
 
   it("pages with numbered pages, the next one fetched ahead", async () => {

@@ -265,6 +265,13 @@ describe("the libraries slice in Polish", () => {
     await userEvent.keyboard("{Escape}");
     await userEvent.click(screen.getByRole("button", { name: "Źródło" }));
     expect(await screen.findByRole("option", { name: "automatyczne" })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    // The library filter's picker, and its failure, in Polish (this stub knows no libraries list).
+    await userEvent.click(screen.getByRole("button", { name: "Biblioteka" }));
+    expect(screen.getByRole("combobox", { name: "Znajdź bibliotekę" })).toBeInTheDocument();
+    const failed = await screen.findByRole("alert");
+    expect(failed).toHaveTextContent("Nie udało się wczytać bibliotek.");
+    expect(within(failed).getByRole("button", { name: "Spróbuj ponownie" })).toBeInTheDocument();
   });
 
   it("follows an import in Polish", async () => {

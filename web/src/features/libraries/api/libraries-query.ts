@@ -1,8 +1,9 @@
 import { queryOptions } from "@tanstack/react-query";
-import { getJson } from "@/shared/lib/http";
+import { getJson, type QueryOf } from "@/shared/lib/http";
 import { LIBRARIES_KEY } from "@/shared/lib/query-keys";
 import { pageQueryOptions, type ServerSource } from "@/shared/ui/data-table/server-pages";
 import { pageOf } from "@/shared/ui/data-table/table-search";
+import type { LibraryChoices } from "@/shared/ui/library-combobox";
 import { JOBS_TABLE, type JobsView, jobsFilters, jobsParams } from "../model/jobs-view";
 import type { Job, JobList, LatestJobs, LibrariesResponse, Library } from "../model/library";
 import { LIBRARIES_TABLE, type ListView, listFilters, listParams } from "../model/list-view";
@@ -34,6 +35,30 @@ export function librariesSource(view: ListView, now: number = Date.now()): Serve
       })),
   };
 }
+
+/** Libraries offered by the jobs table's library filter per request: the API's largest page. */
+const PICKER_LIMIT = 200;
+
+/**
+ * The libraries whose ID, title or description holds `q`, by ID, for the jobs table's library
+ * filter (the library combobox asks again as the text changes). Under `list()`, so whatever
+ * refreshes the libraries list refreshes the picker too.
+ */
+export const pickerLibrariesQueryOptions = (q: string) =>
+  queryOptions({
+    queryKey: [...librariesKeys.list(), "picker", q] as const,
+    queryFn: ({ signal }): Promise<LibraryChoices> => {
+      const query = {
+        limit: PICKER_LIMIT,
+        sort: "id",
+        ...(q && { q }),
+      } satisfies QueryOf<"/api/v1/libraries">;
+      return getJson<LibrariesResponse>("/v1/libraries", { signal, query }).then((list) => ({
+        options: list.libraries.map((l) => ({ id: l.id, title: l.title, logo: l.logo })),
+        total: list.total,
+      }));
+    },
+  });
 
 /** The page of libraries a view shows (its page and size from the URL, else this browser's size). */
 export const librariesPageQueryOptions = (view: ListView) => {
