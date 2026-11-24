@@ -37,7 +37,14 @@ from exactdocs.identity.models import (
     LibraryRole,
     SignInPolicy,
 )
-from exactdocs_kernel import DEFAULT_LIMIT, LIBRARY_ID_PATTERN, MAX_LIMIT, MAX_NAME, Page
+from exactdocs_kernel import (
+    DEFAULT_LIMIT,
+    LIBRARY_ID_PATTERN,
+    MAX_LIMIT,
+    MAX_NAME,
+    MAX_OFFSET,
+    Page,
+)
 
 
 class _Dto(BaseModel):
@@ -52,6 +59,9 @@ class _PageQuery(_Dto):
     cursor: str | None = None
     """Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
     `sort` and filters of the request that returned it."""
+    offset: Annotated[int, Field(ge=0, le=MAX_OFFSET)] | None = None
+    """Jump to a page: skip this many matches, in the order and with the filters of the cursor
+    walk. Not with `cursor`; the page's `next_cursor` goes on from it."""
     q: str | None = Field(default=None, max_length=MAX_NAME)
     """Only items whose name contains this text, any case: a user's username, a token's name, a
     grant's username or group."""
@@ -879,6 +889,9 @@ class LibraryAccessLogQuery(_Dto):
     cursor: str | None = None
     """Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
     filters of the request that returned it."""
+    offset: Annotated[int, Field(ge=0, le=MAX_OFFSET)] | None = None
+    """Jump to a page: skip this many matches, in the order and with the filters of the cursor
+    walk. Not with `cursor`; the page's `next_cursor` goes on from it."""
     change: list[_Change] | None = Field(
         default=None, description="Only events of these changes; repeat for several."
     )

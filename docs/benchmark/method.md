@@ -91,10 +91,8 @@ retrieval configuration is tested against its accuracy under the run's first con
 answerable ones, so its intervals are about twice as wide as the whole set's: at 80% recall,
 roughly ±11 points against ±5. Differences per kind or per project of a few points say little.
 
-A result can be tested only when the report kept every case's outcome (`rows`). The recorded
-retrieval run of #347 kept aggregates only; BM25 was run again for #489 and its rows added (its
-quality numbers matched the recorded ones exactly), but the model configurations show intervals
-and tests only after the next recorded run.
+A result can be tested only when the report kept every case's outcome (`rows`). Every result of
+the recorded retrieval run does (it was recorded again for #490).
 
 ## Scoring tools that return text
 
@@ -191,12 +189,12 @@ the seed and resamples of the intervals
 ```bash
 just ingestion-bench --offline --out packages/exactdocs/evals/results
 EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
-  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@h6,bm25+ce@h2,hybrid:bge-small-en-v1.5+ce@h6,hybrid:snowflake-arctic-embed-s@h6,*+judge,*:hosted*' \
+  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@h6,bm25+ce@h2,bm25+ce@default,hybrid:bge-small-en-v1.5+ce@h6,hybrid:bge-small-en-v1.5+ce@default,hybrid:snowflake-arctic-embed-s@h6' \
   --out packages/exactdocs/evals/results
 ```
 
-The second is the recorded retrieval run ([The recorded run](../evals.md#the-recorded-run)): about
-1 h 40 min on a 10-core laptop, most of it embedding the corpus.
+The second is the recorded retrieval run ([The recorded run](../evals.md#the-recorded-run)): 3 h
+17 min on a 4-CPU runner, most of it embedding the corpus and the cross-encoder.
 
 ## Refreshing these pages
 

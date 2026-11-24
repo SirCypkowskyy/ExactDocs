@@ -830,7 +830,7 @@ class AccessLog(Protocol):
         ...
 
     async def newest(
-        self, where: AccessLogFilter, *, older_than: str | None, limit: int
+        self, where: AccessLogFilter, *, older_than: str | None, limit: int, offset: int = 0
     ) -> list[AccessEvent]:
         """Return the newest events that match, newest first.
 
@@ -838,6 +838,7 @@ class AccessLog(Protocol):
             where: Which events.
             older_than: Only events recorded before the one with this ID (a page's cursor).
             limit: Most events returned.
+            offset: How many of the matching events, newest first, to skip first.
 
         Returns:
             Up to ``limit`` events, by ID descending.

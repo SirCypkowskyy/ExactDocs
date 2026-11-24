@@ -179,6 +179,7 @@ from exactdocs_kernel import (
     SealedTextUnreadableError,
     decode_cursor,
     encode_cursor,
+    page_offset,
     parse_sort,
     sorted_page,
 )
@@ -1014,6 +1015,7 @@ class ListUsersUseCase:
             key=lambda u: u.id,
             limit=query.limit,
             cursor=query.cursor,
+            offset=query.offset,
         )
         return UserList.from_page(page)
 
@@ -1240,6 +1242,7 @@ class ListTokensUseCase:
             key=lambda t: t.id,
             limit=query.limit,
             cursor=query.cursor,
+            offset=query.offset,
         )
         return TokenList.from_page(page)
 
@@ -2484,7 +2487,12 @@ class Sharing:
         )
 
     async def log_page(
-        self, where: AccessLogFilter, *, limit: int, cursor: str | None
+        self,
+        where: AccessLogFilter,
+        *,
+        limit: int,
+        cursor: str | None,
+        offset: int | None = None,
     ) -> AccessLogPage:
         """Read a page of the access log, newest first, people by their names.
 
@@ -2492,12 +2500,14 @@ class Sharing:
             where: Which events.
             limit: Most events on the page.
             cursor: The ``next_cursor`` of the previous page; ``None`` for the first.
+            offset: How many matching events to skip instead of a cursor; ``None``: none.
 
         Returns:
             The page, its next cursor and how many events match.
         """
+        skip = page_offset(cursor=cursor, offset=offset)
         older_than = None if cursor is None else decode_cursor(cursor)
-        found = await self.log.newest(where, older_than=older_than, limit=limit + 1)
+        found = await self.log.newest(where, older_than=older_than, limit=limit + 1, offset=skip)
         events, more = found[:limit], len(found) > limit
         people = {e.actor for e in events if e.actor is not None} | {
             e.subject for e in events if e.kind is SubjectKind.USER and e.subject is not None
@@ -2650,6 +2660,7 @@ class ListLibraryGrantsUseCase:
             key=lambda g: f"{g.kind}:{g.subject}",
             limit=query.limit,
             cursor=query.cursor,
+            offset=query.offset,
         )
         creator = next((g.subject for g in everyone if g.role == LibraryRole.CREATOR.value), None)
         return LibraryGrantList.from_page(
@@ -2763,7 +2774,9 @@ class ListLibraryAccessLogUseCase:
             last = await self.sharing.log.newest(deleted, older_than=None, limit=1)
             since = last[0].id if last else None
         where = AccessLogFilter(library=library, changes=_changes(query.change), newer_than=since)
-        return await self.sharing.log_page(where, limit=query.limit, cursor=query.cursor)
+        return await self.sharing.log_page(
+            where, limit=query.limit, cursor=query.cursor, offset=query.offset
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2792,7 +2805,9 @@ class ListAccessLogUseCase:
             library=None if query.library is None else query.library.casefold(),
             changes=_changes(query.change),
         )
-        return await self.sharing.log_page(where, limit=query.limit, cursor=query.cursor)
+        return await self.sharing.log_page(
+            where, limit=query.limit, cursor=query.cursor, offset=query.offset
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

@@ -886,7 +886,7 @@ class InMemoryAccessLog:
         )
 
     async def newest(
-        self, where: AccessLogFilter, *, older_than: str | None, limit: int
+        self, where: AccessLogFilter, *, older_than: str | None, limit: int, offset: int = 0
     ) -> list[AccessEvent]:
         """Return the newest events that match, newest first.
 
@@ -894,12 +894,14 @@ class InMemoryAccessLog:
             where: Which events.
             older_than: Only events recorded before the one with this ID.
             limit: Most events returned.
+            offset: How many of the matching events, newest first, to skip first.
 
         Returns:
             Up to ``limit`` events, by ID descending.
         """
         found = self._matching(where)
-        return [e for e in found if older_than is None or e.id < older_than][:limit]
+        older = [e for e in found if older_than is None or e.id < older_than]
+        return older[offset : offset + limit]
 
     async def count(self, where: AccessLogFilter) -> int:
         """Count the events that match.

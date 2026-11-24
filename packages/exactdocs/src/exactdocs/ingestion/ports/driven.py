@@ -166,6 +166,7 @@ class JobRepository(Protocol):
         sort: Sort,
         after: tuple[SortValue, str] | None,
         limit: int,
+        offset: int = 0,
     ) -> Sequence[Job]:
         """Return up to ``limit`` of the jobs that pass the filter, in ``sort`` order.
 
@@ -177,6 +178,7 @@ class JobRepository(Protocol):
             sort: The order.
             after: The sort value and ID of the last job of the previous page; ``None`` starts.
             limit: At most this many jobs.
+            offset: How many of the jobs in order (after ``after``) to skip first.
 
         Returns:
             The jobs in order, with their problems.

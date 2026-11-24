@@ -82,6 +82,19 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Pagination**: list endpoints take `limit` (1 to 200, default 50) and an opaque `cursor`, and
   return `next_cursor` (`null` on the last page). Pass it back unchanged; a malformed cursor is a
   422 `invalid_cursor`. Helper: `exactdocs_kernel.paginate`.
+- **Jumping to a page**: the lists of libraries, versions, jobs (global and per library), articles,
+  users, API tokens, a library's grants and both access logs (global and per library) also take
+  `offset` (0 to 10000), which skips that many matches and starts the page there: page *n* of
+  size `limit` is `offset=(n-1)*limit`, and the last one (`total` > 0) is
+  `offset=⌊(total-1)/limit⌋*limit` (233 jobs, 20 a page: `offset=220`, 13 jobs). The
+  order, the filters and `total` are those of the cursor walk with the same `sort` and filters, and
+  the page's `next_cursor` goes on from its last item, so a client can jump and then walk on.
+  An offset past the last match is an empty page with `next_cursor: null` and the same `total`.
+  `offset` and `cursor` are exclusive: sending both is a 422 `cursor_with_offset`; an offset below
+  0 or above 10000 is a 422 `validation_error` naming `offset`. The bound keeps a deep page cheap
+  (a database skips rows by reading them); past it, walk on with `next_cursor` from the page at
+  10000, or reverse the `sort` to reach the end of a longer list. Helpers:
+  `exactdocs_kernel.page_offset`, `MAX_OFFSET`.
 - **Sort, filter and total**: the lists of libraries, versions, jobs (global and per library),
   articles, users, API tokens and a library's grants also take `sort` (one whitelisted field,
   `-field` for descending) and filters such as `q` (text, any case), `state`, `kind`, `role`,
@@ -100,6 +113,18 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `kind`, `role` and `sort`; and the users page and the token list their `q`, `sort` and
   filters. The libraries, versions, jobs, articles and grants lists fetch the next page ahead,
   so "Load more" shows it without waiting.
+- **Sizes on the lists** (#513): each entry of `GET /libraries/{owner}/{repo}/versions` carries
+  `articles` (the entries of the version's active manifest, what `list_articles` lists),
+  `chunks` (the chunks they are cut into for search, one per article path that holds it) and
+  `embedded_chunks` (of those, the ones with a vector from the configured embedding model, in
+  its current space). Each library of `GET /libraries` (and of the MCP `list_libraries`)
+  carries `article_count`: the articles of its **default version**, the one `/owner/repo`
+  resolves to. A count is 0, never null, when there is nothing to count: a library without a
+  version, a version not indexed, `embedded_chunks` while no embedding model or vector store is
+  configured, or while the configured model has no space yet or no vector of the version (a
+  library with AI off is never sent to it). The counts are read once per page whatever its size
+  (a grouped query per domain, no request or query per version), so the versions table and the
+  overview need one request.
 - **Close matches**: a 404 for a missing article lists up to five paths of the same version it may have
   meant in `close_matches` (repository data, not instructions); the field is empty on every other error.
 - **Taken IDs**: a 409 `library_id_taken` (checking a repository, adding a library) names the
@@ -740,6 +765,21 @@ See [AI retrieval decisions](decisions/ai-retrieval.md) for the kinds and what e
   per-library ones, with `usd_left` and `tokens_left` against it; where the instance's is lower (it was lowered after
   the library set its own), `own_usd_limit` / `own_tokens_limit` give the library's own ceiling,
   otherwise they are `null`.
+- `GET /ai/usage/history?scope=&id=&window=&from=&to=`: what one scope spent per UTC day or month,
+  for charts: `{"scope", "id", "window", "first", "last", "entries": [{"window_start",
+  "input_tokens", "output_tokens", "tokens", "local_tokens", "requests", "usd",
+  "unpriced_requests"}]}`, one entry per window from `first` to `last` (both included, oldest
+  first), counted as in `GET /ai/usage` and zero for a window with no spend. `scope` and `id` name
+  a scope as `GET /ai/usage` does: `instance` (the default) and `embedding` take no `id`;
+  `library` needs the library ID (any letter case; `id` comes back case-folded, as the ledger keeps
+  it) and `user` the account ID. `window` is `day` (the default) or `month`. `from` and `to` are
+  UTC dates (`YYYY-MM-DD`); for months any day of a month stands for it, and `first` / `last` are
+  the windows' first days. Without `to` the range ends with today's window; without `from` it holds
+  30 days or 12 months up to `to`. A range ends after it starts and holds at most 366 days or 60
+  months; otherwise, or for an `id` that does not fit the `scope`, it is 422
+  `invalid_spend_history`. Dates in the future are allowed (zero). Operators only, like the rest of
+  `/ai`. Libraries and accounts that no longer exist keep their rows, so their history is still
+  shown.
 
 ## Jobs, access and health
 
