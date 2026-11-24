@@ -116,7 +116,7 @@ question (characters / 4) and up to its first hit, and the share of the case's f
 holds.
 
 The scorer was calibrated on ExactDocs' own BM25 results for the whole golden set, scored both
-ways: at the `default` chunking it takes 99.5% of the hit and miss decisions (each expected
+ways: at the `default` chunking it takes 99.8% of the hit and miss decisions (each expected
 section's rank in the top 10, or a miss) as chunk-ID scoring does, against a criterion of 98%.
 The threshold, the sweep that chose it and every disagreement are in
 [Scoring text results](../evals.md#scoring-text-results).

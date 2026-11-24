@@ -16,26 +16,33 @@ is configured. It ran on this machine, so it indexed exactly what ExactDocs impo
 works, and how to repeat it: [Grounded Docs](../evals.md#grounded-docs) in the evals reference.
 
 The run of 24 November 2026 (Grounded Docs 3.4.1, both configurations, the whole golden set),
-next to ExactDocs' BM25 at `default` asked and scored the same way:
+next to ExactDocs' BM25 at `default` asked and scored the same way. A hit is a result that answers
+any section the case lists, a part or one of its alternatives, as in
+[Retrieval metrics](method.md#retrieval-metrics):
 
-- **Full-text search only.** Grounded Docs finds the expected section in its top 5 about as often
-  as ExactDocs' BM25 (recall@5 78.6% against 81.7%; the paired test finds no significant
-  difference), but less often in its top 10 (80.5% against 89.1%, significant), and its nDCG@10
-  is lower (0.650 against 0.706, significant). It returns 7.5 results per question rather than
-  10, because it merges the nearby matches of a page into one result.
-- **With `bge-small-en-v1.5`.** It puts the expected section first more often than ExactDocs'
-  BM25 (recall@1 61.4% against 52.1%, significant); recall@5, recall@10, MRR and nDCG@10 do not
-  differ significantly (80.5% against 81.7% at 5). Against ExactDocs' hybrid search with the same
-  model (the recorded run, scored by chunk ID) only recall@10 differs significantly (84.6%
-  against 89.9%).
+- **Full-text search only.** Grounded Docs finds a section that answers in its top 5 a little
+  less often than ExactDocs' BM25 (recall@5 83.5% against 87.6%; the paired test finds no
+  significant difference, p 0.08), and less often in its top 10 (85.4% against 93.6%,
+  significant); its nDCG@10 is lower (0.659 against 0.714, significant), and its recall@1 is the
+  same (58.8%). It returns 7.5 results per question rather than 10, because it merges the nearby
+  matches of a page into one result.
+- **With `bge-small-en-v1.5`.** It puts a section that answers first more often than ExactDocs'
+  BM25 (recall@1 71.5% against 58.8%, significant), and its MRR is higher (0.785 against 0.711,
+  significant); recall@5 and nDCG@10 do not differ significantly (85.8% against 87.6% at 5), and
+  recall@10 is lower (89.1% against 93.6%, significant). Against ExactDocs' hybrid search with
+  the same model (the recorded run, scored by chunk ID), recall@1 is higher (71.5% against
+  64.4%) and recall@10 lower (89.1% against 93.6%), both only just significant (p 0.0495 and
+  0.041); recall@5, MRR and nDCG@10 do not differ significantly.
 - **Twice the context.** Its results hold 7,360 to 7,935 estimated tokens per question, against
-  ExactDocs' 3,464, and 2,249 to 2,395 tokens up to the first hit, against 736. That bigger
+  ExactDocs' 3,464, and 1,998 to 2,324 tokens up to the first hit, against 656. That bigger
   context also holds more of the cases' facts (92% to 94%, against 87%).
 - **Changelogs are left out.** Its default exclusion patterns skip `changelog.md` and
   `changelog.mdx` (and hidden files), so it did not index Pydantic v1's and Zod v4's changelogs,
-  and five answerable Zod v4 cases expect `changelog.mdx`. Without those five (262 answerable
-  cases), recall@5 is 80.2% full-text and 82.1% with the embedding model, against ExactDocs'
-  81.3%. The `version-change` questions, which lean on such pages, are where it trails most.
+  and four answerable Zod v4 cases list no section outside `changelog.mdx` (two more list it
+  next to another page). Without those four (263 answerable cases), recall@5 is 84.8%
+  full-text and 87.1% with the embedding model, against ExactDocs' 87.5%. The `version-change`
+  questions, which lean on such pages, are where it trails most (recall@5 80.4% in both
+  configurations, against 92.9%).
 - **No result of another version** from either tool (wrong-version rate 0); 80% of Grounded Docs'
   results and 72% of ExactDocs' are version-neutral, so this says little on its own.
 - **Indexing** the whole corpus (1,716 articles, 6,263 chunks) took 95 seconds with full-text
@@ -51,9 +58,11 @@ next to ExactDocs' BM25 at `default` asked and scored the same way:
   MCP tool with the case's library and version and 10 results, the cut-off ExactDocs is measured
   at.
 - **Same scorer.** Grounded Docs' results and ExactDocs' BM25 at `default`, asked in the same run,
-  were both scored from their text. The paired tests compare the two case by case. ExactDocs'
-  recorded `bm25` and `hybrid:bge-small-en-v1.5` (scored by chunk ID, which agrees with the text
-  scorer on 99.5% of decisions at `default`) are listed for reference.
+  were both scored from their text, with the rules chunk-ID scoring uses: recall@k and MRR count
+  the first hit on any section a case lists, section recall and nDCG@10 count each part once.
+  The paired tests compare the two case by case. ExactDocs' recorded `bm25` and
+  `hybrid:bge-small-en-v1.5` (scored by chunk ID, which agrees with the text scorer on 99.8% of
+  decisions at `default`) are listed for reference.
 - **Its documented defaults.** Scraping, its default exclusion patterns, splitting, search and
   result assembly were left as they ship. Three settings were set: telemetry off, the corpus
   folder as the one folder it may read, and the embedding request timeout raised from 30 to 300
@@ -83,10 +92,10 @@ What to keep in mind:
 
 <!-- bench:grounded-docs-run -->
 - Grounded Docs 3.4.1 (npm `@arabold/docs-mcp-server`, integrity `sha512-IZQKYKs3p939Tt7N...`), Node.js v22.23.5; questions through its `search_docs` MCP tool with the case's library and version, 10 results.
-- Run 2026-11-24T08:24:46+00:00: golden set 321 cases, fingerprint `sha256:7dd51c59057c279a`, projects starlette, pydantic, tanstack-query, zod, electron; ExactDocs commit `2fff1f699f034a8647f65ebf7bb8a723f9aeca64`, Python 3.14.6, Linux x86_64, 4 CPUs.
+- Run 2026-11-24T20:47:42+00:00: golden set 321 cases, fingerprint `sha256:a00997851150e3b0`, projects starlette, pydantic, tanstack-query, zod, electron; ExactDocs commit `d2de6fdf9335f83261a061c7fd9876705d87b998`, Python 3.14.6, Linux x86_64, 4 CPUs.
 - `full-text`: no embedding model: full-text search only, what it does when no provider credentials are set. Environment: none.
 - `bge-small-en-v1.5`: full-text and vector search, BAAI/bge-small-en-v1.5 served locally through an OpenAI-compatible endpoint (OPENAI_API_BASE). Environment: `DOCS_MCP_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5`, `OPENAI_API_BASE=<endpoint>/v1`, `OPENAI_API_KEY=local`.
-  Embedding model BAAI/bge-small-en-v1.5 (revision `aa8f8b060edb`, 384 dimensions, stored at 512), served by retrieval_eval.openai_embeddings (fastembed, the ONNX file `exactdocs models pull` fetched): indexing 6,263 texts, 2,466,665 tokens, 1,599 s of embedding (0 requests abandoned by the client); questions 321 texts, 5 s.
+  Embedding model BAAI/bge-small-en-v1.5 (revision `aa8f8b060edb`, 384 dimensions, stored at 512), served by retrieval_eval.openai_embeddings (fastembed, the ONNX file `exactdocs models pull` fetched): indexing 6,263 texts, 2,466,665 tokens, 1,599 s of embedding (0 requests abandoned by the client); questions 321 texts, 4 s.
 <!-- /bench -->
 
 <!-- bench:grounded-docs -->
@@ -94,51 +103,51 @@ What to keep in mind:
 
 | Tool and configuration | Scored by | recall@1 | recall@5 | recall@10 | MRR | nDCG@10 | wrong version | version-neutral | context tokens / question | tokens to first hit |
 |---|---|---|---|---|---|---|---|---|---|---|
-| ExactDocs bm25 @ default | text | 52.1% (46.1-58.1) | 81.7% (76.8-86.1) | 89.1% (85.4-92.9) | 0.651 (0.604-0.698) | 0.706 (0.668-0.743) | 0.0% | 72.2% | 3,464 (3,320-3,614) | 736 |
-| ExactDocs bm25 @ default | chunk ID | 52.1% (46.1-58.1) | 81.7% (76.8-86.1) | 89.1% (85.4-92.9) | 0.651 (0.604-0.698) | 0.705 (0.667-0.742) | 0.0% | - | - | - |
-| ExactDocs hybrid:bge-small-en-v1.5 @ default | chunk ID | 56.5% (50.6-62.5) | 84.3% (79.8-88.4) | 89.9% (86.1-93.3) | 0.688 (0.642-0.734) | 0.741 (0.705-0.778) | 0.0% | - | - | - |
-| Grounded Docs full-text | text | 52.4% (46.4-58.4) | 78.6% (73.8-83.5) | 80.5% (75.7-85.0) | 0.632 (0.582-0.683) | 0.650 (0.607-0.693) | 0.0% | 80.9% | 7,935 (7,640-8,250) | 2,395 |
-| Grounded Docs bge-small-en-v1.5 | text | 61.4% (55.8-67.4) | 80.5% (75.7-85.0) | 84.6% (80.2-88.8) | 0.702 (0.654-0.749) | 0.718 (0.678-0.757) | 0.0% | 79.7% | 7,360 (7,081-7,657) | 2,249 |
+| ExactDocs bm25 @ default | text | 58.8% (52.8-64.8) | 87.6% (83.5-91.4) | 93.6% (90.6-96.2) | 0.711 (0.666-0.754) | 0.714 (0.676-0.751) | 0.0% | 72.2% | 3,464 (3,320-3,614) | 656 |
+| ExactDocs bm25 @ default | chunk ID | 58.8% (52.8-64.8) | 87.6% (83.5-91.4) | 93.6% (90.6-96.2) | 0.711 (0.666-0.754) | 0.714 (0.676-0.751) | 0.0% | - | - | - |
+| ExactDocs hybrid:bge-small-en-v1.5 @ default | chunk ID | 64.4% (58.8-70.0) | 90.3% (86.5-93.6) | 93.6% (90.6-96.2) | 0.756 (0.714-0.798) | 0.749 (0.712-0.785) | 0.0% | - | - | - |
+| Grounded Docs full-text | text | 58.8% (52.8-64.8) | 83.5% (79.0-88.0) | 85.4% (81.3-89.5) | 0.689 (0.642-0.737) | 0.659 (0.616-0.702) | 0.0% | 80.9% | 7,935 (7,640-8,250) | 2,324 |
+| Grounded Docs bge-small-en-v1.5 | text | 71.5% (66.3-76.8) | 85.8% (81.7-89.9) | 89.1% (85.4-92.9) | 0.785 (0.743-0.826) | 0.731 (0.691-0.770) | 0.0% | 79.7% | 7,360 (7,081-7,657) | 1,998 |
 
 ### Paired tests against ExactDocs
 
 | Grounded Docs | against | recall@1 | recall@5 | recall@10 | MRR | nDCG@10 |
 |---|---|---|---|---|---|---|
-| full-text | ExactDocs bm25 @ default (text) | +0.4 points (-6.4 to +7.1), p 0.912, not significant | -3.0 points (-8.2 to +1.9), p 0.253, not significant | -8.6 points (-13.5 to -3.8), p 0.000936, significant | -0.019 (-0.068 to +0.030), p 0.466, not significant | -0.056 (-0.096 to -0.016), p 0.0061, significant |
-| full-text | ExactDocs bm25 @ default (chunk ID) | +0.4 points (-6.4 to +7.1), p 0.912, not significant | -3.0 points (-8.2 to +1.9), p 0.253, not significant | -8.6 points (-13.5 to -3.8), p 0.000936, significant | -0.019 (-0.068 to +0.030), p 0.466, not significant | -0.055 (-0.095 to -0.015), p 0.0068, significant |
-| full-text | ExactDocs hybrid:bge-small-en-v1.5 @ default (chunk ID) | -4.1 points (-11.2 to +3.0), p 0.266, not significant | -5.6 points (-10.9 to -0.4), p 0.0402, significant | -9.4 points (-14.2 to -4.5), p 0.000306, significant | -0.055 (-0.110 to -0.001), p 0.0499, significant | -0.091 (-0.136 to -0.045), p 0.0002, significant |
-| bge-small-en-v1.5 | ExactDocs bm25 @ default (text) | +9.4 points (+2.6 to +16.1), p 0.00878, significant | -1.1 points (-6.7 to +4.5), p 0.694, not significant | -4.5 points (-9.4 to +0.4), p 0.0725, not significant | +0.050 (-0.002 to +0.102), p 0.0605, not significant | +0.012 (-0.030 to +0.055), p 0.574, not significant |
-| bge-small-en-v1.5 | ExactDocs bm25 @ default (chunk ID) | +9.4 points (+2.6 to +16.1), p 0.00878, significant | -1.1 points (-6.7 to +4.5), p 0.694, not significant | -4.5 points (-9.4 to +0.4), p 0.0725, not significant | +0.050 (-0.002 to +0.102), p 0.0605, not significant | +0.013 (-0.029 to +0.056), p 0.554, not significant |
-| bge-small-en-v1.5 | ExactDocs hybrid:bge-small-en-v1.5 @ default (chunk ID) | +4.9 points (-2.2 to +12.0), p 0.193, not significant | -3.8 points (-9.0 to +1.5), p 0.177, not significant | -5.2 points (-10.1 to -0.4), p 0.0357, significant | +0.014 (-0.041 to +0.067), p 0.616, not significant | -0.023 (-0.068 to +0.021), p 0.322, not significant |
+| full-text | ExactDocs bm25 @ default (text) | +0.0 points (-6.7 to +6.7), p 1, not significant | -4.1 points (-8.6 to +0.4), p 0.0807, not significant | -8.2 points (-12.4 to -4.1), p 0.000191, significant | -0.022 (-0.069 to +0.027), p 0.368, not significant | -0.055 (-0.096 to -0.015), p 0.0072, significant |
+| full-text | ExactDocs bm25 @ default (chunk ID) | +0.0 points (-6.7 to +6.7), p 1, not significant | -4.1 points (-8.6 to +0.4), p 0.0807, not significant | -8.2 points (-12.4 to -4.1), p 0.000191, significant | -0.022 (-0.069 to +0.027), p 0.368, not significant | -0.055 (-0.096 to -0.015), p 0.0072, significant |
+| full-text | ExactDocs hybrid:bge-small-en-v1.5 @ default (chunk ID) | -5.6 points (-12.7 to +1.5), p 0.125, not significant | -6.7 points (-11.2 to -2.2), p 0.0054, significant | -8.2 points (-12.7 to -3.8), p 0.000606, significant | -0.067 (-0.118 to -0.014), p 0.0138, significant | -0.090 (-0.136 to -0.044), p 0.0002, significant |
+| bge-small-en-v1.5 | ExactDocs bm25 @ default (text) | +12.7 points (+6.0 to +19.9), p 0.00049, significant | -1.9 points (-6.4 to +3.0), p 0.441, not significant | -4.5 points (-8.2 to -0.8), p 0.0295, significant | +0.074 (+0.024 to +0.126), p 0.0049, significant | +0.016 (-0.026 to +0.059), p 0.466, not significant |
+| bge-small-en-v1.5 | ExactDocs bm25 @ default (chunk ID) | +12.7 points (+6.0 to +19.9), p 0.00049, significant | -1.9 points (-6.4 to +3.0), p 0.441, not significant | -4.5 points (-8.2 to -0.8), p 0.0295, significant | +0.074 (+0.024 to +0.126), p 0.0049, significant | +0.016 (-0.026 to +0.059), p 0.466, not significant |
+| bge-small-en-v1.5 | ExactDocs hybrid:bge-small-en-v1.5 @ default (chunk ID) | +7.1 points (+0.4 to +13.9), p 0.0495, significant | -4.5 points (-9.0 to +0.0), p 0.0532, not significant | -4.5 points (-8.6 to +0.0), p 0.041, significant | +0.029 (-0.022 to +0.079), p 0.272, not significant | -0.018 (-0.064 to +0.026), p 0.422, not significant |
 
 ### Every metric scored from the text
 
 | tool | recall@1 | recall@5 | recall@10 | section recall@5 | MRR | nDCG@10 | wrong version | no answer | version-neutral | unmatched | results / q | context tokens / q | tokens to first hit | facts found |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| ExactDocs bm25 @ default | 52.1% | 81.7% | 89.1% | 74.9% | 0.651 | 0.706 | 0.0% | 0.0% | 72.2% | 0.0% | 10.0 | 3464 | 736 | 87.0% |
-| Grounded Docs full-text | 52.4% | 78.6% | 80.5% | 71.1% | 0.632 | 0.650 | 0.0% | 0.0% | 80.9% | 0.2% | 7.5 | 7935 | 2395 | 92.3% |
-| Grounded Docs bge-small-en-v1.5 | 61.4% | 80.5% | 84.6% | 73.4% | 0.702 | 0.718 | 0.0% | 0.0% | 79.7% | 0.5% | 7.0 | 7360 | 2249 | 93.5% |
+| ExactDocs bm25 @ default | 58.8% | 87.6% | 93.6% | 76.6% | 0.711 | 0.714 | 0.0% | 0.0% | 72.2% | 0.0% | 10.0 | 3464 | 656 | 87.0% |
+| Grounded Docs full-text | 58.8% | 83.5% | 85.4% | 72.7% | 0.689 | 0.659 | 0.0% | 0.0% | 80.9% | 0.2% | 7.5 | 7935 | 2324 | 92.3% |
+| Grounded Docs bge-small-en-v1.5 | 71.5% | 85.8% | 89.1% | 75.4% | 0.785 | 0.731 | 0.0% | 0.0% | 79.7% | 0.5% | 7.0 | 7360 | 1998 | 93.5% |
 
 ### recall@5 by question kind
 
 | Kind | ExactDocs bm25 @ default | Grounded Docs full-text | Grounded Docs bge-small-en-v1.5 |
 |---|---|---|---|
-| `conceptual` | 83.0% | 81.1% | 83.0% |
-| `cross-page` | 70.8% | 72.9% | 87.5% |
-| `how-to` | 82.8% | 79.3% | 81.0% |
-| `identifier-lookup` | 82.7% | 82.7% | 82.7% |
+| `conceptual` | 86.8% | 83.0% | 86.8% |
+| `cross-page` | 87.5% | 87.5% | 95.8% |
+| `how-to` | 84.5% | 82.8% | 82.8% |
+| `identifier-lookup` | 86.5% | 84.6% | 84.6% |
 | `unanswerable` | - | - | - |
-| `version-change` | 87.5% | 76.8% | 69.6% |
+| `version-change` | 92.9% | 80.4% | 80.4% |
 
 ### recall@5 and context by project
 
 | Project | ExactDocs bm25 @ default | Grounded Docs full-text | Grounded Docs bge-small-en-v1.5 |
 |---|---|---|---|
-| starlette | 85.2%, 3,277 tokens | 94.4%, 5,363 tokens | 90.7%, 4,757 tokens |
-| pydantic | 81.8%, 4,119 tokens | 67.3%, 8,523 tokens | 78.2%, 8,119 tokens |
-| tanstack-query | 75.0%, 3,668 tokens | 82.7%, 7,952 tokens | 78.8%, 7,123 tokens |
-| zod | 86.8%, 3,386 tokens | 79.2%, 7,360 tokens | 79.2%, 7,082 tokens |
-| electron | 79.2%, 2,862 tokens | 69.8%, 10,413 tokens | 75.5%, 9,651 tokens |
+| starlette | 90.7%, 3,277 tokens | 96.3%, 5,363 tokens | 94.4%, 4,757 tokens |
+| pydantic | 89.1%, 4,119 tokens | 72.7%, 8,523 tokens | 83.6%, 8,119 tokens |
+| tanstack-query | 80.8%, 3,668 tokens | 86.5%, 7,952 tokens | 88.5%, 7,123 tokens |
+| zod | 94.3%, 3,386 tokens | 86.8%, 7,360 tokens | 83.0%, 7,082 tokens |
+| electron | 83.0%, 2,862 tokens | 75.5%, 10,413 tokens | 79.2%, 9,651 tokens |
 
 ### Indexing
 
@@ -170,5 +179,5 @@ Articles not indexed:
 - pydantic v1.10.22: `docs/.benchmarks_table.md`, `docs/changelog.md`
 - zod v4.0.17: `packages/docs/content/v4/changelog.mdx`
 - zod v4.6.7: `packages/docs/content/v4/changelog.mdx`
-- answerable cases whose first expected article is among them: 5 (zod v4.0.17: What should I use instead of .strict() and .passthrough() on objects?, zod v4.0.17: My .default("tuna") after a .transform() now has to be a number; how do I get the old pre-parse default?, zod v4.0.17: z.record(z.string()) used to work; why is it rejected now?, zod v4.0.17: An error map passed to .parse() no longer overrides the message set on my schema; is that intended?, zod v4.6.7: An object with an a: z.unknown() field now fails when a is missing; did that change?)
+- answerable cases that list no other article: 4 (zod v4.0.17: What should I use instead of .strict() and .passthrough() on objects?, zod v4.0.17: My .default("tuna") after a .transform() now has to be a number; how do I get the old pre-parse default?, zod v4.0.17: z.record(z.string()) used to work; why is it rejected now?, zod v4.6.7: An object with an a: z.unknown() field now fails when a is missing; did that change?)
 <!-- /bench -->

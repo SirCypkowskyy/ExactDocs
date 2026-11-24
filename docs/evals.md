@@ -1074,7 +1074,7 @@ Changing the release means recording its responses for the tests again (below) a
   configuration is tested against it, case by case (McNemar mid-p for recall@1, @5 and @10, the
   sign-flip permutation test for MRR and nDCG@10). The report also lists ExactDocs' `bm25` and
   `hybrid:bge-small-en-v1.5` at `default` from the recorded retrieval benchmark run
-  (`results/retrieval.json`, scored by chunk ID, which agrees with the text scorer on 99.5% of
+  (`results/retrieval.json`, scored by chunk ID, which agrees with the text scorer on 99.8% of
   decisions at `default`) with paired tests against their rows, when that run measured the same
   golden set on the same projects.
 - **Indexing time** is the wall time of each `scrape` command (the Node.js start included, about
@@ -1116,7 +1116,7 @@ environment variables set), `embedding` (`model`, `revision`, `dimensions`, `sto
 (the text scorer's metrics overall, by kind and by project), `context_tokens_interval`, `rows`
 (every case's row, for intervals and paired tests), `versus` (per ExactDocs result: `against`,
 `scored_by`, `tests`), `errors` (questions whose search failed, scored as empty) and
-`cases_not_indexed` (answerable cases whose first expected article was not indexed). The command
+`cases_not_indexed` (answerable cases none of whose listed articles was indexed). The command
 exits with 1 when a question failed, a version got nothing indexed, or a chunk of the vector
 configuration got no vector (`problems`). `grounded-docs.md` is the summary; `just bench-pages`
 fills [Comparison with other tools](benchmark/comparison.md) from the recorded run.
@@ -1132,7 +1132,8 @@ retrieval benchmark's tiny corpus in both configurations and on three synthetic 
 path replaced by `file:///corpus`) through a stand-in (`tests/fixtures/grounded_docs_stand_in.py`).
 The data directories stay in `<home>/stores/` after a run, for the agent benchmark's Grounded Docs
 arm (#495) to search; `--resume` reuses them and asks the questions again, which is how a
-scorer change is applied without indexing again.
+scorer change is applied without indexing again (about three minutes on 4 CPUs for both
+configurations, the ExactDocs baseline included).
 
 ## The agent benchmark
 
