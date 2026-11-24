@@ -1,9 +1,7 @@
-import { Link } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import { Pin } from "lucide-react";
-import { Count, RelativeTime, VersionCell } from "@/shared/ui/data-table/cells";
+import { Count, LibraryCell, RelativeTime, VersionCell } from "@/shared/ui/data-table/cells";
 import type { TableFilter } from "@/shared/ui/data-table/use-data-table";
-import { LibraryMark } from "@/shared/ui/library-mark";
 import { Tooltip } from "@/shared/ui/tooltip";
 import type { listMessages } from "../messages/list";
 import type { Library } from "../model/library";
@@ -13,36 +11,6 @@ import { SyncCell } from "./sync-status";
 /** The libraries table's columns and filters (blocks-map §2.3, "Libraries"). */
 
 type ListMessages = (typeof listMessages)["en"];
-
-/** The library: its mark, its title (or ID) linking to it, the mono ID, and from `lg` one line of its description. */
-function LibraryName({ library }: { library: Library }) {
-  const [, owner = "", repo = ""] = library.id.split("/");
-  return (
-    <span className="flex min-w-0 items-start gap-3">
-      {/* #504: `logo` once the API sends one. */}
-      <LibraryMark id={library.id} size="md" className="mt-0.5" />
-      <span className="flex min-w-0 flex-col">
-        <Link
-          to="/libraries/$owner/$repo"
-          params={{ owner, repo }}
-          className="w-fit rounded font-medium underline-offset-2 [overflow-wrap:anywhere] outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {library.title || library.id}
-        </Link>
-        {library.title && (
-          <span className="font-mono text-small text-muted-foreground [overflow-wrap:anywhere]">
-            {library.id}
-          </span>
-        )}
-        {library.description && (
-          <span className="max-w-[48ch] truncate text-small text-muted-foreground max-lg:hidden">
-            {library.description}
-          </span>
-        )}
-      </span>
-    </span>
-  );
-}
 
 /** The version `/owner/repo` resolves to, its commit, and a pin when an owner chose it. */
 function DefaultVersion({ library, t }: { library: Library; t: ListMessages["row"] }) {
@@ -71,7 +39,15 @@ export const columnsOf = (t: ListMessages): ColumnDef<Library>[] => [
     header: t.columns.library,
     enableHiding: false,
     meta: { priority: 1, skeleton: "avatar" },
-    cell: ({ row }) => <LibraryName library={row.original} />,
+    cell: ({ row }) => (
+      // #504: `logo` once the API sends one.
+      <LibraryCell
+        id={row.original.id}
+        title={row.original.title}
+        description={row.original.description}
+        size="md"
+      />
+    ),
   },
   {
     id: "default_version",

@@ -18,6 +18,7 @@ import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { TestRouter } from "@/shared/lib/test-router";
 import { ConfirmDialog } from "../confirm-dialog";
 import { TooltipProvider } from "../tooltip";
+import { LibraryCell } from "./cells";
 import { DataTable } from "./data-table";
 import { DataTablePagination } from "./pagination";
 import type { RowAction } from "./row-actions";
@@ -299,6 +300,24 @@ describe("DataTable v2 in client mode", () => {
     expect(JSON.parse(localStorage.getItem("exactdocs-table-sizes") ?? "{}")).toEqual({
       things: 5,
     });
+  });
+});
+
+describe("LibraryCell", () => {
+  it("links the title, with the ID and one line of description under it", async () => {
+    renderAt("/things", () => (
+      <LibraryCell id="/acme/payments" title="Acme Payments" description="Charge cards." />
+    ));
+    const link = await screen.findByRole("link", { name: "Acme Payments" });
+    expect(link).toHaveAttribute("href", "/libraries/acme/payments");
+    expect(screen.getByText("/acme/payments")).toHaveClass("font-mono");
+    expect(screen.getByText("Charge cards.")).toHaveClass("max-lg:hidden", "truncate");
+  });
+
+  it("links the mono ID alone when there is nothing else", async () => {
+    renderAt("/things", () => <LibraryCell id="/acme/payments" />);
+    const link = await screen.findByRole("link", { name: "/acme/payments" });
+    expect(within(link).getByText("/acme/payments")).toHaveClass("font-mono");
   });
 });
 

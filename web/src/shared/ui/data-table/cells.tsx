@@ -87,43 +87,66 @@ export function VersionCell({
   );
 }
 
-/** A library: its mark, then its title over its mono ID (or the ID alone), linking to its page. */
+const libraryLink =
+  "rounded underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring";
+
+/**
+ * A library: its mark, then its mono ID linking to its page. With a title, the title is the link
+ * and the ID sits under it; a description adds one muted line from `lg` up.
+ */
 export function LibraryCell({
   id,
   title,
+  description,
   logo,
   size = "sm",
   link = true,
 }: {
   id: string;
   title?: string | null | undefined;
+  /** One truncated line under the ID, from `lg` up (the libraries list). */
+  description?: string | null | undefined;
   logo?: string | null | undefined;
   size?: "sm" | "md";
   link?: boolean;
 }) {
   const [, owner = "", repo = ""] = id.split("/");
-  const name = title ? (
-    <span className="flex min-w-0 flex-col">
-      <span className="truncate font-medium">{title}</span>
-      <span className="truncate font-mono text-small text-muted-foreground">{id}</span>
-    </span>
-  ) : (
-    <span className="truncate font-mono text-mono">{id}</span>
-  );
+  const linked = (children: ReactNode, className: string) =>
+    link && owner && repo ? (
+      <Link
+        to="/libraries/$owner/$repo"
+        params={{ owner, repo }}
+        className={cn(libraryLink, className)}
+      >
+        {children}
+      </Link>
+    ) : (
+      <span className={className}>{children}</span>
+    );
+  if (!title && !description) {
+    return (
+      <span className="flex min-w-0 items-center gap-2">
+        <LibraryMark id={id} logo={logo} size={size} />
+        {linked(<span className="truncate font-mono text-mono">{id}</span>, "min-w-0")}
+      </span>
+    );
+  }
   return (
-    <span className="flex min-w-0 items-center gap-2">
-      <LibraryMark id={id} logo={logo} size={size} />
-      {link && owner && repo ? (
-        <Link
-          to="/libraries/$owner/$repo"
-          params={{ owner, repo }}
-          className="min-w-0 rounded underline-offset-2 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-        >
-          {name}
-        </Link>
-      ) : (
-        name
-      )}
+    <span className={cn("flex min-w-0 items-start", size === "md" ? "gap-3" : "gap-2")}>
+      <LibraryMark id={id} logo={logo} size={size} className="mt-0.5" />
+      <span className="flex min-w-0 flex-col">
+        {linked(title || id, "w-fit font-medium [overflow-wrap:anywhere]")}
+        {title && (
+          <span className="font-mono text-small text-muted-foreground [overflow-wrap:anywhere]">
+            {id}
+          </span>
+        )}
+        {description && (
+          <span className="max-w-[48ch] truncate text-small text-muted-foreground max-lg:hidden">
+            {description}
+          </span>
+        )}
+      </span>
     </span>
   );
 }
