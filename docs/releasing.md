@@ -406,7 +406,9 @@ on libSQL), the Docker image build, scan and smoke tests, the `-ai` and `-local`
 with the upgrade check and the browser end-to-end test. They run
 
 - on a pull request with the label **`run integration`**: adding it starts them, and each push
-  runs them again while it is on (adding any other label starts nothing). The label is defined in
+  runs them again while it is on (adding any other label starts nothing). A pull request from a
+  fork runs them only when the label is added, on the commit it was added to, never on a later
+  push: look at the new commits, then remove the label and add it again. The label is defined in
   `.github/labels.yml`; create it once with `.agents/skills/working-on-issues/scripts/sync-labels.sh`;
 - on a manual run of CI with the input `integration` (*Actions → CI → Run workflow*, or
   `gh workflow run ci.yml --ref <branch> -f integration=true`);
