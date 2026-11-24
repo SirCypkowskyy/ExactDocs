@@ -203,6 +203,7 @@ export const messages = defineMessages(
       notConfigured: "No longer offered by this server",
       link: (name: string) => `Link ${name}`,
       unlink: "Unlink",
+      unlinkName: (name: string) => `Unlink ${name}`,
       cannotUnlink: (name: string) =>
         `This is your only way to sign in: the account was created with ${name} and has no password, so it can't be unlinked.`,
       confirmTitle: (name: string) => `Unlink ${name}?`,
@@ -456,6 +457,7 @@ export const messages = defineMessages(
       notConfigured: "Ten serwer już go nie oferuje",
       link: (name) => `Powiąż konto ${name}`,
       unlink: "Odłącz",
+      unlinkName: (name) => `Odłącz ${name}`,
       cannotUnlink: (name) =>
         `To Twój jedyny sposób logowania: konto utworzono przez ${name} i nie ma ono hasła, więc nie można go odłączyć.`,
       confirmTitle: (name) => `Odłączyć ${name}?`,

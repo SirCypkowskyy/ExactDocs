@@ -20,22 +20,34 @@ import {
 } from "../model/password";
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from "../model/session";
 import { focusField } from "./focus-field";
+import { LinkedProviders } from "./linked-providers";
 import { PasswordInput } from "./password-input";
 
 /*
- * Account → Sign-in (#505, blocks-map §3): how this person signs in, one Section per subject.
- * Today: the password. Linked sign-in providers (#506) join as the next Section of this stack.
+ * Account → Sign-in (#505, #506, blocks-map §3): how this person signs in, one Section per
+ * subject: the password, then the linked sign-in providers.
  */
 
 const ALERT_ID = "password-alert";
 const inputId = (field: PasswordField) => `password-${field}`;
 const HIDDEN: Record<PasswordField, boolean> = { current: false, next: false, confirm: false };
 
-export function SignInSettings() {
+export function SignInSettings({
+  linked,
+  linkError,
+  onLinkResultSeen,
+}: {
+  /** `?linked=<provider>` after a link finished (#506). */
+  linked?: string | undefined;
+  /** `?link_error=<code>` after a link was refused. */
+  linkError?: string | undefined;
+  /** Drops both from the URL once they were shown. */
+  onLinkResultSeen?: (() => void) | undefined;
+} = {}) {
   return (
     <div className="flex flex-col gap-12">
       <PasswordSection />
-      {/* #506: the "Linked sign-in providers" Section goes here. */}
+      <LinkedProviders linked={linked} linkError={linkError} onLinkResultSeen={onLinkResultSeen} />
     </div>
   );
 }

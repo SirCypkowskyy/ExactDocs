@@ -24,7 +24,12 @@ function mount(session: unknown = signedIn, respond?: () => Response | Promise<R
   const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
     respond ? respond() : new Response(null, { status: 204 }),
   );
-  vi.stubGlobal("fetch", fetchMock);
+  // The linked-providers list on the same tab (#506) has its own tests: answer it apart.
+  vi.stubGlobal("fetch", (url: string, init?: RequestInit) =>
+    url.endsWith("/account/providers")
+      ? Promise.resolve(json({ has_password: true, providers: [] }))
+      : fetchMock(url, init),
+  );
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   client.setQueryData(["session"], session);
   render(
