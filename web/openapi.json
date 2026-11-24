@@ -2697,6 +2697,149 @@
         }
       }
     },
+    "/api/v1/stats/jobs": {
+      "get": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Get Job Stats",
+        "description": "Count the jobs queued on each UTC day from `from` to `to`, by state and by kind.\n\nEvery day of the range is listed, a day without jobs counting 0, and each day lists\nevery state and every kind. A job counts on the day it was queued, in the state it is\nin now. Only `bucket=day` exists. The range is at most 366 days; one that ends before\nit starts or is longer is a 422 `invalid_range`. Operators only (a session or an API\ntoken of an `admin`): the counts cover every library.",
+        "operationId": "ingestion-get_job_stats",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "bucket",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "const": "day",
+              "type": "string",
+              "description": "How jobs are grouped: `day` (UTC days) is the only bucket.",
+              "default": "day",
+              "title": "Bucket"
+            },
+            "description": "How jobs are grouped: `day` (UTC days) is the only bucket."
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The first UTC day counted (`YYYY-MM-DD`); default: 29 days before `to`. At most 366 days are counted at once.",
+              "title": "From"
+            },
+            "description": "The first UTC day counted (`YYYY-MM-DD`); default: 29 days before `to`. At most 366 days are counted at once."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The last UTC day counted (`YYYY-MM-DD`), included; default: today (UTC).",
+              "title": "To"
+            },
+            "description": "The last UTC day counted (`YYYY-MM-DD`), included; default: today (UTC)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/libraries/{owner}/{repo}/asset": {
       "get": {
         "tags": [
@@ -3155,7 +3298,7 @@
                 {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/VersionOrigin-Input"
+                    "$ref": "#/components/schemas/exactdocs__catalog__models__VersionOrigin"
                   }
                 },
                 {
@@ -3483,7 +3626,7 @@
           "catalog"
         ],
         "summary": "List All",
-        "description": "List the libraries the caller may read, a page at a time; sort by ID unless told.\n\nFilter with `q`, `has_versions`, `ai_enabled`, `updated_after` and `updated_before`;\n`total` counts every match (never a library hidden from the caller).",
+        "description": "List the libraries the caller may read, a page at a time; sort by ID unless told.\n\nFilter with `q`, `has_versions`, `ai_enabled`, `sync_state` (the state of the library's\nnewest import job), `updated_after` and `updated_before`; `total` counts every match\n(never a library hidden from the caller).",
         "operationId": "catalog-list_all",
         "security": [
           {
@@ -3619,6 +3762,34 @@
               "title": "Ai Enabled"
             },
             "description": "`true`: only libraries that may use AI providers; `false`: only those with AI turned off."
+          },
+          {
+            "name": "sync_state",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "queued",
+                      "running",
+                      "succeeded",
+                      "failed",
+                      "cancelled"
+                    ],
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only libraries whose latest sync (their newest `import` or `refresh` job) is in one of these states; repeat for several. A library that never synced matches none.",
+              "title": "Sync State"
+            },
+            "description": "Only libraries whose latest sync (their newest `import` or `refresh` job) is in one of these states; repeat for several. A library that never synced matches none."
           },
           {
             "name": "updated_after",
@@ -8963,7 +9134,7 @@
           "ingestion"
         ],
         "summary": "List Jobs",
-        "description": "List the jobs of every library the caller may read, newest first unless sorted.\n\nFilter with `library`, `state`, `kind`, `version`, `q`, `created_after` and\n`created_before`; `total` counts every match (never a job of a library hidden from the\ncaller).",
+        "description": "List the jobs of every library the caller may read, newest first unless sorted.\n\nFilter with `library`, `state`, `kind`, `origin` (`auto`: the instance queued it on its\nown; `manual`), `version`, `q`, `created_after` and `created_before`; `total` counts\nevery match (never a job of a library hidden from the caller). `created_by` names the\nperson whose request queued a job.",
         "operationId": "ingestion-list_jobs",
         "security": [
           {
@@ -9015,6 +9186,27 @@
               "title": "Kind"
             },
             "description": "Only jobs of one of these kinds (`import`, `embed`, ...); repeatable."
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/exactdocs__ingestion__models__VersionOrigin"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs with one of these origins: `auto` (the instance queued it on its own) or `manual`; repeat the parameter for both.",
+              "title": "Origin"
+            },
+            "description": "Only jobs with one of these origins: `auto` (the instance queued it on its own) or `manual`; repeat the parameter for both."
           },
           {
             "name": "version",
@@ -9638,6 +9830,27 @@
               "title": "Kind"
             },
             "description": "Only jobs of one of these kinds (`import`, `embed`, ...); repeatable."
+          },
+          {
+            "name": "origin",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/exactdocs__ingestion__models__VersionOrigin"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only jobs with one of these origins: `auto` (the instance queued it on its own) or `manual`; repeat the parameter for both.",
+              "title": "Origin"
+            },
+            "description": "Only jobs with one of these origins: `auto` (the instance queued it on its own) or `manual`; repeat the parameter for both."
           },
           {
             "name": "version",
@@ -13508,6 +13721,50 @@
         "title": "HostKind",
         "description": "Where the repository is hosted; `git` is any other HTTPS/SSH git server."
       },
+      "JobDayStats": {
+        "properties": {
+          "day": {
+            "type": "string",
+            "format": "date",
+            "title": "Day",
+            "description": "The UTC day the jobs were queued on."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "How many jobs were queued that day."
+          },
+          "by_state": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/JobState"
+            },
+            "type": "object",
+            "title": "By State",
+            "description": "How many of them are in each state now; every state is listed, 0 included."
+          },
+          "by_kind": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "By Kind",
+            "description": "How many of them are of each kind; every kind is listed, 0 included."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "day",
+          "total",
+          "by_state",
+          "by_kind"
+        ],
+        "title": "JobDayStats",
+        "description": "The jobs queued on one UTC day, counted by the state they are in now and by kind."
+      },
       "JobList": {
         "properties": {
           "jobs": {
@@ -13557,6 +13814,46 @@
         ],
         "title": "JobState",
         "description": "Where a job is in its life. Only ``queued`` and ``running`` jobs are unfinished."
+      },
+      "JobStats": {
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "const": "day",
+            "title": "Bucket",
+            "description": "How the jobs are grouped: `day`."
+          },
+          "from": {
+            "type": "string",
+            "format": "date",
+            "title": "From",
+            "description": "The first day counted, as `from`."
+          },
+          "to": {
+            "type": "string",
+            "format": "date",
+            "title": "To",
+            "description": "The last day counted, included, as `to`."
+          },
+          "days": {
+            "items": {
+              "$ref": "#/components/schemas/JobDayStats"
+            },
+            "type": "array",
+            "title": "Days",
+            "description": "One entry per day from `from` to `to`, oldest first."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "bucket",
+          "from",
+          "to",
+          "days"
+        ],
+        "title": "JobStats",
+        "description": "Jobs per UTC day, every day of the range listed (a day without jobs counts 0)."
       },
       "JobSummary": {
         "properties": {
@@ -13669,8 +13966,19 @@
           },
           "origin": {
             "$ref": "#/components/schemas/exactdocs__ingestion__models__VersionOrigin",
-            "description": "`auto` when the scheduled check queued it, `manual` otherwise.",
+            "description": "`auto` when the instance queued it on its own (the scheduled check, a repository's\nwebhook, the embedding of what an import stored), `manual` otherwise.",
             "default": "manual"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The person whose request queued the job; null for the instance's own work (`auto`), the\ncommand line, and jobs queued before ExactDocs recorded who queued them."
           },
           "created_at": {
             "type": "string",
@@ -13841,6 +14149,22 @@
             ],
             "title": "Error Code",
             "description": "The stable code of `error`, null unless the job failed (or failed before codes were recorded). An upstream problem is `repo_unreachable` (the repository was deleted, made private, moved, or cannot be reached), `auth_failed` (the credential was refused or cannot be read), `ref_deleted` (the branch or tag is gone) or `tag_moved` (the tag points elsewhere now); otherwise the error's own code (`no_articles`, `host_key_changed`...) or `unexpected`."
+          },
+          "origin": {
+            "$ref": "#/components/schemas/exactdocs__ingestion__models__VersionOrigin",
+            "description": "`auto` when the instance queued it on its own, `manual` otherwise.",
+            "default": "manual"
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PersonSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The person whose request queued the job; null when no person did (or before it was\nrecorded)."
           },
           "created_at": {
             "type": "string",
@@ -15883,6 +16207,28 @@
         ],
         "title": "PathsChange",
         "description": "A managed path list as stored and as declared."
+      },
+      "PersonSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The account's stable ID."
+          },
+          "username": {
+            "type": "string",
+            "title": "Username",
+            "description": "The account's user name, as it was when they asked."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "username"
+        ],
+        "title": "PersonSummary",
+        "description": "A person as the jobs show them: their account's ID and user name, nothing else."
       },
       "PlanSourcesCommand": {
         "properties": {
@@ -18726,15 +19072,6 @@
         ],
         "title": "VersionList",
         "description": "A page of a library's versions."
-      },
-      "VersionOrigin-Input": {
-        "type": "string",
-        "enum": [
-          "manual",
-          "auto"
-        ],
-        "title": "VersionOrigin",
-        "description": "Who asked for a version: a person, or the scheduled check (which may prune its own)."
       },
       "VersionOut": {
         "properties": {

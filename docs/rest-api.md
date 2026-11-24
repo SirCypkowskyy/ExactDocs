@@ -93,8 +93,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
 - **Sort, filter and total**: the lists of libraries, versions, jobs (global and per library),
   articles, users, API tokens and a library's grants also take `sort` (one whitelisted field,
   `-field` for descending) and filters such as `q` (text, any case), `state`, `kind`, `role`,
-  `disabled`, `ai_enabled`, `has_versions` and date ranges (`updated_after`, `created_before`,
-  ...); each parameter's description in the OpenAPI schema names its fields. They run in the
+  `disabled`, `ai_enabled`, `has_versions`, `origin` (jobs), `sync_state` (libraries) and date
+  ranges (`updated_after`, `created_before`, ...); each parameter's description in the OpenAPI schema names its fields. They run in the
   database, permissions apply before paging, and a cursor only works with the `sort` and filters
   of the request that returned it. Every one of these pages carries `total`, the number of rows
   that match the filters across all pages. An unknown sort field is a 422 `invalid_sort` naming
@@ -706,6 +706,35 @@ See [AI retrieval decisions](decisions/ai-retrieval.md) for the kinds and what e
   `collect`, `embed` or `push`; state `queued`,
   `running`, `succeeded`, `failed` or `cancelled`; `done` / `total` files, or chunks for `embed`; `chunked` / `reused`; `parsed` / `taken`; problems;
   `cancelled_by` / `cancelled_at`; `cancellable`, whether the caller may cancel it now).
+- **Who queued a job**: every job (also on `GET /jobs`, a library's jobs and `/jobs/latest`) has
+  `created_by`, the person whose request queued it, as `{"id": <account ID>, "username": ...}`:
+  the account of the session or API token (REST) or OAuth/API token (MCP), never the token or
+  its ID. The user name is the one the account had then, so a job keeps naming its person after
+  the account is removed. It is `null` when no person queued the job: the instance's own work,
+  the command line on the server (`exactdocs ...` without the API), and every job queued before
+  ExactDocs recorded it (upgrading leaves those `null`; nothing can tell who queued them).
+  `origin` is stored with the job: `auto` when the instance queued it on its own (the scheduled
+  check's tag imports and branch syncs, with the failures and recoveries they record; a
+  repository webhook's `push` job and the sync or imports it queues; the `embed` jobs the
+  instance queues after an import, at start and nightly), `manual` otherwise. An `auto` job
+  never names a person. Jobs queued before this release keep the origin they were stored with
+  (a scheduled branch sync was `manual` then). Filter with `origin=auto` or `origin=manual` on
+  `GET /jobs` and `GET /libraries/{owner}/{repo}/jobs`.
+- **Libraries by sync state**: `GET /libraries?sync_state=failed` (repeatable, any job state)
+  lists the libraries whose latest sync, their newest `import` or `refresh` job, is in one of
+  those states; a library that never synced matches none, and a newer job of another kind
+  (`embed`, `collect`, ...) does not change it. The catalog still filters, sorts and pages, so
+  the filter works with every other filter, `cursor` and `offset`, and `total` counts the
+  matches. The instance reads every library's latest sync in one grouped query.
+- **Job statistics**: `GET /stats/jobs?bucket=day&from=2026-11-01&to=2026-11-30` counts the jobs
+  queued on each UTC day from `from` to `to` (both `YYYY-MM-DD`, both included) by the state
+  they are in now (`by_state`) and by kind (`by_kind`), with each day's `total`. Every day of the
+  range is listed, oldest first, and every state and kind with it, 0 included, so a chart needs
+  no filling in. `bucket` is `day` (the default and only bucket); `to` defaults to today (UTC)
+  and `from` to 29 days before `to`. A range that ends before it starts, or covers more than
+  366 days, is a 422 `invalid_range`. Operators only (a session or an API token of an `admin`;
+  403 `forbidden` otherwise): the counts cover every library. One grouped query on an index of
+  the jobs' creation time.
 - **Cancelling a job**: `POST /jobs/{id}/cancel` needs the `contributor` role on the job's library
   (operators always may; 403 `forbidden` otherwise). A `queued` job becomes `cancelled` at once and
   never starts: its version stays as it was, or is never created for a first import. A `running`

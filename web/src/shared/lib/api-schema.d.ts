@@ -384,6 +384,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/stats/jobs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Job Stats
+         * @description Count the jobs queued on each UTC day from `from` to `to`, by state and by kind.
+         *
+         *     Every day of the range is listed, a day without jobs counting 0, and each day lists
+         *     every state and every kind. A job counts on the day it was queued, in the state it is
+         *     in now. Only `bucket=day` exists. The range is at most 366 days; one that ends before
+         *     it starts or is longer is a 422 `invalid_range`. Operators only (a session or an API
+         *     token of an `admin`): the counts cover every library.
+         */
+        readonly get: operations["ingestion-get_job_stats"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries/{owner}/{repo}/asset": {
         readonly parameters: {
             readonly query?: never;
@@ -473,8 +499,9 @@ export interface paths {
          * List All
          * @description List the libraries the caller may read, a page at a time; sort by ID unless told.
          *
-         *     Filter with `q`, `has_versions`, `ai_enabled`, `updated_after` and `updated_before`;
-         *     `total` counts every match (never a library hidden from the caller).
+         *     Filter with `q`, `has_versions`, `ai_enabled`, `sync_state` (the state of the library's
+         *     newest import job), `updated_after` and `updated_before`; `total` counts every match
+         *     (never a library hidden from the caller).
          */
         readonly get: operations["catalog-list_all"];
         readonly put?: never;
@@ -1328,9 +1355,10 @@ export interface paths {
          * List Jobs
          * @description List the jobs of every library the caller may read, newest first unless sorted.
          *
-         *     Filter with `library`, `state`, `kind`, `version`, `q`, `created_after` and
-         *     `created_before`; `total` counts every match (never a job of a library hidden from the
-         *     caller).
+         *     Filter with `library`, `state`, `kind`, `origin` (`auto`: the instance queued it on its
+         *     own; `manual`), `version`, `q`, `created_after` and `created_before`; `total` counts
+         *     every match (never a job of a library hidden from the caller). `created_by` names the
+         *     person whose request queued a job.
          */
         readonly get: operations["ingestion-list_jobs"];
         readonly put?: never;
@@ -3228,6 +3256,37 @@ export interface components {
          */
         readonly HostKind: "github" | "gitlab" | "bitbucket" | "gitea" | "git";
         /**
+         * JobDayStats
+         * @description The jobs queued on one UTC day, counted by the state they are in now and by kind.
+         */
+        readonly JobDayStats: {
+            /**
+             * Day
+             * Format: date
+             * @description The UTC day the jobs were queued on.
+             */
+            readonly day: string;
+            /**
+             * Total
+             * @description How many jobs were queued that day.
+             */
+            readonly total: number;
+            /**
+             * By State
+             * @description How many of them are in each state now; every state is listed, 0 included.
+             */
+            readonly by_state: {
+                readonly [key: string]: number;
+            };
+            /**
+             * By Kind
+             * @description How many of them are of each kind; every kind is listed, 0 included.
+             */
+            readonly by_kind: {
+                readonly [key: string]: number;
+            };
+        };
+        /**
          * JobList
          * @description A page of jobs, newest first unless sorted otherwise.
          */
@@ -3254,6 +3313,35 @@ export interface components {
          * @enum {string}
          */
         readonly JobState: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+        /**
+         * JobStats
+         * @description Jobs per UTC day, every day of the range listed (a day without jobs counts 0).
+         */
+        readonly JobStats: {
+            /**
+             * Bucket
+             * @description How the jobs are grouped: `day`.
+             * @constant
+             */
+            readonly bucket: "day";
+            /**
+             * From
+             * Format: date
+             * @description The first day counted, as `from`.
+             */
+            readonly from: string;
+            /**
+             * To
+             * Format: date
+             * @description The last day counted, included, as `to`.
+             */
+            readonly to: string;
+            /**
+             * Days
+             * @description One entry per day from `from` to `to`, oldest first.
+             */
+            readonly days: readonly components["schemas"]["JobDayStats"][];
+        };
         /**
          * JobSummary
          * @description A job and how far it got. ``total`` is 0 until the job knows its size.
@@ -3344,10 +3432,16 @@ export interface components {
              */
             readonly error_code: string | null;
             /**
-             * @description `auto` when the scheduled check queued it, `manual` otherwise.
+             * @description `auto` when the instance queued it on its own (the scheduled check, a repository's
+             *     webhook, the embedding of what an import stored), `manual` otherwise.
              * @default manual
              */
             readonly origin: components["schemas"]["exactdocs__ingestion__models__VersionOrigin"];
+            /**
+             * @description The person whose request queued the job; null for the instance's own work (`auto`), the
+             *     command line, and jobs queued before ExactDocs recorded who queued them.
+             */
+            readonly created_by?: components["schemas"]["PersonSummary"] | null;
             /**
              * Created At
              * Format: date-time
@@ -3446,6 +3540,16 @@ export interface components {
              * @description The stable code of `error`, null unless the job failed (or failed before codes were recorded). An upstream problem is `repo_unreachable` (the repository was deleted, made private, moved, or cannot be reached), `auth_failed` (the credential was refused or cannot be read), `ref_deleted` (the branch or tag is gone) or `tag_moved` (the tag points elsewhere now); otherwise the error's own code (`no_articles`, `host_key_changed`...) or `unexpected`.
              */
             readonly error_code: string | null;
+            /**
+             * @description `auto` when the instance queued it on its own, `manual` otherwise.
+             * @default manual
+             */
+            readonly origin: components["schemas"]["exactdocs__ingestion__models__VersionOrigin"];
+            /**
+             * @description The person whose request queued the job; null when no person did (or before it was
+             *     recorded).
+             */
+            readonly created_by?: components["schemas"]["PersonSummary"] | null;
             /**
              * Created At
              * Format: date-time
@@ -4530,6 +4634,22 @@ export interface components {
              * @description As declared, normalized.
              */
             readonly after: readonly string[];
+        };
+        /**
+         * PersonSummary
+         * @description A person as the jobs show them: their account's ID and user name, nothing else.
+         */
+        readonly PersonSummary: {
+            /**
+             * Id
+             * @description The account's stable ID.
+             */
+            readonly id: string;
+            /**
+             * Username
+             * @description The account's user name, as it was when they asked.
+             */
+            readonly username: string;
         };
         /**
          * PlanSourcesCommand
@@ -6177,12 +6297,6 @@ export interface components {
              */
             readonly total: number;
         };
-        /**
-         * VersionOrigin
-         * @description Who asked for a version: a person, or the scheduled check (which may prune its own).
-         * @enum {string}
-         */
-        readonly "VersionOrigin-Input": "manual" | "auto";
         /**
          * VersionOut
          * @description One imported version: the ref, what kind of ref it is, and the commit it stands for.
@@ -8078,6 +8192,87 @@ export interface operations {
             };
         };
     };
+    readonly "ingestion-get_job_stats": {
+        readonly parameters: {
+            readonly query?: {
+                /** @description How jobs are grouped: `day` (UTC days) is the only bucket. */
+                readonly bucket?: "day";
+                /** @description The first UTC day counted (`YYYY-MM-DD`); default: 29 days before `to`. At most 366 days are counted at once. */
+                readonly from?: string | null;
+                /** @description The last UTC day counted (`YYYY-MM-DD`), included; default: today (UTC). */
+                readonly to?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["JobStats"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     readonly "catalog-get_version_asset": {
         readonly parameters: {
             readonly query: {
@@ -8336,7 +8531,7 @@ export interface operations {
                 /** @description Only versions of one of these kinds; repeat for several. */
                 readonly kind?: readonly components["schemas"]["RefKind-Input"][] | null;
                 /** @description Only versions with one of these origins; repeat for several. */
-                readonly origin?: readonly components["schemas"]["VersionOrigin-Input"][] | null;
+                readonly origin?: readonly components["schemas"]["exactdocs__catalog__models__VersionOrigin"][] | null;
                 /** @description Only versions last imported at or after this time (ISO 8601; no offset means UTC). */
                 readonly imported_after?: string | null;
                 /** @description Only versions last imported before this time (ISO 8601; no offset means UTC). */
@@ -8536,6 +8731,8 @@ export interface operations {
                 readonly has_versions?: boolean | null;
                 /** @description `true`: only libraries that may use AI providers; `false`: only those with AI turned off. */
                 readonly ai_enabled?: boolean | null;
+                /** @description Only libraries whose latest sync (their newest `import` or `refresh` job) is in one of these states; repeat for several. A library that never synced matches none. */
+                readonly sync_state?: readonly ("queued" | "running" | "succeeded" | "failed" | "cancelled")[] | null;
                 /** @description Only libraries whose latest import is at or after this time (ISO 8601). */
                 readonly updated_after?: string | null;
                 /** @description Only libraries whose latest import is before this time (ISO 8601). */
@@ -12124,6 +12321,8 @@ export interface operations {
                 readonly state?: readonly components["schemas"]["JobState"][] | null;
                 /** @description Only jobs of one of these kinds (`import`, `embed`, ...); repeatable. */
                 readonly kind?: readonly string[] | null;
+                /** @description Only jobs with one of these origins: `auto` (the instance queued it on its own) or `manual`; repeat the parameter for both. */
+                readonly origin?: readonly components["schemas"]["exactdocs__ingestion__models__VersionOrigin"][] | null;
                 /** @description Only jobs for this exact ref. */
                 readonly version?: string | null;
                 /** @description Only jobs whose library, version or error contains this text (any case). */
@@ -12454,6 +12653,8 @@ export interface operations {
                 readonly state?: readonly components["schemas"]["JobState"][] | null;
                 /** @description Only jobs of one of these kinds (`import`, `embed`, ...); repeatable. */
                 readonly kind?: readonly string[] | null;
+                /** @description Only jobs with one of these origins: `auto` (the instance queued it on its own) or `manual`; repeat the parameter for both. */
+                readonly origin?: readonly components["schemas"]["exactdocs__ingestion__models__VersionOrigin"][] | null;
                 /** @description Only jobs for this exact ref. */
                 readonly version?: string | null;
                 /** @description Only jobs whose library, version or error contains this text (any case). */
