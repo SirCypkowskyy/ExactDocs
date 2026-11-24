@@ -30,7 +30,8 @@ function fixedPrefix(name: string): string {
   const letters = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
   let hash = 7;
   for (const c of name) hash = (hash * 31 + c.charCodeAt(0)) % 1_000_003;
-  return `exd_${Array.from({ length: 4 }, (_, i) => letters[(hash >> (i * 5)) % letters.length]).join("")}`;
+  const picks = Array.from({ length: 4 }, (_, i) => letters[(hash >> (i * 5)) % letters.length]);
+  return `exd_${picks.join("")}`;
 }
 
 function stable(value: unknown): unknown {
@@ -63,21 +64,21 @@ async function stableContext(context: BrowserContext) {
   });
 }
 
+/** Nothing loading, fonts in, animations done, and two more frames for what still lays out. */
 async function ready(page: Page) {
   await page.waitForLoadState("networkidle");
   await page.evaluate(() => document.fonts.ready);
   await settled(page);
+  await page.evaluate(
+    () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+  );
 }
 
-/** The viewport as `<name>-<scheme>.png`, once nothing moves and nothing is hovered. */
+/** The viewport as `<name>-<scheme>.png`, once it is ready and nothing is hovered. */
 async function shoot(page: Page, name: string, scheme: string) {
   const { width, height } = page.viewportSize() ?? { width: WIDTH, height: 900 };
   await page.mouse.move(width - 2, height - 2); // off whatever was clicked
   await ready(page);
-  // Two frames, for whatever a resize observer or a font swap still lays out.
-  await page.evaluate(
-    () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
-  );
   await page.screenshot({ path: `${OUT}/${name}-${scheme}.png`, animations: "disabled" });
 }
 
@@ -96,6 +97,7 @@ const escape = (text: string) =>
 /**
  * Two `query-docs` replies side by side, each the call and its first chunk verbatim, with the
  * lines that differ between them highlighted (but the chunk ID, which differs with its text).
+ * Drawn in the UI's page, with its CSS variables, fonts and theme.
  */
 function mcpFigure(replies: Reply[]): string {
   const firsts = replies.map((r) => r.texts[1].split(CHUNKS)[0].trimEnd().split("\n"));
@@ -106,12 +108,16 @@ function mcpFigure(replies: Reply[]): string {
       return `<span class="${differs ? "line differs" : "line"}">${escape(line) || " "}</span>`;
     });
     const chunks = reply.texts[1].split(CHUNKS).length;
+    const library = reply.library.slice(0, -reply.version.length - 1);
     return `<section class="card">
-      <header><span class="mono">/acme/payments</span> <b class="mono">${reply.version}</b></header>
+      <header>
+        <span class="mono">${escape(library)}</span> <b class="mono">${reply.version}</b>
+      </header>
       <div class="call mono"><b>query-docs</b>
         <span class="key">libraryId</span>"${escape(reply.library)}"
         <span class="key">query</span>"${escape(reply.query)}"</div>
-      <p class="note">The reply: an untrusted-content notice, then ${chunks} chunks, best first. The first, verbatim:</p>
+      <p class="note">The reply: an untrusted-content notice, then ${chunks} chunks, best first.
+        The first, verbatim:</p>
       <pre class="mono">${lines.join("")}</pre>
     </section>`;
   });
@@ -231,7 +237,9 @@ test("the README's and the documentation's screenshots", async ({ browser }) => 
       document.body.innerHTML = html;
     }, mcpFigure(replies));
     await ready(page);
-    await page.locator("#figure").screenshot({ path: `${OUT}/mcp-${scheme}.png` });
+    await page
+      .locator("#figure")
+      .screenshot({ path: `${OUT}/mcp-${scheme}.png`, animations: "disabled" });
     await page.context().close();
   }
 });

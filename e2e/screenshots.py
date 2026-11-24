@@ -16,7 +16,8 @@ Both hosts are answered by a proxy in this process. The server's proxy settings 
 it refuses every other host, so nothing leaves the machine. Then `screenshots.ts` takes every
 picture in Playwright, light and dark, and they are written as WebP to docs/assets/screenshots/.
 The fixture's commits are fixed and screenshots.ts fixes the clock, so a run on the same machine
-gives the same pictures, byte for byte.
+gives the same pictures, byte for byte. It needs the dev environment (`uv sync`), where Pillow
+comes with the `local` extra.
 """
 
 import asyncio
@@ -58,7 +59,7 @@ ADMIN = "maya"
 USERS = ("theo", "priya")
 PASSWORD = "a demo passphrase, not a real one"  # ruff: ignore[hardcoded-password-string]
 QUESTION = "How do I start the sandbox with Docker?"
-LIBRARIES = {  # library ID: the repository on GIT_HOST and the refs to import, default first
+LIBRARIES = {  # library ID, also its repository's path on GIT_HOST: the refs, the default first
     "/acme/payments": ["v1.4.0", "v1.3.0", "next"],
     "/acme/store": ["v2.1.0"],
 }
@@ -148,7 +149,7 @@ def _proxy(routes: dict[str, tuple[str, int]]) -> type[http.server.BaseHTTPReque
             self.end_headers()
             self.wfile.write(payload)
 
-        def log_message(self, format: str, *args: object) -> None:  # ruff: ignore[builtin-argument-shadowing]
+        def log_message(self, *args: object) -> None:
             """Stay quiet."""
 
     return Proxy
