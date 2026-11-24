@@ -294,6 +294,7 @@ from exactdocs_kernel import (
     ValidationError,
     decode_sort_cursor,
     encode_sort_cursor,
+    page_offset,
     parse_sort,
 )
 
@@ -567,6 +568,7 @@ async def _job_page(
         The page, its next cursor and the count of every match.
     """
     sort = parse_sort(query.sort, allowed=JOB_SORT_FIELDS, default="-id")
+    skip = page_offset(cursor=query.cursor, offset=query.offset)
     after = (
         decode_sort_cursor(query.cursor, sort, key_field="id") if query.cursor is not None else None
     )
@@ -583,6 +585,7 @@ async def _job_page(
         job_filter,
         sort=sort,
         after=after,
+        offset=skip,
         limit=query.limit + 1,  # one more than asked tells whether another page follows
     )
     page = list(found[: query.limit])

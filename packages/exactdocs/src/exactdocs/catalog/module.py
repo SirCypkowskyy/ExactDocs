@@ -16,9 +16,11 @@ from exactdocs.catalog.models import (
     ManifestId,
     ManifestInstruction,
     TagSelection,
+    VersionRef,
 )
 from exactdocs.catalog.ports.driven import (
     AccessPolicy,
+    ArticleCounts,
     ArticleTitleFinder,
     EntrySearch,
     ImportedTagWriter,
@@ -217,6 +219,33 @@ class _EveryoneMayDoAnything:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class _ScannedArticleCounts:
+    """The default ``article_counts`` of ``build``: reads each version's entries (for tests)."""
+
+    manifests: ManifestRepository
+    """Where the entries are read from."""
+
+    async def count_articles(
+        self, versions: Sequence[tuple[LibraryId, VersionRef]]
+    ) -> Mapping[tuple[LibraryId, VersionRef], int]:
+        """Count the entries of these versions' active manifests, one version at a time.
+
+        Args:
+            versions: The versions, as ``(library, ref)``.
+
+        Returns:
+            The number of entries of each version's active manifest.
+        """
+        found: dict[tuple[LibraryId, VersionRef], int] = {}
+        entries = _ScannedEntries(manifests=self.manifests)
+        for version, manifest in (await self.manifests.get_active_many(versions)).items():
+            found[version] = await entries.count(
+                manifest.id, prefix="", tags=TagSelection(), text=None
+            )
+        return found
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _ScannedEntries:
     """The default ``entry_search`` of ``build``: reads every entry and sorts them in memory."""
 
@@ -261,6 +290,7 @@ class _ScannedEntries:
         sort: Sort,
         after: tuple[SortValue, str] | None,
         limit: int,
+        offset: int = 0,
     ) -> Sequence[ManifestEntry]:
         """Return up to ``limit`` filtered entries in ``sort`` order, after the ``after`` key.
 
@@ -272,6 +302,7 @@ class _ScannedEntries:
             sort: The order.
             after: The sort value and path of the last entry of the previous page.
             limit: The most entries returned.
+            offset: How many of the entries in order (after ``after``) to skip first.
 
         Returns:
             The entries in order.
@@ -297,7 +328,7 @@ class _ScannedEntries:
         )
         if after is not None:
             ordered = [e for e in ordered if is_after((value(e), e.path), after, sort=sort)]
-        return ordered[:limit]
+        return ordered[offset : offset + limit]
 
     async def count(
         self, manifest_id: ManifestId, *, prefix: str, tags: TagSelection, text: str | None
@@ -427,6 +458,7 @@ class CatalogModule:
         access: AccessPolicy | None = None,
         entry_search: EntrySearch | None = None,
         logos: LibraryLogos | None = None,
+        article_counts: ArticleCounts | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -451,6 +483,8 @@ class CatalogModule:
                 read through ``manifests`` and sorted in memory (for tests).
             logos: Keeps each library's logo (shares its data with ``repository``, which reads
                 ``Library.logo`` from it); without it no library has one.
+            article_counts: Counts many versions' articles at once; without it each version's
+                entries are read through ``manifests`` (for tests).
 
         Returns:
             The module, every driving port wired.
@@ -459,8 +493,11 @@ class CatalogModule:
         access = access or _EveryoneMayDoAnything()
         titles = article_titles or _NoTitles()
         tagger = ManualTagger(repository=repository, manifests=manifests)
+        counts = article_counts or _ScannedArticleCounts(manifests=manifests)
         return cls(
-            list_libraries=ListLibrariesUseCase(repository=repository, access=access),
+            list_libraries=ListLibrariesUseCase(
+                repository=repository, articles=counts, access=access
+            ),
             create_library=CreateLibraryUseCase(repository=repository, access=access),
             discard_library=DiscardLibraryUseCase(repository=repository, access=access),
             is_library_id_taken=IsLibraryIdTakenUseCase(repository=repository, access=access),
@@ -481,7 +518,9 @@ class CatalogModule:
             activate_manifest=ActivateManifestUseCase(
                 repository=repository, manifests=manifests, clock=clock
             ),
-            list_versions=ListVersionsUseCase(repository=repository, access=access),
+            list_versions=ListVersionsUseCase(
+                repository=repository, articles=counts, access=access
+            ),
             list_articles=ListArticlesUseCase(
                 repository=repository,
                 manifests=manifests,

@@ -164,6 +164,15 @@ class SessionRepository(Protocol):
         """
         ...
 
+    async def delete_others(self, account_id: AccountId, *, keep: str | None) -> None:
+        """Remove every session of the account but the one with the token hash ``keep``.
+
+        Args:
+            account_id: The account's id.
+            keep: The hash of the session token that stays; ``None`` removes them all.
+        """
+        ...
+
     async def delete_expired(self, *, idle_before: datetime, created_before: datetime) -> None:
         """Remove sessions last used before ``idle_before`` or created before ``created_before``.
 
@@ -768,7 +777,7 @@ class AccessLog(Protocol):
         ...
 
     async def newest(
-        self, where: AccessLogFilter, *, older_than: str | None, limit: int
+        self, where: AccessLogFilter, *, older_than: str | None, limit: int, offset: int = 0
     ) -> list[AccessEvent]:
         """Return the newest events that match, newest first.
 
@@ -776,6 +785,7 @@ class AccessLog(Protocol):
             where: Which events.
             older_than: Only events recorded before the one with this ID (a page's cursor).
             limit: Most events returned.
+            offset: How many of the matching events, newest first, to skip first.
 
         Returns:
             Up to ``limit`` events, by ID descending.

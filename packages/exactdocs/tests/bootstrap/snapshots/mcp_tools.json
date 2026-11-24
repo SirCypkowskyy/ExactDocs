@@ -402,6 +402,12 @@
             "additionalProperties": false,
             "description": "A library and its imported versions.",
             "properties": {
+              "article_count": {
+                "default": 0,
+                "description": "The articles of the default version (its active manifest's entries); 0 while none is\nimported.",
+                "minimum": 0,
+                "type": "integer"
+              },
               "default_pinned": {
                 "description": "True when an owner pinned `default_version`; false when it follows the default-version rule (highest stable semver tag, else the default branch, else the newest import).",
                 "type": "boolean"
@@ -532,7 +538,8 @@
               "version_count",
               "tags",
               "last_imported_at",
-              "logo"
+              "logo",
+              "article_count"
             ],
             "type": "object"
           },

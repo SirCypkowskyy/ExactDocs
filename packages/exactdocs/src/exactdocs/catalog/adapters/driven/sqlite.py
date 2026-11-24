@@ -1604,11 +1604,13 @@ class SqliteEntrySearch:
         sort: Sort,
         after: tuple[SortValue, str] | None,
         limit: int,
+        offset: int = 0,
     ) -> Sequence[ManifestEntry]:
         """Return up to ``limit`` filtered entries in ``sort`` order, after the ``after`` key.
 
         A keyset query: ``(sort value, path)`` compares as a row, in the sort's direction.
-        Titles sort lower-cased and, on PostgreSQL, by code point, as Python compares str.
+        Titles sort lower-cased and, on PostgreSQL, by code point, as Python compares str. An
+        offset is the database's ``OFFSET`` over the same order.
 
         Args:
             manifest_id: The manifest.
@@ -1618,6 +1620,7 @@ class SqliteEntrySearch:
             sort: The order.
             after: The sort value and path of the last entry of the previous page.
             limit: The most entries returned.
+            offset: How many of the entries in order (after ``after``) to skip first.
 
         Returns:
             The entries in order.
@@ -1636,8 +1639,11 @@ class SqliteEntrySearch:
             bound = tuple_(*after)
             query = query.where(row < bound if sort.descending else row > bound)
         order = (column.desc(), path.desc()) if sort.descending else (column, path)
+        query = query.order_by(*order).limit(limit)
+        if offset:
+            query = query.offset(offset)
         async with self.engine.connect() as connection:
-            rows = (await connection.execute(query.order_by(*order).limit(limit))).all()
+            rows = (await connection.execute(query)).all()
         return tuple(_entry(row) for row in rows)
 
     async def count(
@@ -1707,6 +1713,46 @@ class SqliteImportedTags:
                             .values(**_tag_columns(after))
                         )
         return touched
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteArticleCounts:
+    """Implements ``ports.driven.ArticleCounts`` with grouped counts of the manifest entries."""
+
+    engine: AsyncEngine
+    """The SQLite or PostgreSQL engine."""
+
+    async def count_articles(
+        self, versions: Sequence[tuple[LibraryId, VersionRef]]
+    ) -> Mapping[tuple[LibraryId, VersionRef], int]:
+        """Count the entries of these versions' active manifests: one query per 400 versions.
+
+        Args:
+            versions: The versions, as ``(library, ref)``.
+
+        Returns:
+            The number of entries of each version's active manifest.
+        """
+        found: dict[tuple[LibraryId, VersionRef], int] = {}
+        async with self.engine.connect() as connection:
+            for start in range(0, len(versions), 400):  # two bound variables per version
+                batch = [(lib.value, ref.value) for lib, ref in versions[start : start + 400]]
+                rows = await connection.execute(
+                    select(manifests.c.library_id, manifests.c.ref, func.count())
+                    .select_from(
+                        manifests.join(
+                            manifest_entries, manifest_entries.c.manifest_id == manifests.c.id
+                        )
+                    )
+                    .where(
+                        tuple_(manifests.c.library_id, manifests.c.ref).in_(batch),
+                        manifests.c.state == ManifestState.ACTIVE.value,
+                    )
+                    .group_by(manifests.c.library_id, manifests.c.ref)
+                )
+                for library, ref, count in rows:
+                    found[LibraryId(library), VersionRef(ref)] = count
+        return found
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

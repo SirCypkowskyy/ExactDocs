@@ -456,6 +456,19 @@ class SqliteSessionRepository:
         async with self.engine.begin() as connection:
             await connection.execute(delete(sessions).where(sessions.c.account_id == account_id))
 
+    async def delete_others(self, account_id: AccountId, *, keep: str | None) -> None:
+        """Remove every session of the account but the one with the token hash ``keep``.
+
+        Args:
+            account_id: The account's id.
+            keep: The hash of the session token that stays; ``None`` removes them all.
+        """
+        statement = delete(sessions).where(sessions.c.account_id == account_id)
+        if keep is not None:
+            statement = statement.where(sessions.c.token_hash != keep)
+        async with self.engine.begin() as connection:
+            await connection.execute(statement)
+
     async def delete_expired(self, *, idle_before: datetime, created_before: datetime) -> None:
         """Remove sessions last used before ``idle_before`` or created before ``created_before``.
 
@@ -1514,7 +1527,7 @@ class SqliteAccessLog:
             )
 
     async def newest(
-        self, where: AccessLogFilter, *, older_than: str | None, limit: int
+        self, where: AccessLogFilter, *, older_than: str | None, limit: int, offset: int = 0
     ) -> list[AccessEvent]:
         """Return the newest events that match, newest first.
 
@@ -1522,6 +1535,7 @@ class SqliteAccessLog:
             where: Which events.
             older_than: Only events recorded before the one with this ID.
             limit: Most events returned.
+            offset: How many of the matching events, newest first, to skip first (``OFFSET``).
 
         Returns:
             Up to ``limit`` events, by ID descending.
@@ -1530,6 +1544,8 @@ class SqliteAccessLog:
         if older_than is not None:
             query = query.where(access_events.c.id < older_than)
         query = query.order_by(access_events.c.id.desc()).limit(limit)
+        if offset:
+            query = query.offset(offset)
         async with self.engine.connect() as connection:
             rows = (await connection.execute(query)).all()
         return [_access_event(row) for row in rows]

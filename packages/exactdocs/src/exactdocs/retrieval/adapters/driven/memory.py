@@ -224,6 +224,17 @@ class InMemoryChunkRepository:
         rows = self.rows.get(manifest_id, {}).values()
         return VersionCounts(articles=len({r.article_path for r in rows}), chunks=len(rows))
 
+    async def counts_many(self, manifest_ids: Collection[str]) -> Mapping[str, VersionCounts]:
+        """Count the articles and chunks of each manifest that has chunk rows.
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            The counts per manifest with rows.
+        """
+        return {i: await self.counts(i) for i in set(manifest_ids) if self.rows.get(i)}
+
     async def manifests_with_chunk(self, chunk_id: ChunkId) -> Sequence[IndexedManifest]:
         """Return every indexed manifest that has a row for this chunk ID (any status).
 

@@ -95,6 +95,25 @@ async def test_delete_for_account_removes_all_of_its_sessions(
     assert (await repository.get("h1"), await repository.get("h2")) == (None, None)
 
 
+async def test_delete_others_keeps_one_session_and_other_accounts(
+    repository: SessionRepository,
+) -> None:
+    bob = AccountId("id-bob")
+    if isinstance(repository, SqliteSessionRepository):
+        await SqliteAccountRepository(engine=repository.engine).add(account("bob"))
+    await repository.add(session("h1"))
+    await repository.add(session("h2"))
+    await repository.add(session("h3", owner=bob))
+
+    await repository.delete_others(ADA, keep="h1")
+
+    assert await repository.get("h1") is not None
+    assert await repository.get("h2") is None
+    assert await repository.get("h3") is not None
+    await repository.delete_others(ADA, keep=None)
+    assert await repository.get("h1") is None
+
+
 async def test_delete_expired_removes_idle_and_too_old_sessions_only(
     repository: SessionRepository,
 ) -> None:
