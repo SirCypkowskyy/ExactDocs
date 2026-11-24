@@ -5,7 +5,8 @@ import {
   useQuery,
 } from "@tanstack/react-query";
 import { Check, ChevronsUpDown, CircleAlert, ListFilter, Plus } from "lucide-react";
-import { type ReactNode, useCallback, useEffect, useId, useMemo, useState } from "react";
+import type * as React from "react";
+import { type ReactNode, useCallback, useEffect, useId, useState } from "react";
 import { common, useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "./button";
@@ -189,34 +190,13 @@ const IDLE: LibraryChoicesQuery = {
   enabled: false,
 };
 
-export function LibraryCombobox<K extends QueryKey>(props: LibraryComboboxProps<K>) {
-  const {
-    label,
-    variant = "field",
-    placeholder,
-    hint,
-    options: given,
-    loading = false,
-    failed = false,
-    onRetry,
-    query,
-    custom,
-    children,
-    className,
-  } = props;
-  const t = useMessages(messages).libraryPicker;
-  const c = useMessages(common);
-  const uid = useId();
-  const triggerId = props.id ?? `${uid}-trigger`;
-  const [open, setOpen] = useState(false);
-  // Once opened, a `query` stays live (cached), so reopening shows the list at once.
-  const [opened, setOpened] = useState(false);
-  const [text, setText] = useState("");
-  const [active, setActive] = useState("");
-  // cmdk names the highlighted row in `aria-activedescendant` only once the highlight moves; until
-  // then a screen reader would hear nothing on opening. Point at the highlighted row whenever it
-  // changes.
-  const root = useCallback((node: HTMLDivElement | null) => {
+/**
+ * cmdk names the highlighted row in `aria-activedescendant` only once the highlight moves; until
+ * then a screen reader would hear nothing on opening. This ref points the input at the highlighted
+ * row whenever it changes.
+ */
+function useActiveDescendant() {
+  return useCallback((node: HTMLDivElement | null) => {
     if (!node) return;
     const sync = () => {
       const input = node.querySelector("[cmdk-input]");
@@ -240,327 +220,570 @@ export function LibraryCombobox<K extends QueryKey>(props: LibraryComboboxProps<
     });
     return () => observer.disconnect();
   }, []);
-  const [recent, setRecent] = useState<Recent[]>(readRecent);
-  const rested = useDebounced(text.trim(), DEBOUNCE_MS);
+}
+
+type Status = "pending" | "error" | "ready";
+
+interface Source {
+  status: Status;
+  /** The libraries that match the text, in the API's order. */
+  all: readonly LibraryOption[];
+  /** Every match, when `all` was cut short. */
+  total: number | undefined;
+  /** The list is every library there is to offer (no text, not cut short). */
+  complete: boolean;
+  fetching: boolean;
+  retry: () => void;
+}
+
+/** The libraries to show for the text: the feature's `options`, or its `query` once opened. */
+function useSource<K extends QueryKey>(
+  props: LibraryComboboxProps<K>,
+  opened: boolean,
+  typed: string,
+): Source {
+  const rested = useDebounced(typed, DEBOUNCE_MS);
   // The feature's key type only matters to the feature: here any key will do.
-  const asked = (query && opened ? query(rested) : undefined) as LibraryChoicesQuery | undefined;
+  const asked = (props.query && opened ? props.query(rested) : undefined) as
+    | LibraryChoicesQuery
+    | undefined;
   const fetched = useQuery(
     asked ? { ...asked, placeholderData: keepPreviousData, retry: false } : IDLE,
   );
+  if (!props.query) return fromOptions(props, typed);
+  // While the answer is for older text, it is filtered here so the list follows the keys.
+  const local = fetched.isPlaceholderData || rested !== typed;
+  return finish(
+    {
+      status: statusOf(fetched.isError, fetched.data !== undefined),
+      all: filtered(fetched.data?.options ?? [], local ? typed : ""),
+      total: local ? undefined : fetched.data?.total,
+      fetching: fetched.isFetching,
+      retry: () => void fetched.refetch(),
+    },
+    typed,
+  );
+}
 
-  const chosen = props.multiple ? props.value : props.value ? [props.value] : [];
-  const picked = new Set(chosen);
+const statusOf = (failed: boolean, ready: boolean): Status =>
+  failed ? "error" : ready ? "ready" : "pending";
 
-  const onOpenChange = useCallback((next: boolean) => {
-    setOpen(next);
-    if (next) {
-      setOpened(true);
-      setRecent(readRecent());
-    } else {
-      setText("");
-      setActive("");
-    }
-  }, []);
+const filtered = (list: readonly LibraryOption[], text: string) =>
+  text ? list.filter((o) => matches(o, text)) : list;
 
-  const typed = text.trim();
-  const status: "pending" | "error" | "ready" = !query
-    ? failed
-      ? "error"
-      : loading || !given
-        ? "pending"
-        : "ready"
-    : fetched.isError
-      ? "error"
-      : fetched.data
-        ? "ready"
-        : "pending";
-  // While a new text is asked for, the last answer is filtered here so the list follows the keys.
-  // Static options are filtered here; a query's are, too, while its answer is for older text.
-  const local = !query || fetched.isPlaceholderData || rested !== typed;
-  const all = useMemo(() => {
-    const list = (query ? fetched.data?.options : given) ?? [];
-    return local && typed ? list.filter((o) => matches(o, typed)) : list;
-  }, [query, given, fetched.data, local, typed]);
-  const total = local ? undefined : fetched.data?.total;
-  const known = useMemo(() => new Map(all.map((o) => [o.id, o])), [all]);
-  // Every library is in the list: a recent one missing from it is gone (or not offered here).
-  const complete = !typed && status === "ready" && (!query || (total ?? 0) <= all.length);
+/** Options the feature passed, with its own loading and failure. */
+function fromOptions<K extends QueryKey>(props: LibraryComboboxProps<K>, typed: string): Source {
+  const { options, loading = false, failed = false, onRetry } = props;
+  return finish(
+    {
+      status: statusOf(failed, !loading && options !== undefined),
+      all: filtered(options ?? [], typed),
+      total: undefined,
+      fetching: false,
+      retry: () => onRetry?.(),
+    },
+    typed,
+  );
+}
+
+function finish(source: Omit<Source, "complete">, typed: string): Source {
+  const complete = !typed && source.status === "ready" && (source.total ?? 0) <= source.all.length;
+  return { ...source, complete };
+}
+
+interface Arranged {
+  recents: LibraryOption[];
+  /** Chosen libraries the list does not hold (a removed one, or past the first page). */
+  extra: LibraryOption[];
+  /** The typed text, offered as itself. */
+  typedChoice: string | undefined;
+  /** By owner (more than 20), else one group. */
+  groups: [owner: string | undefined, items: LibraryOption[]][];
+  /** Every row's key, top to bottom (cmdk's values). */
+  keys: string[];
+}
+
+function byOwner(all: readonly LibraryOption[]): Arranged["groups"] {
+  if (all.length === 0) return [];
+  if (all.length <= GROUP_FROM) return [[undefined, [...all]]];
+  const owners = new Map<string, LibraryOption[]>();
+  for (const option of all) {
+    const owner = ownerOf(option.id);
+    owners.set(owner, [...(owners.get(owner) ?? []), option]);
+  }
+  return [...owners.entries()].sort(([a], [b]) => a.localeCompare(b));
+}
+
+/** The rows in the order they are shown: typed, Recent, chosen elsewhere, then the libraries. */
+function arrange(
+  source: Source,
+  recent: readonly Recent[],
+  chosen: readonly string[],
+  typed: string,
+  custom: ((text: string) => boolean) | undefined,
+): Arranged {
+  const known = new Map(source.all.map((o) => [o.id, o]));
+  // With every library in the list, a recent one missing from it is gone (or not offered here).
   const recents = typed
     ? []
-    : recent.filter((r) => !complete || known.has(r.id)).map((r) => known.get(r.id) ?? r);
-  // A library chosen but not in the list (a removed one, or past the first page) is still shown.
-  const extra: LibraryOption[] = typed
+    : recent
+        .filter((r) => !source.complete || known.has(r.id))
+        .map((r): LibraryOption => known.get(r.id) ?? r);
+  const extra = typed
     ? []
     : chosen
         .filter((id) => !known.has(id) && !recents.some((r) => r.id === id))
         .map((id) => ({ id }));
-  const offerTyped =
-    custom !== undefined &&
-    typed !== "" &&
-    custom(typed) &&
-    !known.has(typed) &&
-    !picked.has(typed);
-  const grouped = all.length > GROUP_FROM;
-  const groups = useMemo(() => {
-    if (!grouped) return [];
-    const byOwner = new Map<string, LibraryOption[]>();
-    for (const option of all) {
-      const owner = ownerOf(option.id);
-      byOwner.set(owner, [...(byOwner.get(owner) ?? []), option]);
-    }
-    return [...byOwner.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [all, grouped]);
-
-  const choose = (option: LibraryOption) => {
-    if (props.multiple) {
-      if (picked.has(option.id)) {
-        props.onChange(props.value.filter((id) => id !== option.id));
-        return;
-      }
-      // Stored for the next opening; the open list keeps its order under the pointer.
-      rememberLibrary(option);
-      props.onChange([...props.value, option.id]);
-      return;
-    }
-    rememberLibrary(option);
-    props.onChange(option.id);
-    onOpenChange(false);
-  };
-  const clear = () => {
-    if (props.multiple) props.onChange([]);
-    else {
-      props.onChange(undefined);
-      onOpenChange(false);
-    }
-  };
-
-  const row = (option: LibraryOption, key: string) => {
-    const on = picked.has(option.id);
-    const title = titleOf(option);
-    return (
-      <CommandItem
-        key={key}
-        value={key}
-        aria-checked={on}
-        onSelect={() => choose(option)}
-        className="gap-2.5"
-      >
-        {props.multiple && <Box checked={on} />}
-        <LibraryMark id={option.id} logo={option.logo} size="sm" />
-        <span className="flex min-w-0 flex-1 items-baseline gap-2">
-          <span className="min-w-0 truncate font-mono text-mono">{option.id}</span>
-          {title && " "}
-          {title && (
-            <span className="min-w-0 shrink-[2] truncate text-small text-muted-foreground">
-              {title}
-            </span>
-          )}
-        </span>
-        {option.detail !== undefined && (
-          <span className="num ml-auto shrink-0 text-small text-muted-foreground">
-            <span aria-hidden={option.detailLabel ? true : undefined}>{option.detail}</span>
-            {option.detailLabel && <span className="sr-only">, {option.detailLabel}</span>}
-          </span>
-        )}
-        {!props.multiple && (
-          <Check
-            aria-hidden="true"
-            className={cn("ml-auto size-4 text-foreground!", !on && "invisible")}
-          />
-        )}
-      </CommandItem>
-    );
-  };
-
-  const count = all.length + extra.length;
-  // The highlighted row (cmdk's value): kept while it is still listed, else the chosen library's
-  // row, else the first one, so the input always has an active descendant to announce.
+  const typedChoice =
+    custom && typed && custom(typed) && !known.has(typed) && !chosen.includes(typed)
+      ? typed
+      : undefined;
+  const groups = byOwner(source.all);
   const keys = [
-    ...(offerTyped ? [`custom ${typed}`] : []),
+    ...(typedChoice ? [`custom ${typedChoice}`] : []),
     ...recents.map((o) => `recent ${o.id}`),
     ...extra.map((o) => `extra ${o.id}`),
-    ...(grouped ? groups.flatMap(([, items]) => items) : all).map((o) => o.id),
+    ...groups.flatMap(([, items]) => items.map((o) => o.id)),
   ];
-  const single = !props.multiple ? props.value : undefined;
-  const activeKey = keys.includes(active)
-    ? active
-    : ((single && keys.find((k) => k === single || k.endsWith(` ${single}`))) ?? keys[0] ?? "");
-  const announce =
-    status === "pending"
-      ? t.loading
-      : status === "error"
-        ? t.failed
-        : count === 0 && !offerTyped
-          ? typed
-            ? t.noMatch(typed)
-            : t.none
-          : t.found(count + (offerTyped ? 1 : 0));
+  return { recents, extra, typedChoice, groups, keys };
+}
 
-  const list = (
+/** The highlighted row: the one kept while it is listed, else the chosen one's, else the first. */
+function activeOf(keys: readonly string[], active: string, single: string | undefined): string {
+  if (keys.includes(active)) return active;
+  const chosen = single && keys.find((k) => k === single || k.endsWith(` ${single}`));
+  return chosen || (keys[0] ?? "");
+}
+
+function OptionRow({
+  option,
+  value,
+  on,
+  multiple,
+  onSelect,
+}: {
+  option: LibraryOption;
+  value: string;
+  on: boolean;
+  multiple: boolean;
+  onSelect: () => void;
+}) {
+  const title = titleOf(option);
+  return (
+    <CommandItem value={value} aria-checked={on} onSelect={onSelect} className="gap-2.5">
+      {multiple && <Box checked={on} />}
+      <LibraryMark id={option.id} logo={option.logo} size="sm" />
+      <span className="flex min-w-0 flex-1 items-baseline gap-2">
+        <span className="min-w-0 truncate font-mono text-mono">{option.id}</span>
+        {title && " "}
+        {title && (
+          <span className="min-w-0 shrink-[2] truncate text-small text-muted-foreground">
+            {title}
+          </span>
+        )}
+      </span>
+      {option.detail !== undefined && <Detail option={option} />}
+      {!multiple && (
+        <Check
+          aria-hidden="true"
+          className={cn("ml-auto size-4 text-foreground!", !on && "invisible")}
+        />
+      )}
+    </CommandItem>
+  );
+}
+
+/** A row's count at its end, read out in words. */
+function Detail({ option }: { option: LibraryOption }) {
+  return (
+    <span className="num ml-auto shrink-0 text-small text-muted-foreground">
+      <span aria-hidden={option.detailLabel ? true : undefined}>{option.detail}</span>
+      {option.detailLabel && <span className="sr-only">, {option.detailLabel}</span>}
+    </span>
+  );
+}
+
+/** What the live line says: loading, failed, nothing, or how many match. */
+function useAnnouncement(source: Source, rows: Arranged, typed: string): string {
+  const t = useMessages(messages).libraryPicker;
+  if (source.status === "pending") return t.loading;
+  if (source.status === "error") return t.failed;
+  const count = source.all.length + rows.extra.length + (rows.typedChoice ? 1 : 0);
+  if (count > 0) return t.found(count);
+  return typed ? t.noMatch(typed) : t.none;
+}
+
+/** Loading (skeleton rows) and failed (a sentence and Try again) in place of the list. */
+function ListStates({ source }: { source: Source }) {
+  const t = useMessages(messages).libraryPicker;
+  const c = useMessages(common);
+  if (source.status === "pending") {
+    return (
+      <div aria-hidden="true" className="space-y-1 p-2">
+        {["w-40", "w-32", "w-44"].map((w) => (
+          <div key={w} className="flex h-11 items-center gap-2.5 px-2 fine:h-8">
+            <Skeleton className="size-6 rounded-md" />
+            <Skeleton className={cn("h-3.5", w)} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+  if (source.status === "error") {
+    return (
+      <div role="alert" className="flex flex-col items-start gap-2 p-3 text-body">
+        <p className="flex items-center gap-2 text-destructive-ink">
+          <CircleAlert aria-hidden="true" data-icon-motion="alert" className="size-4" />
+          {t.failed}
+        </p>
+        <Button variant="outline" size="sm" onClick={source.retry}>
+          {c.retry}
+        </Button>
+      </div>
+    );
+  }
+  return null;
+}
+
+/** The typed value offered as itself ("Use /gone/lib"). */
+function TypedChoice({ id, onChoose }: { id: string; onChoose: (option: LibraryOption) => void }) {
+  const t = useMessages(messages).libraryPicker;
+  return (
+    <CommandGroup>
+      <CommandItem value={`custom ${id}`} onSelect={() => onChoose({ id })} className="gap-2.5">
+        <Plus aria-hidden="true" data-icon-motion="turn" />
+        <span className="min-w-0 truncate">
+          {t.typedChoice(<span className="font-mono text-mono">{id}</span>)}
+        </span>
+      </CommandItem>
+    </CommandGroup>
+  );
+}
+
+/** The rows in their groups: the typed value, Recent, chosen elsewhere, then the libraries. */
+function ChoiceGroups({
+  rows,
+  row,
+  onChoose,
+}: {
+  rows: Arranged;
+  row: (option: LibraryOption, key: string) => ReactNode;
+  onChoose: (option: LibraryOption) => void;
+}) {
+  const t = useMessages(messages).libraryPicker;
+  const recent = rows.recents.length > 0;
+  return (
+    <>
+      {rows.typedChoice && <TypedChoice id={rows.typedChoice} onChoose={onChoose} />}
+      {recent && (
+        <CommandGroup heading={t.recent}>
+          {rows.recents.map((option) => row(option, `recent ${option.id}`))}
+        </CommandGroup>
+      )}
+      {rows.extra.length > 0 && (
+        <CommandGroup>{rows.extra.map((option) => row(option, `extra ${option.id}`))}</CommandGroup>
+      )}
+      {rows.groups.map(([owner, items]) => (
+        <CommandGroup key={owner ?? ""} heading={owner ?? (recent ? t.all : undefined)}>
+          {items.map((option) => row(option, option.id))}
+        </CommandGroup>
+      ))}
+    </>
+  );
+}
+
+/** Under a list the API cut short: how much is shown, and to type to narrow it. */
+function PartialNote({ source }: { source: Source }) {
+  const t = useMessages(messages).libraryPicker;
+  if (source.status !== "ready" || (source.total ?? 0) <= source.all.length) return null;
+  return (
+    <p className="border-t border-rule px-3 py-2 text-small text-muted-foreground">
+      {t.partial(source.all.length, source.total ?? 0)}
+    </p>
+  );
+}
+
+/** Nothing to list: no library matches the text, or there are none. */
+function NothingListed({ typed }: { typed: string }) {
+  const t = useMessages(messages).libraryPicker;
+  return (
+    <p role="presentation" className="px-2 py-6 text-center text-body text-muted-foreground">
+      {typed ? t.noMatch(typed) : t.none}
+    </p>
+  );
+}
+
+/** Clear at the list's end, while something is chosen. */
+function ClearRow({ onClear }: { onClear: () => void }) {
+  const t = useMessages(messages).libraryPicker;
+  return (
+    <>
+      <CommandSeparator />
+      <CommandGroup>
+        <CommandItem value="__clear__" onSelect={onClear} className="justify-center">
+          {t.clear}
+        </CommandItem>
+      </CommandGroup>
+    </>
+  );
+}
+
+interface ChoicesProps {
+  label: string;
+  multiple: boolean;
+  open: boolean;
+  source: Source;
+  rows: Arranged;
+  chosen: readonly string[];
+  single: string | undefined;
+  text: string;
+  onText: (text: string) => void;
+  onChoose: (option: LibraryOption) => void;
+  onClear: () => void;
+}
+
+/** The popover's content: the text box, the live line, the states and the list. */
+function Choices({
+  label,
+  multiple,
+  open,
+  source,
+  rows,
+  chosen,
+  single,
+  text,
+  onText,
+  onChoose,
+  onClear,
+}: ChoicesProps) {
+  const t = useMessages(messages).libraryPicker;
+  const root = useActiveDescendant();
+  const [active, setActive] = useState("");
+  const typed = text.trim();
+  const announce = useAnnouncement(source, rows, typed);
+  const picked = new Set(chosen);
+  const row = (option: LibraryOption, key: string) => (
+    <OptionRow
+      key={key}
+      value={key}
+      option={option}
+      on={picked.has(option.id)}
+      multiple={multiple}
+      onSelect={() => onChoose(option)}
+    />
+  );
+  return (
     // cmdk names its input with a hidden label of its own (`aria-labelledby`), from `label`.
     <Command
       ref={root}
       shouldFilter={false}
       label={t.find}
-      value={activeKey}
+      value={activeOf(rows.keys, active, single)}
       onValueChange={setActive}
     >
-      <CommandInput value={text} onValueChange={setText} placeholder={t.findPlaceholder} />
+      <CommandInput value={text} onValueChange={onText} placeholder={t.findPlaceholder} />
       <p role="status" className="sr-only">
         {open ? announce : ""}
       </p>
-      {status === "pending" && (
-        <div aria-hidden="true" className="space-y-1 p-2">
-          {["w-40", "w-32", "w-44"].map((w) => (
-            <div key={w} className="flex h-11 items-center gap-2.5 px-2 fine:h-8">
-              <Skeleton className="size-6 rounded-md" />
-              <Skeleton className={cn("h-3.5", w)} />
-            </div>
-          ))}
-        </div>
-      )}
-      {status === "error" && (
-        <div role="alert" className="flex flex-col items-start gap-2 p-3 text-body">
-          <p className="flex items-center gap-2 text-destructive-ink">
-            <CircleAlert aria-hidden="true" data-icon-motion="alert" className="size-4" />
-            {t.failed}
-          </p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => (query ? void fetched.refetch() : onRetry?.())}
-          >
-            {c.retry}
-          </Button>
-        </div>
-      )}
-      {status === "ready" && (
+      <ListStates source={source} />
+      {source.status === "ready" && (
         <CommandList
           label={label}
-          aria-multiselectable={props.multiple || undefined}
-          aria-busy={(query && fetched.isFetching) || undefined}
+          aria-multiselectable={multiple || undefined}
+          aria-busy={source.fetching || undefined}
         >
-          {offerTyped && (
-            <CommandGroup>
-              <CommandItem
-                value={`custom ${typed}`}
-                onSelect={() => choose({ id: typed })}
-                className="gap-2.5"
-              >
-                <Plus aria-hidden="true" data-icon-motion="turn" />
-                <span className="min-w-0 truncate">
-                  {t.typedChoice(<span className="font-mono text-mono">{typed}</span>)}
-                </span>
-              </CommandItem>
-            </CommandGroup>
-          )}
-          {recents.length > 0 && (
-            <CommandGroup heading={t.recent}>
-              {recents.map((option) => row(option, `recent ${option.id}`))}
-            </CommandGroup>
-          )}
-          {extra.length > 0 && (
-            <CommandGroup>{extra.map((option) => row(option, `extra ${option.id}`))}</CommandGroup>
-          )}
-          {grouped
-            ? groups.map(([owner, items]) => (
-                <CommandGroup key={owner} heading={owner}>
-                  {items.map((option) => row(option, option.id))}
-                </CommandGroup>
-              ))
-            : all.length > 0 && (
-                <CommandGroup heading={recents.length > 0 ? t.all : undefined}>
-                  {all.map((option) => row(option, option.id))}
-                </CommandGroup>
-              )}
-          {count === 0 && !offerTyped && (
-            <p
-              role="presentation"
-              className="px-2 py-6 text-center text-body text-muted-foreground"
-            >
-              {typed ? t.noMatch(typed) : t.none}
-            </p>
-          )}
-          {chosen.length > 0 && (
-            <>
-              <CommandSeparator />
-              <CommandGroup>
-                <CommandItem value="__clear__" onSelect={clear} className="justify-center">
-                  {t.clear}
-                </CommandItem>
-              </CommandGroup>
-            </>
-          )}
+          <ChoiceGroups rows={rows} row={row} onChoose={onChoose} />
+          {rows.keys.length === 0 && <NothingListed typed={typed} />}
+          {chosen.length > 0 && <ClearRow onClear={onClear} />}
         </CommandList>
       )}
-      {status === "ready" && total !== undefined && total > all.length && (
-        <p className="border-t border-rule px-3 py-2 text-small text-muted-foreground">
-          {t.partial(all.length, total)}
-        </p>
-      )}
+      <PartialNote source={source} />
     </Command>
   );
+}
 
-  const singleOption = single ? (known.get(single) ?? { id: single }) : undefined;
+interface TriggerProps extends React.ComponentProps<"button"> {
+  id: string;
+  chosen: readonly string[];
+  /** The single chosen library. */
+  shown: LibraryOption | undefined;
+}
 
-  const triggerNode =
+/** The toolbar trigger: an outline button naming the filter and what it holds. */
+function FilterTrigger({ id, label, chosen, shown, ...rest }: TriggerProps & { label: string }) {
+  const t = useMessages(messages).libraryPicker;
+  const value = shown?.id ?? (chosen.length > 0 ? t.selected(chosen.length) : "");
+  return (
+    <Button
+      {...rest}
+      id={id}
+      variant="outline"
+      size="sm"
+      aria-label={value ? `${label}: ${value}` : label}
+      className={cn("max-w-full", value && "border-muted-foreground/50")}
+    >
+      <ListFilter aria-hidden="true" data-icon-motion="tilt" />
+      {label}
+      {value && (
+        <span className="flex min-w-0 items-center gap-1.5 border-l border-rule pl-2">
+          {shown && <LibraryMark id={shown.id} logo={shown.logo} size="sm" />}
+          <span className={cn("max-w-40 truncate", shown && "font-mono text-mono")}>{value}</span>
+        </span>
+      )}
+    </Button>
+  );
+}
+
+/** A field's trigger: a control-like box with the choice (or the placeholder) and a chevron. */
+function FieldTrigger({
+  id,
+  labelId,
+  chosen,
+  shown,
+  placeholder,
+  ...rest
+}: TriggerProps & { labelId: string; placeholder: string | undefined }) {
+  const t = useMessages(messages).libraryPicker;
+  const fallback = placeholder ?? t.choose;
+  const text = shown?.id ?? (chosen.length > 0 ? t.selected(chosen.length) : fallback);
+  return (
+    <button
+      {...rest}
+      id={id}
+      type="button"
+      aria-labelledby={`${labelId} ${id}`}
+      className={cn(triggerRecipe, "w-full")}
+    >
+      <span className="flex min-w-0 items-center gap-2">
+        {shown && <LibraryMark id={shown.id} logo={shown.logo} size="sm" />}
+        <span
+          className={cn(
+            "truncate",
+            shown && "font-mono text-mono",
+            chosen.length === 0 && "text-muted-foreground",
+          )}
+        >
+          {text}
+        </span>
+      </span>
+      <ChevronsUpDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+    </button>
+  );
+}
+
+/** A field's chosen libraries as removable chips. */
+function ChosenTags({
+  ids,
+  find,
+  onChange,
+}: {
+  ids: readonly string[];
+  find: (id: string) => LibraryOption | undefined;
+  onChange: (ids: string[]) => void;
+}) {
+  const t = useMessages(messages).libraryPicker;
+  if (ids.length === 0) return null;
+  return (
+    <TagList label={t.chosen}>
+      {ids.map((id) => (
+        <li key={id} className="reveal flex min-w-0">
+          <Tag
+            mono
+            leading={<LibraryMark id={id} logo={find(id)?.logo} size="sm" className="size-5" />}
+            removeLabel={t.remove(id)}
+            onRemove={() => onChange(ids.filter((v) => v !== id))}
+            className="pl-1.5"
+          >
+            {id}
+          </Tag>
+        </li>
+      ))}
+    </TagList>
+  );
+}
+
+/** What the picker holds and how a pick changes it, single or multiple. */
+function useChoice<K extends QueryKey>(props: LibraryComboboxProps<K>, close: () => void) {
+  const chosen: readonly string[] = props.multiple ? props.value : props.value ? [props.value] : [];
+  const choose = (option: LibraryOption) => {
+    if (!props.multiple) {
+      rememberLibrary(option);
+      props.onChange(option.id);
+      close();
+      return;
+    }
+    if (props.value.includes(option.id)) {
+      props.onChange(props.value.filter((id) => id !== option.id));
+      return;
+    }
+    // Stored for the next opening; the open list keeps its order under the pointer.
+    rememberLibrary(option);
+    props.onChange([...props.value, option.id]);
+  };
+  const clear = () => {
+    if (props.multiple) {
+      props.onChange([]);
+      return;
+    }
+    props.onChange(undefined);
+    close();
+  };
+  return { chosen, single: props.multiple ? undefined : props.value, choose, clear };
+}
+
+export function LibraryCombobox<K extends QueryKey>(props: LibraryComboboxProps<K>) {
+  const { label, variant = "field", placeholder, hint, custom, children, className } = props;
+  const uid = useId();
+  const [open, setOpen] = useState(false);
+  // Once opened, a `query` stays live (cached), so reopening shows the list at once.
+  const [opened, setOpened] = useState(false);
+  const [text, setText] = useState("");
+  const [recent, setRecent] = useState<Recent[]>(readRecent);
+  const typed = text.trim();
+  const source = useSource(props, opened, typed);
+  const onOpenChange = (next: boolean) => {
+    setOpen(next);
+    if (!next) {
+      setText("");
+      return;
+    }
+    setOpened(true);
+    setRecent(readRecent());
+  };
+  const { chosen, single, choose, clear } = useChoice(props, () => onOpenChange(false));
+  const rows = arrange(source, recent, chosen, typed, custom);
+  const find = (id: string) =>
+    source.all.find((o) => o.id === id) ?? recent.find((r) => r.id === id);
+  const triggerProps = {
+    id: props.id ?? `${uid}-trigger`,
+    chosen,
+    shown: single ? (find(single) ?? { id: single }) : undefined,
+  };
+  const trigger =
     children ??
     (variant === "filter" ? (
-      <Button
-        id={triggerId}
-        variant="outline"
-        size="sm"
-        aria-label={
-          chosen.length === 0
-            ? label
-            : props.multiple
-              ? `${label}: ${t.selected(chosen.length)}`
-              : `${label}: ${single}`
-        }
-        className={cn("max-w-full", chosen.length > 0 && "border-muted-foreground/50")}
-      >
-        <ListFilter aria-hidden="true" data-icon-motion="tilt" />
-        {label}
-        {singleOption && (
-          <span className="flex min-w-0 items-center gap-1.5 border-l border-rule pl-2">
-            <LibraryMark id={singleOption.id} logo={singleOption.logo} size="sm" />
-            <span className="max-w-40 truncate font-mono text-mono">{singleOption.id}</span>
-          </span>
-        )}
-        {props.multiple && chosen.length > 0 && (
-          <span className="border-l border-rule pl-2 text-muted-foreground">
-            {t.selected(chosen.length)}
-          </span>
-        )}
-      </Button>
+      <FilterTrigger {...triggerProps} label={label} />
     ) : (
-      <button
-        id={triggerId}
-        type="button"
-        aria-labelledby={`${uid}-label ${triggerId}`}
-        className={cn(triggerRecipe, "w-full")}
-      >
-        <span className="flex min-w-0 items-center gap-2">
-          {singleOption ? (
-            <>
-              <LibraryMark id={singleOption.id} logo={singleOption.logo} size="sm" />
-              <span className="truncate font-mono text-mono">{singleOption.id}</span>
-            </>
-          ) : props.multiple && chosen.length > 0 ? (
-            <span className="truncate">{t.selected(chosen.length)}</span>
-          ) : (
-            <span className="truncate text-muted-foreground">{placeholder ?? t.choose}</span>
-          )}
-        </span>
-        <ChevronsUpDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-      </button>
+      <FieldTrigger {...triggerProps} labelId={`${uid}-label`} placeholder={placeholder} />
     ));
 
   const popover = (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger asChild>{triggerNode}</PopoverTrigger>
+      <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent className="w-[min(24rem,calc(100vw-2rem))] min-w-(--radix-popover-trigger-width) p-0">
-        {list}
+        <Choices
+          label={label}
+          multiple={props.multiple === true}
+          open={open}
+          source={source}
+          rows={rows}
+          chosen={chosen}
+          single={single}
+          text={text}
+          onText={setText}
+          onChoose={choose}
+          onClear={clear}
+        />
       </PopoverContent>
     </Popover>
   );
@@ -575,26 +798,7 @@ export function LibraryCombobox<K extends QueryKey>(props: LibraryComboboxProps<
       </span>
       {popover}
       {hint && <p className="text-small text-muted-foreground">{hint}</p>}
-      {props.multiple && props.value.length > 0 && (
-        <TagList label={t.chosen}>
-          {props.value.map((id) => {
-            const option = known.get(id) ?? recent.find((r) => r.id === id) ?? { id };
-            return (
-              <li key={id} className="reveal flex min-w-0">
-                <Tag
-                  mono
-                  leading={<LibraryMark id={id} logo={option.logo} size="sm" className="size-5" />}
-                  removeLabel={t.remove(id)}
-                  onRemove={() => props.onChange(props.value.filter((v) => v !== id))}
-                  className="pl-1.5"
-                >
-                  {id}
-                </Tag>
-              </li>
-            );
-          })}
-        </TagList>
-      )}
+      {props.multiple && <ChosenTags ids={props.value} find={find} onChange={props.onChange} />}
     </div>
   );
 }
