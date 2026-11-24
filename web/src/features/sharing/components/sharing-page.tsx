@@ -53,9 +53,6 @@ const ROLE_ICONS: Record<GrantedRole, { icon: LucideIcon; motion: IconMotion }> 
   admin: { icon: ShieldCheck, motion: "pop" },
 };
 
-/** Crumbs stay 44 px high on touch (DESIGN.md, Accessibility). */
-const crumbTarget = "inline-flex min-h-11 items-center fine:min-h-7";
-
 interface Props {
   owner: string;
   repo: string;
@@ -317,13 +314,13 @@ function SharingBreadcrumb({
     <Breadcrumb>
       <BreadcrumbList>
         <BreadcrumbItem>
-          <BreadcrumbLink asChild className={crumbTarget}>
+          <BreadcrumbLink asChild>
             <Link to="/">{t.page.libraries}</Link>
           </BreadcrumbLink>
         </BreadcrumbItem>
         <BreadcrumbSeparator />
         <BreadcrumbItem>
-          <BreadcrumbLink asChild className={cn(crumbTarget, "font-mono text-small")}>
+          <BreadcrumbLink asChild className="font-mono text-small">
             <Link to="/libraries/$owner/$repo" params={{ owner, repo }}>
               {libraryId}
             </Link>

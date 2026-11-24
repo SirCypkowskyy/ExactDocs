@@ -41,7 +41,10 @@ function BreadcrumbItem({ className, ...props }: React.ComponentProps<"li">) {
   );
 }
 
-/** A crumb that leads back; `asChild` takes the router's `Link`. */
+/**
+ * A crumb that leads back; `asChild` takes the router's `Link`. A 44 px target on touch, as tall
+ * as the line with a mouse (DESIGN.md, Accessibility).
+ */
 function BreadcrumbLink({
   asChild,
   className,
@@ -52,7 +55,7 @@ function BreadcrumbLink({
     <Comp
       data-slot="breadcrumb-link"
       className={cn(
-        "rounded-sm underline-offset-2 outline-none transition-colors duration-(--dur-fast) hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring",
+        "inline-flex min-h-11 items-center rounded-sm underline-offset-2 outline-none fine:min-h-7 transition-colors duration-(--dur-fast) hover:text-foreground hover:underline focus-visible:ring-2 focus-visible:ring-ring",
         className,
       )}
       {...props}

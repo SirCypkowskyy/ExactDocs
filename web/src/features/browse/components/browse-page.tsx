@@ -183,7 +183,7 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
             <BreadcrumbList>
               <BreadcrumbItem>
                 <BreadcrumbLink asChild>
-                  <Link to="/" className="-ml-1 inline-flex min-h-11 items-center px-1 lg:min-h-7">
+                  <Link to="/" className="-ml-1 px-1">
                     {t.libraries}
                   </Link>
                 </BreadcrumbLink>

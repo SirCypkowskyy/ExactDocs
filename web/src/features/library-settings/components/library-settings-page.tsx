@@ -96,9 +96,6 @@ function SectionNav() {
   );
 }
 
-/** A crumb is a 44 px target on touch, as tall as the line with a mouse. */
-const crumb = "inline-flex min-h-11 items-center fine:min-h-7";
-
 /** Libraries / the library's ID / Settings. */
 export function SettingsBreadcrumb({
   owner,
@@ -115,9 +112,7 @@ export function SettingsBreadcrumb({
       <BreadcrumbList>
         <BreadcrumbItem>
           <BreadcrumbLink asChild>
-            <Link to="/" className={crumb}>
-              {t.libraries}
-            </Link>
+            <Link to="/">{t.libraries}</Link>
           </BreadcrumbLink>
         </BreadcrumbItem>
         <BreadcrumbSeparator />
@@ -127,7 +122,7 @@ export function SettingsBreadcrumb({
             <Link
               to="/libraries/$owner/$repo"
               params={{ owner, repo }}
-              className={cn(crumb, "font-mono text-small [overflow-wrap:anywhere]")}
+              className="font-mono text-small [overflow-wrap:anywhere]"
             >
               {id}
             </Link>

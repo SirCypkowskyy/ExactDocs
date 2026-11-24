@@ -449,6 +449,16 @@ describe("Breadcrumb", () => {
     expect(within(nav).getAllByRole("listitem")).toHaveLength(2);
   });
 
+  it("makes each crumb a 44 px target on touch, a line high with a mouse, even as a child link", () => {
+    render(
+      <BreadcrumbLink asChild className="font-mono">
+        <a href="/libraries/acme/payments">/acme/payments</a>
+      </BreadcrumbLink>,
+    );
+    const link = screen.getByRole("link", { name: "/acme/payments" });
+    expect(link).toHaveClass("inline-flex", "min-h-11", "fine:min-h-7", "font-mono");
+  });
+
   it("is named in Polish", () => {
     setPreferences({ language: "pl" });
     render(

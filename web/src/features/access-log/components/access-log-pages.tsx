@@ -2,7 +2,6 @@ import { Link, useSearch } from "@tanstack/react-router";
 import { ScrollText } from "lucide-react";
 import { useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
-import { cn } from "@/shared/lib/utils";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -21,9 +20,6 @@ import {
   parseLibraryAccessLogView,
 } from "../model/access-log";
 import { AccessLogTable } from "./access-log-list";
-
-/** Crumbs stay 44 px high on touch (DESIGN.md, Accessibility). */
-const crumbTarget = "inline-flex min-h-11 items-center fine:min-h-7";
 
 /** The URL's search, as the route validated it (or as typed, in a test). */
 const useRawSearch = () => useSearch({ strict: false }) as Record<string, unknown>;
@@ -45,13 +41,13 @@ export function LibraryAccessLogPage({ owner, repo }: { owner: string; repo: str
           <Breadcrumb>
             <BreadcrumbList>
               <BreadcrumbItem>
-                <BreadcrumbLink asChild className={crumbTarget}>
+                <BreadcrumbLink asChild>
                   <Link to="/">{t.libraries}</Link>
                 </BreadcrumbLink>
               </BreadcrumbItem>
               <BreadcrumbSeparator />
               <BreadcrumbItem>
-                <BreadcrumbLink asChild className={cn(crumbTarget, "font-mono text-small")}>
+                <BreadcrumbLink asChild className="font-mono text-small">
                   <Link to="/libraries/$owner/$repo" params={{ owner, repo }}>
                     {id}
                   </Link>
@@ -59,7 +55,7 @@ export function LibraryAccessLogPage({ owner, repo }: { owner: string; repo: str
               </BreadcrumbItem>
               <BreadcrumbSeparator />
               <BreadcrumbItem>
-                <BreadcrumbLink asChild className={crumbTarget}>
+                <BreadcrumbLink asChild>
                   <Link to="/libraries/$owner/$repo/sharing" params={{ owner, repo }}>
                     {t.sharing}
                   </Link>
