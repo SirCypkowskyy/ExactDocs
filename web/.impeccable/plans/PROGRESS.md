@@ -3,7 +3,7 @@
 Kept up to date by the overnight session that continues `HANDOFF.md`. Newest state first in each
 section. Read `HANDOFF.md` for the plan, the owner's decisions and the rules.
 
-_Last updated: 2026-11-24 00:15 UTC._
+_Last updated: 2026-11-24 01:25 UTC._
 
 ## Frontend (`feature/486-design-system`)
 
@@ -49,7 +49,7 @@ react-doctor, 59 files / 846 tests, build (check-dist, bundle-size) all green.
 
 Every server table uses the cursor walk with a `// #509:` note where offset paging goes.
 
-### Kit follow-ups from section B: in progress
+### Kit follow-ups from section B: done (`2d586ee..0d29563`, 867 tests)
 
 Row-menu focus return after a mouse-opened menu (one bug, found twice); future relative times;
 `EmptyState` icon at 32 px; `DataTableModel.error`; a local (non-URL) view option; `qParam`;
@@ -57,9 +57,18 @@ TableError retry label; breadcrumb links 44 px on touch; keep the URL hash; row 
 `formatBytes` "B"; `DataTableSkeleton`; `LibraryCell` description; a shared "chips + N" cell;
 FormAlert's alert reaction. Then the local workarounds go.
 
-### C. UI for finished backend branches: not started
+### C. UI for finished backend branches: in progress
 
-Waits for each backend branch to be green (below).
+- **#504 library logos: done** (`f9844a0` merges the backend and develop; `1ddac14`, `f32001b`).
+  `LibraryMark` takes the API's `logo` version and builds `/api/v1/libraries/{owner}/{repo}/logo?v=`;
+  the logo sits on the white logo tile (lazy, async, `alt=""`, fixed box); no logo or a failed
+  image shows the generic icon on the library's line colour; logos turned off show the monogram
+  bullet (new `xl` size). Shown in the libraries table, the library page header (`xl`, new
+  `PageHeader` `mark` slot), the settings / sharing / library access-log headers (`lg`) and the
+  playground. The "Library logos" switch is also in the band's interface menu. 881 tests.
+- Next: #487 (drop the `as ApiPath` cast once merged), #505/#506 (Account → Sign-in tab, brand
+  buttons), #509 (offset paging in DataTable v2), #510–#513 (Overview and Leaderboard),
+  #514/#515 (access-log and users filters).
 
 ## Backend
 
@@ -97,5 +106,11 @@ here, so the BM25-on-PostgreSQL variants only run in CI.
    (they link or sign in already-linked identities only); Microsoft `tenant` must be a GUID or
    `organizations` / `common` / `consumers`; a link callback that fails before its attempt is
    found lands on `/sign-in?error=…`.
-7. **Commit identity.** Commits use the repository's existing identity (no AI attribution);
+7. **Logo placement.** On the sharing and access-log pages the library mark replaces the page's
+   own icon (blocks-map §4 "the page header, lg 36"); breadcrumbs no longer carry the bullet
+   (§4 "not in breadcrumbs"). The alternative is to keep the function icon there.
+8. **Logos missing from some DTOs.** Global search hits/facets, jobs, access-log and AI-usage
+   rows have no `logo`, so they show the generic mark; adding `logo` there is a small backend
+   follow-up (search was already gap G11).
+9. **Commit identity.** Commits use the repository's existing identity (no AI attribution);
    GitHub shows them as Unverified because they are not signed.
