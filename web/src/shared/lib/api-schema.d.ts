@@ -523,6 +523,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/stats/jobs": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Job Stats
+         * @description Count the jobs queued on each UTC day from `from` to `to`, by state and by kind.
+         *
+         *     Every day of the range is listed, a day without jobs counting 0, and each day lists
+         *     every state and every kind. A job counts on the day it was queued, in the state it is
+         *     in now. Only `bucket=day` exists. The range is at most 366 days; one that ends before
+         *     it starts or is longer is a 422 `invalid_range`. Operators only (a session or an API
+         *     token of an `admin`): the counts cover every library.
+         */
+        readonly get: operations["ingestion-get_job_stats"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/account/preferences": {
         readonly parameters: {
             readonly query?: never;
@@ -3749,6 +3775,37 @@ export interface components {
             readonly leaderboard_opt_in: boolean;
         };
         /**
+         * JobDayStats
+         * @description The jobs queued on one UTC day, counted by the state they are in now and by kind.
+         */
+        readonly JobDayStats: {
+            /**
+             * Day
+             * Format: date
+             * @description The UTC day the jobs were queued on.
+             */
+            readonly day: string;
+            /**
+             * Total
+             * @description How many jobs were queued that day.
+             */
+            readonly total: number;
+            /**
+             * By State
+             * @description How many of them are in each state now; every state is listed, 0 included.
+             */
+            readonly by_state: {
+                readonly [key: string]: number;
+            };
+            /**
+             * By Kind
+             * @description How many of them are of each kind; every kind is listed, 0 included.
+             */
+            readonly by_kind: {
+                readonly [key: string]: number;
+            };
+        };
+        /**
          * JobList
          * @description A page of jobs, newest first unless sorted otherwise.
          */
@@ -5280,6 +5337,22 @@ export interface components {
          * @enum {string}
          */
         readonly Period: "day" | "week" | "month" | "year";
+        /**
+         * PersonSummary
+         * @description A person as the jobs show them: their account's ID and user name, nothing else.
+         */
+        readonly PersonSummary: {
+            /**
+             * Id
+             * @description The account's stable ID.
+             */
+            readonly id: string;
+            /**
+             * Username
+             * @description The account's user name, as it was when they asked.
+             */
+            readonly username: string;
+        };
         /**
          * PlanSourcesCommand
          * @description Compare a sources file with the instance; nothing is changed.
@@ -9545,6 +9618,87 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["AccessLogPage"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "ingestion-get_job_stats": {
+        readonly parameters: {
+            readonly query?: {
+                /** @description How jobs are grouped: `day` (UTC days) is the only bucket. */
+                readonly bucket?: "day";
+                /** @description The first UTC day counted (`YYYY-MM-DD`); default: 29 days before `to`. At most 366 days are counted at once. */
+                readonly from?: string | null;
+                /** @description The last UTC day counted (`YYYY-MM-DD`), included; default: today (UTC). */
+                readonly to?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["JobStats"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */

@@ -3400,6 +3400,149 @@
         }
       }
     },
+    "/api/v1/stats/jobs": {
+      "get": {
+        "tags": [
+          "ingestion"
+        ],
+        "summary": "Get Job Stats",
+        "description": "Count the jobs queued on each UTC day from `from` to `to`, by state and by kind.\n\nEvery day of the range is listed, a day without jobs counting 0, and each day lists\nevery state and every kind. A job counts on the day it was queued, in the state it is\nin now. Only `bucket=day` exists. The range is at most 366 days; one that ends before\nit starts or is longer is a 422 `invalid_range`. Operators only (a session or an API\ntoken of an `admin`): the counts cover every library.",
+        "operationId": "ingestion-get_job_stats",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "bucket",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "const": "day",
+              "type": "string",
+              "description": "How jobs are grouped: `day` (UTC days) is the only bucket.",
+              "default": "day",
+              "title": "Bucket"
+            },
+            "description": "How jobs are grouped: `day` (UTC days) is the only bucket."
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The first UTC day counted (`YYYY-MM-DD`); default: 29 days before `to`. At most 366 days are counted at once.",
+              "title": "From"
+            },
+            "description": "The first UTC day counted (`YYYY-MM-DD`); default: 29 days before `to`. At most 366 days are counted at once."
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The last UTC day counted (`YYYY-MM-DD`), included; default: today (UTC).",
+              "title": "To"
+            },
+            "description": "The last UTC day counted (`YYYY-MM-DD`), included; default: today (UTC)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStats"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/account/preferences": {
       "get": {
         "tags": [
@@ -15520,6 +15663,50 @@
         "title": "InterfacePreferences",
         "description": "How a person wants the interface to look and behave.\n\nEvery setting is required but `leaderboard_opt_in` (#510), which a client written before it\nexisted does not send."
       },
+      "JobDayStats": {
+        "properties": {
+          "day": {
+            "type": "string",
+            "format": "date",
+            "title": "Day",
+            "description": "The UTC day the jobs were queued on."
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "How many jobs were queued that day."
+          },
+          "by_state": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "propertyNames": {
+              "$ref": "#/components/schemas/JobState"
+            },
+            "type": "object",
+            "title": "By State",
+            "description": "How many of them are in each state now; every state is listed, 0 included."
+          },
+          "by_kind": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "By Kind",
+            "description": "How many of them are of each kind; every kind is listed, 0 included."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "day",
+          "total",
+          "by_state",
+          "by_kind"
+        ],
+        "title": "JobDayStats",
+        "description": "The jobs queued on one UTC day, counted by the state they are in now and by kind."
+      },
       "JobList": {
         "properties": {
           "jobs": {
@@ -18249,6 +18436,28 @@
         ],
         "title": "Period",
         "description": "A calendar period in UTC: what counts are added up over."
+      },
+      "PersonSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The account's stable ID."
+          },
+          "username": {
+            "type": "string",
+            "title": "Username",
+            "description": "The account's user name, as it was when they asked."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "username"
+        ],
+        "title": "PersonSummary",
+        "description": "A person as the jobs show them: their account's ID and user name, nothing else."
       },
       "PlanSourcesCommand": {
         "properties": {

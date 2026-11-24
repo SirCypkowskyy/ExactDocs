@@ -11,14 +11,14 @@ not (``manual``); it is stored, not derived, so earlier jobs keep theirs.
 ``ingestion_jobs_created_at`` serves the day range of ``GET /stats/jobs``.
 
 Revision ID: b7e2c4a91d58
-Revises: 9d4f2b7e1c83
+Revises: 7f3a91c5d2e8
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "b7e2c4a91d58"
-down_revision = "9d4f2b7e1c83"
+down_revision = "7f3a91c5d2e8"
 branch_labels = None
 depends_on = None
 
