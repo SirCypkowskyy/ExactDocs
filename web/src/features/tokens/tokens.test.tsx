@@ -36,6 +36,13 @@ function stubApi(initial: ReturnType<typeof row>[] = []) {
       tokens = [made, ...tokens];
       return json({ ...made, token: SECRET }, 201);
     }
+    if (url.startsWith("/api/v1/libraries?") && method === "GET") {
+      const q = new URL(url, "http://x").searchParams.get("q") ?? "";
+      const libraries = ["/acme/api", "/acme/docs", "/other/site"]
+        .filter((id) => id.includes(q))
+        .map((id) => ({ id, title: id.split("/")[2], logo: null }));
+      return json({ libraries, next_cursor: null, total: libraries.length, notice: "" });
+    }
     if (url.startsWith("/api/v1/tokens/") && method === "DELETE") {
       tokens = tokens.filter((t) => t.id !== url.split("/").pop());
       return new Response(null, { status: 204 });
@@ -131,7 +138,23 @@ describe("tokens", () => {
     await userEvent.click(screen.getByRole("button", { name: "New token" }));
     await userEvent.type(screen.getByLabelText("Name"), "limited");
     await userEvent.selectOptions(screen.getByLabelText("Library access"), "selected");
-    await userEvent.type(screen.getByLabelText("Library IDs"), "/acme/docs, /acme/api");
+    // The scope is picked from the libraries the caller can read, not typed.
+    await userEvent.click(screen.getByRole("button", { name: /^Libraries/ }));
+    await userEvent.click(await screen.findByRole("option", { name: "/acme/docs" }));
+    await userEvent.type(screen.getByRole("combobox", { name: "Find a library" }), "api");
+    await waitFor(() =>
+      expect(request.mock.calls.some(([url]) => String(url).includes("q=api"))).toBe(true),
+    );
+    await userEvent.click(await screen.findByRole("option", { name: "/acme/api" }));
+    await userEvent.keyboard("{Escape}");
+    // Escape closed the picker, not the dialog.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    const chosen = screen.getByRole("list", { name: "Chosen libraries" });
+    expect(
+      within(chosen)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual(["/acme/docs", "/acme/api"]);
     await userEvent.click(screen.getByRole("button", { name: "Create token" }));
     await screen.findByText(SECRET);
     const post = request.mock.calls.find(([, init]) => init?.method === "POST");
@@ -446,6 +469,19 @@ describe("tokens in Polish", () => {
     expect(
       within(dialog).getByText("Nazwij token od miejsca, w którym będzie używany, np. „laptop”."),
     ).toBeInTheDocument();
+  });
+
+  it("picks the token's libraries in Polish", async () => {
+    stubApi();
+    renderSection();
+    await userEvent.click(await screen.findByRole("button", { name: "Nowy token" }));
+    await userEvent.selectOptions(screen.getByLabelText("Dostęp do bibliotek"), "selected");
+    await userEvent.click(screen.getByRole("button", { name: /^Biblioteki Wybierz bibliotekę/ }));
+    expect(screen.getByRole("combobox", { name: "Znajdź bibliotekę" })).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("option", { name: "/acme/api" }));
+    await userEvent.keyboard("{Escape}");
+    expect(screen.getByRole("button", { name: "Biblioteki Wybrano 1 bibliotekę" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Usuń /acme/api" })).toBeInTheDocument();
   });
 
   it("explains the token limit with a Polish plural", () => {

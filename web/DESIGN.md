@@ -557,6 +557,8 @@ and the lamp on the one lit thing.
 | `ConfirmDialog`, `TypedConfirmDialog` | `ui/confirm-dialog.tsx` | The usual confirmation built on AlertDialog: a question as the title, what happens, Cancel and the verb. The confirm runs `onConfirm` and the dialog stays open until the caller closes it, so a refusal shows inside it (`error`, with `errorLink` for its way out, e.g. Sign in); while `pending` it cannot be closed. The typed one keeps the confirm inert until the field holds `phrase` exactly. Focus goes back to what opened it. |
 | `DropdownMenu`, `ContextMenu` | `ui/dropdown-menu.tsx`, `ui/context-menu.tsx` | One menu feel (Menus below). A context menu only mirrors a visible menu. |
 | `Popover`, `Command` | `ui/popover.tsx`, `ui/command.tsx` | A floating card like a menu, and the filterable list (cmdk) inside pickers and faceted filters; rows use the menu recipe. |
+| `LibraryCombobox` | `ui/library-combobox.tsx` | The one library picker (Playground, a token's scope, the jobs and access-log library filters, the global search's other libraries): a Popover with a Command list, "Recent" (the last five picked in this browser, `localStorage`, never required) then every library, grouped by owner above 20. Each row is the `LibraryMark` (sm), the mono ID and the title when it says more; `detail` puts a count at the end. `multiple` ticks several (`aria-multiselectable`, the list stays open, the choice shows as removable `Tag`s under a field); single closes on a pick and offers Clear. `variant` `field` (label above, `trigger` recipe box) or `filter` (an outline toolbar button naming the chosen library); `children` is a trigger of the caller's own. Data from the feature: `options` (with `loading`, `failed`, `onRetry`) or `query` (text to the feature's queryOptions, asked on first open, debounced 200 ms, the old answer filtered meanwhile; `total` above the list's length says "Showing 200 of 340. Type to narrow the list."). `custom` offers a typed value that passes (a removed library's `/owner/repo`). Keyboard: arrows, Home, End, Enter, Escape (focus back on the trigger); the input is a `combobox` pointing at the highlighted `option` with `aria-activedescendant`, and a live line counts the matches. |
+| `Tag`, `TagList` | `ui/tags.tsx` | The chip of every tag filter and active filter: 44px on touch, 32px with a mouse, full round on `secondary`. `pressed` + `onClick` is a toggle (`aria-pressed`, picked = solid `route`; the browse and search tag filters through `TagChips`); `onRemove` + `removeLabel` adds the remove `IconButton` (the table's active filters, a picker's chosen libraries); neither is a plain chip. `TagList` is the named `<ul>`; one `<li>` per chip. |
 | `Table` and its parts | `ui/table.tsx` | The shadcn table primitives on the tokens: headers `text-small` muted, rows on `rule` hairlines, figures tabular. `TableRowHeader` is a body cell that names its row (`<th scope="row">`), set like any cell. |
 | `DataTable` (v2) | `ui/data-table/` | Every list with many rows (Data tables below): `useDataTable`, `DataTable`, `DataTableToolbar`, `DataTablePagination`, row actions and the cell kit. `ui/data-table.tsx` is v1 ("Load more"), kept until the last page moves. |
 | `Skeleton` | `ui/skeleton.tsx` | A flat bar at the size of the value it stands for; no pulse. |
@@ -581,6 +583,10 @@ and the lamp on the one lit thing.
 ### Pills and chips
 - **Style:** 20px high, full radius, 12px / 500, `-soft` ground with `-ink` text. The route tone is
   the lamp's wash with ink text.
+- **Chips** (`Tag`) are the pill grown to a target: 44px on touch, 32px with a mouse, on
+  `secondary`. A filter you toggle reads in body text and fills solid `route` when on; a chip that
+  narrows a list reads `Title: value` in small text with its remove button. One component for both,
+  so the tag panel, the articles' Tags facet chips and every active filter look like one family.
 
 ### Navigation (the band)
 Built on shadcn's Navigation Menu after the free shadcnblocks `navbar1`, `navbar5` and `navbar35`.
@@ -662,7 +668,8 @@ shadcn/ui's data-table guide) is the one way to show a list with many rows.
 - **Filterable and sortable** only where the server filters and sorts (never a client filter over
   one server page). Enum filters are faceted multi-selects (an outline button with a count pill,
   a Popover with a Command list, counts per value in client mode); date filters are single presets.
-  Active filters show as chips (`pill-neutral` with a remove `IconButton`) and Clear all. A
+  Active filters show as `Tag` chips (with a remove `IconButton`) and Clear all. A library filter
+  is the `LibraryCombobox` (`variant="filter"`) in the toolbar, its value a `TableParam` chip. A
   narrowing parameter (`TableParam`: a library, a version, an owner) shows its value as is, in mono
   with `mono`; `format` names it instead when the URL holds an ID the page can put in words (the
   all-tokens owner chip shows the username once a row names it). The chip still removes the

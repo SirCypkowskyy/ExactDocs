@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import type { components } from "@/shared/lib/api-schema";
-import { getJson, sendJson } from "@/shared/lib/http";
+import { getJson, type QueryOf, sendJson } from "@/shared/lib/http";
+import type { LibraryChoices } from "@/shared/ui/library-combobox";
 import { MAX_TOKENS, type TokenGrant } from "../model/token";
 
 export const tokensKey = ["tokens"] as const;
@@ -31,3 +32,29 @@ export function createToken(name: string, expiresAt: string | undefined, library
 
 export const revokeToken = (id: string) =>
   sendJson<void>("DELETE", `/v1/tokens/${encodeURIComponent(id)}`);
+
+/** Libraries offered by the scope picker per request: the API's largest page. */
+const PICKER_LIMIT = 200;
+
+/**
+ * The libraries the caller may read whose ID, title or description holds `q`, by ID, for the
+ * token's scope picker (the library combobox asks again as the text changes).
+ */
+export const scopeLibrariesQueryOptions = (q: string) =>
+  queryOptions({
+    queryKey: [...tokensKey, "scope-libraries", q] as const,
+    queryFn: ({ signal }): Promise<LibraryChoices> => {
+      const query = {
+        limit: PICKER_LIMIT,
+        sort: "id",
+        ...(q && { q }),
+      } satisfies QueryOf<"/api/v1/libraries">;
+      return getJson<components["schemas"]["LibraryList"]>("/v1/libraries", {
+        signal,
+        query,
+      }).then((list) => ({
+        options: list.libraries.map((l) => ({ id: l.id, title: l.title, logo: l.logo })),
+        total: list.total,
+      }));
+    },
+  });

@@ -24,8 +24,6 @@ export const messages = defineMessages(
         library_deleted: "Removals",
       } satisfies Record<Change, string>,
       library: "Library",
-      filter: "Filter",
-      libraryInvalid: "Write the library's ID as /owner/repo.",
       libraryHint: "The full ID; removed libraries keep their log.",
       emptyTitle: "Nothing recorded yet",
       emptyBody:
@@ -142,8 +140,6 @@ export const messages = defineMessages(
         library_deleted: "Usunięcia bibliotek",
       },
       library: "Biblioteka",
-      filter: "Filtruj",
-      libraryInvalid: "Wpisz identyfikator biblioteki w postaci /owner/repo.",
       libraryHint: "Pełny identyfikator; usunięte biblioteki zachowują swój dziennik.",
       emptyTitle: "Nic jeszcze nie zarejestrowano",
       emptyBody:

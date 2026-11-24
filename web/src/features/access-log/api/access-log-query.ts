@@ -1,5 +1,8 @@
-import { getJson } from "@/shared/lib/http";
+import { queryOptions } from "@tanstack/react-query";
+import type { components } from "@/shared/lib/api-schema";
+import { getJson, type QueryOf } from "@/shared/lib/http";
 import type { ServerSource } from "@/shared/ui/data-table/server-pages";
+import type { LibraryChoices } from "@/shared/ui/library-combobox";
 import {
   type AccessEvent,
   type AccessLogPage,
@@ -58,3 +61,29 @@ export function accessLogSource(
       }).then(rowsOf),
   };
 }
+
+/** Libraries offered by the operators' library filter per request: the API's largest page. */
+const PICKER_LIMIT = 200;
+
+/**
+ * The libraries whose ID, title or description holds `q`, by ID, for the operators' library
+ * filter. A removed library is not listed; its full ID can still be typed.
+ */
+export const filterLibrariesQueryOptions = (q: string) =>
+  queryOptions({
+    queryKey: [...accessLogKey, "libraries", q] as const,
+    queryFn: ({ signal }): Promise<LibraryChoices> => {
+      const query = {
+        limit: PICKER_LIMIT,
+        sort: "id",
+        ...(q && { q }),
+      } satisfies QueryOf<"/api/v1/libraries">;
+      return getJson<components["schemas"]["LibraryList"]>("/v1/libraries", {
+        signal,
+        query,
+      }).then((list) => ({
+        options: list.libraries.map((l) => ({ id: l.id, title: l.title, logo: l.logo })),
+        total: list.total,
+      }));
+    },
+  });

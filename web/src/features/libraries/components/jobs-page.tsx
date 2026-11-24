@@ -26,9 +26,10 @@ import {
   type TableParam,
   useDataTable,
 } from "@/shared/ui/data-table/use-data-table";
+import { LibraryCombobox } from "@/shared/ui/library-combobox";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { Tooltip } from "@/shared/ui/tooltip";
-import { jobsSource } from "../api/libraries-query";
+import { jobsSource, pickerLibrariesQueryOptions } from "../api/libraries-query";
 import { jobsMessages } from "../messages/jobs";
 import {
   JOB_KINDS,
@@ -343,7 +344,15 @@ export function JobsPage() {
           )
         }
       />
-      <DataTableToolbar model={model} search={{ label: t.find, placeholder: t.findPlaceholder }} />
+      <DataTableToolbar model={model} search={{ label: t.find, placeholder: t.findPlaceholder }}>
+        <LibraryCombobox
+          variant="filter"
+          label={t.columns.library}
+          query={pickerLibrariesQueryOptions}
+          value={model.param("library")}
+          onChange={(library) => model.setParam("library", library)}
+        />
+      </DataTableToolbar>
       <DataTable
         model={model}
         label={t.title}

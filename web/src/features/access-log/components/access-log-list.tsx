@@ -15,11 +15,10 @@ import {
   UserRound,
   Users,
 } from "lucide-react";
-import { useId, useMemo, useState } from "react";
+import { useId, useMemo } from "react";
 import { type Language, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { Badge, type BadgeTone } from "@/shared/ui/badge";
-import { Button } from "@/shared/ui/button";
 import { LibraryCell, Person, RelativeTime } from "@/shared/ui/data-table/cells";
 import { DataTable } from "@/shared/ui/data-table/data-table";
 import { DataTablePagination } from "@/shared/ui/data-table/pagination";
@@ -29,12 +28,12 @@ import type { ServerSource } from "@/shared/ui/data-table/server-pages";
 import type { TableConfig } from "@/shared/ui/data-table/table-search";
 import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
 import {
-  type DataTableModel,
   type TableFilter,
   type TableParam,
   useDataTable,
 } from "@/shared/ui/data-table/use-data-table";
-import { Input } from "@/shared/ui/input";
+import { LibraryCombobox } from "@/shared/ui/library-combobox";
+import { filterLibrariesQueryOptions } from "../api/access-log-query";
 import { messages } from "../messages";
 import {
   type AccessEvent,
@@ -246,56 +245,6 @@ const paramsOf = (t: Messages, everyLibrary: boolean): TableParam[] => [
   { id: "subject", title: t.list.subject },
 ];
 
-/** The operators' library filter: a typed `/owner/repo`, checked before it reaches the URL. */
-function LibraryFilter<T>({ model }: { model: DataTableModel<T> }) {
-  const id = useId();
-  const t = useMessages(messages).list;
-  const current = model.param("library");
-  const [library, setLibrary] = useState(current ?? "");
-  const [shown, setShown] = useState(current);
-  // A removed chip (or a row's action) changes the filter from outside: the field follows it.
-  if (shown !== current) {
-    setShown(current);
-    setLibrary(current ?? "");
-  }
-  const invalid = library.trim() !== "" && !isLibraryId(library);
-  return (
-    <form
-      className="flex min-w-0 flex-1 basis-60 flex-col gap-2"
-      onSubmit={(e) => {
-        e.preventDefault();
-        if (!invalid) model.setParam("library", library.trim() || undefined);
-      }}
-    >
-      <label htmlFor={`${id}-library`} className="text-body font-medium">
-        {t.library}
-      </label>
-      <div className="flex gap-2">
-        <Input
-          id={`${id}-library`}
-          type="search"
-          value={library}
-          aria-invalid={invalid || undefined}
-          aria-describedby={`${id}-library-hint`}
-          onChange={(e) => {
-            setLibrary(e.target.value);
-            if (!e.target.value.trim() && current) model.setParam("library", undefined);
-          }}
-          placeholder="/owner/repo"
-          className="font-mono"
-        />
-        <Button type="submit" variant="outline">
-          <ListFilter aria-hidden="true" data-icon-motion="tilt" />
-          {t.filter}
-        </Button>
-      </div>
-      <p id={`${id}-library-hint`} className="text-small text-muted-foreground">
-        {invalid ? t.libraryInvalid : t.libraryHint}
-      </p>
-    </form>
-  );
-}
-
 interface Props {
   view: AccessLogView;
   config: TableConfig;
@@ -384,7 +333,17 @@ export function AccessLogTable({ view, config, source, everyLibrary = false }: P
     <>
       <DataTableToolbar model={model}>
         <CustomDates model={model} />
-        {everyLibrary && <LibraryFilter model={model} />}
+        {everyLibrary && (
+          <LibraryCombobox
+            label={t.list.library}
+            hint={t.list.libraryHint}
+            query={filterLibrariesQueryOptions}
+            custom={isLibraryId}
+            value={model.param("library")}
+            onChange={(library) => model.setParam("library", library)}
+            className="flex-1 basis-60"
+          />
+        )}
         <SearchFilter
           id={`${id}-actor`}
           label={t.list.actor}

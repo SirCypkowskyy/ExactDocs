@@ -75,6 +75,27 @@ export const messages = defineMessages(
     command: {
       empty: "No results.",
     },
+    /** The library combobox (Playground, token scope, the jobs and access-log filters, search). */
+    libraryPicker: {
+      choose: "Choose a library…",
+      find: "Find a library",
+      findPlaceholder: "Find a library…",
+      recent: "Recent",
+      all: "All libraries",
+      loading: "Loading libraries",
+      failed: "Couldn't load the libraries.",
+      none: "No libraries yet.",
+      noMatch: (text: string) => `No library matches “${text}”.`,
+      found: (n: number) => plural.en(n, { one: "# library", other: "# libraries" }),
+      partial: (shown: number, total: number) =>
+        `Showing ${formatNumber(shown, "en")} of ${formatNumber(total, "en")}. Type to narrow the list.`,
+      typedChoice: (id: ReactNode): ReactNode => <>Use {id}</>,
+      selected: (n: number) =>
+        plural.en(n, { one: "# library chosen", other: "# libraries chosen" }),
+      chosen: "Chosen libraries",
+      remove: (id: string) => `Remove ${id}`,
+      clear: "Clear",
+    },
     credential: {
       fileTooBig: "That file is too big to be a deploy key.",
       token: "Access token",
@@ -212,6 +233,26 @@ export const messages = defineMessages(
     },
     command: {
       empty: "Brak wyników.",
+    },
+    libraryPicker: {
+      choose: "Wybierz bibliotekę…",
+      find: "Znajdź bibliotekę",
+      findPlaceholder: "Znajdź bibliotekę…",
+      recent: "Ostatnio używane",
+      all: "Wszystkie biblioteki",
+      loading: "Wczytywanie bibliotek",
+      failed: "Nie udało się wczytać bibliotek.",
+      none: "Nie ma jeszcze żadnych bibliotek.",
+      noMatch: (text) => `Żadna biblioteka nie pasuje do „${text}”.`,
+      found: (n) => plural.pl(n, { one: "# biblioteka", few: "# biblioteki", many: "# bibliotek" }),
+      partial: (shown, total) =>
+        `Widoczne: ${formatNumber(shown, "pl")} z ${formatNumber(total, "pl")}. Wpisz nazwę, aby zawęzić listę.`,
+      typedChoice: (id) => <>Użyj {id}</>,
+      selected: (n) =>
+        `Wybrano ${plural.pl(n, { one: "# bibliotekę", few: "# biblioteki", many: "# bibliotek" })}`,
+      chosen: "Wybrane biblioteki",
+      remove: (id) => `Usuń ${id}`,
+      clear: "Wyczyść",
     },
     credential: {
       fileTooBig: "Ten plik jest za duży, aby mógł być kluczem wdrożeniowym.",
