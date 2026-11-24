@@ -164,6 +164,10 @@ test("the redesigned pages and their dialogs have no axe violation", async ({ br
     ["article", "/libraries/fixture/docs-repo?version=v1.4.0&path=docs%2Fguide%2Fresilience.md"],
     ["settings", "/libraries/fixture/docs-repo/settings"],
     ["sharing", "/libraries/fixture/docs-repo/sharing"],
+    ["access-log", "/access-log"],
+    ["jobs", "/jobs"],
+    ["overview", "/overview"],
+    ["interface", "/account?tab=interface"],
   ] as const;
   const widths = [
     ["desktop", { width: 1280, height: 900 }],
@@ -191,6 +195,11 @@ test("the redesigned pages and their dialogs have no axe violation", async ({ br
           fullPage: true,
         });
         await expectNoViolations(page, `${name} ${colorScheme} ${size}`);
+        // Nothing pushes the page sideways (#486: the sharing page's actions did at 390 px).
+        const overflow = await page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        );
+        expect(overflow, `${name} ${colorScheme} ${size} scrolls sideways`).toBeLessThanOrEqual(0);
       }
 
       // The playground with results, and the new-token dialog with its secret.
@@ -223,6 +232,13 @@ test("the redesigned pages and their dialogs have no axe violation", async ({ br
       await page.getByRole("button", { name: "Transfer ownership" }).click();
       await expect(page.getByRole("dialog")).toBeVisible();
       await expectNoViolations(page, `transfer dialog ${colorScheme} ${size}`);
+      await page.keyboard.press("Escape");
+
+      // An open menu hides nothing that stays focusable (#486: menus are not modal).
+      await page.goto("/");
+      await page.getByRole("button", { name: "More actions for /fixture/docs-repo" }).click();
+      await expect(page.getByRole("menu")).toBeVisible();
+      await expectNoViolations(page, `row menu ${colorScheme} ${size}`);
       await page.keyboard.press("Escape");
       await context.close();
     }
