@@ -4,7 +4,7 @@ name: Grounded Docs benchmark
 # npm release) indexes the golden corpus and answers the golden set, scored with the text scorer
 # next to ExactDocs' BM25 (docs/evals.md#grounded-docs, `just grounded-bench`). It downloads the
 # package from npm, the corpus from GitHub and the embedding model from Hugging Face, calls no
-# hosted model and needs no secret. About an hour on the runner, most of it embedding the corpus
+# hosted model and needs no secret. About half an hour on 4 CPUs, most of it embedding the corpus
 # for the vector configuration; `--configs full-text` takes a few minutes.
 
 on:

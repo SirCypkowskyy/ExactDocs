@@ -973,7 +973,7 @@ endpoint is `retrieval_eval/openai_embeddings.py`. Its results are on
 
 ```bash
 exactdocs models pull BAAI/bge-small-en-v1.5      # the vector configuration's model, once
-just grounded-bench                               # both configurations, every project: about an hour on 4 CPUs
+just grounded-bench                               # both configurations, every project: about half an hour on 4 CPUs
 just grounded-bench --configs full-text           # full-text search only: a few minutes
 just grounded-bench --resume                      # after an interruption: keeps the versions already indexed
 just grounded-bench --out packages/exactdocs/evals/results   # refresh the recorded run, then `just bench-pages`
