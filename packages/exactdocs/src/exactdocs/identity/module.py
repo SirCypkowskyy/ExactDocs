@@ -17,6 +17,7 @@ from exactdocs.identity.ports.driven import (
     FailedSignInLog,
     LibraryGrantRepository,
     PasswordHasher,
+    PreferencesRepository,
     SecretBox,
     SessionRepository,
     SignInAttemptRepository,
@@ -32,7 +33,10 @@ from exactdocs.identity.ports.driving import (
     CreateToken,
     CreateUser,
     DropLibraryGrants,
+    FindLeaderboardPeople,
     FinishExternalSignIn,
+    GetPreferences,
+    GetProviderIcon,
     GetSessionState,
     GetSetupState,
     GrantLibraryRole,
@@ -41,6 +45,7 @@ from exactdocs.identity.ports.driving import (
     IdentifyExternalToken,
     IdentifyToken,
     ListAccessLog,
+    ListAccountProviders,
     ListLibraryAccessLog,
     ListLibraryGrants,
     ListTokens,
@@ -51,11 +56,14 @@ from exactdocs.identity.ports.driving import (
     RevalidateExternalAccounts,
     RevokeLibraryRole,
     RevokeToken,
+    SavePreferences,
     SetUserDisabled,
     SignIn,
     SignOut,
+    StartAccountLink,
     StartExternalSignIn,
     TransferLibrary,
+    UnlinkProvider,
 )
 from exactdocs.identity.use_cases import (
     AuthenticateUseCase,
@@ -66,7 +74,10 @@ from exactdocs.identity.use_cases import (
     CreateTokenUseCase,
     CreateUserUseCase,
     DropLibraryGrantsUseCase,
+    FindLeaderboardPeopleUseCase,
     FinishExternalSignInUseCase,
+    GetPreferencesUseCase,
+    GetProviderIconUseCase,
     GetSessionStateUseCase,
     GetSetupStateUseCase,
     GrantLibraryRoleUseCase,
@@ -75,6 +86,7 @@ from exactdocs.identity.use_cases import (
     IdentifyExternalTokenUseCase,
     IdentifyTokenUseCase,
     ListAccessLogUseCase,
+    ListAccountProvidersUseCase,
     ListLibraryAccessLogUseCase,
     ListLibraryGrantsUseCase,
     ListTokensUseCase,
@@ -85,12 +97,15 @@ from exactdocs.identity.use_cases import (
     RevalidateExternalAccountsUseCase,
     RevokeLibraryRoleUseCase,
     RevokeTokenUseCase,
+    SavePreferencesUseCase,
     SetUserDisabledUseCase,
     Sharing,
     SignInUseCase,
     SignOutUseCase,
+    StartAccountLinkUseCase,
     StartExternalSignInUseCase,
     TransferLibraryUseCase,
+    UnlinkProviderUseCase,
 )
 from exactdocs_kernel import Clock
 
@@ -140,7 +155,15 @@ class IdentityModule:
     start_external_sign_in: StartExternalSignIn
     """Start a sign-in through a configured identity provider."""
     finish_external_sign_in: FinishExternalSignIn
-    """Finish an external sign-in (the provider's callback) and start a session."""
+    """Finish an external sign-in (the provider's callback) and start a session, or a link."""
+    get_provider_icon: GetProviderIcon
+    """Return a provider's own icon, for ExactDocs to serve."""
+    list_account_providers: ListAccountProviders
+    """List the signed-in account's providers, linked or not."""
+    start_account_link: StartAccountLink
+    """Start linking an identity of a provider to the signed-in account."""
+    unlink_provider: UnlinkProvider
+    """Unlink the signed-in account's identity of a provider (never its last way in)."""
     revalidate_external_accounts: RevalidateExternalAccounts
     """Check again the memberships of the external identities that are due."""
     can_create_library: CanCreateLibrary
@@ -163,6 +186,12 @@ class IdentityModule:
     """Read the access log of every library, removed ones included (operators)."""
     transfer_library: TransferLibrary
     """Hand a library over to another user (its creator only)."""
+    get_preferences: GetPreferences
+    """Return an account's interface preferences, or the defaults when it saved none."""
+    save_preferences: SavePreferences
+    """Save an account's interface preferences."""
+    find_leaderboard_people: FindLeaderboardPeople
+    """Tell which accounts may be shown by name on the people leaderboard (they opted in)."""
 
     @classmethod
     def build(
@@ -179,6 +208,7 @@ class IdentityModule:
         attempts: SignInAttemptRepository,
         box: SecretBox,
         clock: Clock,
+        preferences: PreferencesRepository,
         providers: Mapping[str, SignInProvider] = MappingProxyType({}),
         policies: Mapping[str, SignInPolicy] = MappingProxyType({}),
         library_creation: LibraryCreationPolicy | None = None,
@@ -201,6 +231,7 @@ class IdentityModule:
             attempts: Where started external sign-ins wait for their callback.
             box: Seals the refresh tokens of external identities.
             clock: The current time.
+            preferences: Where each account's interface preferences are saved.
             providers: The configured identity providers, by name.
             policies: Their policies, by the same names.
             access_verifier: Checks Cloudflare Access tokens; ``None`` when Access is off.
@@ -305,8 +336,23 @@ class IdentityModule:
                 accounts=repository,
                 externals=externals,
                 sessions=sessions,
+                identify_caller=identify_caller,
                 box=box,
                 clock=clock,
+            ),
+            get_provider_icon=GetProviderIconUseCase(policies=policies),
+            list_account_providers=ListAccountProvidersUseCase(
+                policies=policies, accounts=repository, externals=externals
+            ),
+            start_account_link=StartAccountLinkUseCase(
+                providers=providers,
+                policies=policies,
+                attempts=attempts,
+                externals=externals,
+                clock=clock,
+            ),
+            unlink_provider=UnlinkProviderUseCase(
+                policies=policies, accounts=repository, externals=externals
             ),
             revalidate_external_accounts=RevalidateExternalAccountsUseCase(
                 providers=providers,
@@ -333,4 +379,9 @@ class IdentityModule:
             list_library_access_log=ListLibraryAccessLogUseCase(sharing=sharing),
             list_access_log=ListAccessLogUseCase(sharing=sharing),
             transfer_library=TransferLibraryUseCase(sharing=sharing),
+            get_preferences=GetPreferencesUseCase(preferences=preferences),
+            save_preferences=SavePreferencesUseCase(preferences=preferences),
+            find_leaderboard_people=FindLeaderboardPeopleUseCase(
+                preferences=preferences, accounts=repository
+            ),
         )

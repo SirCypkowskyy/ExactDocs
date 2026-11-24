@@ -29,7 +29,8 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   the session cookie, or `Authorization: Bearer exd_...` with an API token (a wrong bearer is
   refused even if a valid cookie is sent too). Exempt: `POST /setup`, the three `/session`
   operations, `POST /tokens/login`, the two external sign-in navigations
-  (`GET /auth/{provider}/start` and `/callback`) and the OpenAPI document; a test pins that list, and
+  (`GET /auth/{provider}/start` and `/callback`), a provider's own icon (`GET /auth/{provider}/icon`)
+  and the OpenAPI document; a test pins that list, and
   the OpenAPI document marks every other operation with the `SessionCookie` security scheme.
   `POST /session` (`{"username", "password"}`) answers 201 with the session state and sets the
   `exactdocs_session` cookie; a wrong password and an unknown user are the same 401
@@ -45,7 +46,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   live in the server's memory on SQLite (a restart clears them) and in the database on
   PostgreSQL, where every server process shares them. `PUT /account/password` checks the current
   password under the same throttle (see *Own password*); only these three operations document 429. `GET /session` returns `{"state": "setup_required" | "signed_out" |
-  "signed_in", "account": {"id", "username", "role", "has_password"}, "providers": [{"name", "display_name"}]}` and never fails
+  "signed_in", "account": {"id", "username", "role", "has_password"}, "providers": [{"name", "display_name", "icon", "icon_url"}]}` and never fails
   (`providers` lists the configured identity providers, empty while setup is due); `DELETE /session` ends the session on the server
   and is always 204. The cookie is an opaque random token (stored hashed), HttpOnly,
   SameSite=Lax, `Secure` over HTTPS (or with `EXACTDOCS_SECURE_COOKIES`, or an `https://` `EXACTDOCS_PUBLIC_URL`), `Path=/api`, ends after
@@ -69,7 +70,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   an ID token that fails a check), `sign_in_cancelled` (the provider answered an error),
   `not_allowed` (in no allowed group; any access the account had ends), `account_disabled`,
   `username_unavailable` (the username and `<username>@<provider>` are both taken) or
-  `provider_unavailable` (also from `start`). An unknown provider is 404 `unknown_provider`.
+  `not_linked` (the provider creates no accounts, see *Linked sign-in providers*, and nobody
+  linked this identity), `provider_access_revoked` (a linked identity of an account whose own
+  provider ended its access) or `provider_unavailable` (also from `start`). An unknown provider
+  is 404 `unknown_provider`.
   The redirect URI is `<EXACTDOCS_PUBLIC_URL>/api/v1/auth/{provider}/callback`, never built from
   the request. An external account's sessions and API tokens are refused once its access ends
   (a lost group or a revoked refresh token at revalidation, or no successful check within the
@@ -214,6 +218,24 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   operator: an API token is 401 (a stolen token cannot create accounts), and a signed-in account
   that is not an `admin` gets 403 `forbidden`. Library roles (who may read or change a library)
   are separate: see the *Library roles* bullet below.
+- **Interface preferences** (#487): `GET /api/v1/account/preferences` answers the caller's
+  `{"saved", "preferences"}`; `saved` is `false` while the account never saved any, and
+  `preferences` then holds the defaults (so the UI keeps, and saves, what the browser already
+  applies on a first sign-in). `PUT` takes the whole `preferences` object and answers the same
+  shape with `saved: true`: `theme` (`light`, `dark`, `system`), `contrast` (`standard`, `more`),
+  `text_scale` (90, 100, 110, 125 or 150 percent), `text_spacing` (`standard`, `wide`), `motion`
+  (`system`, `reduced`, `full`), `font` (`default`, `hyperlegible`, `dyslexic`, `system`),
+  `underline_links` and `large_targets` (booleans), `language` (`system`, `en`, `pl`; `system`
+  follows the browser's), `library_logos` (boolean; `false` hides library logos and generic
+  icons, #504), `leaderboard_opt_in` (boolean; `true` agrees to be shown by name on the people
+  leaderboard while the operator has it on, #510); defaults `system`, `standard`, 100, `standard`,
+  `system`, `default`, `false`, `false`, `system`, `true`, `false`. Every key is required but
+  `leaderboard_opt_in`: a `PUT` without it (an interface older than #510) keeps the choice already
+  saved (`false` if none), so it neither opts the person in nor drops their opt-in. An unknown key
+  or a value not listed is 422 `validation_error` naming the field, and nothing is saved. They are stored per account
+  (`identity_preferences`, one JSON object: a key a stored row lacks, or a value no longer
+  offered, reads as its default), so they follow the person to every browser; a session or an
+  API token may call both, and each acts as its own account only.
 - **Own password** (#505): `PUT /account/password` (`{"current_password", "new_password"}`)
   changes the signed-in account's own password; the new one follows the setup's limits (12 to
   1024 characters, else 422 `validation_error`). The current password is checked like a sign-in,
@@ -229,6 +251,40 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `account` of `GET /session` (and of `GET /users`) is `false` for it, so the UI hides the form.
   It needs the **session cookie**; an API token is 401, so a stolen token cannot take the
   account over.
+- **Linked sign-in providers** (#506): an account keeps the identity it was created through (its
+  *origin*; an account without a password follows it: role, groups and access) and may link one
+  identity of every other configured provider, which then only signs it in (the account's own
+  role and groups stand). `GET /account/providers` answers `{"has_password", "providers"}`: every
+  configured provider in configuration order, then each identity linked through a provider no
+  longer configured (`configured: false`), each with `name`, `display_name`, `icon`, `icon_url`,
+  `linked`, `origin`, `linked_at` (`null` for the origin), `last_signed_in_at`, `can_link` and
+  `can_unlink`. `POST /account/providers/{provider}/link` (body optional:
+  `{"return_to": "/path"}`, default `/account`) answers `{"redirect_url"}` and sets the
+  `exactdocs_sign_in` binding cookie exactly as `GET /auth/{provider}/start` does; the attempt
+  also holds the SHA-256 of the session that started it. The browser goes to `redirect_url`; the
+  provider comes back to `GET /auth/{provider}/callback`, which, for a link, needs the binding
+  cookie, the `state` **and the same session cookie**, links the identity to that session's
+  account, sets no cookie but clears the binding one, and redirects to `return_to` with
+  `?linked=<provider>`, or `?link_error=<code>`: `sign_in_failed` (another session, or none, or a
+  callback that fails a check), `sign_in_cancelled`, `not_allowed`, `identity_linked_elsewhere`
+  (the identity is another account's), `provider_linked`, `unauthenticated` (the session ended
+  meanwhile) or `provider_unavailable`. `return_to` is a path on this server (anything else is
+  `/`). The start is refused with 409 `provider_linked` when the account has an identity of the
+  provider already, 404 `unknown_provider`, or 429 `provider_unavailable`.
+  `DELETE /account/providers/{provider}` unlinks the account's identity of the provider (it no
+  longer signs the account in; sessions stay) and answers the list again; 404
+  `provider_not_linked`, or 409 `last_sign_in_method` for the origin of an account without a
+  password (its only way in). Every `/account/providers` route needs the **session cookie**: an
+  API token is 401, so a stolen token cannot link an identity that signs in as its account. A
+  provider with `auto_create_users = false` (the default of the Discord, Google and Microsoft
+  presets) signs in linked identities only: anyone else is refused with `not_linked`, at sign-in
+  and over MCP OAuth. `GET /auth/{provider}/icon` serves a provider's own icon (`icon_file`),
+  the `icon_url` the provider lists (`?v=<version>`, which changes with the icon): `image/png`,
+  `image/webp` or a sanitised `image/svg+xml`, with `ETag` (304 on `If-None-Match`),
+  `Cache-Control: public, max-age=86400`, `X-Content-Type-Options: nosniff` and a
+  `Content-Security-Policy` that runs and loads nothing. A built-in icon (`icon`: `discord`,
+  `github`, `google` or `microsoft`) is the web UI's own and has no `icon_url`; a provider
+  without an icon file is 404 `no_icon`. The icon needs no caller.
 - **Library roles** (ACL-02): `viewer < contributor < admin < creator` on each library, granted
   to users and to groups; an account's role is the highest it holds, and an operator (role
   `admin`) is `creator` of every library. Every library route asks for one: `viewer` reads and
@@ -272,6 +328,36 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `creator`, `previous_role` the role they held, if any), with the caller as actor.
   Giving someone the role they already hold records nothing. Changes made before the upgrade
   that added the log are not in it.
+- **Usage** (#510): every read (an article or a chunk, over REST, MCP or its resources), search
+  (one library, several or all, `query-docs` and `/c7/docs` included) and agent answer is counted
+  per UTC day, account, API token, library and operation, and nothing else: no query, no path, no
+  text. A request that fails is not counted, nor are the agent's own reads or a stdio MCP process
+  (read-only). A search or an answer over more than one library counts to no library. Counts are
+  added up in memory and written every 10 s and when the server stops (a report writes the pending
+  ones first), and the days older than `EXACTDOCS_USAGE__RETENTION_MONTHS` (13 by default) are
+  deleted every night. `GET /stats/usage` is the instance's usage for operators (like `/users`, the
+  session cookie of an `admin`: an API token is 401, anyone else 403): `period` (`day`, `week`
+  (ISO, Monday first), `month`, `year`; UTC), `periods` (how many, 1 to 400; default 30 days, 12
+  weeks, 12 months or 2 years), `until` (a day of the last period; default today), `by` (`none`,
+  `library`, `account`, `token`), `library` and `limit` (groups, 1 to 200, default 50). It answers
+  `{"period", "since", "until", "by", "total", "series", "groups", "groups_total"}`: `series` has one
+  bucket per period (`start`, `end`, `reads`, `searches`, `answers`), zeros included; `groups` the
+  breakdown over the whole range, most reads first. People are named (`account_id`, `username`)
+  only while the people leaderboard is on and only if they opted in; everyone else, and requests
+  without an account, are summed into one last group with `others: true`, so an operator sees
+  them in aggregate only. `GET /account/usage` is the same report over the caller's own counts
+  (`by`: `none`, `library`, `token`; `token_id: null` is their browser sessions and OAuth
+  sign-ins); a session or an API token may ask, and nobody can ask for someone else's.
+  `GET /stats/leaderboard?subject=libraries|people&metric=reads|searches|answers&period=day|week|month|year&at=&limit=`
+  ranks over the period holding `at` (default today, so the current period so far): `{"subject",
+  "metric", "period", "start", "end", "previous_start", "previous_end", "total", "ranked",
+  "entries", "you"}`, each entry with `rank` (equal values share one: 1, 2, 2, 4),
+  `previous_rank` (among the same subjects in the period before; `null` when it had nothing
+  counted) and `value`. `libraries` (the default) is always on and lists only libraries the caller
+  may read. `people` is 403 `people_leaderboard_off` until the operator sets
+  `EXACTDOCS_USAGE__PEOPLE_LEADERBOARD`, and then ranks only enabled accounts that opted in
+  (`leaderboard_opt_in`); the caller's entry has `you: true`, and comes in `you` when ranked beyond
+  `limit`. `GET /stats/settings` tells any caller `{"people_leaderboard", "retention_months"}`.
 - **Editing a library**: `PATCH /libraries/{owner}/{repo}` (`{"title"?, "description"?}`). An edited
   field is kept across re-imports instead of following the default version's `context7.json` or
   root README (LIB-07).
@@ -363,8 +449,25 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   or an unknown library is 404 `not_found`; a missing or empty ref, a malformed library ID or ref,
   or a short SHA that matches more than one commit version is 422. Libraries carry
   `default_pinned` (also in the MCP `list_libraries` tool). Removing the pinned version unpins the
-  library. Changing the pin does not re-derive the title and description from the new default's
-  README (LIB-07); re-import the new default to refresh them.
+  library. Changing the pin does not re-derive the title, description and logo from the new
+  default's README (LIB-07); re-import the new default to refresh them.
+- **Library logos** (#504): libraries carry `logo` (in `GET /libraries`, `GET
+  /libraries/{owner}/{repo}` and every answer that returns a library, MCP `list_libraries` too):
+  the logo's version, 16 hex digits of the SHA-256 of its bytes, or `null` when the importer found
+  none. `GET /libraries/{owner}/{repo}/logo` serves it from ExactDocs itself, never from the git
+  host: a PNG, JPEG or WebP as the repository has it, or an SVG as the importer cleaned it, with
+  the stored type, `ETag` = the version (`If-None-Match` answers 304) and the asset headers
+  (`X-Content-Type-Options: nosniff`, `Cross-Origin-Resource-Policy: same-origin`,
+  `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox; ...`; an SVG
+  is an attachment, which an `<img>` still shows). With `?v=` set to the current version it is
+  `Cache-Control: private, max-age=31536000, immutable` (the URL changes with the logo), otherwise
+  `private, no-cache`; an old `v` gets the current logo, never a cached old one. A library without
+  a logo (or unknown, or hidden from the caller) is 404 `not_found`. The logo is the **default
+  version's**: each import or re-sync of the version that is then the default looks for one and
+  replaces the library's, or removes it when the version has none; importing any other version
+  changes nothing. A library imported before logos existed gets one at the next import of its
+  default version (`versions/reimport`, a re-sync of a branch that moved, or a paths edit).
+  Where the importer looks and what it keeps: [Architecture](architecture.md), *Project logos*.
 - **Adding a library**: `POST /libraries` (`{"url", "library_id"?, "ref"?, "include_paths"?,
   "exclude_paths"?}`) validates everything first, then stores the library with its selection and
   queues an `import` job; it answers 201 with `library_id`, `ref`, `ref_kind` (`tag`, `branch`

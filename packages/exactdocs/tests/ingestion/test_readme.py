@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from exactdocs.ingestion.constants import README_DESCRIPTION_MAX, README_TITLE_MAX
-from exactdocs.ingestion.models import ReadmeSummary, readme_summary
+from exactdocs.ingestion.models import readme_summary
 
 
 @pytest.mark.parametrize(
@@ -52,7 +52,9 @@ from exactdocs.ingestion.models import ReadmeSummary, readme_summary
     ],
 )
 def test_extraction(source: str, title: str | None, description: str | None) -> None:
-    assert readme_summary(source) == ReadmeSummary(title=title, description=description)
+    summary = readme_summary(source)  # its logo candidates: tests/ingestion/test_logos.py
+
+    assert (summary.title, summary.description) == (title, description)
 
 
 def test_long_values_are_cut() -> None:
@@ -91,6 +93,6 @@ READMES = Path(__file__).parents[1] / "fixtures" / "readmes"
 def test_a_logo_names_the_project_never_a_section_heading(
     name: str, title: str, description: str
 ) -> None:
-    source = (READMES / name).read_text(encoding="utf-8")
+    summary = readme_summary((READMES / name).read_text(encoding="utf-8"))
 
-    assert readme_summary(source) == ReadmeSummary(title=title, description=description)
+    assert (summary.title, summary.description) == (title, description)

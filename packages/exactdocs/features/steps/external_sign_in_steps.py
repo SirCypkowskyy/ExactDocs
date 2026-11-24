@@ -633,3 +633,12 @@ def signed_in_through_provider(context: Context, name: str, subject: str) -> str
     """
     _person(context, name, subject, email=f"{name}@example.com", groups=[])
     return _session_of(_sign_in(context, subject))
+
+
+# Shared with other features (linked providers): the instance, the browser and the people.
+instance_client = _client
+send_as = _send
+admin_session = _admin_session
+add_person = _person
+browser_sign_in = _sign_in
+whoami = _whoami

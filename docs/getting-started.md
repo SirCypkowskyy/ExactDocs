@@ -66,6 +66,12 @@ A `context7.json` at the repository root pre-fills the library. Added without pa
 takes its folders and exclusions; its title and description win over the README's; and its rules
 come first in every `query-docs` answer. The [REST API](rest-api.md) page has the details.
 
+The import also looks for the project's logo: an image the root README opens with whose path or
+alt text says "logo", else a conventional file such as `logo.svg` or `.github/logo.png`. ExactDocs
+keeps a bounded copy (an SVG cleaned of scripts and external references) and serves it itself, so
+showing a library loads nothing from the git host. A library without one has no logo, and a logo
+never fails an import.
+
 ## From `docker run` to a searchable library, over REST
 
 CI runs this flow on every change ([`deploy/smoke.sh`](https://github.com/SirCypkowskyy/ExactDocs/blob/develop/deploy/smoke.sh),

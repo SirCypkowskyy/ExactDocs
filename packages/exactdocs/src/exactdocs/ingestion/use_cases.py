@@ -46,6 +46,7 @@ from exactdocs.ingestion.constants import (
     MAX_INCLUDES,
     MAX_INSTRUCTION_FILE_BYTES,
     MAX_LISTED_REFS,
+    MAX_LOGO_BYTES,
     MAX_PREVIEW_FILES,
     MAX_STATS_DAYS,
     MAX_WANTED_IMAGES,
@@ -226,9 +227,11 @@ from exactdocs.ingestion.models import (
     instruction_candidates,
     is_restructuredtext,
     is_unordered,
+    logo_candidates,
     parse_article,
     parse_context7,
     parse_push,
+    pick_logo,
     plan_auto_imports,
     plan_sources,
     previous_version,
@@ -259,6 +262,7 @@ from exactdocs.ingestion.ports.driven import (
     KnownLibraries,
     LibraryIds,
     LibraryLocks,
+    LibraryLogos,
     LibrarySettingsStore,
     LibrarySources,
     LibraryTexts,
@@ -2883,6 +2887,8 @@ class ImportVersionUseCase:
     """Reads the instruction files (RET-08); without it none are kept."""
     converter: MarkupConverter | None = None
     """Writes reStructuredText articles as Markdown (#435); without it they are skipped."""
+    logos: LibraryLogos | None = None
+    """Keeps the default version's logo (#504); without it (or ``files``) none is looked for."""
 
     async def __call__(self, job: Job, progress: JobProgress, /) -> None:
         """Run the import, skipping the steps a run before a crash completed; raising fails it.
@@ -2974,6 +2980,7 @@ class ImportVersionUseCase:
         # maps, so running it again after a crash is the right thing to do.
         await self._renew_newer(job, job.ref_kind or RefKind.COMMIT, source, credential, refs)
         await self._describe(job.library, job.version, readme, context7)
+        await self._logo(job, source, credential, readme)
 
     async def _describe(
         self, library: str, ref: str, readme: ReadmeSummary, context7: _Context7Read
@@ -3000,6 +3007,51 @@ class ImportVersionUseCase:
             )
         except Exception:
             log.exception("could not apply the README of %s %s", library, ref)
+
+    async def _logo(
+        self,
+        job: Job,
+        source: ImportSource,
+        credential: Credential | None,
+        readme: ReadmeSummary,
+    ) -> None:
+        """Find the default version's logo and offer it to the catalog (#504); never raises.
+
+        Only an import of the version that is the library's default now looks: the README's
+        logo images, then the conventional files (``logo_candidates``), are read from the pinned
+        commit (``RepositoryFiles``, also outside the selected paths, at most ``MAX_LOGO_BYTES``
+        each), and the first one ``check_logo`` keeps is offered; none is offered as ``None``,
+        which removes the library's logo. The version is live already: whatever goes wrong
+        (the remote, the catalog) is logged and the library keeps the logo it had. Not a step:
+        it reads what is imported now and replaces the logo as a whole, so a resumed import
+        simply does it again.
+
+        Args:
+            job: The import, pinned to a version and a commit.
+            source: The library's repository.
+            credential: Its credential, if any.
+            readme: What the root README says, with its logo images.
+        """
+        if self.logos is None or self.files is None or not job.version or not job.commit_sha:
+            return
+        try:
+            if not await self.logos.wants_logo(job.library, job.version):
+                return
+            candidates = logo_candidates(readme.logos, source.url)
+            found = await self.files.read_files(
+                source.url,
+                job.commit_sha,
+                candidates,
+                max_bytes=MAX_LOGO_BYTES,
+                refs=_full_refs(job.ref_kind or RefKind.COMMIT, job.version),
+                credential=credential,
+            )
+            logo = await asyncio.to_thread(pick_logo, candidates, found)
+            await self.logos.offer_logo(library=job.library, ref=job.version, logo=logo)
+        except DomainError as error:  # expected: unreachable, auth, the library removed, ...
+            log.warning("no logo for %s %s: %s", job.library, job.version, type(error).__name__)
+        except Exception:  # a logo is never a reason to fail an import
+            log.exception("no logo for %s %s", job.library, job.version)
 
     async def _publish(self, version: ImportedVersion) -> None:
         """Store the version as a pending manifest, index its chunks, then activate it.

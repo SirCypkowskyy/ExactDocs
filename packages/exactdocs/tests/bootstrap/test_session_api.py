@@ -258,6 +258,7 @@ async def test_only_setup_the_session_routes_and_the_push_webhook_are_open(
         ("POST", "/api/v1/tokens/login"),
         ("GET", "/api/v1/auth/{provider}/start"),
         ("GET", "/api/v1/auth/{provider}/callback"),
+        ("GET", "/api/v1/auth/{provider}/icon"),  # the sign-in page shows it
         ("POST", "/api/v1/webhooks/{owner}/{repo}"),  # the library's webhook secret instead
     }
     assert spec["components"]["securitySchemes"]["SessionCookie"]["in"] == "cookie"

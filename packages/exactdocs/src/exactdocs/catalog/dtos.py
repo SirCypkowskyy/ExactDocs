@@ -27,6 +27,7 @@ from exactdocs.catalog.constants import (
     MAX_INSTRUCTION_FILES,
     MAX_LIBRARY_RULE_CHARS,
     MAX_LIBRARY_RULES,
+    MAX_LOGO_BYTES,
     MAX_STORED_ARTICLE_FILES,
     MAX_SUMMARY_REFS,
     MAX_TAG_RULES,
@@ -247,6 +248,11 @@ class LibrarySummary(_Dto):
     """The tags the library's tag rules give its articles."""
     last_imported_at: datetime | None
     """When any version was last imported; null while none is."""
+    logo: str | None
+    """Version of the library's project logo (hex digits of its SHA-256); null when the importer
+    found none in the default version. The image is `GET /api/v1/libraries/{owner}/{repo}/logo`;
+    with `?v=<logo>` a browser may keep it until the logo changes.
+    """
     article_count: int = Field(default=0, ge=0)
     """The articles of the default version (its active manifest's entries); 0 while none is
     imported."""
@@ -279,6 +285,7 @@ class LibrarySummary(_Dto):
             version_count=len(library.versions),
             tags=sorted({rule.tag for rule in library.settings.tag_rules}),
             last_imported_at=max((v.imported_at for v in library.versions), default=None),
+            logo=library.logo,
             article_count=article_count,
         )
 
@@ -310,6 +317,11 @@ class LibraryDetail(_Dto):
     """The rules of the default version's `context7.json`, shown to agents with every `query-docs`
     answer. Untrusted repository text.
     """
+    logo: str | None
+    """Version of the library's project logo (hex digits of its SHA-256); null when the importer
+    found none in the default version. The image is `GET /api/v1/libraries/{owner}/{repo}/logo`;
+    with `?v=<logo>` a browser may keep it until the logo changes.
+    """
 
     @classmethod
     def from_model(cls, library: Library) -> Self:
@@ -337,6 +349,7 @@ class LibraryDetail(_Dto):
             default_version=str(default.ref) if default else None,
             default_pinned=library.default_is_pinned(),
             rules=list(library.rules),
+            logo=library.logo,
         )
 
 
@@ -1597,6 +1610,50 @@ class ApplyReadmeCommand(_Dto):
     """The description it gives; null: none."""
     rules: list[_Rule] = Field(default_factory=list, max_length=MAX_LIBRARY_RULES)
     """Its `context7.json` rules; they replace the library's."""
+
+
+class LogoIn(_Dto):
+    """A logo found in an imported version, already checked (raster) or cleaned (SVG)."""
+
+    path: str = Field(min_length=1, max_length=MAX_PATH)
+    """The repository path it was read from."""
+    content_type: Literal["image/png", "image/jpeg", "image/webp", "image/svg+xml"]
+    """Its media type."""
+    data: bytes = Field(min_length=1, max_length=MAX_LOGO_BYTES, repr=False)
+    """Its bytes."""
+
+
+class ApplyLogoCommand(_Dto):
+    """What logo an imported version has; used only if it is the default version (#504)."""
+
+    library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
+    ref: str = Field(min_length=1)
+    """The version imported; nothing changes unless it is the default."""
+    logo: LogoIn | None = None
+    """Its logo; null: it has none, and the library's logo is removed."""
+
+
+class GetLogoQuery(_Dto):
+    """Read a library's logo."""
+
+    library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
+    known_digests: list[str] = Field(default=[])
+    """Logo versions the caller holds; a match answers `unchanged`."""
+
+
+class Logo(_Dto):
+    """A library's logo: its bytes, its type and the version that names them."""
+
+    digest: str
+    """Version of the logo (hex digits of its SHA-256): its ETag."""
+    content_type: str
+    """Media type, one of PNG, JPEG, WebP or SVG."""
+    data: bytes = Field(repr=False)
+    """The image's bytes; empty when `unchanged`."""
+    unchanged: bool = False
+    """The logo is one of `known_digests`; `data` is empty."""
 
 
 class DiscardLibraryCommand(_Dto):

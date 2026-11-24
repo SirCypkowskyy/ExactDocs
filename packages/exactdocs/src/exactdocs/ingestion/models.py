@@ -18,12 +18,15 @@ from datetime import date, datetime, timedelta
 from enum import StrEnum
 from fnmatch import fnmatchcase
 from functools import lru_cache
+from html import escape
 from html.parser import HTMLParser
+from io import BytesIO
 from itertools import pairwise, starmap
 from operator import itemgetter
 from pathlib import PurePosixPath
-from typing import Any, NewType, Self
+from typing import Any, NewType, NoReturn, Self
 from urllib.parse import unquote, urlsplit
+from xml.parsers import expat
 
 import yaml
 from markdown_it import MarkdownIt
@@ -46,6 +49,8 @@ from exactdocs.ingestion.constants import (
     HEADS,
     INSTRUCTION_FILE_NAMES,
     KNOWN_HOSTS,
+    LOGO_FILES,
+    LOGO_TYPES,
     MAX_CHECK_ERROR,
     MAX_CHUNK_CHARS,
     MAX_CONTEXT7_RULE_CHARS,
@@ -58,14 +63,20 @@ from exactdocs.ingestion.constants import (
     MAX_JOB_NOTES,
     MAX_JOB_PROBLEMS,
     MAX_KEEP_LAST,
+    MAX_LOGO_BYTES,
+    MAX_LOGO_PIXELS,
+    MAX_LOGO_SIDE,
+    MAX_LOGO_SVG_ELEMENTS,
     MAX_PREVIOUS_VERSION_CHARS,
     MAX_PREVIOUS_VERSIONS,
+    MAX_README_LOGOS,
     MAX_RENAMES,
     MAX_SIMILARITY,
     MAX_TAG_PATTERN,
     MAX_TAG_RULES,
     MERGED_HEADINGS_VERSION,
     MIN_INTERVAL_MINUTES,
+    MIN_LOGO_SIDE,
     ONE,
     OPENSSH_MAGIC,
     PARSER_VERSION,
@@ -84,13 +95,22 @@ from exactdocs.ingestion.constants._models import (
     _BADGE_SOURCES,
     _FRONT_MATTER,
     _GIT_SUFFIX,
+    _GITHUB_RAW_HOSTS,
     _HOST,
     _ID_SEGMENTS,
+    _JPEG_FRAMES,
+    _JPEG_LENGTH_FIELD,
+    _JPEG_MARKER,
+    _JPEG_SIZE_SEGMENT,
+    _JPEG_STANDALONE,
+    _JPEG_STOP,
+    _LOGO_NAME,
     _LOGO_WORDS,
     _LOOPBACK,
     _MAX_BRANCH,
     _MAX_IMAGE_DEPTH,
     _MAX_KEY,
+    _MAX_LOGO_SOURCE,
     _MAX_PATH,
     _MAX_PATTERN,
     _MAX_PATTERNS,
@@ -100,7 +120,10 @@ from exactdocs.ingestion.constants._models import (
     _NO_ALIASES,
     _NUMERIC_REF,
     _ORDER_WIDTH,
+    _PNG_HEADER,
+    _PNG_SIGNATURE,
     _README_LABEL,
+    _README_LOGO_TOKENS,
     _README_NAV_CHARS,
     _SCHEME,
     _SCHEMES,
@@ -109,8 +132,15 @@ from exactdocs.ingestion.constants._models import (
     _SSH_USER,
     _STRAY_JOINER,
     _SVG,
+    _SVG_ELEMENTS,
+    _SVG_NAMESPACE,
     _TOKEN_USER,
+    _UNSAFE_CSS,
     _UNSAFE_ID_CHARS,
+    _VP8L_SIGNATURE,
+    _WEBP_HEADER,
+    _XLINK_NAMESPACE,
+    _XML_NAMESPACE,
 )
 from exactdocs.ingestion.errors import (
     AmbiguousRefError,
@@ -583,6 +613,9 @@ class ReadmeSummary:
     """The first H1's text (or its image's ``alt``), else the ``alt`` of a logo opening the file."""
     description: str | None = None
     """The first paragraph's text after where the title was found."""
+    logos: tuple[str, ...] = ()
+    """The ``src`` of each image at the top of the README whose path or ``alt`` says "logo", in
+    order (#504); ``logo_candidates`` turns them into repository paths."""
 
 
 def readme_summary(source: str) -> ReadmeSummary:
@@ -601,11 +634,13 @@ def readme_summary(source: str) -> ReadmeSummary:
     such as ``Documentation:``) are skipped. Without a title the first paragraph of the file is
     used.
 
+    The images at its top that say "logo" are kept as ``logos`` (see ``readme_logos``).
+
     Args:
         source: The README's text.
 
     Returns:
-        The title and the description found.
+        The title, the description and the logo images found.
     """
     tokens = _readme_markdown.parse(parse_article("README.md", source).body)
     title, start = _readme_title(tokens)
@@ -620,7 +655,7 @@ def readme_summary(source: str) -> ReadmeSummary:
         ):
             description = text[:README_DESCRIPTION_MAX].rstrip()
             break
-    return ReadmeSummary(title=title, description=description)
+    return ReadmeSummary(title=title, description=description, logos=readme_logos(tokens))
 
 
 type _HeadEvent = tuple[str, str, str]
@@ -2735,6 +2770,600 @@ class ImportedImage:
     """The media type sniffed from its bytes."""
     data: bytes = field(repr=False)
     """Its bytes."""
+
+
+# ---------------------------------------------------------------- project logos (#504)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ProjectLogo:
+    """A library's logo as an import found it: a checked raster image or a cleaned SVG."""
+
+    path: str
+    """The repository path it was read from."""
+    content_type: str
+    """Its media type, one of ``LOGO_TYPES``."""
+    data: bytes = field(repr=False)
+    """Its bytes: the file's for a raster image, the cleaned document for an SVG."""
+
+
+def readme_logos(tokens: Sequence[Token]) -> tuple[str, ...]:
+    """Find the logo images at the top of a parsed README: the ``src`` of each, in order.
+
+    The top is what comes before the first heading below H1 (a section starts there), within the
+    first ``_README_LOGO_TOKENS`` tokens. An image there is a logo when its ``src`` or ``alt``
+    says "logo" (``_LOGO_NAME``) and it is not a badge. Markdown images and HTML ``<img>`` count,
+    also inside an ``<h1>``, a link or a ``<picture>``. A blank or overlong ``src`` is skipped.
+
+    Args:
+        tokens: The parsed README.
+
+    Returns:
+        At most ``MAX_README_LOGOS`` sources, as written, first seen first.
+    """
+    found: dict[str, None] = {}
+    for token in tokens[:_README_LOGO_TOKENS]:
+        if token.type == "heading_open" and token.tag != "h1":
+            break
+        match token.type:
+            case "html_block":
+                images = _html_images(token.content)
+            case "inline":
+                images = _inline_images(token)
+            case _:
+                continue
+        for alt, src in images:
+            source = src.strip()
+            if (
+                source
+                and len(source) <= _MAX_LOGO_SOURCE
+                and not _is_badge(source)
+                and (_LOGO_NAME.search(source) or _LOGO_NAME.search(alt))
+            ):
+                found[source] = None
+    return tuple(found)[:MAX_README_LOGOS]
+
+
+class _HtmlImages(HTMLParser):
+    """Collect every ``<img>`` of a piece of README HTML as ``(alt, src)``, in order."""
+
+    def __init__(self) -> None:
+        """Start with no images; character references are decoded."""
+        super().__init__(convert_charrefs=True)
+        self.images: list[tuple[str, str]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        """Note an image's ``alt`` and ``src``.
+
+        Args:
+            tag: The tag's name, lowercased.
+            attrs: Its attributes.
+        """
+        if tag == "img":
+            values = {name: value or "" for name, value in attrs}
+            self.images.append((values.get("alt", ""), values.get("src", "")))
+
+
+def _html_images(html: str) -> list[tuple[str, str]]:
+    """List the images of a piece of README HTML.
+
+    Args:
+        html: An HTML block or inline tag.
+
+    Returns:
+        ``(alt, src)`` of each ``<img>``, in order.
+    """
+    parser = _HtmlImages()
+    parser.feed(html)
+    parser.close()
+    return parser.images
+
+
+def _inline_images(inline: Token) -> list[tuple[str, str]]:
+    """List the images of a paragraph's or heading's text: Markdown images and inline ``<img>``.
+
+    Args:
+        inline: The inline token.
+
+    Returns:
+        ``(alt, src)`` of each image, in order.
+    """
+    images: list[tuple[str, str]] = []
+    for child in inline.children or []:
+        if child.type == "image":
+            images.append((child.content, str(child.attrs.get("src", ""))))
+        elif child.type == "html_inline":
+            images += _html_images(child.content)
+    return images
+
+
+def logo_candidates(sources: Sequence[str], repository: RepositoryUrl) -> tuple[str, ...]:
+    """List the repository paths a library's logo is looked for at, the likeliest first.
+
+    First the README's logo images (``ReadmeSummary.logos``): a relative ``src`` resolves against
+    the repository's root, as the README's own images do. An absolute URL counts only when it
+    points into the library's own GitHub repository (``raw.githubusercontent.com/<owner>/<repo>/
+    <ref>/<path>``, ``github.com/<owner>/<repo>/raw/<ref>/<path>`` or ``.../blob/...``): it then
+    names ``<path>`` of the imported commit, whatever ref the URL names, and the URL itself is
+    never fetched. Then ``LOGO_FILES``. No path is listed twice.
+
+    Args:
+        sources: The README's logo sources.
+        repository: The library's repository.
+
+    Returns:
+        The paths, in the order they are tried.
+    """
+    paths: dict[str, None] = {}
+    for source in sources[:MAX_README_LOGOS]:
+        if path := _logo_path(source, repository):
+            paths[path] = None
+    paths.update(dict.fromkeys(LOGO_FILES))
+    return tuple(paths)
+
+
+def _logo_path(source: str, repository: RepositoryUrl) -> str | None:
+    """Turn a README logo's ``src`` into a repository path (see ``logo_candidates``).
+
+    Args:
+        source: The image's ``src``.
+        repository: The library's repository.
+
+    Returns:
+        The path, or ``None`` when the image is not a file of the repository.
+    """
+    if not _SCHEME.match(source) and not source.startswith("//"):
+        return _resolve("README.md", source)
+    if repository.host_kind is not RepositoryHost.GITHUB:
+        return None
+    try:
+        url = urlsplit(source)
+        host = (url.hostname or "").lower()
+    except ValueError:  # a malformed host or port
+        return None
+    if url.scheme.lower() not in {"https", "http"} or host not in _GITHUB_RAW_HOSTS:
+        return None
+    segments = [part for part in url.path.split("/") if part]
+    if "/".join(["", *(unquote(s) for s in segments[:2])]).lower() != repository.library_id:
+        return None
+    return _github_file(segments[2:], raw_host=host == "raw.githubusercontent.com")
+
+
+def _github_file(segments: Sequence[str], *, raw_host: bool) -> str | None:
+    """Read the file path out of a GitHub URL's segments after ``/<owner>/<repo>``.
+
+    Args:
+        segments: ``<ref>/<path>`` on the raw host, ``raw|blob/<ref>/<path>`` on github.com.
+        raw_host: Whether the URL is on ``raw.githubusercontent.com``.
+
+    Returns:
+        The repository path, or ``None`` when the URL names no file.
+    """
+    rest = list(segments)
+    if not raw_host:
+        if rest[:1] not in (["raw"], ["blob"]):
+            return None
+        rest = rest[1:]
+    # The ref: `refs/heads/<name>` or `refs/tags/<name>` take three segments, a bare name one.
+    rest = rest[3:] if rest[:1] == ["refs"] else rest[1:]
+    return _resolve("README.md", "/" + "/".join(rest)) if rest else None
+
+
+def pick_logo(candidates: Sequence[str], found: Mapping[str, FetchedFile]) -> ProjectLogo | None:
+    """Take the first candidate the commit has that ``check_logo`` keeps.
+
+    Args:
+        candidates: The paths, in the order they are tried (``logo_candidates``).
+        found: What was read of them, by path; a path the commit lacks is left out.
+
+    Returns:
+        The logo, or ``None`` when no candidate is one.
+    """
+    for path in candidates:
+        file = found.get(path)
+        if file is None or file.data is None:
+            continue
+        if (checked := check_logo(file.data)) is not None:
+            content_type, data = checked
+            return ProjectLogo(path=path, content_type=content_type, data=data)
+    return None
+
+
+def check_logo(data: bytes) -> tuple[str, bytes] | None:
+    """Tell whether a file can be a library's logo, and what of it to keep.
+
+    The type is sniffed from the bytes and must be one of ``LOGO_TYPES``; the file has at most
+    ``MAX_LOGO_BYTES``. A PNG, JPEG or WebP is kept as it is when its header says it is
+    ``MIN_LOGO_SIDE`` to ``MAX_LOGO_SIDE`` pixels on each side and at most ``MAX_LOGO_PIXELS`` in
+    all (nothing is decoded). An SVG is kept as ``clean_svg`` rewrites it.
+
+    Args:
+        data: The file's bytes.
+
+    Returns:
+        The media type and the bytes to keep; ``None`` when the file is no usable logo.
+    """
+    if not data or len(data) > MAX_LOGO_BYTES:
+        return None
+    content_type = sniff_image(data)
+    if content_type == "image/svg+xml":
+        cleaned = clean_svg(data)
+        return None if cleaned is None else (content_type, cleaned)
+    if content_type is None or content_type not in LOGO_TYPES:
+        return None
+    if (size := image_size(data)) is None:
+        return None
+    width, height = size
+    fits = (
+        min(width, height) >= MIN_LOGO_SIDE
+        and max(width, height) <= MAX_LOGO_SIDE
+        and width * height <= MAX_LOGO_PIXELS
+    )
+    return (content_type, data) if fits else None
+
+
+def image_size(data: bytes) -> tuple[int, int] | None:
+    """Read a PNG's, JPEG's or WebP's width and height from its header, without decoding it.
+
+    Args:
+        data: The file's bytes.
+
+    Returns:
+        Width and height in pixels; ``None`` for another format or a header that says none.
+    """
+    if data.startswith(_PNG_SIGNATURE):
+        if len(data) < _PNG_HEADER or data[12:16] != b"IHDR":
+            return None
+        return int.from_bytes(data[16:20]), int.from_bytes(data[20:24])
+    if data.startswith(b"\xff\xd8"):
+        return _jpeg_size(data)
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return _webp_size(data)
+    return None
+
+
+def _jpeg_size(data: bytes) -> tuple[int, int] | None:
+    """Walk a JPEG's segments up to its frame header, which holds the size.
+
+    Each step moves forward, so the walk ends within the file.
+
+    Args:
+        data: The file's bytes, starting with the start-of-image marker.
+
+    Returns:
+        Width and height; ``None`` when the file ends, or its scan starts, before a frame header.
+    """
+    at = 2
+    while at + 4 <= len(data):
+        if data[at] != _JPEG_MARKER:
+            return None
+        marker = data[at + 1]
+        if marker == _JPEG_MARKER:  # a fill byte
+            at += 1
+            continue
+        if marker in _JPEG_STANDALONE:
+            at += 2
+            continue
+        length = int.from_bytes(data[at + 2 : at + 4])
+        if marker in _JPEG_FRAMES:
+            if length < _JPEG_SIZE_SEGMENT or at + 9 > len(data):
+                return None
+            return int.from_bytes(data[at + 7 : at + 9]), int.from_bytes(data[at + 5 : at + 7])
+        if marker in _JPEG_STOP or length < _JPEG_LENGTH_FIELD:
+            return None
+        at += 2 + length
+    return None
+
+
+def _webp_size(data: bytes) -> tuple[int, int] | None:
+    """Read a WebP's size from its first chunk: lossy (``VP8``), lossless or extended.
+
+    Args:
+        data: The file's bytes, a RIFF ``WEBP`` container.
+
+    Returns:
+        Width and height; ``None`` for a header that is cut short or not one of the three.
+    """
+    if len(data) < _WEBP_HEADER:
+        return None
+    chunk = data[12:16]
+    if chunk == b"VP8 " and data[23:26] == b"\x9d\x01\x2a":
+        width, height = data[26:28], data[28:30]
+        return int.from_bytes(width, "little") & 0x3FFF, int.from_bytes(height, "little") & 0x3FFF
+    if chunk == b"VP8L" and data[20] == _VP8L_SIGNATURE:
+        bits = int.from_bytes(data[21:25], "little")
+        return (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+    if chunk == b"VP8X":
+        width, height = data[24:27], data[27:30]
+        return int.from_bytes(width, "little") + 1, int.from_bytes(height, "little") + 1
+    return None
+
+
+class _RefusedSvgError(Exception):
+    """An SVG logo is refused while it is parsed: a DTD subset, an entity or too many elements."""
+
+
+@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- built while parsed
+class _SvgElement:
+    """One element of an SVG being cleaned: its name, attributes and content."""
+
+    name: str
+    """``<namespace URI> <local name>``, or the bare local name of an element in no namespace."""
+    attributes: dict[str, str]
+    """Its attributes, their names written the same way."""
+    content: list[_SvgElement | str] = field(default_factory=list)
+    """Its child elements and text, in document order."""
+
+
+class _SvgReader:
+    """Builds ``_SvgElement``s from expat's events; refuses DTD subsets, entities and bulk."""
+
+    def __init__(self) -> None:
+        """Start with no element read."""
+        self.roots: list[_SvgElement] = []
+        self.open: list[_SvgElement] = []
+        self.count = 0
+
+    def start(self, name: str, attributes: dict[str, str]) -> None:
+        """Open an element inside the one open now.
+
+        Args:
+            name: Its name, the namespace URI and the local name joined by a space.
+            attributes: Its attributes, named the same way.
+
+        Raises:
+            _RefusedSvgError: The document has more than ``MAX_LOGO_SVG_ELEMENTS`` elements.
+        """
+        self.count += 1
+        if self.count > MAX_LOGO_SVG_ELEMENTS:
+            raise _RefusedSvgError
+        element = _SvgElement(name=name, attributes=dict(attributes))
+        (self.open[-1].content if self.open else self.roots).append(element)
+        self.open.append(element)
+
+    def end(self, name: str) -> None:
+        """Close the element open now.
+
+        Args:
+            name: Its name (expat checks it matches).
+        """
+        del name
+        self.open.pop()
+
+    def text(self, data: str) -> None:
+        """Add text to the element open now.
+
+        Args:
+            data: The text, its references decoded.
+        """
+        if self.open:
+            self.open[-1].content.append(data)
+
+    def doctype(
+        self, name: str, system_id: str | None, public_id: str | None, has_internal_subset: int
+    ) -> None:
+        """Accept a DOCTYPE that only names a DTD (never read); refuse one with a subset.
+
+        Args:
+            name: The document type's name.
+            system_id: Its system identifier, if any.
+            public_id: Its public identifier, if any.
+            has_internal_subset: Whether it declares things itself (entities, attributes).
+
+        Raises:
+            _RefusedSvgError: It has an internal subset.
+        """
+        del name, system_id, public_id
+        if has_internal_subset:
+            raise _RefusedSvgError
+
+    def refuse(self, *args: object) -> NoReturn:
+        """Refuse an entity: declared, external, or referenced without a declaration.
+
+        Args:
+            args: What expat says about it.
+
+        Raises:
+            _RefusedSvgError: Always.
+        """
+        del args
+        raise _RefusedSvgError
+
+
+def _parse_svg(data: bytes) -> _SvgElement | None:
+    """Parse an SVG's bytes, refusing every entity and any DTD subset before they are expanded.
+
+    Expat reads the encoding the file declares (UTF-8 without one) and never reads an external
+    DTD; comments and processing instructions (``xml-stylesheet``) are dropped.
+
+    Args:
+        data: The file's bytes.
+
+    Returns:
+        The root element; ``None`` for a document that is not well-formed, declares an entity or
+        a DTD subset, references an entity XML does not predefine, or has more than
+        ``MAX_LOGO_SVG_ELEMENTS`` elements.
+    """
+    reader = _SvgReader()
+    parser = expat.ParserCreate(namespace_separator=" ")
+    parser.buffer_text = True
+    parser.StartElementHandler = reader.start
+    parser.EndElementHandler = reader.end
+    parser.CharacterDataHandler = reader.text
+    parser.StartDoctypeDeclHandler = reader.doctype
+    parser.EntityDeclHandler = reader.refuse
+    parser.ExternalEntityRefHandler = reader.refuse
+    parser.SkippedEntityHandler = reader.refuse
+    try:
+        parser.ParseFile(BytesIO(data))
+    except expat.ExpatError, _RefusedSvgError:
+        return None
+    return reader.roots[0] if reader.roots else None
+
+
+def clean_svg(data: bytes) -> bytes | None:
+    """Rewrite an SVG so that, whatever shows it, it runs nothing and loads nothing.
+
+    Only elements of ``_SVG_ELEMENTS`` in the SVG namespace are kept; any other is dropped with
+    its content (scripts, ``foreignObject``, images, animations, metadata, editors' elements). Of
+    the attributes, event handlers (``on*``) and attributes in another namespace go, and so does
+    any value ``_UNSAFE_CSS`` matches (``url()`` to another document, ``javascript:``, imports,
+    escapes); ``href`` (also SVG 1.1's ``xlink:href``) stays only as a ``#fragment`` of the same
+    document. A ``<style>`` whose CSS ``_UNSAFE_CSS`` matches is dropped. A ``<use>`` that copies
+    another ``<use>``, or copies more than ``MAX_LOGO_SVG_ELEMENTS`` elements in all, refuses the
+    file (copies of copies multiply a small file into a drawing no browser finishes). The result
+    is written anew, UTF-8, with the SVG namespace as the default one.
+
+    Args:
+        data: The file's bytes.
+
+    Returns:
+        The cleaned document; ``None`` when the file is refused (see ``_parse_svg``), its root is
+        not an SVG ``<svg>``, or the result is larger than ``MAX_LOGO_BYTES``.
+    """
+    root = _parse_svg(data)
+    if root is None or root.name != f"{_SVG_NAMESPACE} svg":
+        return None
+    for element in _svg_elements(root):  # visits the kept children as they are filtered
+        element.attributes = _safe_attributes(element.attributes)
+        element.content = [c for c in element.content if isinstance(c, str) or _kept_element(c)]
+    if not _uses_bounded(root):
+        return None
+    cleaned = _write_svg(root).encode()
+    return cleaned if len(cleaned) <= MAX_LOGO_BYTES else None
+
+
+def _svg_elements(root: _SvgElement) -> Iterator[_SvgElement]:
+    """Walk an element and everything inside it, without recursion (any depth).
+
+    An element's children are read after it was yielded, so the caller may filter them first.
+
+    Args:
+        root: Where to start.
+
+    Yields:
+        Each element, parents before their children.
+    """
+    pending = [root]
+    while pending:
+        element = pending.pop()
+        yield element
+        pending.extend(c for c in reversed(element.content) if isinstance(c, _SvgElement))
+
+
+def _split_name(name: str) -> tuple[str, str]:
+    """Split an expanded element or attribute name.
+
+    Args:
+        name: ``<namespace URI> <local name>`` or a bare local name.
+
+    Returns:
+        The namespace URI (empty for none) and the local name.
+    """
+    namespace, _, local = name.rpartition(" ")
+    return namespace, local
+
+
+def _kept_element(element: _SvgElement) -> bool:
+    """Tell whether an SVG logo keeps an element (its content is looked at later).
+
+    Args:
+        element: The element.
+
+    Returns:
+        True for an element of ``_SVG_ELEMENTS`` in the SVG namespace, a ``<style>`` only when
+        its CSS is safe.
+    """
+    namespace, local = _split_name(element.name)
+    if namespace != _SVG_NAMESPACE or local not in _SVG_ELEMENTS:
+        return False
+    css = "".join(c for c in element.content if isinstance(c, str))
+    return local != "style" or not _UNSAFE_CSS.search(css)
+
+
+def _safe_attributes(attributes: Mapping[str, str]) -> dict[str, str]:
+    """Keep the attributes of an SVG element that can neither run nor load anything.
+
+    Args:
+        attributes: The element's attributes, by expanded name.
+
+    Returns:
+        The kept ones; an ``xlink:href`` kept becomes a plain ``href``.
+    """
+    kept: dict[str, str] = {}
+    for name, value in attributes.items():
+        namespace, local = _split_name(name)
+        if local == "href" and namespace in {"", _XLINK_NAMESPACE}:
+            target = value.strip()
+            if target.startswith("#") and not _UNSAFE_CSS.search(target):
+                kept["href"] = target
+        elif (
+            namespace in {"", _XML_NAMESPACE}
+            and not local.lower().startswith("on")
+            and not _UNSAFE_CSS.search(value)
+        ):
+            kept[name] = value
+    return kept
+
+
+def _uses_bounded(root: _SvgElement) -> bool:
+    """Tell whether the ``<use>`` elements of a cleaned SVG copy a bounded part of it.
+
+    The work stops as soon as the bound is passed, so it is at most about twice the bound.
+
+    Args:
+        root: The cleaned document.
+
+    Returns:
+        False when a ``<use>`` copies another ``<use>`` (or itself), or the copies add up to more
+        than ``MAX_LOGO_SVG_ELEMENTS`` elements.
+    """
+    use = f"{_SVG_NAMESPACE} use"
+    by_id: dict[str, _SvgElement] = {}
+    uses: list[_SvgElement] = []
+    for element in _svg_elements(root):
+        if key := element.attributes.get("id"):
+            by_id.setdefault(key, element)
+        if element.name == use:
+            uses.append(element)
+    copied = 0
+    for element in uses:
+        target = by_id.get(element.attributes.get("href", "").removeprefix("#"))
+        for inside in _svg_elements(target) if target is not None else ():
+            copied += 1
+            if inside.name == use or copied > MAX_LOGO_SVG_ELEMENTS:
+                return False
+    return True
+
+
+def _write_svg(root: _SvgElement) -> str:
+    """Write a cleaned SVG back as text, without recursion; the SVG namespace is the default.
+
+    Args:
+        root: The cleaned document's root.
+
+    Returns:
+        The document.
+    """
+    parts: list[str] = []
+    pending: list[_SvgElement | str] = [root]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, str):  # escaped text or a closing tag
+            parts.append(item)
+            continue
+        local = _split_name(item.name)[1]
+        written = [f' xmlns="{_SVG_NAMESPACE}"'] if item is root else []
+        for name, value in item.attributes.items():
+            namespace, attribute = _split_name(name)
+            prefix = "xml:" if namespace == _XML_NAMESPACE else ""
+            written.append(f' {prefix}{attribute}="{escape(value, quote=True)}"')
+        parts.append(f"<{local}{''.join(written)}>")
+        pending.append(f"</{local}>")
+        pending.extend(
+            escape(c, quote=False) if isinstance(c, str) else c for c in reversed(item.content)
+        )
+    return "".join(parts)
 
 
 class InstructionPolicy(StrEnum):

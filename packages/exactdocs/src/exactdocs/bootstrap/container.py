@@ -32,6 +32,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogKnownLibraries,
     CatalogLibraries,
     CatalogLibraryIds,
+    CatalogLibraryLogos,
     CatalogLibrarySettings,
     CatalogLibrarySources,
     CatalogManualTags,
@@ -44,6 +45,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogVersionCopier,
     CatalogVersionPublisher,
     IdentityAccessPolicy,
+    IdentityLeaderboardPeople,
     RetrievalChunkIndex,
     RetrievalCollector,
     RetrievalGuidancePolicy,
@@ -69,6 +71,7 @@ from exactdocs.bootstrap.constants import (
     SIGN_IN_TOKENS_PURPOSE,
     UPKEEP_RECANCEL_SECONDS,
     UPKEEP_STOP_SECONDS,
+    USAGE_FLUSH_SECONDS,
     WEBHOOK_SECRETS_PURPOSE,
     WORK_DIR,
 )
@@ -103,6 +106,7 @@ from exactdocs.bootstrap.sign_in import (
 )
 from exactdocs.bootstrap.telemetry import agent_reads as telemetry_agent_reads
 from exactdocs.bootstrap.telemetry import search_tracer, traced_job, traced_jobs
+from exactdocs.bootstrap.usage_meter import flushing
 from exactdocs.bootstrap.version_counts import ListVersionsWithChunks
 from exactdocs.bootstrap.workdirs import held, new_work_root, sweep_abandoned_work
 from exactdocs.catalog import CatalogModule
@@ -112,6 +116,7 @@ from exactdocs.catalog.adapters.driven.sqlite import (
     SqliteEntrySearch,
     SqliteImportedTags,
     SqliteInstructionFiles,
+    SqliteLibraryLogos,
     SqliteLibraryRepository,
     SqliteManifestCopier,
     SqliteManifestRepository,
@@ -127,6 +132,7 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteExternalIdentityRepository,
     SqliteFailedSignInLog,
     SqliteLibraryGrantRepository,
+    SqlitePreferencesRepository,
     SqliteSessionRepository,
     SqliteSignInAttemptRepository,
     SqliteTokenRepository,
@@ -212,6 +218,10 @@ from exactdocs.retrieval.ports.driven import (
 )
 from exactdocs.retrieval.ports.driving import SaveProvider, SetLibraryRetrieval
 from exactdocs.retrieval.use_cases import PriceBook
+from exactdocs.usage import UsageModule
+from exactdocs.usage.adapters.driven.sqlite import SqliteUsageCounts
+from exactdocs.usage.dtos import PruneUsageCommand
+from exactdocs.usage.models import Retention, UsagePolicy
 from exactdocs_kernel import Clock, DomainError, SystemClock
 
 logger = logging.getLogger(__name__)
@@ -456,6 +466,7 @@ def _identity(settings: Settings, engine: AsyncEngine, stand_ins: SignInStandIns
         attempts=SqliteSignInAttemptRepository(engine=engine),
         box=_secret_box(settings, SIGN_IN_TOKENS_PURPOSE),
         clock=clock,
+        preferences=SqlitePreferencesRepository(engine=engine),
         providers=providers,
         policies=policies,
         access_verifier=None if access is None else access[0],
@@ -481,6 +492,32 @@ def _access_policy(identity: IdentityModule) -> IdentityAccessPolicy:
         caller=current_account_id,
         external_identity=current_external_identity,
         api_identity=current_api_identity,
+    )
+
+
+def _usage(
+    settings: Settings, engine: AsyncEngine, identity: IdentityModule, clock: Clock | None
+) -> UsageModule:
+    """Build the usage domain: its counts in the database, people and library roles from identity.
+
+    Args:
+        settings: The runtime configuration: the people leaderboard and the retention.
+        engine: The database.
+        identity: The identity domain.
+        clock: The current time; the system's UTC clock when ``None``.
+
+    Returns:
+        The module.
+    """
+    return UsageModule.build(
+        counts=SqliteUsageCounts(engine=engine),
+        people=IdentityLeaderboardPeople(find_leaderboard_people=identity.find_leaderboard_people),
+        libraries=_access_policy(identity),
+        clock=clock or SystemClock(),
+        policy=UsagePolicy(
+            people_leaderboard=settings.usage.people_leaderboard,
+            retention=Retention(months=settings.usage.retention_months),
+        ),
     )
 
 
@@ -673,6 +710,7 @@ def _build_read_side(
         instruction_files=SqliteInstructionFiles(engine=engine),
         access=access,
         entry_search=SqliteEntrySearch(engine=engine),
+        logos=SqliteLibraryLogos(engine=engine),
         article_counts=SqliteArticleCounts(engine=engine),
     )
     choice = None
@@ -1026,6 +1064,8 @@ class Container:
     """The ingestion domain, wired."""
     retrieval: RetrievalModule
     """The retrieval domain, wired."""
+    usage: UsageModule
+    """The usage domain (#510): daily counts of reads, searches and answers, wired."""
     job_worker: DbosJobWorker
     """Runs the queued jobs (imports, syncs, embeddings) in ``running(jobs=True)``."""
     list_libraries: ListLibraries
@@ -1185,6 +1225,9 @@ class Container:
                 get_library_retrieval=read.retrieval.get_library_retrieval
             ),
             files=files,
+            logos=CatalogLibraryLogos(
+                get_library=read.catalog.get_library, apply_logo=read.catalog.apply_logo
+            ),
         )
         ingestion = IngestionModule.build(
             jobs=SqliteJobRepository(engine=engine),
@@ -1263,6 +1306,7 @@ class Container:
             identity=identity.module,
             ingestion=ingestion,
             retrieval=read.retrieval,
+            usage=_usage(settings, engine, identity.module, clock),
             list_libraries=ListLibrariesBySync(
                 list_libraries=ListLibrariesByAi(
                     list_libraries=read.catalog.list_libraries,
@@ -1366,9 +1410,9 @@ class Container:
         await requeue_daily(engine=self.engine, queue=self.nightly)
 
     async def nightly(self) -> None:
-        """Queue the missing embedding, then prune HyDE's and the agentic answer cache.
+        """Queue the missing embedding, prune HyDE's and the agentic answer cache, then usage.
 
-        Each part is logged on failure and never stops the other or the server. A failure while
+        Each part is logged on failure and never stops the others or the server. A failure while
         the server stops (it cancels this) is raised instead, so the upkeep ends (#308).
         """
         await self.queue_embedding()
@@ -1378,6 +1422,19 @@ class Container:
             if being_cancelled():  # the error replaced the server's stop: stop all the same
                 raise
             logger.exception("pruning the answer caches failed; it runs again tomorrow")
+        try:
+            pruned = await self.usage.prune_usage(PruneUsageCommand())
+        except Exception:
+            if being_cancelled():
+                raise
+            logger.exception("pruning the usage counts failed; it runs again tomorrow")
+        else:
+            if pruned.deleted:
+                logger.info(
+                    "%d usage counters before %s were deleted (retention)",
+                    pruned.deleted,
+                    pruned.first_kept,
+                )
 
     async def queue_embedding(self) -> None:
         """Queue the embedding of every version the configured model has not embedded.
@@ -1442,23 +1499,26 @@ class Container:
                     index.current_format,
                 )
             with held(self.work_owner) if self.work_owner else nullcontext():
-                if jobs:
-                    # Fetch folders a crash left behind: on SQLite this process is the data dir's
-                    # one job runner; on PostgreSQL only the folders of processes that are gone.
-                    sweep = sweep_abandoned_work if self.work_owner else sweep_stale_fetches
-                    await asyncio.to_thread(sweep, self.settings.data_dir / WORK_DIR)
-                    async with (
-                        self.job_worker.running(),
-                        self._embedding_queued(),
-                        revalidating(
-                            self.identity.revalidate_external_accounts,
-                            every=self.settings.auth.revalidate_poll_seconds,
-                        ),
-                        self._drift_watched(),
-                    ):
+                # The usage counts served while it runs are written in the background, and
+                # once more at the end, before the engine is disposed.
+                async with flushing(self.usage.flush_usage, every=USAGE_FLUSH_SECONDS):
+                    if jobs:
+                        # Fetch folders a crash left behind: on SQLite this process is the data
+                        # dir's one job runner; on PostgreSQL only those of processes now gone.
+                        sweep = sweep_abandoned_work if self.work_owner else sweep_stale_fetches
+                        await asyncio.to_thread(sweep, self.settings.data_dir / WORK_DIR)
+                        async with (
+                            self.job_worker.running(),
+                            self._embedding_queued(),
+                            revalidating(
+                                self.identity.revalidate_external_accounts,
+                                every=self.settings.auth.revalidate_poll_seconds,
+                            ),
+                            self._drift_watched(),
+                        ):
+                            yield
+                    else:
                         yield
-                else:
-                    yield
         finally:
             try:
                 self.local.close()  # queued local model calls are dropped, not waited for

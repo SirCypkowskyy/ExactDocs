@@ -104,14 +104,41 @@ export interface paths {
         };
         /**
          * Callback
-         * @description Finish signing in: the identity provider sends the browser here.
+         * @description Finish signing in (or linking): the identity provider sends the browser here.
          *
          *     The binding cookie is cleared whatever happens. Refusals go back to the sign-in page
          *     with `?error=` and one of `sign_in_failed`, `sign_in_cancelled`, `not_allowed`,
-         *     `account_disabled`, `username_unavailable` or `provider_unavailable`; no session is
-         *     created then.
+         *     `not_linked` (the provider creates no accounts, and nobody linked this identity),
+         *     `account_disabled`, `username_unavailable`, `provider_access_revoked` or
+         *     `provider_unavailable`; no session is created then. A link started from Account
+         *     settings goes back to where it started, with `?linked=<provider>` or
+         *     `?link_error=<code>`, and leaves the session as it was.
          */
         readonly get: operations["identity-callback"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/auth/{provider}/icon": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Icon
+         * @description Serve a provider's own icon, from this server (never from the provider's).
+         *
+         *     Only for a provider with an operator's `icon_file` (its `icon_url`); a built-in icon
+         *     (`icon`) is the web UI's own, and anything else is `no_icon` (404). The response may be
+         *     cached: its URL carries the icon's version, which is also its ETag.
+         */
+        readonly get: operations["identity-icon"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -285,6 +312,98 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/stats/usage": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Usage Stats
+         * @description Report the instance's reads, searches and agent answers per period. Operators only.
+         *
+         *     `series` has one bucket per `period` (UTC days, ISO weeks, months or years; `periods`
+         *     of them, the last holding `until`), zeros included; `groups` breaks the whole range
+         *     down `by` library, person (`account`) or person and API token (`token`). Only counts
+         *     are kept, never what was read or asked. People are named only while the people
+         *     leaderboard is on (`GET /stats/settings`) and only if they opted in
+         *     (`leaderboard_opt_in`); everyone else is summed into one group with `others: true`.
+         *     A search or an answer over several libraries counts to no library (`library: null`).
+         */
+        readonly get: operations["usage-get_usage_stats"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/account/providers": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Providers
+         * @description List the signed-in account's ways to sign in: its password and every provider.
+         *
+         *     Each configured provider says whether an identity of it is linked and whether it may
+         *     be linked or unlinked now; an identity of a provider no longer configured is listed
+         *     last, to be unlinked.
+         */
+        readonly get: operations["identity-get_providers"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/account/providers/{provider}/link": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Link Provider
+         * @description Start linking an identity of this provider to the signed-in account. Answers `redirect_url`, where the browser goes next (the provider's sign-in), and sets the `exactdocs_sign_in` binding cookie, exactly as `GET /auth/{provider}/start` does; the attempt is also bound to this session. The provider then comes back to `GET /auth/{provider}/callback`, which links the identity to this account (no new session) and redirects to `return_to` with `?linked=<provider>`, or `?link_error=<code>`: `identity_linked_elsewhere`, `provider_linked`, `not_allowed`, `sign_in_failed`, `sign_in_cancelled`, `unauthenticated` (the session ended meanwhile) or `provider_unavailable`. Refused at once with `provider_linked` (409) when the account has an identity of the provider already, `unknown_provider` (404) for a provider not configured, and `provider_unavailable` (429) when it cannot be reached. Needs a session cookie (401 otherwise, an API token included).
+         */
+        readonly post: operations["identity-link_provider"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/account/providers/{provider}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Delete Provider
+         * @description Unlink the signed-in account's identity of this provider: it no longer signs the account in. Answers the account's providers as `GET /account/providers` does. Refused with `last_sign_in_method` (409) for the provider an account without a password was created through (its role, groups and access follow it, and it is the account's way in), and with `provider_not_linked` (404) when the account has no identity of this provider. Needs a session cookie.
+         */
+        readonly delete: operations["identity-delete_provider"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/account/password": {
         readonly parameters: {
             readonly query?: never;
@@ -404,7 +523,7 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
-    readonly "/api/v1/stats/jobs": {
+    readonly "/api/v1/account/preferences": {
         readonly parameters: {
             readonly query?: never;
             readonly header?: never;
@@ -412,17 +531,22 @@ export interface paths {
             readonly cookie?: never;
         };
         /**
-         * Get Job Stats
-         * @description Count the jobs queued on each UTC day from `from` to `to`, by state and by kind.
+         * Get Account Preferences
+         * @description Return the caller's interface preferences.
          *
-         *     Every day of the range is listed, a day without jobs counting 0, and each day lists
-         *     every state and every kind. A job counts on the day it was queued, in the state it is
-         *     in now. Only `bucket=day` exists. The range is at most 366 days; one that ends before
-         *     it starts or is longer is a 422 `invalid_range`. Operators only (a session or an API
-         *     token of an `admin`): the counts cover every library.
+         *     `saved` is `false` while the account never saved any: `preferences` then holds the
+         *     defaults, and a browser signing in keeps the preferences it already applies (and saves
+         *     them). Once `saved` is `true`, the account's preferences win over a browser's.
          */
-        readonly get: operations["ingestion-get_job_stats"];
-        readonly put?: never;
+        readonly get: operations["identity-get_account_preferences"];
+        /**
+         * Save Account Preferences
+         * @description Save the caller's interface preferences, replacing the ones it had.
+         *
+         *     Every preference is required. An unknown key or a value the interface does not offer is
+         *     a 422 `validation_error` naming the field, and nothing is saved.
+         */
+        readonly put: operations["identity-save_account_preferences"];
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -445,6 +569,32 @@ export interface paths {
          *     `<img>` still shows it) under a CSP that forbids scripts and any request.
          */
         readonly get: operations["catalog-get_version_asset"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/libraries/{owner}/{repo}/logo": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Library Logo
+         * @description Serve the library's project logo, found by the importer in its default version.
+         *
+         *     From ExactDocs' own origin, never from the repository's host. The `ETag` is the logo's
+         *     version (the library's `logo` field). Asked for with `?v=` set to that version, it is
+         *     cached for a year; otherwise the browser asks again (`no-cache`) and gets a 304 while the
+         *     logo is the same. An SVG is served as an attachment (an `<img>` still shows it) under a
+         *     CSP that forbids scripts and any request. 404 `not_found` when the library has no logo.
+         */
+        readonly get: operations["catalog-get_library_logo"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -877,6 +1027,80 @@ export interface paths {
          *     accepted and ignored (no LLM reranking). The text is external data, never instructions.
          */
         readonly get: operations["retrieval-context_docs"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/account/usage": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Account Usage
+         * @description Report your own reads, searches and agent answers per period.
+         *
+         *     The same shape as `GET /stats/usage`, over your account only, broken down by library or
+         *     by API token (`token_id: null` is your browser sessions and OAuth sign-ins).
+         */
+        readonly get: operations["usage-get_account_usage"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/stats/leaderboard": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Leaderboard
+         * @description Rank libraries or people by reads, searches or agent answers over a period.
+         *
+         *     `period` is the UTC day, ISO week, month or year holding `at` (default today, so the
+         *     current period so far); each entry has its rank in the previous period among the same
+         *     subjects (`previous_rank`, null when it had none). `libraries` ranks only libraries you
+         *     may read. `people` is 403 `people_leaderboard_off` unless the operator turned the
+         *     people leaderboard on, and ranks only people who opted in (`leaderboard_opt_in` in
+         *     `PUT /account/preferences`); your own entry is marked `you`, and given in `you` when
+         *     it is ranked beyond `limit`.
+         */
+        readonly get: operations["usage-get_leaderboard"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/stats/settings": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Usage Settings
+         * @description Say whether the people leaderboard is on and how long daily counts are kept.
+         *
+         *     Both are the operator's configuration (`EXACTDOCS_USAGE__PEOPLE_LEADERBOARD`,
+         *     `EXACTDOCS_USAGE__RETENTION_MONTHS`).
+         */
+        readonly get: operations["usage-get_usage_settings"];
         readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
@@ -1721,6 +1945,115 @@ export interface components {
              *     repository tokens use `x-token-auth`.
              */
             readonly username?: string | null;
+        };
+        /**
+         * AccountLinkStart
+         * @description A started link: send the browser to ``redirect_url`` (the binding cookie is set).
+         */
+        readonly AccountLinkStart: {
+            /**
+             * Redirect Url
+             * @description The identity provider's authorization URL: the browser goes there next.
+             */
+            readonly redirect_url: string;
+        };
+        /**
+         * AccountPreferences
+         * @description An account's interface preferences, and whether it saved them.
+         */
+        readonly AccountPreferences: {
+            /**
+             * Saved
+             * @description `false` while the account never saved any: `preferences` then holds the defaults, and a
+             *     browser keeps (and may save) the ones it already applies.
+             */
+            readonly saved: boolean;
+            /** @description The saved preferences, or the defaults when `saved` is `false`. */
+            readonly preferences: components["schemas"]["InterfacePreferences"];
+        };
+        /**
+         * AccountProvider
+         * @description A provider as the signed-in person's Account settings show it: linked or not.
+         */
+        readonly AccountProvider: {
+            /**
+             * Name
+             * @description The provider's name: sign in at `GET /api/v1/auth/{name}/start`.
+             */
+            readonly name: string;
+            /**
+             * Display Name
+             * @description What its sign-in button says.
+             */
+            readonly display_name: string;
+            /**
+             * Icon
+             * @description The built-in icon its button shows (the web UI ships these); `null` when it has none, or
+             *     an icon of its own (`icon_url`).
+             */
+            readonly icon?: ("discord" | "github" | "google" | "microsoft") | null;
+            /**
+             * Icon Url
+             * @description Where ExactDocs serves the provider's own icon, an operator's file (a same-origin path,
+             *     `/api/v1/auth/{name}/icon?v=<version>`, which changes with the icon); `null` when it has
+             *     none.
+             */
+            readonly icon_url?: string | null;
+            /**
+             * Configured
+             * @description `false` for an identity linked through a provider that is no longer configured (or
+             *     through Cloudflare Access): it signs nobody in, and only unlinking it is offered.
+             */
+            readonly configured: boolean;
+            /**
+             * Linked
+             * @description Whether an identity of this provider is linked to the account.
+             */
+            readonly linked: boolean;
+            /**
+             * Origin
+             * @description Whether the account was created through this provider. An account without a password
+             *     follows it (its role, groups and access) and always keeps it.
+             */
+            readonly origin: boolean;
+            /**
+             * Linked At
+             * @description When the person linked it here; `null` for the origin, and when it is not linked.
+             */
+            readonly linked_at: string | null;
+            /**
+             * Last Signed In At
+             * @description The latest sign-in through it (or when it was linked); `null` when it is not linked.
+             */
+            readonly last_signed_in_at: string | null;
+            /**
+             * Can Link
+             * @description Whether `POST /api/v1/account/providers/{name}/link` may start: configured, not linked.
+             */
+            readonly can_link: boolean;
+            /**
+             * Can Unlink
+             * @description Whether `DELETE /api/v1/account/providers/{name}` may unlink it: linked, and not the
+             *     account's only way to sign in.
+             */
+            readonly can_unlink: boolean;
+        };
+        /**
+         * AccountProviders
+         * @description The signed-in account's ways to sign in: its password and its providers.
+         */
+        readonly AccountProviders: {
+            /**
+             * Has Password
+             * @description Whether the account has a password (it always keeps that way in).
+             */
+            readonly has_password: boolean;
+            /**
+             * Providers
+             * @description Every configured provider, in configuration order, then every identity linked through a
+             *     provider no longer configured.
+             */
+            readonly providers: readonly components["schemas"]["AccountProvider"][];
         };
         /**
          * AccountSummary
@@ -3323,41 +3656,97 @@ export interface components {
             readonly is_skip: boolean;
         };
         /**
+         * Grouping
+         * @description What a usage report breaks its counts down by.
+         * @enum {string}
+         */
+        readonly Grouping: "none" | "library" | "account" | "token";
+        /**
          * HostKind
          * @description Where the repository is hosted; `git` is any other HTTPS/SSH git server.
          * @enum {string}
          */
         readonly HostKind: "github" | "gitlab" | "bitbucket" | "gitea" | "git";
         /**
-         * JobDayStats
-         * @description The jobs queued on one UTC day, counted by the state they are in now and by kind.
+         * InterfacePreferences
+         * @description How a person wants the interface to look and behave.
+         *
+         *     Every setting is required but `leaderboard_opt_in` (#510), which a client written before it
+         *     existed does not send.
          */
-        readonly JobDayStats: {
+        readonly InterfacePreferences: {
             /**
-             * Day
-             * Format: date
-             * @description The UTC day the jobs were queued on.
+             * Theme
+             * @description Colour scheme: `light`, `dark`, or `system` to follow the operating system. Default
+             *     `system`.
+             * @enum {string}
              */
-            readonly day: string;
+            readonly theme: "light" | "dark" | "system";
             /**
-             * Total
-             * @description How many jobs were queued that day.
+             * Contrast
+             * @description Contrast of text and controls: `standard` or `more`. Default `standard`.
+             * @enum {string}
              */
-            readonly total: number;
+            readonly contrast: "standard" | "more";
             /**
-             * By State
-             * @description How many of them are in each state now; every state is listed, 0 included.
+             * Text Scale
+             * @description Text size in percent of the default size: 90, 100, 110, 125 or 150. Default 100.
+             * @enum {integer}
              */
-            readonly by_state: {
-                readonly [key: string]: number;
-            };
+            readonly text_scale: 90 | 100 | 110 | 125 | 150;
             /**
-             * By Kind
-             * @description How many of them are of each kind; every kind is listed, 0 included.
+             * Text Spacing
+             * @description Spacing of lines, words and letters: `standard`, or `wide` (WCAG 1.4.12's minimums).
+             *     Default `standard`.
+             * @enum {string}
              */
-            readonly by_kind: {
-                readonly [key: string]: number;
-            };
+            readonly text_spacing: "standard" | "wide";
+            /**
+             * Motion
+             * @description Animations: `system` follows the operating system's reduced-motion setting; `reduced` and
+             *     `full` override it. Default `system`.
+             * @enum {string}
+             */
+            readonly motion: "system" | "reduced" | "full";
+            /**
+             * Font
+             * @description Typeface: `default`, `hyperlegible` (a typeface for low vision), `dyslexic` (one for
+             *     dyslexic readers) or `system` (the operating system's). Default `default`.
+             * @enum {string}
+             */
+            readonly font: "default" | "hyperlegible" | "dyslexic" | "system";
+            /**
+             * Underline Links
+             * @description Whether every link is underlined, not only told apart by its colour. Default `false`.
+             */
+            readonly underline_links: boolean;
+            /**
+             * Large Targets
+             * @description Whether buttons and links get larger hit areas. Default `false`.
+             */
+            readonly large_targets: boolean;
+            /**
+             * Language
+             * @description Interface language: `en` (English), `pl` (Polish), or `system` to follow the browser's.
+             *     Default `system`.
+             * @enum {string}
+             */
+            readonly language: "system" | "en" | "pl";
+            /**
+             * Library Logos
+             * @description Whether libraries show their logos, and generic icons where they have none; `false` hides
+             *     both. Default `true`.
+             */
+            readonly library_logos: boolean;
+            /**
+             * Leaderboard Opt In
+             * @description Whether the person agrees to be shown by name on the people leaderboard while the operator
+             *     has it on (`GET /stats/settings`). Without it they are on no people leaderboard, and nobody
+             *     sees their usage except as part of totals. Default `false`. The one setting a save may leave
+             *     out: a client that does not know it keeps the choice already saved (`false` if none).
+             * @default false
+             */
+            readonly leaderboard_opt_in: boolean;
         };
         /**
          * JobList
@@ -3669,6 +4058,102 @@ export interface components {
             readonly jobs: readonly components["schemas"]["LatestJob"][];
         };
         /**
+         * Leaderboard
+         * @description Libraries or people ranked by one metric over one period, with the previous period's rank.
+         */
+        readonly Leaderboard: {
+            /** @description What is ranked. */
+            readonly subject: components["schemas"]["Subject"];
+            /** @description What it is ranked by. */
+            readonly metric: components["schemas"]["Metric"];
+            /** @description The kind of period. */
+            readonly period: components["schemas"]["Period"];
+            /**
+             * Start
+             * Format: date
+             * @description The period's first day (UTC).
+             */
+            readonly start: string;
+            /**
+             * End
+             * Format: date
+             * @description The period's last day, included (UTC); the current period ends after today.
+             */
+            readonly end: string;
+            /**
+             * Previous Start
+             * Format: date
+             * @description The previous period's first day: what `previous_rank` ranks.
+             */
+            readonly previous_start: string;
+            /**
+             * Previous End
+             * Format: date
+             * @description The previous period's last day, included.
+             */
+            readonly previous_end: string;
+            /**
+             * Total
+             * @description The metric summed over every ranked subject (for each one's share).
+             */
+            readonly total: number;
+            /**
+             * Ranked
+             * @description How many subjects are ranked; `entries` lists the first `limit`.
+             */
+            readonly ranked: number;
+            /**
+             * Entries
+             * @description The best first; equal values by name.
+             */
+            readonly entries: readonly components["schemas"]["LeaderboardEntryOut"][];
+            /** @description `people`: the caller's own entry when it is ranked but beyond `limit`; null otherwise. */
+            readonly you?: components["schemas"]["LeaderboardEntryOut"] | null;
+        };
+        /**
+         * LeaderboardEntryOut
+         * @description One library or person on a leaderboard.
+         */
+        readonly LeaderboardEntryOut: {
+            /**
+             * Rank
+             * @description 1 for the most; equal values share a rank (1, 2, 2, 4).
+             */
+            readonly rank: number;
+            /**
+             * Previous Rank
+             * @description The rank in the previous period, among the same subjects; null when it was not ranked
+             *     then (nothing counted).
+             */
+            readonly previous_rank: number | null;
+            /**
+             * Value
+             * @description The metric's count in the period.
+             */
+            readonly value: number;
+            /**
+             * Library
+             * @description `libraries`: the library ID, lower-case.
+             */
+            readonly library?: string | null;
+            /**
+             * Account Id
+             * @description `people`: the account ID.
+             */
+            readonly account_id?: string | null;
+            /**
+             * Username
+             * @description `people`: the username.
+             */
+            readonly username?: string | null;
+            /**
+             * You
+             * @description `people`: this is the caller.
+             * @default false
+             */
+            readonly you: boolean;
+        };
+        /**
          * LibraryAccess
          * @description Whether the library's repository is private: it has a stored credential (token or key).
          */
@@ -3760,6 +4245,13 @@ export interface components {
              *     answer. Untrusted repository text.
              */
             readonly rules?: readonly string[];
+            /**
+             * Logo
+             * @description Version of the library's project logo (hex digits of its SHA-256); null when the importer
+             *     found none in the default version. The image is `GET /api/v1/libraries/{owner}/{repo}/logo`;
+             *     with `?v=<logo>` a browser may keep it until the logo changes.
+             */
+            readonly logo: string | null;
         };
         /**
          * LibraryFacetOut
@@ -4336,6 +4828,13 @@ export interface components {
              */
             readonly last_imported_at: string | null;
             /**
+             * Logo
+             * @description Version of the library's project logo (hex digits of its SHA-256); null when the importer
+             *     found none in the default version. The image is `GET /api/v1/libraries/{owner}/{repo}/logo`;
+             *     with `?v=<logo>` a browser may keep it until the logo changes.
+             */
+            readonly logo: string | null;
+            /**
              * Article Count
              * @description The articles of the default version (its active manifest's entries); 0 while none is
              *     imported.
@@ -4529,6 +5028,12 @@ export interface components {
              */
             readonly tags: readonly string[];
         };
+        /**
+         * Metric
+         * @description What a leaderboard ranks by: one operation's counts.
+         * @enum {string}
+         */
+        readonly Metric: "reads" | "searches" | "answers";
         /**
          * ModelCheckOut
          * @description One minimal call to a model: whether it answered, how fast, and what.
@@ -4770,21 +5275,11 @@ export interface components {
             readonly after: readonly string[];
         };
         /**
-         * PersonSummary
-         * @description A person as the jobs show them: their account's ID and user name, nothing else.
+         * Period
+         * @description A calendar period in UTC: what counts are added up over.
+         * @enum {string}
          */
-        readonly PersonSummary: {
-            /**
-             * Id
-             * @description The account's stable ID.
-             */
-            readonly id: string;
-            /**
-             * Username
-             * @description The account's user name, as it was when they asked.
-             */
-            readonly username: string;
-        };
+        readonly Period: "day" | "week" | "month" | "year";
         /**
          * PlanSourcesCommand
          * @description Compare a sources file with the instance; nothing is changed.
@@ -5704,6 +6199,19 @@ export interface components {
              * @description What its sign-in button says.
              */
             readonly display_name: string;
+            /**
+             * Icon
+             * @description The built-in icon its button shows (the web UI ships these); `null` when it has none, or
+             *     an icon of its own (`icon_url`).
+             */
+            readonly icon?: ("discord" | "github" | "google" | "microsoft") | null;
+            /**
+             * Icon Url
+             * @description Where ExactDocs serves the provider's own icon, an operator's file (a same-origin path,
+             *     `/api/v1/auth/{name}/icon?v=<version>`, which changes with the icon); `null` when it has
+             *     none.
+             */
+            readonly icon_url?: string | null;
         };
         /**
          * SourceErrorOut
@@ -6004,6 +6512,24 @@ export interface components {
              */
             readonly unpriced_requests: number;
         };
+        /**
+         * StartAccountLinkRequest
+         * @description Where to come back to once the provider linked the identity (or refused it).
+         */
+        readonly StartAccountLinkRequest: {
+            /**
+             * Return To
+             * @description A path on this server; default `/account`. `?linked=<provider>` or
+             *     `?link_error=<code>` is added to it.
+             */
+            readonly return_to?: string | null;
+        };
+        /**
+         * Subject
+         * @description Who or what a leaderboard ranks.
+         * @enum {string}
+         */
+        readonly Subject: "libraries" | "people";
         /**
          * SyncStatus
          * @description What a re-sync did with one version.
@@ -6423,6 +6949,166 @@ export interface components {
              *     versions again when it runs). Listed also when a queued job is reused.
              */
             readonly versions: readonly string[];
+        };
+        /**
+         * UsageBucketOut
+         * @description The counts of one period.
+         */
+        readonly UsageBucketOut: {
+            /**
+             * Reads
+             * @description Articles and chunks read (MCP, REST and the web reader).
+             */
+            readonly reads: number;
+            /**
+             * Searches
+             * @description Searches (one library, several or all; `query-docs` included).
+             */
+            readonly searches: number;
+            /**
+             * Answers
+             * @description Questions answered by the agent.
+             */
+            readonly answers: number;
+            /**
+             * Start
+             * Format: date
+             * @description The period's first day (UTC).
+             */
+            readonly start: string;
+            /**
+             * End
+             * Format: date
+             * @description The period's last day, included (UTC); the current period's may be after today.
+             */
+            readonly end: string;
+        };
+        /**
+         * UsageCountsOut
+         * @description How many reads, searches and agent answers were counted.
+         */
+        readonly UsageCountsOut: {
+            /**
+             * Reads
+             * @description Articles and chunks read (MCP, REST and the web reader).
+             */
+            readonly reads: number;
+            /**
+             * Searches
+             * @description Searches (one library, several or all; `query-docs` included).
+             */
+            readonly searches: number;
+            /**
+             * Answers
+             * @description Questions answered by the agent.
+             */
+            readonly answers: number;
+        };
+        /**
+         * UsageGroupOut
+         * @description The counts of one library, person or token over the whole report.
+         */
+        readonly UsageGroupOut: {
+            /**
+             * Reads
+             * @description Articles and chunks read (MCP, REST and the web reader).
+             */
+            readonly reads: number;
+            /**
+             * Searches
+             * @description Searches (one library, several or all; `query-docs` included).
+             */
+            readonly searches: number;
+            /**
+             * Answers
+             * @description Questions answered by the agent.
+             */
+            readonly answers: number;
+            /**
+             * Library
+             * @description `by=library`: the library ID, lower-case; null for searches and answers over several
+             *     libraries.
+             */
+            readonly library?: string | null;
+            /**
+             * Account Id
+             * @description `by=account` or `token`: the person's account ID; null in the `others` group.
+             */
+            readonly account_id?: string | null;
+            /**
+             * Username
+             * @description The person's username, next to `account_id`.
+             */
+            readonly username?: string | null;
+            /**
+             * Token Id
+             * @description `by=token`: the API token's ID; null for browser sessions and OAuth sign-ins.
+             */
+            readonly token_id?: string | null;
+            /**
+             * Others
+             * @description `true` for the one group that sums everyone not shown by name (people who did not opt
+             *     in, everyone while the people leaderboard is off, and requests without an account).
+             * @default false
+             */
+            readonly others: boolean;
+        };
+        /**
+         * UsageSettingsOut
+         * @description How this instance counts usage: the operator's configuration.
+         */
+        readonly UsageSettingsOut: {
+            /**
+             * People Leaderboard
+             * @description Whether the people leaderboard is on (`EXACTDOCS_USAGE__PEOPLE_LEADERBOARD`). Off, nobody
+             *     is shown by name; on, only people who opted in (`leaderboard_opt_in`).
+             */
+            readonly people_leaderboard: boolean;
+            /**
+             * Retention Months
+             * @description How many months of daily counts are kept (`EXACTDOCS_USAGE__RETENTION_MONTHS`).
+             */
+            readonly retention_months: number;
+        };
+        /**
+         * UsageStats
+         * @description Counts per period over a range of periods, and a breakdown over the whole range.
+         */
+        readonly UsageStats: {
+            /** @description What each bucket adds up. */
+            readonly period: components["schemas"]["Period"];
+            /**
+             * Since
+             * Format: date
+             * @description The first day covered (UTC).
+             */
+            readonly since: string;
+            /**
+             * Until
+             * Format: date
+             * @description The last day covered, included (UTC).
+             */
+            readonly until: string;
+            /** @description What `groups` breaks the counts down by. */
+            readonly by: components["schemas"]["Grouping"];
+            /** @description Everything counted in the range. */
+            readonly total: components["schemas"]["UsageCountsOut"];
+            /**
+             * Series
+             * @description One bucket per period, oldest first, zeros included.
+             */
+            readonly series: readonly components["schemas"]["UsageBucketOut"][];
+            /**
+             * Groups
+             * @description The breakdown, most reads first (then searches, then answers), at most `limit`; the
+             *     `others` group, when there is one, comes last and is always listed.
+             */
+            readonly groups: readonly components["schemas"]["UsageGroupOut"][];
+            /**
+             * Groups Total
+             * @description How many groups there are in all, the `others` group included.
+             */
+            readonly groups_total: number;
         };
         /**
          * UserList
@@ -7177,8 +7863,95 @@ export interface operations {
         };
         readonly requestBody?: never;
         readonly responses: {
-            /** @description Signed in, or back to the sign-in page with `?error=` */
+            /** @description Signed in, or back to the sign-in page with `?error=`; after a link, back to where it started, with `?linked=` or `?link_error=` */
             readonly 303: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-icon": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: {
+                readonly "if-none-match"?: string | null;
+            };
+            readonly path: {
+                readonly provider: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The icon (PNG, WebP or a sanitised SVG) */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "image/png": unknown;
+                    readonly "image/webp": unknown;
+                    readonly "image/svg+xml": unknown;
+                };
+            };
+            /** @description The browser's copy is current (`If-None-Match`) */
+            readonly 304: {
                 headers: {
                     readonly [name: string]: unknown;
                 };
@@ -7985,6 +8758,330 @@ export interface operations {
             };
         };
     };
+    readonly "usage-get_usage_stats": {
+        readonly parameters: {
+            readonly query?: {
+                /** @description What each bucket adds up: `day` (UTC), `week` (ISO, Monday first), `month` or `year`. */
+                readonly period?: components["schemas"]["Period"];
+                /**
+                 * @description How many buckets, the last one holding `until`; default 30 days, 12 weeks, 12 months or 2
+                 *     years. Counts older than the retention are gone, so older buckets are zeros.
+                 */
+                readonly periods?: number | null;
+                /** @description A day of the last bucket (UTC); default today. */
+                readonly until?: string | null;
+                /** @description How many groups to list, most reads first. */
+                readonly limit?: number;
+                /**
+                 * @description `library`, `account` (people), `token` (people and their API tokens), or `none`. People
+                 *     are named only while the people leaderboard is on and only if they opted in; everyone else
+                 *     is summed into one group with `others` set.
+                 */
+                readonly by?: components["schemas"]["Grouping"];
+                /** @description Only this library's counts (`/owner/repo`, any letter case). */
+                readonly library?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UsageStats"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-get_providers": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccountProviders"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-link_provider": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly provider: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["StartAccountLinkRequest"] | null;
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccountLinkStart"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-delete_provider": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly provider: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccountProviders"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     readonly "identity-put_password": {
         readonly parameters: {
             readonly query?: never;
@@ -8506,16 +9603,9 @@ export interface operations {
             };
         };
     };
-    readonly "ingestion-get_job_stats": {
+    readonly "identity-get_account_preferences": {
         readonly parameters: {
-            readonly query?: {
-                /** @description How jobs are grouped: `day` (UTC days) is the only bucket. */
-                readonly bucket?: "day";
-                /** @description The first UTC day counted (`YYYY-MM-DD`); default: 29 days before `to`. At most 366 days are counted at once. */
-                readonly from?: string | null;
-                /** @description The last UTC day counted (`YYYY-MM-DD`), included; default: today (UTC). */
-                readonly to?: string | null;
-            };
+            readonly query?: never;
             readonly header?: never;
             readonly path?: never;
             readonly cookie?: never;
@@ -8528,7 +9618,85 @@ export interface operations {
                     readonly [name: string]: unknown;
                 };
                 content: {
-                    readonly "application/json": components["schemas"]["JobStats"];
+                    readonly "application/json": components["schemas"]["AccountPreferences"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-save_account_preferences": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["InterfacePreferences"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AccountPreferences"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */
@@ -8612,6 +9780,96 @@ export interface operations {
                     readonly "image/png": unknown;
                     readonly "image/jpeg": unknown;
                     readonly "image/gif": unknown;
+                    readonly "image/webp": unknown;
+                    readonly "image/svg+xml": unknown;
+                };
+            };
+            /** @description The caller's copy (`If-None-Match`) is current. */
+            readonly 304: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "catalog-get_library_logo": {
+        readonly parameters: {
+            readonly query?: {
+                /** @description The library's `logo` version: when it is the current one, the answer may be cached for a year (the URL changes with the logo). */
+                readonly v?: string | null;
+            };
+            readonly header?: never;
+            readonly path: {
+                readonly owner: string;
+                readonly repo: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The logo's bytes: a PNG, JPEG or WebP as the repository has it, or an SVG as the importer cleaned it. */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "image/png": unknown;
+                    readonly "image/jpeg": unknown;
                     readonly "image/webp": unknown;
                     readonly "image/svg+xml": unknown;
                 };
@@ -10762,6 +12020,256 @@ export interface operations {
                 content: {
                     readonly "application/json": components["schemas"]["C7ContextResponse"];
                     readonly "text/plain": string;
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "usage-get_account_usage": {
+        readonly parameters: {
+            readonly query?: {
+                /** @description What each bucket adds up: `day` (UTC), `week` (ISO, Monday first), `month` or `year`. */
+                readonly period?: components["schemas"]["Period"];
+                /**
+                 * @description How many buckets, the last one holding `until`; default 30 days, 12 weeks, 12 months or 2
+                 *     years. Counts older than the retention are gone, so older buckets are zeros.
+                 */
+                readonly periods?: number | null;
+                /** @description A day of the last bucket (UTC); default today. */
+                readonly until?: string | null;
+                /** @description How many groups to list, most reads first. */
+                readonly limit?: number;
+                /** @description `library`, `token` (your API tokens; null is your browser sessions), or `none`. */
+                readonly by?: "none" | "library" | "token";
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UsageStats"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "usage-get_leaderboard": {
+        readonly parameters: {
+            readonly query?: {
+                /**
+                 * @description `libraries` (always on; only libraries you may read) or `people` (only while the
+                 *     operator has it on; only people who opted in).
+                 */
+                readonly subject?: components["schemas"]["Subject"];
+                /** @description `reads`, `searches` or `answers`. */
+                readonly metric?: components["schemas"]["Metric"];
+                /** @description `day` (UTC), `week` (ISO), `month` or `year`. */
+                readonly period?: components["schemas"]["Period"];
+                /** @description A day of the period to rank (UTC); default today, so the current period so far. */
+                readonly at?: string | null;
+                /** @description How many entries to list, best first. */
+                readonly limit?: number;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["Leaderboard"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "usage-get_usage_settings": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["UsageSettingsOut"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */
