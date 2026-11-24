@@ -49,6 +49,13 @@ function stubApi(events: AccessEvent[], status = 200) {
   const fetchMock = vi.fn(async (url: string) => {
     if (status !== 200) return json({ error: "forbidden", detail: "no", fields: [] }, status);
     const params = new URL(url, "http://x").searchParams;
+    if (url.startsWith("/api/v1/libraries?")) {
+      const q = params.get("q") ?? "";
+      const libraries = ["/acme/ledger", "/acme/payments"]
+        .filter((id) => id.includes(q))
+        .map((id) => ({ id, title: id.split("/")[2], logo: null }));
+      return json({ libraries, next_cursor: null, total: libraries.length, notice: "" });
+    }
     const changes = params.getAll("change");
     const library = params.get("library");
     const actor = params.get("actor")?.toLowerCase();
@@ -271,10 +278,21 @@ describe("operators' access log", () => {
     );
     expect(history.location.search).toContain("change=granted");
 
-    await userEvent.type(screen.getByLabelText("Library"), "not-an-id");
-    expect(screen.getByText("Write the library's ID as /owner/repo.")).toBeInTheDocument();
-    await userEvent.clear(screen.getByLabelText("Library"));
-    await userEvent.type(screen.getByLabelText("Library"), "/acme/ledger{Enter}");
+    // The library is picked from the list; a typed text that is no ID is not offered.
+    await userEvent.click(screen.getByRole("button", { name: "Library Choose a library…" }));
+    const find = screen.getByRole("combobox", { name: "Find a library" });
+    await userEvent.type(find, "not-an-id");
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole("status")
+          .some((s) => s.textContent === "No library matches “not-an-id”."),
+      ).toBe(true),
+    );
+    expect(screen.queryByRole("option", { name: /not-an-id/ })).toBeNull();
+    await userEvent.clear(find);
+    await userEvent.type(find, "ledger");
+    await userEvent.click(await screen.findByRole("option", { name: "/acme/ledger" }));
 
     await waitFor(() =>
       expect(asked(fetchMock)).toContain(
@@ -287,7 +305,23 @@ describe("operators' access log", () => {
       screen.getByRole("button", { name: "Remove filter Library: /acme/ledger" }),
     );
     expect(await screen.findByText("1–2 of 2")).toBeInTheDocument();
-    expect(screen.getByLabelText("Library")).toHaveValue("");
+    expect(screen.getByRole("button", { name: "Library Choose a library…" })).toBeInTheDocument();
+  });
+
+  it("filters by a removed library's typed ID", async () => {
+    const fetchMock = stubApi([event({ id: "1", library: "/gone/lib" }), event({ id: "2" })]);
+    const history = renderAt("all");
+    await rowsOf();
+    await userEvent.click(screen.getByRole("button", { name: "Library Choose a library…" }));
+    await userEvent.type(screen.getByRole("combobox", { name: "Find a library" }), "/gone/lib");
+    await userEvent.click(await screen.findByRole("option", { name: "Use /gone/lib" }));
+    await waitFor(() =>
+      expect(asked(fetchMock)).toContain(
+        "/api/v1/access-log?limit=20&library=%2Fgone%2Flib&offset=0",
+      ),
+    );
+    expect(history.location.search).toContain("library=%2Fgone%2Flib");
+    expect(screen.getByRole("button", { name: "Library /gone/lib" })).toBeInTheDocument();
   });
 
   it("sorts by a header on the server, back to the first page with no cursor", async () => {
@@ -463,7 +497,7 @@ describe("operators' access log", () => {
 
     expect(await screen.findByText("1–1 of 1")).toBeInTheDocument();
     expect(history.location.search).toContain("library=");
-    expect(screen.getByLabelText("Library")).toHaveValue("/acme/ledger");
+    expect(screen.getByRole("button", { name: "Library /acme/ledger" })).toBeInTheDocument();
   });
 
   it("pages through a long log by offset, Last in one request", async () => {
@@ -624,10 +658,15 @@ describe("access log in Polish", () => {
     await userEvent.click(screen.getByRole("button", { name: "Zmiana" }));
     expect((await facetOptions()).map((o) => o.textContent)).toContain("Usunięcia bibliotek");
     await userEvent.keyboard("{Escape}");
-    await userEvent.type(screen.getByLabelText("Biblioteka"), "nie-id");
+    await userEvent.click(screen.getByRole("button", { name: "Biblioteka Wybierz bibliotekę…" }));
+    await userEvent.type(
+      screen.getByRole("combobox", { name: "Znajdź bibliotekę" }),
+      "/usunieta/biblioteka",
+    );
     expect(
-      screen.getByText("Wpisz identyfikator biblioteki w postaci /owner/repo."),
+      await screen.findByRole("option", { name: "Użyj /usunieta/biblioteka" }),
     ).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
     expect(screen.getByLabelText("Autor zmiany")).toHaveAttribute(
       "placeholder",
       "Nazwa użytkownika lub ID konta",
