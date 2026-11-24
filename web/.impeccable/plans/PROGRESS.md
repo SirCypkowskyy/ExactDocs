@@ -3,7 +3,7 @@
 Kept up to date by the overnight session that continues `HANDOFF.md`. Newest state first in each
 section. Read `HANDOFF.md` for the plan, the owner's decisions and the rules.
 
-_Last updated: 2026-11-24 01:25 UTC._
+_Last updated: 2026-11-24 02:10 UTC._
 
 ## Frontend (`feature/486-design-system`)
 
@@ -70,21 +70,30 @@ FormAlert's alert reaction. Then the local workarounds go.
   buttons), #509 (offset paging in DataTable v2), #510–#513 (Overview and Leaderboard),
   #514/#515 (access-log and users filters).
 
-## Backend
+## Backend: every issue has a draft PR
 
-| Issue | Branch | State |
-|---|---|---|
-| #487 | `feature/487-interface-preferences` (`69fd893`) | develop merged, API types regenerated, contract test on memory/SQLite/PostgreSQL (30 passed, 12 on PostgreSQL), targeted suites green. Full pytest + behave queued |
-| #504 | `feature/504-library-logos` | develop merged, re-sync picks up a changed logo, docs. Full suites running |
-| #505 | `feature/505-change-password` (`eca233e`) | develop merged; every criterion covered; PostgreSQL HTTP test added; targeted 41 passed. Full pytest + behave queued |
-| #506 | `feature/506-link-sign-in-providers` | storage, migration, routes, presets, icons, tests and docs written; merging the finished #505; targeted checks running |
-| #509 | `feature/509-offset-paging` (`8fd8e92`) | PostgreSQL variants pass (126 targeted incl. 20 on PostgreSQL), behave jobs.feature green. Full pytest + behave queued |
-| #510 | `feature/510-usage-counters` | tests (use cases, counts store on every database, REST/MCP counting), behave, docs, schema; merging the finished #487; targeted checks running |
-| #511–#515 | — | wave 2, not started |
+All branches have develop `d47307c` (#507: integration tests are opt-in, PR CI runs fast shards)
+merged, their new PostgreSQL tests marked the #507 way, one Alembic head each, `just api` clean,
+and targeted tests green with and without `--integration`. Each draft PR has the `run integration`
+label; its CI is the full verification (fast shards ~8 min, then the integration job).
 
-Full suites run one at a time on this 4-CPU machine (parallel runs took the load to 10 and
-caused timeouts). Local PostgreSQL 16 with pgvector; ParadeDB's pg_search is not available
-here, so the BM25-on-PostgreSQL variants only run in CI.
+| Issue | PR | Stacked on | Notes |
+|---|---|---|---|
+| #504 library logos | #518 | develop | fast CI green |
+| #514 access-log filters | #519 | #509 | fast CI green; old cursors get `invalid_cursor` |
+| #512 job stats | #520 | #509 | scheduled branch syncs' jobs are now `auto` |
+| #511 AI spend history | #521 | develop | no migration; bounds 366 days / 60 months |
+| #513 version counts | #522 | develop | composed in bootstrap; `article_count` also in MCP `list_libraries` |
+| #515 user activity, all tokens | #523 | #509 | `provider` = the account's origin sign-in |
+| #509 offset paging | #524 | develop | merge before #512, #514, #515 |
+| #487 preferences | #525 | develop | merge before #510 |
+| #505 own password | #526 | develop | merge before #506 |
+| #510 usage counts | #527 | #487 | `leaderboard_opt_in` may be left out of a save |
+| #506 linked providers | #528 | #505 | presets don't create accounts by default |
+
+**Alembic.** #504, #487, #506, #512, #514 and #515 each add a revision on `9d4f2b7e1c83` (#510
+follows #487's). Merge them one at a time and re-point each later one's `down_revision` onto the
+head develop has then.
 
 ## For the owner
 
