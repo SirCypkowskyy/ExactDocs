@@ -1,5 +1,6 @@
 import AxeBuilder from "@axe-core/playwright";
 import { expect, type Page, test } from "@playwright/test";
+import { settled, signIn as signInAs } from "./helpers";
 
 const FIXTURE_REPO_URL = process.env.FIXTURE_REPO_URL;
 if (!FIXTURE_REPO_URL) throw new Error("FIXTURE_REPO_URL is not set: run the test through e2e/run.py");
@@ -67,13 +68,7 @@ test("setup, add the fixture repository, browse an article, search a term", asyn
   await page.screenshot({ path: "shots/4-section.png" });
 });
 
-async function signIn(page: Page) {
-  await page.goto("/sign-in");
-  await page.getByLabel("Username").fill("ada");
-  await page.getByLabel("Password").fill(PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("heading", { name: "Libraries" })).toBeVisible();
-}
+const signIn = (page: Page) => signInAs(page, "ada", PASSWORD);
 
 // #426: the main pages in both themes, screenshotted, with no axe violation (contrast included).
 // Runs after the test above, in the same worker: it reads the library that test imported.
@@ -126,10 +121,6 @@ test("the main pages read in the light and the dark theme", async ({ browser }) 
 });
 
 const AXE_TAGS = ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "wcag22aa"];
-
-// A fade that is still running would be measured half transparent: let every animation finish.
-const settled = (page: Page) =>
-  page.evaluate(() => Promise.all(document.getAnimations().map((a) => a.finished.catch(() => {}))));
 
 async function expectNoViolations(page: Page, name: string) {
   await settled(page);
