@@ -26,3 +26,14 @@ Feature: New tags are imported automatically and branches re-synced on a schedul
     When the scheduled check runs
     Then "/fixture/docs-repo/next" serves the new commit
     And no tag was imported
+
+  Scenario: A job shows who started it; the scheduled check's jobs show nobody
+    Given "alice" is signed in
+    And a commit changed "docs/guide/install.md" on branch "next"
+    When alice re-syncs the library
+    Then the re-sync job was started by "alice", by hand
+    Given "/fixture/docs-repo" re-syncs its branches on a schedule
+    And a commit changed "docs/guide/install.md" on branch "next"
+    When the scheduled check runs
+    Then the newest re-sync job was started by nobody, automatically
+    And only that job is listed when the jobs are filtered to automatic ones

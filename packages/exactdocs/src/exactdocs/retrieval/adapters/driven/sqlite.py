@@ -563,6 +563,30 @@ class SqliteChunkRepository:
             articles, chunk_count = (await connection.execute(query)).one()
         return VersionCounts(articles=articles, chunks=chunk_count)
 
+    async def counts_many(self, manifest_ids: Collection[str]) -> Mapping[str, VersionCounts]:
+        """Count each manifest's articles and chunks: one grouped query per batch of IDs.
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            The counts per manifest with chunk rows.
+        """
+        found: dict[str, VersionCounts] = {}
+        rows = manifest_chunks.c
+        async with self.engine.connect() as connection:
+            for part in batched(sorted(set(manifest_ids)), VECTOR_BATCH, strict=False):
+                result = await connection.execute(
+                    select(rows.manifest_id, func.count(distinct(rows.article_path)), func.count())
+                    .where(rows.manifest_id.in_(part))
+                    .group_by(rows.manifest_id)
+                )
+                found |= {
+                    manifest: VersionCounts(articles=articles, chunks=chunk_count)
+                    for manifest, articles, chunk_count in result
+                }
+        return found
+
     async def manifests_with_chunk(self, chunk_id: ChunkId) -> Sequence[IndexedManifest]:
         """Return every indexed manifest that has a row for this chunk ID (any status).
 

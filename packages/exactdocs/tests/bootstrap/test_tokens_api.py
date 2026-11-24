@@ -220,6 +220,8 @@ OPEN_ROUTES = {
     ("POST", "/api/v1/tokens/login"),
     ("GET", "/api/v1/auth/{provider}/start"),
     ("GET", "/api/v1/auth/{provider}/callback"),
+    # A provider's own icon: the sign-in page shows it to people not signed in yet.
+    ("GET", "/api/v1/auth/{provider}/icon"),
     ("GET", "/api/v1/openapi.json"),
     # A forge's push: no caller, only the library's webhook secret (answers 401 without it).
     ("POST", "/api/v1/webhooks/{owner}/{repo}"),

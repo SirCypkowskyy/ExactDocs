@@ -40,6 +40,7 @@ from exactdocs.ingestion.models import (
     Job,
     KnownLibrary,
     PathSelection,
+    Person,
     TagRule,
     Webhook,
     WebhookDelivery,
@@ -62,6 +63,7 @@ from exactdocs.ingestion.ports.driven import (
     KnownLibraries,
     LibraryIds,
     LibraryLocks,
+    LibraryLogos,
     LibrarySettingsStore,
     LibrarySources,
     LibraryTexts,
@@ -73,6 +75,7 @@ from exactdocs.ingestion.ports.driven import (
     RenameSource,
     RepositoryFiles,
     RepositoryTree,
+    Requester,
     ScheduleSwitch,
     StoredArticleSource,
     VersionCopier,
@@ -92,10 +95,12 @@ from exactdocs.ingestion.ports.driving import (
     EnqueueJob,
     GetAutoSync,
     GetJob,
+    GetJobStats,
     GetLibraryAccess,
     GetWebhook,
     ListJobs,
     ListLatestJobs,
+    ListLibrariesInSyncStates,
     ListLibraryJobs,
     ListRepositoryRefs,
     PlanSources,
@@ -133,12 +138,14 @@ from exactdocs.ingestion.use_cases import (
     EmbedVersionUseCase,
     EnqueueJobUseCase,
     GetAutoSyncUseCase,
+    GetJobStatsUseCase,
     GetJobUseCase,
     GetLibraryAccessUseCase,
     GetWebhookUseCase,
     ImportVersionUseCase,
     ListJobsUseCase,
     ListLatestJobsUseCase,
+    ListLibrariesInSyncStatesUseCase,
     ListLibraryJobsUseCase,
     ListRepositoryRefsUseCase,
     PlanSourcesUseCase,
@@ -595,6 +602,15 @@ class _NoSwitch:
         del on
 
 
+async def _no_person() -> Person | None:
+    """The default ``requester`` of ``build``: no person asks (a local process, a test).
+
+    Returns:
+        ``None``.
+    """
+    return None
+
+
 class _NoRunner:
     """The default ``runner`` of ``build``: jobs wait in the repository for ``RunNextJob``."""
 
@@ -637,8 +653,12 @@ class IngestionModule:
     """Says whether a library's webhook is on."""
     list_latest_jobs: ListLatestJobs
     """Lists the newest job of every (library, version)."""
+    get_job_stats: GetJobStats
+    """Counts the jobs queued per UTC day, by state and by kind."""
     list_jobs: ListJobs
     """Lists a page of the jobs of every readable library."""
+    list_libraries_in_sync_states: ListLibrariesInSyncStates
+    """Names the readable libraries whose latest sync is in given states."""
     list_library_jobs: ListLibraryJobs
     """Lists a page of a library's jobs."""
     list_repository_refs: ListRepositoryRefs
@@ -712,6 +732,7 @@ class IngestionModule:
         webhook_deliveries: WebhookDeliveries | None = None,
         wrap_handler: Callable[[JobKind, JobHandler], JobHandler] | None = None,
         access: AccessPolicy = _open_access,
+        requester: Requester = _no_person,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -763,6 +784,8 @@ class IngestionModule:
             webhook_deliveries: Where deliveries are remembered; None: none is.
             wrap_handler: Wraps the ``push`` handler, given its kind; None: it runs as built.
             access: Library roles: what the caller may do with a library; everything without it.
+            requester: Names the person whose request queues a job (``created_by``); without
+                it no job names a person.
 
         Returns:
             The module.
@@ -798,7 +821,9 @@ class IngestionModule:
                     checkpoints=StopOnCancel(inner=checkpoints or _InlineSteps()),
                 ),
             }
-        enqueue_job = EnqueueJobUseCase(jobs=jobs, clock=clock, handlers=kinds, runner=runner)
+        enqueue_job = EnqueueJobUseCase(
+            jobs=jobs, clock=clock, handlers=kinds, runner=runner, requester=requester
+        )
         sources = sources or _NoLibrarySources()
         vault = vault or _NoCredentials()
         schedules = auto_syncs or _NoAutoSyncs()
@@ -814,6 +839,7 @@ class IngestionModule:
             enqueue_job=enqueue_job,
             vault=vault,
             access=access,
+            requester=requester,
         )
         add_library = AddLibraryUseCase(
             access=access,
@@ -904,12 +930,16 @@ class IngestionModule:
             enqueue_job=enqueue_job,
             get_auto_sync=GetAutoSyncUseCase(sources=sources, schedules=schedules, access=access),
             get_job=GetJobUseCase(jobs=jobs, access=access),
+            get_job_stats=GetJobStatsUseCase(jobs=jobs, clock=clock),
             get_library_access=GetLibraryAccessUseCase(
                 vault=vault, library_ids=library_ids, access=access
             ),
             get_webhook=GetWebhookUseCase(sources=sources, webhooks=webhooks or _NoWebhooks()),
             list_latest_jobs=ListLatestJobsUseCase(jobs=jobs, access=access),
             list_jobs=ListJobsUseCase(jobs=jobs, access=access),
+            list_libraries_in_sync_states=ListLibrariesInSyncStatesUseCase(
+                jobs=jobs, access=access
+            ),
             list_library_jobs=ListLibraryJobsUseCase(jobs=jobs, access=access),
             list_repository_refs=ListRepositoryRefsUseCase(remote=remote),
             plan_sources=PlanSourcesUseCase(
@@ -998,6 +1028,7 @@ def import_job(
     guidance: GuidancePolicy | None = None,
     files: RepositoryFiles | None = None,
     converter: MarkupConverter | None = None,
+    logos: LibraryLogos | None = None,
 ) -> tuple[Mapping[JobKind, JobHandler], Mapping[JobKind, RecoveryHook]]:
     """Return the ``handlers`` and ``recovery_hooks`` that make the module import versions.
 
@@ -1010,7 +1041,8 @@ def import_job(
     chunked); without it an interrupted import starts over. ``guidance`` says which libraries
     keep their ``AGENTS.md`` / ``CLAUDE.md`` files with each version (RET-08), read with
     ``files``; without both none do. ``converter`` writes reStructuredText articles as Markdown;
-    without it they are skipped.
+    without it they are skipped. ``logos`` keeps the default version's logo (#504), read with
+    ``files``; without both none is looked for.
 
     Args:
         gateway: Fetches a commit's files.
@@ -1033,6 +1065,7 @@ def import_job(
         guidance: Which libraries keep their instruction files.
         files: Reads the instruction files.
         converter: Writes reStructuredText articles as Markdown.
+        logos: Keeps the logo of a library's default version.
 
     Returns:
         The handlers and the recovery hooks, by job kind.
@@ -1055,6 +1088,7 @@ def import_job(
         guidance=guidance,
         files=files,
         converter=converter,
+        logos=logos,
     )
     # A cancelled job stops before its next step; each step leaves nothing half done.
     importer = replace(importer, checkpoints=StopOnCancel(inner=checkpoints or _InlineSteps()))

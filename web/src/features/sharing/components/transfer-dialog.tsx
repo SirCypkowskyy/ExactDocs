@@ -1,10 +1,12 @@
 import { type FormEvent, useState } from "react";
 import { HttpError } from "@/shared/lib/http";
+import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { Button } from "@/shared/ui/button";
 import { DialogContent, DialogDescription, DialogRoot, DialogTitle } from "@/shared/ui/dialog";
 import { Field } from "@/shared/ui/field";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { transferLibrary } from "../api/grants";
+import { messages } from "../messages";
 import { explainSharingError } from "../model/grant";
 
 interface Props {
@@ -34,6 +36,9 @@ function Body({
   onTransferred,
   onDone,
 }: Omit<Props, "open" | "onOpenChange"> & { onDone: () => void }) {
+  const t = useMessages(messages);
+  const c = useMessages(common);
+  const language = useLanguage();
   const [fieldError, setFieldError] = useState<string>();
   const [problem, setProblem] = useState<string>();
   const [pending, setPending] = useState(false);
@@ -46,7 +51,7 @@ function Body({
     ).trim();
     setProblem(undefined);
     if (!username) {
-      setFieldError("Enter the username of the new creator.");
+      setFieldError(t.transfer.enterUsername);
       document.getElementById("transfer-username")?.focus();
       return;
     }
@@ -61,10 +66,10 @@ function Body({
         error instanceof HttpError &&
         (error.code === "unknown_account" || error.code === "invalid_grant");
       if (onField) {
-        setFieldError(explainSharingError(error));
+        setFieldError(explainSharingError(error, language));
         document.getElementById("transfer-username")?.focus();
       } else {
-        setProblem(explainSharingError(error));
+        setProblem(explainSharingError(error, language));
       }
     } finally {
       setPending(false);
@@ -73,17 +78,14 @@ function Body({
 
   return (
     <form onSubmit={submit} noValidate>
-      <DialogTitle>Transfer {libraryId}</DialogTitle>
-      <DialogDescription>
-        The new creator owns the library: only they make or remove admins, and only they can hand it
-        over again. Its creator now, if it has one, stays on as an admin.
-      </DialogDescription>
+      <DialogTitle>{t.transfer.title(libraryId)}</DialogTitle>
+      <DialogDescription>{t.transfer.description}</DialogDescription>
       <div className="mt-5">
         <FormAlert id="transfer-alert" message={problem} />
       </div>
       <Field
         id="transfer-username"
-        label="New creator's username"
+        label={t.transfer.username}
         autoComplete="off"
         autoCapitalize="none"
         spellCheck={false}
@@ -91,10 +93,10 @@ function Body({
       />
       <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
         <Button variant="ghost" aria-disabled={pending} onClick={() => !pending && onDone()}>
-          Cancel
+          {c.cancel}
         </Button>
         <Button type="submit" variant="destructive-solid" pending={pending}>
-          Transfer ownership
+          {t.transfer.submit}
         </Button>
       </div>
     </form>

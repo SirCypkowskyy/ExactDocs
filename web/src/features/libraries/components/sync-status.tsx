@@ -1,27 +1,44 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Check, ChevronRight, CircleAlert } from "lucide-react";
-import { useState } from "react";
+import { ChevronDown, CircleX, ListChecks, RefreshCw, TriangleAlert } from "lucide-react";
+import { useContext, useId, useState } from "react";
+import { useLanguage, useMessages } from "@/shared/lib/i18n";
 import { absoluteTime, absoluteTimeWithZone, relativeTime } from "@/shared/lib/time";
+import { useNow } from "@/shared/lib/use-now";
 import { cn } from "@/shared/lib/utils";
+import { Badge } from "@/shared/ui/badge";
+import { Button, buttonVariants } from "@/shared/ui/button";
+import { StateBadge } from "@/shared/ui/data-table/cells";
+import { FormAlert } from "@/shared/ui/form-alert";
+import { Meter } from "@/shared/ui/meter";
+import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { jobQueryOptions, librariesKeys } from "../api/libraries-query";
 import { reimportVersion } from "../api/reimport";
+import { SyncContext } from "../hooks/sync-context";
 import type { SyncState } from "../hooks/use-libraries";
+import { listMessages } from "../messages/list";
 import { explainReimport, type LatestJob } from "../model/library";
 import { CancelJob } from "./cancel-job";
 
+/*
+ * The Sync column of the libraries table: what the newest job of each version says, as a state
+ * badge. A failed sync opens its details (the reason, the skipped files, the way to fix it) in a
+ * popover from the badge, so the row keeps its height.
+ */
+
 const SKIPPED_SHOWN = 5;
 
-function SkippedFiles({ job, open }: { job: LatestJob; open: boolean }) {
+function SkippedFiles({ job }: { job: LatestJob }) {
+  const t = useMessages(listMessages).failure;
   const [all, setAll] = useState(false);
-  const { data } = useQuery(jobQueryOptions(job.id, open && job.skipped > 0));
+  const { data } = useQuery(jobQueryOptions(job.id, job.skipped > 0));
   if (job.skipped === 0) return null;
   // notes on imported files (e.g. front matter) are not skips; the count above excludes them
   const problems = (data?.problems ?? []).filter((p) => p.is_skip);
   return (
     <>
-      <p className="mt-3 text-muted-foreground">Skipped files ({job.skipped})</p>
+      <p className="mt-3 text-muted-foreground">{t.skippedFiles(job.skipped)}</p>
       <ul className="mt-1 space-y-1">
         {(all ? problems : problems.slice(0, SKIPPED_SHOWN)).map((p) => (
           <li key={p.path} className="[overflow-wrap:anywhere]">
@@ -31,13 +48,10 @@ function SkippedFiles({ job, open }: { job: LatestJob; open: boolean }) {
         ))}
       </ul>
       {!all && problems.length > SKIPPED_SHOWN && (
-        <button
-          type="button"
-          onClick={() => setAll(true)}
-          className="mt-1 min-h-11 rounded text-muted-foreground underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
-        >
-          Show {problems.length - SKIPPED_SHOWN} more
-        </button>
+        <Button variant="ghost" size="sm" className="mt-1 -ml-3" onClick={() => setAll(true)}>
+          <ListChecks aria-hidden="true" />
+          {t.showMore(problems.length - SKIPPED_SHOWN)}
+        </Button>
       )}
     </>
   );
@@ -45,216 +59,188 @@ function SkippedFiles({ job, open }: { job: LatestJob; open: boolean }) {
 
 /** The confirmation a moved tag waits for, right on its error: re-import the new commit. */
 function ReimportMovedTag({ library, version }: { library: string; version: string }) {
+  const language = useLanguage();
+  const t = listMessages[language].reimport;
   const queryClient = useQueryClient();
+  const alertId = useId();
   const reimport = useMutation({
     mutationFn: () => reimportVersion(library, version),
     // The queued import is the version's newest job now: the list shows it instead of the error.
     onSettled: () => queryClient.invalidateQueries({ queryKey: librariesKeys.all }),
   });
-  const problem = reimport.isError ? explainReimport(reimport.error) : undefined;
+  const problem = reimport.isError ? explainReimport(reimport.error, language) : undefined;
   if (reimport.isSuccess) {
     // Until the refetch replaces this error with the queued job: no second press, no 409.
     return (
       <p role="status" className="mt-3 font-medium">
-        Queued: the new commit of {version} is being imported.
+        {t.queuedNew(version)}
       </p>
     );
   }
   return (
-    <div className="mt-3">
+    <div className="mt-3 flex flex-col items-start gap-2">
       {!problem?.final && (
-        <button
-          type="button"
+        <Button
+          size="sm"
+          pending={reimport.isPending}
           aria-disabled={reimport.isPending}
-          aria-busy={reimport.isPending}
           onClick={() => {
             if (!reimport.isPending) reimport.mutate();
           }}
-          className="inline-flex min-h-11 items-center rounded-md bg-foreground px-3 font-medium text-background outline-none transition-colors duration-(--dur-fast) hover:bg-foreground/90 focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
         >
-          {reimport.isPending ? "Queueing" : "Re-import the new commit"}{" "}
-          <span className="sr-only">of {version}</span>
-        </button>
+          {!reimport.isPending && <RefreshCw aria-hidden="true" data-icon-motion="refresh" />}
+          {reimport.isPending ? t.queueing : t.button}{" "}
+          <span className="sr-only">{t.ofVersion(version)}</span>
+        </Button>
       )}
-      <p role="alert" className={problem ? "mt-2" : undefined}>
-        {problem && (
-          <span className={problem.tone === "info" ? "text-foreground" : "text-destructive"}>
-            {problem.message}
-          </span>
-        )}
-      </p>
+      <FormAlert
+        id={alertId}
+        message={problem?.message}
+        tone={problem?.tone === "info" ? "info" : "error"}
+      />
     </div>
   );
 }
 
-export function FailureDetail({ job, open }: { job: LatestJob; open: boolean }) {
+/** Why the newest failed job of a library failed, and how to fix it. */
+function FailureDetail({ job }: { job: LatestJob }) {
+  const language = useLanguage();
+  const t = listMessages[language].failure;
   const finished = job.finished_at ?? job.created_at;
   const [, owner = "", repo = ""] = job.library.split("/");
   const moved = job.error_code === "tag_moved";
   return (
-    <div className="mt-3 rounded-md bg-secondary px-3 py-3 text-body">
+    <div className="text-body">
       <p className="text-muted-foreground">
-        <span className="font-mono text-mono">{job.version ?? "Sync"}</span> failed{" "}
-        <time dateTime={finished} title={absoluteTimeWithZone(finished)}>
-          {absoluteTime(finished)}
-        </time>
+        {t.failedAt(
+          <span className="font-mono text-mono">{job.version ?? t.sync}</span>,
+          <time dateTime={finished} title={absoluteTimeWithZone(finished, language)}>
+            {absoluteTime(finished, language)}
+          </time>,
+        )}
       </p>
-      <pre className="mt-2 overflow-x-auto whitespace-pre-wrap [overflow-wrap:anywhere] font-mono text-small">
-        {job.error ?? "No reason was recorded."}
+      <pre className="mt-2 max-h-48 overflow-auto rounded-md bg-secondary px-3 py-2 font-mono text-small whitespace-pre-wrap [overflow-wrap:anywhere]">
+        {job.error ?? t.noReason}
       </pre>
-      <SkippedFiles job={job} open={open} />
+      <SkippedFiles job={job} />
       {moved && job.version && <ReimportMovedTag library={job.library} version={job.version} />}
       <Link
         to="/libraries/$owner/$repo/settings"
         params={{ owner, repo }}
         hash="sync-heading"
-        className="mt-3 inline-flex min-h-11 items-center rounded-md bg-background px-3 font-medium outline-none ring-1 ring-inset ring-border transition-colors duration-(--dur-fast) hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
+        className={cn(buttonVariants({ variant: "outline", size: "sm" }), "mt-3")}
       >
-        {moved ? "Review the moved tag in settings" : "Open settings to sync again"}
+        <RefreshCw aria-hidden="true" data-icon-motion="refresh" />
+        {moved ? t.reviewMovedTag : t.openSettings}
       </Link>
     </div>
   );
 }
 
-const muted = "text-body text-muted-foreground";
-
-function Unknown({ sync }: { sync: Extract<SyncState, { status: string }> }) {
-  if (sync.status === "pending") {
-    return (
-      <>
-        <Skeleton className="h-4 w-20" />
-        <span className="sr-only">Checking sync status</span>
-      </>
-    );
-  }
+/** A failed sync: the badge opens what went wrong; the error code stays visible under it. */
+function Failed({ job, failures }: { job: LatestJob; failures: number }) {
+  const language = useLanguage();
+  const t = listMessages[language].sync;
+  const now = useNow();
+  const moved = job.error_code === "tag_moved";
+  const Icon = moved ? TriangleAlert : CircleX;
   return (
-    <p className={muted}>
-      <span aria-hidden="true">-</span>
-      <span className="sr-only">Sync status unavailable</span>
-    </p>
+    <span className="flex flex-col items-start gap-0.5">
+      <Popover>
+        <PopoverTrigger asChild>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-mx-2 h-auto min-h-11 max-w-full flex-wrap justify-start gap-x-1.5 gap-y-0.5 px-2 py-1 text-left whitespace-normal data-[state=open]:bg-accent fine:min-h-8"
+          >
+            <Badge tone={moved ? "warning" : "destructive"}>
+              <Icon aria-hidden="true" className="size-3" />
+              {moved ? t.tagMoved : failures > 1 ? t.versionsFailed(failures) : t.failed}
+            </Badge>
+            <span className="text-small font-normal whitespace-nowrap text-muted-foreground">
+              {relativeTime(job.finished_at ?? job.created_at, now, language)}
+            </span>
+            <ChevronDown
+              aria-hidden="true"
+              className="text-muted-foreground transition-transform duration-(--dur-fast) ease-(--ease-out) in-data-[state=open]:rotate-180 motion-reduce:transition-none"
+            />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-96 max-w-[calc(100vw-2rem)]"
+          aria-label={t.detailsOf(job.library)}
+        >
+          <FailureDetail job={job} />
+        </PopoverContent>
+      </Popover>
+      {job.error_code && !moved && (
+        <span className="font-mono text-small text-muted-foreground">{job.error_code}</span>
+      )}
+    </span>
   );
 }
 
 function Running({ job }: { job: LatestJob }) {
-  const label = `the sync of ${job.version ?? job.library}`;
-  if (job.state === "queued") {
-    return (
-      <div className="text-body">
-        <p>Queued</p>
-        <CancelJob job={job} label={label} />
-      </div>
-    );
-  }
+  const t = useMessages(listMessages).sync;
   const known = job.total > 0;
   return (
-    <div className="text-body">
-      <p className="tabular-nums">
-        {known ? `Importing ${job.done} of ${job.total}` : "Importing"}
-      </p>
-      <div
-        role="progressbar"
-        aria-label={`Import progress for ${job.library}`}
-        aria-valuemin={0}
-        aria-valuemax={known ? job.total : undefined}
-        aria-valuenow={known ? job.done : undefined}
-        className="mt-1.5 h-1 w-full max-w-40 overflow-hidden rounded-full bg-secondary"
-      >
-        <div
-          className={cn(
-            "h-full origin-left bg-route transition-transform duration-(--dur-slow) ease-(--ease-out) motion-reduce:transition-none",
-            !known && "sweep w-1/3",
-          )}
-          style={
-            known ? { transform: `scaleX(${job.done / job.total})`, width: "100%" } : undefined
-          }
-        />
-      </div>
-      <CancelJob job={job} label={label} />
-    </div>
-  );
-}
-
-interface FailedProps {
-  job: LatestJob;
-  failures: number;
-  now: number;
-  open: boolean;
-  onToggle: () => void;
-  panel: string;
-}
-
-function Failed({ job, failures, now, open, onToggle, panel }: FailedProps) {
-  return (
-    <div className="min-w-0 text-body">
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-controls={panel}
-        onClick={onToggle}
-        className="-ml-1 flex min-h-11 max-w-full items-center gap-1.5 rounded-md px-1 text-left outline-none transition-colors duration-(--dur-fast) hover:bg-secondary focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
-      >
-        <CircleAlert aria-hidden="true" className="size-4 shrink-0 text-destructive" />
-        <span className="whitespace-nowrap font-medium text-destructive">
-          {failures > 1 ? `${failures} versions failed` : "Sync failed"}
-        </span>
-        <span className="whitespace-nowrap text-muted-foreground">
-          {relativeTime(job.finished_at ?? job.created_at, now)}
-        </span>
-        <ChevronRight
-          aria-hidden="true"
-          className={cn(
-            "size-4 shrink-0 text-muted-foreground transition-transform duration-(--dur-fast) ease-(--ease-out) motion-reduce:transition-none",
-            open && "rotate-90",
-          )}
-        />
-      </button>
-      {job.error && !open && (
-        <p className="line-clamp-2 text-small text-muted-foreground" title={job.error}>
-          {job.error}
-        </p>
+    <span className="flex min-w-36 flex-col items-start gap-1.5">
+      {job.state === "queued" ? (
+        <StateBadge state="queued" label={t.queued} />
+      ) : (
+        <>
+          <StateBadge
+            state="running"
+            label={known ? t.importingOf(job.done, job.total) : t.importing}
+          />
+          <Meter
+            value={known ? Math.round((job.done / job.total) * 100) : null}
+            label={t.progressFor(job.library)}
+            className="max-w-40"
+          />
+        </>
       )}
-    </div>
+      <CancelJob job={job} label={t.cancelLabel(job.version ?? job.library)} />
+    </span>
   );
 }
 
-interface SyncStatusProps {
-  sync: SyncState;
-  now: number;
-  open: boolean;
-  onToggle: () => void;
-  panel: string;
-}
+const muted = "text-muted-foreground";
 
-export function SyncStatus({ sync, now, open, onToggle, panel }: SyncStatusProps) {
-  if ("status" in sync) return <Unknown sync={sync} />;
+/** A library's sync state in its row (the Sync column). */
+export function SyncCell({ library }: { library: string }) {
+  const t = useMessages(listMessages).sync;
+  const states = useContext(SyncContext);
+  const sync: SyncState = states?.syncOf(library) ?? { status: "pending" };
+  if ("status" in sync) {
+    return sync.status === "pending" ? (
+      <>
+        <Skeleton className="h-5 w-20 rounded-full" />
+        <span className="sr-only">{t.checking}</span>
+      </>
+    ) : (
+      <span className={muted}>
+        <span aria-hidden="true">–</span>
+        <span className="sr-only">{t.unavailable}</span>
+      </span>
+    );
+  }
   switch (sync.kind) {
     case "none":
-      return <p className={muted}>Not synced yet</p>;
+      return <span className={muted}>{t.none}</span>;
     case "running":
       return <Running job={sync.job} />;
     case "failed":
-      return (
-        <Failed
-          job={sync.job}
-          failures={sync.failures}
-          now={now}
-          open={open}
-          onToggle={onToggle}
-          panel={panel}
-        />
-      );
+      return <Failed job={sync.job} failures={sync.failures} />;
     case "cancelled":
-      return (
-        <p className={muted}>
-          Sync cancelled{sync.job.cancelled_by ? ` by ${sync.job.cancelled_by}` : ""}
-        </p>
-      );
+      return <StateBadge state="cancelled" label={t.cancelled(sync.job.cancelled_by ?? null)} />;
     case "ok":
       return (
-        <p className={cn(muted, "flex items-center gap-1")}>
-          <Check aria-hidden="true" className="size-3.5 shrink-0" />
-          {sync.skipped > 0 ? `Synced, ${sync.skipped} skipped` : "Synced"}
-        </p>
+        <StateBadge
+          state="succeeded"
+          label={sync.skipped > 0 ? t.syncedSkipped(sync.skipped) : t.synced}
+        />
       );
   }
 }

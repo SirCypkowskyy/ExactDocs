@@ -1,15 +1,12 @@
 import { Check } from "lucide-react";
+import { useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
+import { addMessages } from "../messages/add";
 
 /** Where the person is in adding a library; each phase is one step further along. */
 export type AddPhase = "check" | "choose" | "import" | "done" | "failed";
 
-const STEPS = [
-  { label: "Check repository", hint: "Is it reachable?" },
-  { label: "Choose version", hint: "Branch, tag or commit" },
-  { label: "Choose files", hint: "Optional" },
-  { label: "Import", hint: "Reads and indexes it" },
-] as const;
+const STEPS = ["check", "choose", "files", "import"] as const;
 
 /** The step the phase is on (0-based); past the last one means everything is done. */
 const CURRENT: Record<AddPhase, number> = { check: 0, choose: 1, import: 3, done: 4, failed: 3 };
@@ -27,20 +24,22 @@ function stateOf(index: number, phase: AddPhase): State {
  * for the one you are on, a tick for the ones behind. On a phone it folds to one line and a bar.
  */
 export function AddSteps({ phase }: { phase: AddPhase }) {
+  const t = useMessages(addMessages).steps;
   const current = Math.min(CURRENT[phase], STEPS.length - 1);
+  const currentStep = STEPS[current];
   return (
     <>
       <div className="mb-6 lg:hidden">
         <p className="text-body">
           <span className="text-muted-foreground tabular-nums">
-            Step {current + 1} of {STEPS.length}:{" "}
+            {t.stepOf(current + 1, STEPS.length)}
           </span>
-          <span className="font-medium">{STEPS[current]?.label}</span>
+          <span className="font-medium">{currentStep && t[currentStep].label}</span>
         </p>
         <div aria-hidden="true" className="mt-2 flex gap-1">
           {STEPS.map((step, i) => (
             <span
-              key={step.label}
+              key={step}
               className={cn(
                 "h-1 flex-1 rounded-full transition-colors duration-(--dur) ease-(--ease-out)",
                 stateOf(i, phase) === "upcoming" ? "bg-secondary" : "bg-route",
@@ -50,13 +49,13 @@ export function AddSteps({ phase }: { phase: AddPhase }) {
           ))}
         </div>
       </div>
-      <nav aria-label="Steps" className="hidden lg:block">
+      <nav aria-label={t.label} className="hidden lg:block">
         <ol className="sticky top-17">
           {STEPS.map((step, i) => {
             const state = stateOf(i, phase);
             return (
               <li
-                key={step.label}
+                key={step}
                 aria-current={state === "current" ? "step" : undefined}
                 className="relative pb-6 pl-8 last:pb-0 before:absolute before:top-2 before:bottom-0 before:left-[9px] before:w-0.5 before:bg-rule last:before:hidden data-[state=done]:before:bg-route"
                 data-state={state}
@@ -80,12 +79,12 @@ export function AddSteps({ phase }: { phase: AddPhase }) {
                     state === "upcoming" ? "text-muted-foreground" : "font-medium",
                   )}
                 >
-                  {step.label}
+                  {t[step].label}
                   <span className="sr-only">
-                    {state === "done" ? " (done)" : state === "failed" ? " (failed)" : ""}
+                    {state === "done" ? t.done : state === "failed" ? t.failed : ""}
                   </span>
                 </p>
-                <p className="text-small text-muted-foreground">{step.hint}</p>
+                <p className="text-small text-muted-foreground">{t[step].hint}</p>
               </li>
             );
           })}

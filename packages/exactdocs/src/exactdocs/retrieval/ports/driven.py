@@ -304,6 +304,17 @@ class ChunkRepository(Protocol):
         """
         ...
 
+    async def counts_many(self, manifest_ids: Collection[str]) -> Mapping[str, VersionCounts]:
+        """Count the articles and chunks of each of these manifests, at once (no query each).
+
+        Args:
+            manifest_ids: The manifests.
+
+        Returns:
+            The counts per manifest; one without chunk rows (or unknown) is left out.
+        """
+        ...
+
     async def manifests_with_chunk(self, chunk_id: ChunkId) -> Sequence[IndexedManifest]:
         """Return every indexed manifest that has a row for this chunk ID (any status).
 

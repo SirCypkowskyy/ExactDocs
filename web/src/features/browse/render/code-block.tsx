@@ -1,4 +1,6 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { useMessages } from "@/shared/lib/i18n";
+import { messages } from "../messages";
 import { CopyButton } from "./copy-button";
 import { type Budget, inTurn } from "./limits";
 import { tokensOf } from "./tokens";
@@ -31,13 +33,13 @@ const LABELS: Record<string, string> = {
   mdx: "MDX",
 };
 
-/** The name shown above a block: a known language in full, anything else as written, nothing for none. */
-const languageLabel = (language: string | undefined) =>
+/** The name shown above a block: a known language in full, anything else as written, `plain` for none. */
+const languageLabel = (language: string | undefined, plain: string) =>
   language
     ? Object.hasOwn(LABELS, language.toLowerCase())
       ? LABELS[language.toLowerCase()]
       : language
-    : "Text";
+    : plain;
 
 /**
  * A fenced block: the language, a copy button, and the code, coloured when the browser is idle and
@@ -52,6 +54,7 @@ export function CodeBlock({
   language?: string | undefined;
   budget?: Budget | undefined;
 }) {
+  const t = useMessages(messages).render;
   const [marked, setMarked] = useState<{ code: string; nodes: ReactNode[] }>();
   const pre = useRef<HTMLPreElement>(null);
   useEffect(() => {
@@ -70,7 +73,7 @@ export function CodeBlock({
   return (
     <figure className="doc-code">
       <figcaption>
-        <span>{languageLabel(language)}</span>
+        <span>{languageLabel(language, t.plainText)}</span>
         <CopyButton text={text} target={pre} />
       </figcaption>
       {/* A scrollable region has to be reachable by keyboard. */}

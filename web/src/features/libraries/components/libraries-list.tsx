@@ -1,213 +1,101 @@
-import type { ColumnDef } from "@tanstack/react-table";
-import { Check, Copy, LibraryBig } from "lucide-react";
-import { useEffect, useEffectEvent, useId, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { Copy, LibraryBig } from "lucide-react";
+import { useId } from "react";
 import { toast } from "sonner";
+import { common, useMessages } from "@/shared/lib/i18n";
+import { useFlash } from "@/shared/lib/use-flash";
 import { cn } from "@/shared/lib/utils";
-import { Button } from "@/shared/ui/button";
-import { ListFooter, SortHeader, useServerTable } from "@/shared/ui/data-table";
-import { Input } from "@/shared/ui/input";
+import { IconButton } from "@/shared/ui/button";
 import { EmptyState } from "@/shared/ui/page";
 import { codeWell } from "@/shared/ui/recipes";
 import { SelectField } from "@/shared/ui/select-field";
-import { Skeleton } from "@/shared/ui/skeleton";
-import { type SyncState, useNow } from "../hooks/use-libraries";
-import type { Library } from "../model/library";
-import { isFiltered, type ListView } from "../model/list-view";
+import { listMessages } from "../messages/list";
+import type { ListView } from "../model/list-view";
 import { AddLibraryLink } from "./add-library-link";
-import { columns, LibraryRow } from "./library-row";
 
-interface LibrariesListProps {
-  libraries: readonly Library[];
-  syncs: ReadonlyMap<string, SyncState>;
-  view: ListView;
-  onView: (view: ListView) => void;
-  total: number;
-  hasMore: boolean;
-  loadingMore: boolean;
-  onLoadMore: () => void;
+/*
+ * Around the libraries table: the sort picker phones get instead of headers, and the first-run
+ * screen of an instance with no library yet.
+ */
+
+const SORTS = [
+  "title",
+  "-title",
+  "-last_imported_at",
+  "last_imported_at",
+  "-version_count",
+  "version_count",
+] as const;
+
+/** Phones get rows as cards, without sortable headers: the order is picked here instead. */
+export function PhoneSort({ view }: { view: ListView }) {
+  const t = useMessages(listMessages).toolbar;
+  const id = useId();
+  const navigate = useNavigate();
+  const names: Record<(typeof SORTS)[number], string> = {
+    title: t.nameAsc,
+    "-title": t.nameDesc,
+    "-last_imported_at": t.recentlyImported,
+    last_imported_at: t.leastRecentlyImported,
+    "-version_count": t.mostVersions,
+    version_count: t.fewestVersions,
+  };
+  return (
+    <div className="w-full md:hidden">
+      <SelectField
+        id={`${id}-sort`}
+        label={t.sortBy}
+        value={view.sort ?? ""}
+        onChange={(e) => {
+          const sort = e.target.value || undefined;
+          void navigate({
+            search: (prev: Record<string, unknown>) => ({ ...prev, sort, page: undefined }),
+            replace: true,
+            resetScroll: false,
+          } as never);
+        }}
+      >
+        <option value="">{t.sortDefault}</option>
+        {SORTS.map((s) => (
+          <option key={s} value={s}>
+            {names[s]}
+          </option>
+        ))}
+      </SelectField>
+    </div>
+  );
 }
-
-/** Sorting is done by the API, so the table only holds the state and draws the headers. */
-const columnDefs: ColumnDef<Library>[] = [
-  { accessorKey: "title", header: "Library" },
-  { accessorKey: "version_count", header: "Versions", sortDescFirst: true },
-  { accessorKey: "last_imported_at", header: "Last imported", sortDescFirst: true },
-  { id: "sync", header: "Sync", enableSorting: false },
-];
 
 const COMMAND = "exactdocs add https://github.com/acme/payments --path docs/";
 
-function FirstRun() {
-  const [copied, setCopied] = useState(false);
+/** An instance with no library yet: what a library is, and the two ways to add one. */
+export function FirstRun() {
+  const t = useMessages(listMessages).firstRun;
+  const c = useMessages(common);
+  const [copied, flash] = useFlash(2000);
   const copy = () => {
     void navigator.clipboard?.writeText(COMMAND).then(() => {
-      setCopied(true);
-      toast.success("Command copied");
-      setTimeout(() => setCopied(false), 2000);
+      flash();
+      toast.success(t.commandCopied);
     });
   };
   return (
     <EmptyState
       icon={<LibraryBig aria-hidden="true" />}
-      title="No libraries yet"
+      title={t.title}
       action={<AddLibraryLink />}
       className="max-w-2xl"
     >
-      <p>
-        Add a git repository and choose its Markdown docs. Agents and people then read them at the
-        exact version you import.
-      </p>
-      <p className="mt-4">Or index one from the command line:</p>
+      <p>{t.intro}</p>
+      <p className="mt-4">{t.commandLine}</p>
       <div className="mt-2 flex items-start gap-1">
         <pre className={cn(codeWell, "min-w-0 flex-1 whitespace-pre-wrap")}>
           <code>{COMMAND}</code>
         </pre>
-        <Button variant="ghost" size="icon" onClick={copy} aria-label="Copy command">
-          {copied ? <Check aria-hidden="true" /> : <Copy aria-hidden="true" />}
-        </Button>
+        <IconButton label={copied ? c.copied : t.copyCommand} done={copied} onClick={copy}>
+          <Copy aria-hidden="true" data-icon-motion="pop" />
+        </IconButton>
       </div>
     </EmptyState>
-  );
-}
-
-function Toolbar({
-  view,
-  onView,
-  text,
-  setText,
-}: Pick<LibrariesListProps, "view" | "onView"> & { text: string; setText: (v: string) => void }) {
-  const id = useId();
-  const commit = useEffectEvent((value: string) => {
-    if ((view.q ?? "") !== value.trim()) onView({ ...view, q: value.trim() || undefined });
-  });
-  // Typing waits a moment before it asks the server.
-  useEffect(() => {
-    const t = setTimeout(() => commit(text), 300);
-    return () => clearTimeout(t);
-  }, [text]);
-  return (
-    <search className="mb-4 flex flex-wrap items-end gap-3">
-      <div className="flex min-w-0 flex-1 basis-60 flex-col gap-2">
-        <label htmlFor={`${id}-q`} className="text-body font-medium">
-          Find a library
-        </label>
-        <Input
-          id={`${id}-q`}
-          type="search"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Name, ID or description"
-        />
-      </div>
-      <div className="w-40">
-        <SelectField
-          id={`${id}-ai`}
-          label="AI"
-          value={view.ai ?? ""}
-          onChange={(e) =>
-            onView({
-              ...view,
-              ai: e.target.value === "" ? undefined : (e.target.value as "on" | "off"),
-            })
-          }
-        >
-          <option value="">Any</option>
-          <option value="on">AI on</option>
-          <option value="off">AI off</option>
-        </SelectField>
-      </div>
-      <div className="w-48 md:hidden">
-        <SelectField
-          id={`${id}-sort`}
-          label="Sort by"
-          value={view.sort ?? ""}
-          onChange={(e) => onView({ ...view, sort: e.target.value || undefined })}
-        >
-          <option value="">Default</option>
-          <option value="title">Name, A to Z</option>
-          <option value="-title">Name, Z to A</option>
-          <option value="-last_imported_at">Recently imported</option>
-          <option value="last_imported_at">Least recently imported</option>
-          <option value="-version_count">Most versions</option>
-          <option value="version_count">Fewest versions</option>
-        </SelectField>
-      </div>
-    </search>
-  );
-}
-
-export function LibrariesList({
-  libraries,
-  syncs,
-  view,
-  onView,
-  total,
-  hasMore,
-  loadingMore,
-  onLoadMore,
-}: LibrariesListProps) {
-  const now = useNow();
-  const [text, setText] = useState(view.q ?? "");
-  const table = useServerTable({
-    data: libraries,
-    columns: columnDefs,
-    getRowId: (library) => library.id,
-    sort: view.sort,
-    onSort: (sort) => onView({ ...view, sort }),
-  });
-  if (total === 0 && !isFiltered(view)) return <FirstRun />;
-  return (
-    <div>
-      <Toolbar view={view} onView={onView} text={text} setText={setText} />
-      {libraries.length === 0 ? (
-        <EmptyState title="No libraries match" className="max-w-2xl">
-          <p>Nothing matches these filters.</p>
-          <Button
-            variant="ghost"
-            className="mt-3"
-            onClick={() => {
-              setText("");
-              onView({ sort: view.sort });
-            }}
-          >
-            Clear filters
-          </Button>
-        </EmptyState>
-      ) : (
-        <>
-          <div
-            className={`hidden border-b border-rule pb-2 pl-[3.25rem] text-small text-muted-foreground ${columns}`}
-          >
-            {table.getHeaderGroups()[0]?.headers.map((header) => (
-              <span key={header.id}>
-                <SortHeader header={header} />
-              </span>
-            ))}
-          </div>
-          <ul aria-label="Libraries" className="divide-y divide-rule">
-            {table.getRowModel().rows.map(({ original: library }) => (
-              <LibraryRow
-                key={library.id}
-                library={library}
-                sync={syncs.get(library.id) ?? { status: "pending" }}
-                now={now}
-              />
-            ))}
-            {loadingMore && (
-              <li aria-hidden="true" className="py-4">
-                <Skeleton className="h-12 w-full" />
-              </li>
-            )}
-          </ul>
-          <ListFooter
-            shown={libraries.length}
-            total={total}
-            hasMore={hasMore}
-            loadingMore={loadingMore}
-            onLoadMore={onLoadMore}
-          />
-        </>
-      )}
-    </div>
   );
 }

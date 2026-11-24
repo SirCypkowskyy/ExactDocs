@@ -1,7 +1,8 @@
 import copy
+from collections import Counter
 from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import UTC, date, datetime
 from typing import Self, cast
 
 from exactdocs.ingestion.constants import ACTIVE_JOB_STATES, IMPORT_KINDS, PUSH_JOB, JobKind
@@ -21,6 +22,7 @@ from exactdocs.ingestion.models import (
     ImportedVersion,
     ImportSource,
     Job,
+    JobDayCount,
     JobFilter,
     JobId,
     JobState,
@@ -201,6 +203,7 @@ class InMemoryJobRepository:
             if (job_filter.libraries is None or job.library in job_filter.libraries)
             and (not job_filter.states or job.state in job_filter.states)
             and (not job_filter.kinds or job.kind in job_filter.kinds)
+            and (not job_filter.origins or job.origin in job_filter.origins)
             and (job_filter.version is None or job.version == job_filter.version)
             and (floor is None or job.created_at >= floor)
             and (ceiling is None or job.created_at < ceiling)
@@ -219,6 +222,7 @@ class InMemoryJobRepository:
         sort: Sort,
         after: tuple[SortValue, str] | None,
         limit: int,
+        offset: int = 0,
     ) -> Sequence[Job]:
         """Return up to ``limit`` of the jobs that pass the filter, in ``sort`` order.
 
@@ -227,6 +231,7 @@ class InMemoryJobRepository:
             sort: The order.
             after: The sort value and ID of the last job of the previous page.
             limit: At most this many jobs.
+            offset: How many of the jobs in order (after ``after``) to skip first.
 
         Returns:
             The jobs in order.
@@ -254,7 +259,7 @@ class InMemoryJobRepository:
         )
         if after is not None:
             ordered = [j for j in ordered if is_after((value(j), j.id), after, sort=sort)]
-        return ordered[:limit]
+        return ordered[offset : offset + limit]
 
     async def count(self, job_filter: JobFilter) -> int:
         """Count the jobs that pass the filter.
@@ -288,6 +293,38 @@ class InMemoryJobRepository:
             if job.kind != PUSH_JOB:  # names a ref, says nothing about how the version fared
                 newest[job.library, job.version] = job
         return sorted(newest.values(), key=lambda job: (job.library, job.version or ""))
+
+    async def sync_states(self) -> Mapping[str, JobState]:
+        """Return the state of every library's newest ``import`` or ``refresh`` job.
+
+        Returns:
+            The state by library, as spelled in the jobs.
+        """
+        newest: dict[str, Job] = {}
+        for job in sorted(self.jobs.values(), key=lambda job: job.id):
+            if job.kind in IMPORT_KINDS:
+                newest[job.library] = job
+        return {library: job.state for library, job in newest.items()}
+
+    async def daily_counts(self, *, start: datetime, end: datetime) -> Sequence[JobDayCount]:
+        """Count the jobs queued in ``[start, end)`` by UTC day, state and kind.
+
+        Args:
+            start: The first moment counted.
+            end: The first moment no longer counted.
+
+        Returns:
+            One count per (day, state, kind) that has jobs.
+        """
+        counts: Counter[tuple[date, JobState, str]] = Counter(
+            (job.created_at.astimezone(UTC).date(), job.state, job.kind)
+            for job in self.jobs.values()
+            if start <= job.created_at < end
+        )
+        return [
+            JobDayCount(day=day, state=state, kind=kind, count=count)
+            for (day, state, kind), count in counts.items()
+        ]
 
     async def delete_for(self, library: str, version: str | None = None) -> None:
         """Delete the library's jobs (only those of ``version`` when given), never a running one.

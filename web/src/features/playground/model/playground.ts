@@ -1,4 +1,6 @@
 import type { components } from "@/shared/lib/api-schema";
+import { currentLanguage, type Language, messagesFor } from "@/shared/lib/i18n";
+import { messages } from "../messages";
 
 export type PlaygroundResults = components["schemas"]["SearchAllResult"];
 export type PlaygroundHit = components["schemas"]["LibrarySearchResultOut"];
@@ -11,12 +13,6 @@ export type AnswerAvailability = components["schemas"]["AnswerAvailabilityOut"];
 /** The retrieval modes a search across libraries can run in. */
 export const PLAYGROUND_MODES = ["bm25", "vector", "hybrid"] as const;
 export type PlaygroundMode = (typeof PLAYGROUND_MODES)[number];
-
-export const MODE_LABEL: Record<PlaygroundMode, string> = {
-  bm25: "BM25 (keywords)",
-  vector: "Vector (embeddings)",
-  hybrid: "Hybrid (BM25 + vectors)",
-};
 
 /** The agent writes an answer instead of ranking chunks; it is not a retrieval mode. */
 export const AGENT = "agent" as const;
@@ -31,24 +27,25 @@ export interface PlaygroundRun {
   second?: PlaygroundMode;
 }
 
-const FALLBACK_WORDS: Partial<Record<FallbackReason, string>> = {
-  embedding_in_progress: "No chosen library is embedded with the current model yet.",
-  embedding_unavailable: "The embedding model failed on the query.",
-  vector_store_unavailable: "The vector store can't be loaded here.",
-  llm_budget_reached: "A budget the query embedding counts to is used up.",
-  mode_unavailable: "The mode can't run now.",
-};
-
 /** Why BM25 answered instead of the mode asked for, in a sentence. */
-export function fallbackSentence(reason: FallbackReason): string {
-  return `BM25 answered instead: ${FALLBACK_WORDS[reason] ?? reason}`;
+export function fallbackSentence(
+  reason: FallbackReason,
+  language: Language = currentLanguage(),
+): string {
+  const t = messagesFor(messages, language).results;
+  const words: Partial<Record<FallbackReason, string>> = t.fallbacks;
+  return t.fallback(words[reason] ?? reason);
 }
 
 /** The ranks a result holds, e.g. `["BM25 #1", "vector #4"]`. */
-export function rankLabels(hit: Pick<PlaygroundHit, "bm25_rank" | "vector_rank">): string[] {
+export function rankLabels(
+  hit: Pick<PlaygroundHit, "bm25_rank" | "vector_rank">,
+  language: Language = currentLanguage(),
+): string[] {
+  const t = messagesFor(messages, language).results;
   const labels: string[] = [];
-  if (hit.bm25_rank != null) labels.push(`BM25 #${hit.bm25_rank}`);
-  if (hit.vector_rank != null) labels.push(`vector #${hit.vector_rank}`);
+  if (hit.bm25_rank != null) labels.push(t.bm25Rank(hit.bm25_rank));
+  if (hit.vector_rank != null) labels.push(t.vectorRank(hit.vector_rank));
   return labels;
 }
 
@@ -86,22 +83,11 @@ export interface AnswerProgress {
 }
 
 /** Why the agent did not answer, in a sentence. */
-const NO_ANSWER_WORDS: Partial<Record<NonNullable<AnswerResult["fallback_reason"]>, string>> = {
-  agent_limit_reached: "The agent used up its tool calls or time before it could answer.",
-  agent_loop_detected: "The agent repeated itself and was stopped.",
-  agent_failed: "The agent failed.",
-  llm_budget_reached: "A budget this run counts to is used up.",
-  llm_rate_limited: "Too many LLM searches this minute.",
-  mode_unavailable: "No chosen library may be sent to the LLM (AI is off for it).",
-};
-
-export function noAnswerSentence(reason: NonNullable<AnswerResult["fallback_reason"]>): string {
-  return NO_ANSWER_WORDS[reason] ?? reason;
-}
-
-/** Tokens and, when the model has a price, what they cost. */
-export function spendSentence(usage: AnswerResult["usage"]): string {
-  const tokens = `${usage.input_tokens.toLocaleString("en-US")} in / ${usage.output_tokens.toLocaleString("en-US")} out tokens`;
-  const cost = usage.cost_usd === null ? "" : `, $${usage.cost_usd.toFixed(4)}`;
-  return `${usage.requests} model request${usage.requests === 1 ? "" : "s"}, ${tokens}${cost}`;
+export function noAnswerSentence(
+  reason: NonNullable<AnswerResult["fallback_reason"]>,
+  language: Language = currentLanguage(),
+): string {
+  const words: Partial<Record<FallbackReason, string>> = messagesFor(messages, language).agent
+    .noAnswers;
+  return words[reason] ?? reason;
 }

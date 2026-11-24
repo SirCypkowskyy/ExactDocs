@@ -1,3 +1,9 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../docs/assets/logo/exactdocs-lockup-dark.svg">
+  <source media="(prefers-color-scheme: light)" srcset="../../docs/assets/logo/exactdocs-lockup-light.svg">
+  <img src="../../docs/assets/logo/exactdocs-lockup-light.svg" alt="ExactDocs" width="220">
+</picture>
+
 # Self-hosted runners (GB10)
 
 > **What runs here (#478)** depends on the repository variable `RUNNER_MODE`

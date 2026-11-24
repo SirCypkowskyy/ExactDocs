@@ -1,5 +1,6 @@
 """Catalog entities and value objects. Pure Python: no frameworks, no I/O."""
 
+import hashlib
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -17,9 +18,12 @@ from exactdocs.catalog.constants import (
     DEFAULT_MAX_CHARS,
     DEFAULT_SPLIT_LEVEL,
     IMAGE_TYPES,
+    LOGO_DIGEST_CHARS,
+    LOGO_TYPES,
     MAX_CLOSE_MATCHES,
     MAX_INSTRUCTION_FILE_CHARS,
     MAX_INSTRUCTION_FILES,
+    MAX_LOGO_BYTES,
     MAX_SIMILARITY,
 )
 from exactdocs.catalog.errors import (
@@ -34,6 +38,7 @@ from exactdocs.catalog.errors import (
     InvalidImportTimeError,
     InvalidInstructionFileError,
     InvalidLibraryIdError,
+    InvalidLogoError,
     InvalidManualTagsError,
     InvalidSettingsError,
     InvalidSimilarityError,
@@ -341,6 +346,9 @@ class Library:
     """The version an owner chose as the default (LIB-10); it wins over the rule while imported."""
     rules: tuple[str, ...] = ()
     """What the default version's ``context7.json`` tells agents (LIB-06); untrusted text."""
+    logo: str | None = None
+    """The ``digest`` of the library's ``LibraryLogo`` (#504); ``None`` while it has none. Only
+    ``LibraryLogos`` writes it: saving a library never changes it."""
 
     def __post_init__(self) -> None:
         """Refuse two versions of one ref.
@@ -764,6 +772,39 @@ class StoredImage:
     """Media type, one of ``IMAGE_TYPES``."""
     data: bytes = field(repr=False)
     """The image's bytes."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class LibraryLogo:
+    """A library's project logo (#504), served from ExactDocs' own origin.
+
+    The importer found it in the library's default version and checked it (raster) or cleaned it
+    (SVG) there.
+    """
+
+    content_type: str
+    """Media type, one of ``LOGO_TYPES``."""
+    data: bytes = field(repr=False)
+    """The image's bytes, at most ``MAX_LOGO_BYTES``."""
+    path: str
+    """The repository path it was read from."""
+    ref: VersionRef
+    """The version it was found in: the default version when it was imported."""
+
+    def __post_init__(self) -> None:
+        """Re-check what the importer checked: the type and the size.
+
+        Raises:
+            InvalidLogoError: The type is not one of ``LOGO_TYPES``, or the image is empty or
+                larger than ``MAX_LOGO_BYTES``.
+        """
+        if self.content_type not in LOGO_TYPES or not 0 < len(self.data) <= MAX_LOGO_BYTES:
+            raise InvalidLogoError(self.content_type, len(self.data))
+
+    @property
+    def digest(self) -> str:
+        """The first ``LOGO_DIGEST_CHARS`` hex digits of its SHA-256: names exactly these bytes."""
+        return hashlib.sha256(self.data).hexdigest()[:LOGO_DIGEST_CHARS]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
