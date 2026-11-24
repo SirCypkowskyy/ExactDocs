@@ -5,8 +5,8 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import {
-  LibraryCombobox,
   type LibraryChoices,
+  LibraryCombobox,
   type LibraryOption,
   recentLibraries,
 } from "./library-combobox";
@@ -160,9 +160,11 @@ describe("LibraryCombobox", () => {
     await userEvent.click(screen.getByRole("option", { name: /\/fixture\/docs-repo/ }));
     await userEvent.click(trigger());
     const recent = screen.getByRole("group", { name: "Recent" });
-    expect(within(recent).getAllByRole("option").map((o) => o.textContent)).toEqual([
-      "/fixture/docs-repo Docs",
-    ]);
+    expect(
+      within(recent)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["/fixture/docs-repo Docs"]);
     expect(screen.getByRole("group", { name: "All libraries" })).toBeInTheDocument();
     // Typing searches every library; the shortcut steps aside.
     await userEvent.keyboard("acme");
@@ -200,9 +202,11 @@ describe("LibraryCombobox", () => {
     wrap(<Single />);
     await userEvent.click(screen.getByRole("button", { name: "Library" }));
     const recent = screen.getByRole("group", { name: "Recent" });
-    expect(within(recent).getAllByRole("option").map((o) => o.textContent)).toEqual([
-      "/acme/web",
-    ]);
+    expect(
+      within(recent)
+        .getAllByRole("option")
+        .map((o) => o.textContent),
+    ).toEqual(["/acme/web"]);
   });
 
   it("groups by owner above twenty libraries", async () => {
@@ -262,6 +266,44 @@ describe("LibraryCombobox", () => {
     await userEvent.type(screen.getByRole("combobox"), "fixture");
     await waitFor(() => expect(calls.at(-1)).toBe("fixture"));
     expect(screen.getAllByRole("option")).toHaveLength(1);
+  });
+
+  it("shows the loading and failed states of options the feature loads", async () => {
+    const onRetry = vi.fn();
+    const { rerender } = wrap(
+      <LibraryCombobox
+        label="Library"
+        options={undefined}
+        loading
+        value={undefined}
+        onChange={() => {}}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^Library/ }));
+    expect(screen.getByRole("status")).toHaveTextContent("Loading libraries");
+    expect(screen.queryByRole("listbox")).toBeNull();
+    rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <LibraryCombobox
+          label="Library"
+          options={undefined}
+          failed
+          onRetry={onRetry}
+          value={undefined}
+          onChange={() => {}}
+        />
+      </QueryClientProvider>,
+    );
+    // Still open: the failure shows in place of the list.
+    expect(screen.getByRole("alert")).toHaveTextContent("Couldn't load the libraries.");
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(onRetry).toHaveBeenCalled();
+  });
+
+  it("says when there are no libraries at all", async () => {
+    wrap(<Single options={[]} />);
+    await userEvent.click(screen.getByRole("button", { name: "Library" }));
+    expect(screen.getByRole("status")).toHaveTextContent("No libraries yet.");
   });
 
   it("offers a typed ID when the caller accepts it", async () => {
