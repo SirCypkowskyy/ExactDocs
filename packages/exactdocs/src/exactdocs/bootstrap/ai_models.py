@@ -19,7 +19,7 @@ from dataclasses import dataclass, field, replace
 from types import ModuleType
 
 from exactdocs.bootstrap.ai_endpoint import Endpoint
-from exactdocs.bootstrap.constants import AI_SDK_MODULE, CHECK_TEXT
+from exactdocs.bootstrap.constants import AI_SDK_MODULE, CHECK_TEXT, ENTRA_URL
 from exactdocs.bootstrap.local_models import LocalModels
 from exactdocs.bootstrap.settings import AiSettings, BudgetSettings
 from exactdocs.retrieval.adapters.driven.ai_embeddings import PydanticAiEmbeddingModels
@@ -52,7 +52,7 @@ from exactdocs.retrieval.models import (
     ThinkingLevel,
 )
 from exactdocs.retrieval.ports.driven import Embeddings, Reranker, SecretBox
-from exactdocs_kernel import SealedTextUnreadableError
+from exactdocs_kernel import OutboundNetwork, SealedTextUnreadableError
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +110,11 @@ class PydanticAiModels:
     """The keys of profiles configured with ``api_key`` in the environment, by profile name."""
     box: SecretBox | None = field(default=None, repr=False)
     """Opens keys stored over the REST API; ``None`` when this process has no secret key."""
+    network: OutboundNetwork = field(default_factory=OutboundNetwork, repr=False)
+    """The instance's outbound proxy, NO_PROXY and CA bundle (#538)."""
+    use_instance_proxy: bool = False
+    """``ai.use_instance_proxy``: a profile without a ``proxy`` of its own goes through the
+    instance's outbound proxy (unless ``NO_PROXY`` lists its endpoint) instead of directly."""
     _endpoints: dict[str, Endpoint] = field(default_factory=dict, init=False, repr=False)
     """The current endpoint of each profile called so far, by name."""
     _locks: dict[str, asyncio.Lock] = field(default_factory=dict, init=False, repr=False)
@@ -213,16 +218,35 @@ class PydanticAiModels:
             The endpoint.
         """
         url = sdk.base_url(profile)
-        tokens = sdk.entra_token_provider(profile) if profile.auth is AzureAuth.ENTRA else None
+        tokens = (
+            sdk.entra_token_provider(profile, instance_proxy=self._instance_proxy(ENTRA_URL))
+            if profile.auth is AzureAuth.ENTRA
+            else None
+        )
         # Claude on Foundry with Entra ID: the client signs each request with a fresh token.
         bearer = tokens if profile.kind is ProviderKind.ANTHROPIC else None
-        return Endpoint(
-            profile=profile,
-            base_url=url,
-            key=key,
-            client=sdk.http_client(profile, url, bearer=bearer),
-            token_provider=tokens,
+        client = sdk.http_client(
+            profile,
+            url,
+            bearer=bearer,
+            instance_proxy=self._instance_proxy(url),
+            network=self.network,
         )
+        return Endpoint(
+            profile=profile, base_url=url, key=key, client=client, token_provider=tokens
+        )
+
+    def _instance_proxy(self, url: str) -> str | None:
+        """The instance's outbound proxy for a URL, when profiles use it.
+
+        Args:
+            url: The endpoint (or Entra ID's).
+
+        Returns:
+            The proxy, or ``None``: ``ai.use_instance_proxy`` is off, or the URL is reached
+            directly (``NO_PROXY``, loopback).
+        """
+        return self.network.proxy_for(url) if self.use_instance_proxy else None
 
     async def release(self, name: str) -> None:
         """Close the client of a profile that was deleted (or will be rebuilt).

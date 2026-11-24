@@ -111,6 +111,7 @@ from exactdocs.ingestion.constants._git import (
     _NOT_A_REPO,
     _PASSTHROUGH,
     _PREFIX,
+    _PROXY_TROUBLE,
     _REF,
     _ROOT_CONTEXT7,
     _ROOT_NAME,
@@ -120,6 +121,7 @@ from exactdocs.ingestion.constants._git import (
     _SSH_BASE,
     _SYMREF,
     _TOO_BIG,
+    _UNABLE_TO_ACCESS,
 )
 from exactdocs.ingestion.errors import (
     CommitUnavailableError,
@@ -146,6 +148,7 @@ from exactdocs.ingestion.models import (
     RepositoryUrl,
     branch_name,
 )
+from exactdocs_kernel import OutboundNetwork, proxy_failure, resolve_outbound
 
 
 class _OutputTooBigError(RepositoryUnreachableError):
@@ -233,6 +236,11 @@ class GitCli:
     """Bounds the cost of an unauthenticated endpoint: each slot is one git process, its helpers
     and up to ``max_output`` bytes of output.
     """
+    network: OutboundNetwork = field(
+        default_factory=lambda: resolve_outbound(os.environ), compare=False
+    )
+    """The proxy, ``NO_PROXY`` and CA bundle git is given (#538): bootstrap passes the instance's;
+    by default the standard variables of this process."""
 
     @classmethod
     def locate(
@@ -241,6 +249,7 @@ class GitCli:
         timeout: float = TIMEOUT_SECONDS,
         work_root: Path | None = None,
         known_hosts: Path | None = None,
+        network: OutboundNetwork | None = None,
     ) -> Self:
         """Find ``git`` on ``PATH``; raises ``GitNotInstalledError`` when it is missing.
 
@@ -248,6 +257,8 @@ class GitCli:
             timeout: Seconds one call that is not a fetch may take.
             work_root: Where fetches get their folders; the temp dir when None.
             known_hosts: Remembered SSH host keys; none are kept when None.
+            network: The outbound proxy, NO_PROXY and CA bundle; this process's standard
+                variables when None.
 
         Returns:
             The adapter, with the other settings at their defaults.
@@ -258,7 +269,8 @@ class GitCli:
         git = shutil.which("git")
         if git is None:
             raise GitNotInstalledError
-        return cls(git=git, timeout=timeout, work_root=work_root, known_hosts=known_hosts)
+        found = cls(git=git, timeout=timeout, work_root=work_root, known_hosts=known_hosts)
+        return found if network is None else replace(found, network=network)
 
     async def list_refs(
         self,
@@ -914,12 +926,13 @@ class GitCli:
             What git printed, and its exit code.
 
         Raises:
-            RepositoryUnreachableError: git did not finish within ``limit``.
+            RepositoryUnreachableError: git did not finish within ``limit``, or failed on the
+                way through the proxy (the message names the proxy and the host).
             RepositoryTooLargeError: The watchdog found too many bytes or files in ``watch``.
             _OutputTooBigError: git printed more than ``cap`` bytes.
         """
         max_bytes = self.max_fetch_bytes if watch_bytes is None else watch_bytes
-        environment = _environment(home, self.known_hosts)
+        environment = _environment(home, self.known_hosts, self.network)
         if auth is not None:
             await asyncio.to_thread(_offer, environment, home, auth, self.known_hosts)
         if trust_local:
@@ -957,7 +970,10 @@ class GitCli:
             raise RepositoryTooLargeError(max_bytes)
         if len(out) > cap:
             raise _OutputTooBigError(_TOO_BIG)
-        return _Output(stdout=out, stderr=err.decode(errors="replace").lower(), code=code)
+        stderr = err.decode(errors="replace").lower()
+        if code != 0 and (reason := _proxy_trouble(stderr, self.network)) is not None:
+            raise RepositoryUnreachableError(reason)
+        return _Output(stdout=out, stderr=stderr, code=code)
 
     async def _guard(self, process: Process, folder: Path, max_bytes: int) -> str:
         """Return (after killing git) as soon as ``folder`` holds too many bytes or files.
@@ -1639,20 +1655,29 @@ def _offer(environment: dict[str, str], home: str, auth: _Auth, known_hosts: Pat
         environment["GIT_SSH_COMMAND"] = _ssh_command(known_hosts, str(key))
 
 
-def _environment(home: str, known_hosts: Path | None = None) -> dict[str, str]:
+def _environment(
+    home: str, known_hosts: Path | None = None, network: OutboundNetwork | None = None
+) -> dict[str, str]:
     """Build git's environment from scratch: a private home, no config, no prompts.
 
     Args:
         home: The call's private directory.
         known_hosts: Remembered host keys; none are kept when None.
+        network: The outbound settings (#538): the proxy variables (both spellings), a
+            ``NO_PROXY`` that keeps loopback direct, and the CA bundle as ``GIT_SSL_CAINFO``
+            (git's ``http.sslCAInfo``); none when None.
 
     Returns:
-        The environment; of ours only ``PATH``, ``SYSTEMROOT``, proxy and certificate variables
-        are kept.
+        The environment; of ours only ``PATH``, ``SYSTEMROOT`` and certificate folders are kept,
+        and the outbound settings are added.
     """
     kept = {k: v for k, v in os.environ.items() if k.lower() in _PASSTHROUGH}
+    if network is None or network.ca_bundle is None:
+        # No CA bundle resolved: git's own variable, if this process has one, still applies.
+        kept |= {k: v for k, v in os.environ.items() if k == "GIT_SSL_CAINFO"}
     return {
         **kept,
+        **(network.environment() if network is not None else {}),
         "HOME": home,
         "USERPROFILE": home,
         "XDG_CONFIG_HOME": home,
@@ -1664,6 +1689,38 @@ def _environment(home: str, known_hosts: Path | None = None) -> dict[str, str]:
         "GIT_SSH_COMMAND": _ssh_command(known_hosts),
         "LC_ALL": "C",
     }
+
+
+def _proxy_trouble(stderr: str, network: OutboundNetwork) -> str | None:
+    """Say how a request through the proxy failed, when git's error says so.
+
+    Git names the URL it could not reach (``unable to access '<url>'``); when that URL goes
+    through a proxy, curl talked to the proxy alone, so a connection failure, a 407, a refused
+    tunnel or an untrusted certificate is the proxy's part.
+
+    Args:
+        stderr: git's lower-cased error output.
+        network: The outbound settings git was given.
+
+    Returns:
+        A message naming the proxy (without credentials) and the host, or ``None``.
+    """
+    if (access := _UNABLE_TO_ACCESS.search(stderr)) is None:
+        return None
+    url = access.group(1)
+    if (proxy := network.proxy_for(url)) is None:
+        return None
+    parts = urlsplit(url)
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    target = f"{parts.hostname}:{port or (443 if parts.scheme == 'https' else 80)}"
+    for pattern, detail in _PROXY_TROUBLE:
+        if (found := pattern.search(stderr)) is not None:
+            code = next((group for group in found.groups() if group), "")
+            return proxy_failure(proxy, target, detail.format(code))
+    return None
 
 
 async def _read(process: Process, stream: asyncio.StreamReader | None, cap: int | None) -> bytes:

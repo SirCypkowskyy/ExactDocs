@@ -33,3 +33,6 @@ class IndexBackendKind:
     """The top-level packages the extra installs; only ``module`` may import them."""
     production: bool = True
     """False for a backend that keeps nothing across a restart (``memory``): start logs it."""
+    outbound: bool = False
+    """It connects over the network: its factories take ``network=`` (the outbound proxy,
+    ``NO_PROXY`` and CA bundle, #538) besides the options."""

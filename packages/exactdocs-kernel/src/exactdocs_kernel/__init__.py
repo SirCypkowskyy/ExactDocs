@@ -44,7 +44,12 @@ from exactdocs_kernel.listing import (
     parse_sort,
     sorted_page,
 )
-from exactdocs_kernel.network import OutboundNetwork, redact_url, resolve_outbound
+from exactdocs_kernel.network import (
+    OutboundNetwork,
+    proxy_failure,
+    redact_url,
+    resolve_outbound,
+)
 from exactdocs_kernel.pagination import (
     CursorWithOffsetError,
     InvalidCursorError,
@@ -102,6 +107,7 @@ __all__ = [
     "page_offset",
     "paginate",
     "parse_sort",
+    "proxy_failure",
     "redact_url",
     "resolve_outbound",
     "section_link",

@@ -86,6 +86,7 @@ from exactdocs.retrieval.models import (
     TextQuery,
     identifier_tokens,
 )
+from exactdocs_kernel import OutboundNetwork
 
 
 def row_key(manifest_id: str, chunk_id: str) -> str:
@@ -230,6 +231,8 @@ class MilvusVectorBackend:
     """The consistency new collections are created with."""
     bm25: bool = False
     """New collections keep the words for BM25 (``MilvusHybridVectorBackend`` sets it)."""
+    network: OutboundNetwork = field(default_factory=OutboundNetwork, repr=False)
+    """The outbound proxy, NO_PROXY and CA bundle a server is reached with (#538)."""
     name: str = MILVUS_BACKEND
     """The registered name."""
     _client: MilvusClient | None = field(default=None, init=False, repr=False)
@@ -238,6 +241,25 @@ class MilvusVectorBackend:
     """The fields of each collection seen to exist and loaded, in this process."""
     _setting_up: asyncio.Lock = field(default_factory=asyncio.Lock, init=False, repr=False)
     """Lets one task create or load a collection at a time."""
+
+    def _channel(self) -> dict[str, Any]:
+        """The gRPC channel's proxy and trust, from the outbound settings (#538).
+
+        gRPC would otherwise read the proxy variables itself: the channel is told the proxy
+        explicitly (``grpc.http_proxy``, credentials included), or to use none; a TLS server's
+        certificate is checked against the CA bundle when one is set.
+
+        Returns:
+            ``MilvusClient`` keywords; none for Milvus Lite.
+        """
+        if self.local:
+            return {}
+        proxy = self.network.proxy_for(self.uri)
+        options = {"grpc.http_proxy": proxy} if proxy else {"grpc.enable_http_proxy": 0}
+        channel: dict[str, Any] = {"grpc_options": options}
+        if self.network.ca_bundle is not None and self.uri.startswith("https"):
+            channel["server_pem_path"] = self.network.ca_bundle
+        return channel
 
     @property
     def local(self) -> bool:
@@ -261,6 +283,7 @@ class MilvusVectorBackend:
                 token=self.token or "",
                 db_name=self.db_name or "",
                 timeout=self.timeout,
+                **self._channel(),
             )
             try:
                 client.get_server_version(timeout=self.timeout)
@@ -949,7 +972,9 @@ def _backend_options(options: Mapping[str, object]) -> dict[str, Any]:
     }
 
 
-def vector_backend(options: Mapping[str, object]) -> MilvusVectorBackend:
+def vector_backend(
+    options: Mapping[str, object], *, network: OutboundNetwork | None = None
+) -> MilvusVectorBackend:
     """Build the vector backend from its ``[index_backends.milvus]`` options (no connection yet).
 
     Options: ``uri`` (required: ``http://host:19530``, ``https://...`` for Zilliz Cloud, or a
@@ -960,11 +985,14 @@ def vector_backend(options: Mapping[str, object]) -> MilvusVectorBackend:
 
     Args:
         options: The options.
+        network: The outbound proxy, NO_PROXY and CA bundle a server is reached with (#538);
+            none: direct, the system's trust.
 
     Returns:
         The backend: with ``NativeHybrid`` unless ``hybrid = false``.
     """
     fields = _backend_options(options)
+    reach = network or OutboundNetwork()
     if _flag(options, "hybrid", default=True):
-        return MilvusHybridVectorBackend(**fields)
-    return MilvusVectorBackend(**fields)
+        return MilvusHybridVectorBackend(**fields, network=reach)
+    return MilvusVectorBackend(**fields, network=reach)

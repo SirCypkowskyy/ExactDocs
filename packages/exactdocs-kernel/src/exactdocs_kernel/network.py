@@ -28,6 +28,7 @@ Proxy URLs may carry credentials (``http://user:password@proxy:3128``). They are
 """
 
 import ipaddress
+import ssl
 from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit
@@ -37,9 +38,12 @@ from exactdocs_kernel.constants import (
     _ALWAYS_DIRECT_SUFFIX,
     _DEFAULT_PORTS,
     _MIN_SECRET,
+    _PROXY_AUTH_MARKERS,
+    _PROXY_REFUSED_MARKERS,
     _PROXY_SCHEMES,
     _PUBLISHED_DIRECT,
     _SCHEME_PROXY,
+    _TLS_MARKERS,
     _URL_USERINFO,
     CA_BUNDLE_VARIABLES,
     REDACTED,
@@ -61,6 +65,35 @@ def redact_url(text: str) -> str:
         The text, each ``scheme://user:password@`` shown as ``scheme://***@``.
     """
     return _URL_USERINFO.sub(rf"\g<scheme>{REDACTED}@", text)
+
+
+def proxy_failure(proxy: str, target: str, detail: str) -> str:
+    """Say that a connection through a proxy failed, naming the proxy and the host it was for.
+
+    Args:
+        proxy: The proxy URL (its credentials are never shown).
+        target: The host (``host`` or ``host:port``) the connection was for.
+        detail: What the client reported: a status line, an OS or TLS error. It must hold no
+            secret (``OutboundNetwork.redact`` it first).
+
+    Returns:
+        The message: credentials the proxy asked for, a TLS failure, or the connection failing.
+    """
+    shown, detail = redact_url(proxy), redact_url(detail.strip()) or "no answer"
+    lowered = detail.lower()
+    if any(marker in lowered for marker in _PROXY_AUTH_MARKERS):
+        return (
+            f"the proxy {shown} wants credentials to reach {target} ({detail}): give them in the "
+            "proxy URL, http://user:password@host:port"
+        )
+    if any(marker in lowered for marker in _TLS_MARKERS):
+        return (
+            f"TLS failed reaching {target} through the proxy {shown} ({detail}): a proxy that "
+            "re-signs TLS needs its CA in the CA bundle (EXACTDOCS_CA_BUNDLE or SSL_CERT_FILE)"
+        )
+    if any(marker in lowered for marker in _PROXY_REFUSED_MARKERS):
+        return f"the proxy {shown} refused the connection to {target} ({detail})"
+    return f"could not reach {target} through the proxy {shown} ({detail})"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -162,6 +195,17 @@ class OutboundNetwork:
         if not name or _always_direct(name):
             return True
         return any(_matches(entry, name, port) for entry in self.no_proxy)
+
+    def tls_context(self) -> ssl.SSLContext | None:
+        """A TLS context that trusts exactly the CA bundle's certificates.
+
+        Returns:
+            The context (verification on, host names checked), or ``None`` when no bundle is
+            configured: the client keeps its own default trust. Verification is never off.
+        """
+        if self.ca_bundle is None:
+            return None
+        return ssl.create_default_context(cafile=self.ca_bundle)
 
     def via(self, url: str) -> str:
         """Say how a URL is reached, for a log line or an error.

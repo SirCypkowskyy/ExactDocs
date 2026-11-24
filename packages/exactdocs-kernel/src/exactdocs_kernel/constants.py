@@ -120,3 +120,14 @@ _URL_USERINFO: Final[re.Pattern[str]] = re.compile(
 """The credentials of a URL inside any text: ``scheme://user:password@``."""
 _MIN_SECRET: Final[int] = 3
 """Shortest proxy password ``redact`` replaces on its own (inside its URL, any length is)."""
+_PROXY_AUTH_MARKERS: Final[tuple[str, ...]] = ("407", "proxy authentication required")
+"""How httpx, requests and git (curl) say the proxy wants credentials."""
+_TLS_MARKERS: Final[tuple[str, ...]] = ("certificate", "ssl", "tls")
+"""How they say a TLS handshake failed (an unknown CA, a name mismatch)."""
+_PROXY_REFUSED_MARKERS: Final[tuple[str, ...]] = (
+    "403",
+    "connect tunnel failed",
+    "proxy connect aborted",
+    "from proxy after connect",
+)
+"""How they say the proxy refused the tunnel (a host its policy does not allow)."""

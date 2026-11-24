@@ -89,6 +89,7 @@ from exactdocs.bootstrap.library_filters import ListLibrariesByAi
 from exactdocs.bootstrap.library_texts import CatalogLibraryTexts
 from exactdocs.bootstrap.local_models import LocalModels
 from exactdocs.bootstrap.open_access import OpenAccess
+from exactdocs.bootstrap.outbound import describe as describe_outbound
 from exactdocs.bootstrap.repo_guidance import SetRetrievalThenReprocess
 from exactdocs.bootstrap.search_engine import PostgresSearchChoice
 from exactdocs.bootstrap.secret_box import FernetSecretBox, derived_key, read_key_file
@@ -211,7 +212,7 @@ from exactdocs.retrieval.ports.driven import (
 )
 from exactdocs.retrieval.ports.driving import SaveProvider, SetLibraryRetrieval
 from exactdocs.retrieval.use_cases import PriceBook
-from exactdocs_kernel import Clock, DomainError, SystemClock
+from exactdocs_kernel import Clock, DomainError, OutboundNetwork, SystemClock
 
 logger = logging.getLogger(__name__)
 
@@ -384,6 +385,36 @@ async def _warm_ai(retrieval: RetrievalModule, local: LocalModels, local_roles: 
             )
 
 
+def outbound_network(settings: Settings) -> OutboundNetwork:
+    """Resolve the outbound proxy, NO_PROXY and CA bundle every client is given (#538).
+
+    Args:
+        settings: The runtime configuration (``EXACTDOCS_HTTPS_PROXY``...) over the standard
+            variables.
+
+    Returns:
+        The settings.
+
+    Raises:
+        StartupError: A proxy is not a usable URL, or the CA bundle cannot be read.
+    """
+    try:
+        return settings.outbound()
+    except ValueError as error:
+        raise StartupError(str(error)) from None
+
+
+def _log_outbound(settings: Settings) -> None:
+    """Say at start how outbound connections leave, when a proxy or a CA bundle is configured.
+
+    Args:
+        settings: The runtime configuration.
+    """
+    network = outbound_network(settings)
+    if network.proxied or network.ca_bundle is not None:
+        logger.info("Outbound connections (#538): %s", describe_outbound(network))
+
+
 def _secret_box(settings: Settings, purpose: bytes) -> FernetSecretBox:
     """Build the secret box of one purpose from ``EXACTDOCS_SECRET_KEY`` or the key file.
 
@@ -433,7 +464,7 @@ def _identity(settings: Settings, engine: AsyncEngine, stand_ins: SignInStandIns
     """
     clock = stand_ins.clock or SystemClock()
     wanted = settings.auth.providers or settings.auth.cloudflare_access is not None
-    client = sign_in_client(stand_ins.transport) if wanted else None
+    client = sign_in_client(stand_ins.transport, outbound_network(settings)) if wanted else None
     providers, policies = sign_in_providers(settings, client, clock) if client else ({}, {})
     access = cloudflare_access(settings, client, clock) if client else None
     creation = settings.auth.library_creation
@@ -715,7 +746,15 @@ def _build_read_side(
         thinking_levels=SqliteRoleThinkingLevels(engine=engine),
         instance_roles=ai.roles,
         models=model_factory
-        or AiModels(remote=PydanticAiModels(keys=ai.keys, box=ai_box), local=local),
+        or AiModels(
+            remote=PydanticAiModels(
+                keys=ai.keys,
+                box=ai_box,
+                network=outbound_network(settings),
+                use_instance_proxy=settings.ai.use_instance_proxy,
+            ),
+            local=local,
+        ),
         secret_box=ai_box,
         instance_mode=settings.ai.mode,
         rerank_limits=_rerank_limits(settings),
@@ -790,7 +829,9 @@ def _system_git(settings: Settings, engine: AsyncEngine) -> tuple[GitCli | Missi
     try:
         seed_known_hosts(settings.data_dir / KNOWN_HOSTS_FILE)
         git: GitCli | MissingGit = GitCli.locate(
-            work_root=work_root, known_hosts=settings.data_dir / KNOWN_HOSTS_FILE
+            work_root=work_root,
+            known_hosts=settings.data_dir / KNOWN_HOSTS_FILE,
+            network=outbound_network(settings),  # git's proxy, NO_PROXY and CA bundle (#538)
         )
     except GitNotInstalledError as exc:
         logger.warning("%s", exc)
@@ -1112,6 +1153,7 @@ class Container:
         Returns:
             The container, not running yet.
         """
+        outbound_network(settings)  # an unusable proxy or CA bundle stops the start here
         engine = open_database(settings)  # creates the data dir first (or says why not)
         _require_shared_key(settings, engine)
         work_owner = None
@@ -1416,6 +1458,7 @@ class Container:
             message = "this container is already running; run it once (or through its app)"
             raise RuntimeError(message)
         try:
+            _log_outbound(self.settings)
             await migrate(self.engine)
             await warn_unless_session(self.engine)  # a transaction-mode pooler (#279)
             if self.search_choice is not None:

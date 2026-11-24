@@ -20,6 +20,7 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from pathlib import Path
+from typing import Any
 
 from qdrant_client import AsyncQdrantClient, models
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
@@ -63,6 +64,7 @@ from exactdocs.retrieval.models import (
     VectorMetric,
     identifier_tokens,
 )
+from exactdocs_kernel import OutboundNetwork
 
 type Connect = Callable[[], AsyncQdrantClient]
 """Makes a new client; called by each ``open()`` (a client is bound to the event loop it ran in)."""
@@ -791,17 +793,22 @@ def _api_key(options: Mapping[str, object]) -> str | None:
     return (str(key).strip() or None) if key else None
 
 
-def vector_backend(options: Mapping[str, object]) -> QdrantVectorBackend:
+def vector_backend(
+    options: Mapping[str, object], *, network: OutboundNetwork | None = None
+) -> QdrantVectorBackend:
     """Build the Qdrant vector backend from its ``[index_backends.qdrant]`` options.
 
     Options: ``url`` (required: ``http(s)://host[:port]``, port 6333 when none), ``collection``
     (the collections' prefix, ``exactdocs``), ``api_key`` (from the environment only) or
     ``api_key_file``, ``timeout`` (seconds, 10), ``hybrid`` (native hybrid search, off),
     ``on_disk`` (dense vectors memory-mapped from disk, off) and ``quantization`` (``none`` or
-    ``scalar``: int8 copies kept in memory).
+    ``scalar``: int8 copies kept in memory). The server is reached through the outbound proxy
+    unless ``NO_PROXY`` lists it, trusting the CA bundle when one is set (#538); the client
+    reads no proxy variable itself.
 
     Args:
         options: The options.
+        network: The outbound proxy, NO_PROXY and CA bundle; none: direct, the system's trust.
 
     Returns:
         The backend, not connected yet; with ``NativeHybrid`` when ``hybrid`` is on.
@@ -835,6 +842,10 @@ def vector_backend(options: Mapping[str, object]) -> QdrantVectorBackend:
         message = f"quantization must be none or scalar (got {quantization!r})"
         raise ValueError(message)
     api_key = _api_key(options)
+    network = network or OutboundNetwork()
+    http: dict[str, Any] = {"trust_env": False, "proxy": network.proxy_for(url)}
+    if (trust := network.tls_context()) is not None:
+        http["verify"] = trust
 
     def connect() -> AsyncQdrantClient:
         """Make a client of the configured server.
@@ -843,7 +854,7 @@ def vector_backend(options: Mapping[str, object]) -> QdrantVectorBackend:
             The client (no request sent yet).
         """
         return AsyncQdrantClient(
-            url=url, api_key=api_key, timeout=timeout, check_compatibility=False
+            url=url, api_key=api_key, timeout=timeout, check_compatibility=False, **http
         )
 
     kind = QdrantHybridVectorBackend if _switch(options, "hybrid") else QdrantVectorBackend
