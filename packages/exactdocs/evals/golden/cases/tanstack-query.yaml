@@ -29,8 +29,8 @@ cases:
   expected_output:
     hits:
     - {version: v4.36.1, article: docs/react/reference/useQuery.md, heading_path: []}
-    - {version: v4.36.1, article: docs/react/guides/important-defaults.md, heading_path: []}
-    - {version: v4.36.1, article: docs/react/guides/caching.md, heading_path: [Basic Example]}
+    - {version: v4.36.1, article: docs/react/guides/important-defaults.md, heading_path: [], alternative: true}
+    - {version: v4.36.1, article: docs/react/guides/caching.md, heading_path: [Basic Example], alternative: true}
     reference: '`cacheTime` defaults to 5 minutes (`5 * 60 * 1000`), or `Infinity` during SSR; it is
       how long unused or inactive cache data stays in memory.'
     facts:
@@ -64,8 +64,8 @@ cases:
   expected_output:
     hits:
     - {version: v5.90.3, article: docs/framework/react/guides/important-defaults.md, heading_path: []}
-    - {version: v5.90.3, article: docs/framework/react/guides/window-focus-refetching.md, heading_path: []}
-    - {version: v5.90.3, article: docs/framework/react/reference/useQuery.md, heading_path: []}
+    - {version: v5.90.3, article: docs/framework/react/guides/window-focus-refetching.md, heading_path: [], alternative: true}
+    - {version: v5.90.3, article: docs/framework/react/reference/useQuery.md, heading_path: [], alternative: true}
     reference: Cached data is stale by default, and stale queries refetch in the background when the
       window is refocused; set `staleTime` (or `refetchOnWindowFocus`) to change it.
     facts:
@@ -151,7 +151,7 @@ cases:
   expected_output:
     hits:
     - {version: v4.36.1, article: docs/react/guides/paginated-queries.md, heading_path: [Better Paginated Queries with keepPreviousData]}
-    - {version: v4.36.1, article: docs/react/reference/useQuery.md, heading_path: []}
+    - {version: v4.36.1, article: docs/react/reference/useQuery.md, heading_path: [], alternative: true}
     reference: >-
       Put the page in the query key and set `keepPreviousData: true`: the data of the last
       successful fetch stays available while the new page is requested, is swapped when it
@@ -245,7 +245,7 @@ cases:
   expected_output:
     hits:
     - {version: v4.36.1, article: docs/react/guides/caching.md, heading_path: [Basic Example]}
-    - {version: v4.36.1, article: docs/react/guides/important-defaults.md, heading_path: []}
+    - {version: v4.36.1, article: docs/react/guides/important-defaults.md, heading_path: [], alternative: true}
     reference: >-
       With no active instances a cache timeout of `cacheTime` (5 minutes by default) starts. If the
       query mounts again before it ends, the cached data is returned at once while it refetches in
@@ -819,7 +819,7 @@ cases:
   expected_output:
     hits:
     - {version: v5.90.3, article: docs/framework/react/guides/mutations.md, heading_path: [Mutation Scopes]}
-    - {version: v5.90.3, article: docs/framework/react/reference/useMutation.md, heading_path: []}
+    - {version: v5.90.3, article: docs/framework/react/reference/useMutation.md, heading_path: [], alternative: true}
     reference: >-
       Mutations run in parallel by default. Give them a `scope: { id: 'todo' }`: mutations with the
       same `scope.id` run serially; one triggered while another is in progress starts with
@@ -911,7 +911,7 @@ cases:
   expected_output:
     hits:
     - {version: v5.90.3, article: docs/framework/react/guides/render-optimizations.md, heading_path: [structural sharing, referential identity]}
-    - {version: v5.90.3, article: docs/eslint/no-unstable-deps.md, heading_path: []}
+    - {version: v5.90.3, article: docs/eslint/no-unstable-deps.md, heading_path: [], alternative: true}
     reference: >-
       Better not: the top-level object from useQuery (and useInfiniteQuery, useMutation, and the
       array from useQueries) is a new reference on every render. The `data` property is kept as
@@ -1033,7 +1033,7 @@ cases:
     hits:
     - {version: v5.90.3, article: docs/framework/react/guides/suspense.md, heading_path: [throwOnError default]}
     - {version: v5.90.3, article: docs/framework/react/reference/QueryErrorResetBoundary.md, heading_path: []}
-    - {version: v5.90.3, article: docs/framework/react/guides/suspense.md, heading_path: [Resetting Error Boundaries]}
+    - {version: v5.90.3, article: docs/framework/react/guides/suspense.md, heading_path: [Resetting Error Boundaries], alternative: true}
     reference: >-
       By default only errors without cached data are thrown (`throwOnError: (error, query) =>
       typeof query.state.data === 'undefined'`), and useSuspenseQuery does not let you change it, so

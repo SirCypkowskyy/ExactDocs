@@ -12,6 +12,12 @@ Feature: The retrieval benchmark scores any documentation tool's text results
     When the results are scored
     Then the first result whose text holds S's text counts as a hit at its rank
 
+  Scenario: A text result that holds an alternative section is a hit
+    Given a case whose answer is in section S or, equally, in section T of version V
+    And a tool returned text results for the question that hold T and not S
+    When the results are scored
+    Then the first result whose text holds T counts as a hit at its rank
+
   Scenario: Text that exists only in another version is a wrong-version result
     Given a result whose text matches a section of another pinned version and no section of V
     When the results are scored

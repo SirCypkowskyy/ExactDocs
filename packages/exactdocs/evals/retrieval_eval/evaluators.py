@@ -1,6 +1,6 @@
 """Per-case evaluators: where the expected section ranked, the version of every hit, the cost."""
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Final
 
@@ -18,7 +18,7 @@ version and served nothing of another (#99)."""
 AGENTIC: Final[str] = "agentic"
 """The mode whose runs leave a trace of reads."""
 RECIPROCAL_RANK: Final[str] = "reciprocal_rank"
-"""1 / the rank of the expected section (0 when it is not returned)."""
+"""1 / the rank of the first hit on an expected section (0 when none is returned)."""
 TOKENS: Final[str] = "tokens"
 """The score holding the model tokens a case cost."""
 USD: Final[str] = "usd"
@@ -96,12 +96,35 @@ def rank_of(expected: Hit, answer: Answer, matches: SectionMatch = same_section)
     return None
 
 
+def first_rank(
+    expected: Sequence[Hit], answer: Answer, matches: SectionMatch = same_section
+) -> int | None:
+    """Return the 1-based rank of the first hit on any expected section, as recall counts it.
+
+    Any section the case lists counts, its alternatives and every part of a multi-part answer
+    alike (#501): a hit on one of them is a hit.
+
+    Args:
+        expected: The sections the case lists.
+        answer: What the mode returned.
+        matches: When a hit counts as an expected section (exact by default).
+
+    Returns:
+        The rank, or ``None`` when no hit answers any of them.
+    """
+    for rank, hit in enumerate(answer.hits, start=1):
+        if any(matches(e, hit) for e in expected):
+            return rank
+    return None
+
+
 @dataclass(repr=False)
 class VersionAndRank(Evaluator[Question, Answer, CaseInfo]):
     """Asserts the version of every hit; scores recall@1/5/10 and the reciprocal rank.
 
-    Recall and rank are scored only for a case whose version has an answer; the version is
-    asserted for every case, so a version with no answer must still return nothing of another.
+    Recall and rank are scored only for a case whose version has an answer, at the first hit on
+    any section it lists (``first_rank``); the version is asserted for every case, so a version
+    with no answer must still return nothing of another.
     """
 
     matches: SectionMatch = same_section
@@ -128,7 +151,7 @@ class VersionAndRank(Evaluator[Question, Answer, CaseInfo]):
         }
         expected = ctx.expected_output.hits if ctx.expected_output else []
         if expected:
-            rank = rank_of(expected[0], ctx.output, self.matches)
+            rank = first_rank(expected, ctx.output, self.matches)
             for k in RECALL_AT:
                 results[recall_key(k)] = 1.0 if rank is not None and rank <= k else 0.0
             results[RECIPROCAL_RANK] = 1.0 / rank if rank else 0.0
