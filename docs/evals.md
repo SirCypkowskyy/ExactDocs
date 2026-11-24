@@ -904,27 +904,38 @@ The report (`text-scorer.json` and `text-scorer.md`, in `reports/evals/` or `--o
   the result at the earlier rank is.
 
 **The recorded calibration** is `packages/exactdocs/evals/results/text-scorer.json` and
-`text-scorer.md`, on the whole golden set (321 cases, 384 decisions), about two minutes per
-chunking on 4 CPUs:
+`text-scorer.md`, on the whole reviewed golden set (321 cases, 404 decisions), about two minutes
+per chunking on 4 CPUs:
 
-| chunking | same rank | hit / miss | rendered as plain text | counting held headings | BM25 recall@5, text (chunk ID) |
-|---|---|---|---|---|---|
-| `default` | **99.5%** | 99.7% | 99.5% | 99.7% | 81.7% (81.7%) |
-| `h6` | 99.7% | 100.0% | 99.7% | 99.7% | 79.8% (79.8%) |
-| `h2` | 93.2% | 93.5% | 93.0% | 99.7% | 82.8% (76.0%) |
-| `merge-400` | 90.9% | 91.4% | 90.9% | 99.5% | 81.7% (74.2%) |
+| chunking | same rank | hit / miss | rendered as plain text | BM25 recall@5, text (chunk ID) |
+|---|---|---|---|---|
+| `default` | **99.8%** | 100.0% | 99.8% | 81.7% (81.7%) |
+| `h6` | 99.8% | 100.0% | 99.8% | 79.8% (79.8%) |
+| `h2` | 99.8% | 100.0% | 99.5% | 82.8% (82.8%) |
+| `merge-400` | 99.5% | 99.8% | 99.5% | 81.7% (81.7%) |
 
-The criterion is met at `default`. Both scorings take the same wrong-version decision on every
-case at every chunking (BM25 returns nothing of another version, and no result's text is only in
-another version). At `default`, 72% of BM25's results are version-neutral; its ten results hold
-3,464 tokens of context on average, 736 of them up to the first hit; they hold 87% of the cases'
-facts, where the expected sections' own text holds 80% and another question's results 25%.
+The criterion is met at `default`, and the agreement is above it at every chunking. Both
+scorings take the same wrong-version decision on every case at every chunking (BM25 returns
+nothing of another version, and no result's text is only in another version). At `default`, 72%
+of BM25's results are version-neutral; its ten results hold 3,464 tokens of context on average,
+736 of them up to the first hit; they hold 87% of the cases' facts, where the expected sections'
+own text holds 81% and another question's results 25%.
 
 The threshold is 0.8 because of the sweep: below it, results of other articles that share part of
-a section's text count as hits (at `default`, 98.4% agreement at 0.7, 97.1% at 0.5); above it the
-results as returned agree as well, but rendered ones less (99.2% at 0.9, 89.8% at 1), since a
+a section's text count as hits (at `default`, 98.8% agreement at 0.7, 97.5% at 0.5); above it the
+results as returned agree as well, but rendered ones less (99.5% at 0.9, 90.3% at 1), since a
 rendering loses a little text. Shingles of 5 words are the usual size for near-duplicate text; in
 trial runs, 3 to 9 words moved the agreement at 0.8 by less than a point.
+
+Until #503, chunk-ID scoring counted a coarser chunk only when it was named after a parent of the
+expected section. The calibration showed what that missed: at `h2` and `merge-400` the two
+scorings agreed on only 93.2% and 90.9% of the decisions, and in 25 of `h2`'s 26 disagreements and
+33 of `merge-400`'s 35 the returned chunk held the expected section next to another one (a section
+with its subsections; small sections merged with the next), as did one at `default`: Starlette's
+1.0.0rc1 release notes are longer than 4,000 characters, so they are cut again at their `####`
+headings, and the chunk `1.0.0rc1 > Removed` also holds `Fixed`. Chunk-ID scoring now reads what
+each chunk holds, and BM25's recall@5 at `h2` and `merge-400` went from 76.0% and 74.2% to the
+82.8% and 81.7% the text gives.
 
 What still disagrees, and why:
 
@@ -932,30 +943,21 @@ What still disagrees, and why:
   `useSuspenseQuery` in `guides/suspense.md` and again, nearly word for word, in
   `guides/advanced-ssr.md`. BM25 returns the second at rank 1 and the expected one at rank 7; the
   text scorer finds the expected section's text at rank 1. Text alone cannot say which article a
-  result came from; a tool that returns it does answer the question.
-- **A section held under another heading path.** At `default`, Starlette's 1.0.0rc1 release notes
-  are longer than 4,000 characters, so they are cut again at their `####` headings and the chunk
-  `1.0.0rc1 > Removed` also holds `Added`, `Fixed` and `Changed`. The question about Jinja2
-  autoescaping expects `Fixed`: the text scorer finds it in that chunk at rank 8, the nested rule
-  does not, since it counts a chunk for its own section, the sections inside it and its parents,
-  not for a sibling it holds. `h2` and `merge-400` put sibling sections into one chunk far more
-  often (a section with all its subsections; small sections merged with the next), which is 25 of
-  `h2`'s 26 disagreements and 33 of `merge-400`'s 35: with the rule that counts held headings they
-  agree on 99.7% and 99.5%. The text scorer is right there, and the nested rule undercounts those
-  chunkings' hits: scored from text, BM25's recall@5 is 82.8% at `h2` and 81.7% at `merge-400`,
-  not 76.0% and 74.2%.
-- **A part of a section that runs past it.** At `merge-400`, one chunk named after a subsection
-  of the expected section was merged with the start of the next section: the nested rule counts
-  it as part of the expected section, the text scorer does not, since less than 80% of its text
-  is.
+  result came from; a tool that returns it does answer the question. This is the one
+  disagreement at `default`, `h6` and `h2`.
+- **A part of a section that runs past it.** At `merge-400`, Electron's chunk
+  `Signing & notarizing macOS builds > Signing Mac App Store applications`, a subsection of the
+  expected section, was merged with the start of the next section: chunk-ID scoring counts it as
+  part of the expected section, the text scorer does not, since less than 80% of its text is.
 
 ### The JSON report
 
-`text-scorer.json` (`schema_version` 1) records `golden` (the golden set's fingerprint), `cases`,
+`text-scorer.json` (`schema_version` 2) records `golden` (the golden set's fingerprint), `cases`,
 `projects`, `corpus` (every pinned version's commit), `environment` (as the retrieval benchmark
 records it), `scorer` (`shingle_words`, `threshold`, `fact_share`, `min_agreement`,
-`gated_chunking`) and, per chunking, in `calibrations`: `agreement`, `held_agreement` and
-`rendered_agreement` (each `decisions`, `agreed`, `rate`, `hit_miss_rate`),
+`gated_chunking`) and, per chunking, in `calibrations`: `agreement` and `rendered_agreement`
+(each `decisions`, `agreed`, `rate`, `hit_miss_rate`; version 1 also had `held_agreement`, the
+agreement with a rule that counted held headings, which chunk-ID scoring does itself since #503),
 `wrong_version_agreement`, `sweep` (`threshold`, `rate`, `rendered_rate`), `disagreements`
 (`case`, `section`, `chunk_id_rank`, `text_rank`, `why`), `chunk_id` (the retrieval benchmark's
 metrics), `text` (the same scored from text, with the metrics only text gives),

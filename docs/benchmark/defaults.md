@@ -9,8 +9,8 @@ is significant on the same cases (McNemar's test, p under 5%;
 <!-- bench:defaults -->
 | budget | configuration | chunking | USD / 1000 questions | why |
 |---|---|---|---|---|
-| none | `bm25` | `default` | $0.0000 | best none configuration: `bm25` at `default`: recall@5 81.7%, nDCG@10 0.705, MRR 0.651, wrong-version rate 0, p95 58 ms, $0.0000 per 1000 questions |
-| local | `bm25` | `default` | $0.0000 | best local configuration: `hybrid:bge-small-en-v1.5` at `h6`: recall@5 84.6%, nDCG@10 0.738, MRR 0.676, wrong-version rate 0, p95 109 ms, $0.0000 per 1000 questions; +3.0 points of recall@5 over `bm25`, under the 5-point margin (McNemar mid-p 0.108): the cheaper `bm25` at `default` stays the default |
+| none | `bm25` | `h2` | $0.0000 | best none configuration: `bm25` at `h2`: recall@5 82.8%, nDCG@10 0.714, MRR 0.677, wrong-version rate 0, p95 28 ms, $0.0000 per 1000 questions |
+| local | `bm25` | `h2` | $0.0000 | best local configuration: `hybrid:bge-small-en-v1.5` at `h6`: recall@5 84.6%, nDCG@10 0.738, MRR 0.676, wrong-version rate 0, p95 109 ms, $0.0000 per 1000 questions; +1.9 points of recall@5 over `bm25`, under the 5-point margin (McNemar mid-p 0.405): the cheaper `bm25` at `h2` stays the default |
 | hosted | not measured yet: needs a real-providers run | - | - | - |
 <!-- /bench -->
 
