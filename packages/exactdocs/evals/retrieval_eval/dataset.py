@@ -42,6 +42,9 @@ class Hit(_Model):
     """The section's headings, from the H1."""
     commit_sha: str | None = None
     """The commit the result was read from, when the mode says."""
+    chunk_id: str | None = None
+    """The chunk the result was read from, when the mode says: the golden benchmarks look up
+    the headings it holds by it (``golden_run.held_match``)."""
 
 
 class TracedRead(_Model):

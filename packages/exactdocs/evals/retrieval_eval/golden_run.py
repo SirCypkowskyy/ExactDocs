@@ -7,7 +7,7 @@ and ``run_golden`` scores the whole set with the suite's evaluators and ``evalua
 ingestion benchmark (#346) runs BM25 this way; the retrieval benchmark (#347) can run any mode.
 """
 
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Collection, Mapping
 from dataclasses import dataclass
 
 from pydantic_evals import Dataset
@@ -25,8 +25,9 @@ from retrieval_eval.golden import Corpus
 from retrieval_eval.retrievers import RecordedReads, Retriever, SearchDocsRetriever
 from retrieval_eval.suite import MODES, EvalMode, ModeOutcome, RetrievalUnderTest, evaluate_mode
 
-type HeldHeadings = Callable[[Hit], frozenset[tuple[str, ...]]]
-"""The heading paths the chunk a hit came from holds (its own and every merged heading)."""
+type HeldHeadings = Mapping[str, Collection[tuple[str, ...]]]
+"""The heading path of every heading each stored chunk holds, by chunk ID: the one it is named
+after and every one a cut or a merge put in it with it, as the chunker recorded them."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -91,16 +92,20 @@ def golden_retriever(
     )
 
 
-def nested_match(held: HeldHeadings) -> SectionMatch:
-    """Build the match rule that holds whatever depth a configuration cuts at.
+def held_match(held: HeldHeadings) -> SectionMatch:
+    """Build the match rule that holds whatever a chunking configuration puts in a chunk.
 
-    A hit of the expected version and article answers the expected section when its heading path
-    is the expected one; or the expected path is a non-empty prefix of it (a finer cut: the hit is
-    part of the expected section); or its path is a prefix of the expected one and its chunk holds
-    the expected heading (a coarser cut merged the section into it).
+    The golden set names its sections as ``h6`` cuts them: one heading's own text. A hit of the
+    expected version and article answers the expected section when its heading path is the
+    expected one (the section, or a part of it split at its blocks); or the expected path is a
+    non-empty prefix of it (a finer cut: the hit is part of the section with its subsections); or
+    its chunk holds the expected heading, as the chunker recorded it (#503): a coarser cut that
+    kept the section inside its parent, a cut at ``max_chars`` that kept it with a sibling, or
+    sections merged by ``min_chars``.
 
     Args:
-        held: The heading paths the chunk of a hit holds.
+        held: The headings each chunk holds, by chunk ID; a hit without a chunk ID, or of a chunk
+            not in it, holds none.
 
     Returns:
         The rule.
@@ -121,7 +126,7 @@ def nested_match(held: HeldHeadings) -> SectionMatch:
         want, got = tuple(expected.heading_path), tuple(hit.heading_path)
         if got == want or (want and got[: len(want)] == want):
             return True
-        return want[: len(got)] == got and want in held(hit)
+        return want in held.get(hit.chunk_id or "", ())
 
     return matches
 

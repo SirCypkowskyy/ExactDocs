@@ -36,8 +36,9 @@ from retrieval_eval.text_match import (
     words,
 )
 
-SCHEMA_VERSION: Final[int] = 1
-"""The JSON report's layout; bumped when a field is renamed or removed."""
+SCHEMA_VERSION: Final[int] = 2
+"""The JSON report's layout; bumped when a field is renamed or removed (2: ``held_agreement``
+went, since chunk-ID scoring counts held headings itself, #503)."""
 FACT_SHARE: Final[float] = 0.75
 """A fact is in the returned text when at least this share of its content words is."""
 MIN_AGREEMENT: Final[float] = 0.98
@@ -446,11 +447,7 @@ class Calibration(_Model):
     threshold: float
     """The text scorer's threshold (``MATCH_THRESHOLD``)."""
     agreement: Agreement
-    """With chunk-ID scoring as the retrieval benchmark scores it (the nested match rule)."""
-    held_agreement: Agreement
-    """With chunk-ID scoring that also counts a chunk holding the section's heading under
-    another heading path (a section merged into a sibling's chunk), which the nested rule does
-    not."""
+    """With chunk-ID scoring as the retrieval benchmark scores it (``golden_run.held_match``)."""
     rendered_agreement: Agreement
     """With chunk-ID scoring, the results rendered as plain text first."""
     wrong_version_agreement: float
@@ -496,27 +493,28 @@ def _shown(hit: Hit) -> str:
     return f"{hit.version} {hit.article} [{' > '.join(hit.heading_path)}]"
 
 
-def _why(ranks: Sequence[int | None], hits: Sequence[Hit]) -> str:
+def _why(expected: Hit, ranks: tuple[int | None, int | None], hits: Sequence[Hit]) -> str:
     """Say why two decisions differ, from the result at the earlier rank.
 
     Args:
-        ranks: The section's chunk-ID rank, text rank and held-heading rank.
+        expected: The expected section.
+        ranks: The section's chunk-ID rank and text rank.
         hits: What ExactDocs returned, best first.
 
     Returns:
         A short reason.
     """
-    by_id, by_text, by_held = ranks
+    by_id, by_text = ranks
     if by_text is not None and (by_id is None or by_text < by_id):
         hit = hits[by_text - 1]
-        if by_held == by_text:
+        if (hit.version, hit.article) != (expected.version, expected.article):
             return (
-                f"the chunk at rank {by_text} holds the section under another heading path "
-                f"({_shown(hit)}), which the nested rule does not count"
+                f"the chunk at rank {by_text} ({_shown(hit)}) holds the section's text, but is "
+                "another article or version"
             )
         return (
-            f"the chunk at rank {by_text} ({_shown(hit)}) holds the section's text, but is "
-            "another article or version"
+            f"the chunk at rank {by_text} ({_shown(hit)}) holds the section's text, but not "
+            "its heading"
         )
     if by_id is not None:
         return (
@@ -535,9 +533,7 @@ class _Tally:
     """What the calibration counts, case by case."""
 
     pairs: list[_Pair] = field(default_factory=list)
-    """Chunk-ID (nested rule) against text."""
-    held_pairs: list[_Pair] = field(default_factory=list)
-    """Chunk-ID counting held headings against text."""
+    """Chunk-ID against text."""
     rendered_pairs: list[_Pair] = field(default_factory=list)
     """Chunk-ID against the text rendered as plain text."""
     sweep: dict[float, tuple[list[bool], list[bool]]] = field(
@@ -559,7 +555,7 @@ def _tally(
     case: GoldenCase,
     found: tuple[Answer, Sequence[str]],
     index: SectionIndex,
-    rules: tuple[SectionMatch, SectionMatch],
+    matches: SectionMatch,
 ) -> None:
     """Score one case both ways and count its decisions.
 
@@ -568,17 +564,14 @@ def _tally(
         case: The case.
         found: What ExactDocs returned for it, and the text of each hit.
         index: The case's project's sections.
-        rules: The chunk-ID rule and the held-heading rule.
+        matches: The chunk-ID rule.
     """
     answer, texts = found
-    matches, held = rules
     expected = case.expected_output.hits if case.expected_output else []
     rendered = [plain_text(t) for t in texts]
     by_ids = [_first(e, answer.hits, matches) for e in expected]
-    by_held = [_first(e, answer.hits, held) for e in expected]
     by_text = first_ranks(expected, index.match_all(texts))
     tally.pairs.extend(zip(by_ids, by_text, strict=True))
-    tally.held_pairs.extend(zip(by_held, by_text, strict=True))
     tally.rendered_pairs.extend(
         zip(by_ids, first_ranks(expected, index.match_all(rendered)), strict=True)
     )
@@ -588,9 +581,9 @@ def _tally(
             section=_shown(e),
             chunk_id_rank=by_id,
             text_rank=by_txt,
-            why=_why((by_id, by_txt, by_hld), answer.hits),
+            why=_why(e, (by_id, by_txt), answer.hits),
         )
-        for e, by_id, by_txt, by_hld in zip(expected, by_ids, by_text, by_held, strict=True)
+        for e, by_id, by_txt in zip(expected, by_ids, by_text, strict=True)
         if by_id != by_txt
     )
     for threshold, (plain, as_rendered) in tally.sweep.items():
@@ -615,7 +608,6 @@ def calibrate(
     indexes: Mapping[str, SectionIndex],
     *,
     matches: SectionMatch,
-    held: SectionMatch,
 ) -> Calibration:
     """Score ExactDocs' own results by chunk ID and by text, and compare the decisions.
 
@@ -625,8 +617,7 @@ def calibrate(
         results: Each case's answer (by its name), with the text of each hit (the chunk's
             content, as ``read_chunk`` returns it).
         indexes: Each project's sections.
-        matches: The benchmark's chunk-ID rule (``golden_run.nested_match``).
-        held: The rule that also counts a chunk holding the section's heading.
+        matches: The benchmark's chunk-ID rule (``golden_run.held_match``).
 
     Returns:
         The calibration.
@@ -634,13 +625,12 @@ def calibrate(
     tally = _Tally()
     for case in cases:
         found = results[case.name or ""]
-        _tally(tally, case, found, indexes[case.inputs.project or ""], (matches, held))
+        _tally(tally, case, found, indexes[case.inputs.project or ""], matches)
     ceiling, control = _facts_bounds(cases, results, indexes)
     return Calibration(
         chunking=chunking,
         threshold=next((i.threshold for i in indexes.values()), MATCH_THRESHOLD),
         agreement=agreement(tally.pairs),
-        held_agreement=agreement(tally.held_pairs),
         rendered_agreement=agreement(tally.rendered_pairs),
         wrong_version_agreement=round(tally.wrong_agreed / len(cases), _DIGITS) if cases else 1.0,
         sweep=[
@@ -832,16 +822,16 @@ def markdown(report: TextScorerReport) -> str:
         "",
         (
             "| chunking | decisions | same rank | hit / miss | rendered as plain text "
-            "| counting held headings | wrong version (cases) | criterion |"
+            "| wrong version (cases) | criterion |"
         ),
-        "|---|---|---|---|---|---|---|---|",
+        "|---|---|---|---|---|---|---|",
     ]
     for c in report.calibrations:
         verdict = ("met" if c.passed else "NOT MET") if c.chunking == s["gated_chunking"] else "-"
         lines.append(
             f"| `{c.chunking}` | {c.agreement.decisions} | {_pct(c.agreement.rate)} "
             f"| {_pct(c.agreement.hit_miss_rate)} | {_pct(c.rendered_agreement.rate)} "
-            f"| {_pct(c.held_agreement.rate)} | {_pct(c.wrong_version_agreement)} | {verdict} |"
+            f"| {_pct(c.wrong_version_agreement)} | {verdict} |"
         )
     lines.extend(_sweep(report.calibrations))
     lines.extend(

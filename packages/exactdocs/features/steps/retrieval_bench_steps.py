@@ -65,6 +65,65 @@ def step_run(context: Context) -> None:
     context.ran = [r for r in context.report.results if r.metrics is not None]
 
 
+# ---------------------------------------------------------------- held sections (#503)
+
+# The guide's and "Configure"'s texts are long enough to be chunks of their own; "Install" is
+# under 400 characters, so merge-400 merges the sections after it into its chunk, which keeps
+# the heading path Guide > Install and holds "Upgrade".
+SIBLINGS = (
+    "# Guide\n\n" + "The demo package reads its settings from one file. " * 10 + "\n\n"
+    "## Install\n\nRun pip to install the demo package.\n\n"
+    "## Upgrade\n\nPass --upgrade to pip to move to the latest release.\n\n"
+    "## Configure\n\n" + "Set the timeout option in the settings file. " * 10 + "\n"
+)
+
+
+@given(
+    "a golden case whose expected section a chunking merges into the chunk of the section before it"
+)
+def step_held_corpus(context: Context) -> None:
+    tmp = Path(tempfile.mkdtemp(prefix="exactdocs-retrieval-bench-"))
+    context.add_cleanup(shutil.rmtree, tmp, ignore_errors=True)
+    upgrade = {"version": "v1", "article": "docs/guide.md", "heading_path": ["Guide", "Upgrade"]}
+    case = {
+        "name": "demo v1: How do I upgrade the demo package?",
+        "inputs": {"query": "upgrade latest release", "version": "v1", "project": "demo"},
+        "metadata": {"kind": "how-to"},
+        "expected_output": {"hits": [upgrade], "reference": "--upgrade.", "facts": ["upgrade"]},
+    }
+    tiny_corpus(tmp, guide=SIBLINGS, cases=[case])
+    context.bench_dir = tmp
+    context.chunking = next(c for c in CONFIGURATIONS if c.name == "merge-400")
+
+
+@when("the retrieval benchmark runs BM25 at that chunking")
+def step_run_bm25(context: Context) -> None:
+    tmp = context.bench_dir
+    corpus = load_corpus(tmp / "corpus.yaml")
+    repos = {p.id: fetch(p, tmp / "cache", offline=False) for p in corpus.projects}
+    report = asyncio.run(
+        bench(
+            corpus.projects,
+            repos,
+            load_golden(tmp / "cases"),
+            [context.chunking],
+            matrix([]),
+            hosted=context.hosted,
+            models_dir=tmp / "models",
+            only=["bm25"],
+        )
+    )
+    (context.result,) = report.results
+
+
+@then("the case counts as a hit at the rank of that chunk")
+def step_held_hit(context: Context) -> None:
+    (row,) = context.result.rows
+    assert row.rank == 1, row  # the chunk Guide > Install, which holds Upgrade
+    assert context.result.metrics.recall_at_1 == 1
+    assert row.section_ranks == (1,)
+
+
 @then(
     "each configuration that ran reports recall@1/5/10, MRR, nDCG@10, wrong-version rate, "
     "p50/p95 latency and tokens and USD per question"

@@ -22,7 +22,7 @@ from exactdocs.bootstrap.container import Container
 from exactdocs.retrieval.dtos import ReadChunkQuery, SearchDocsQuery
 from exactdocs.retrieval.models import RetrievalMode
 from retrieval_eval.dataset import Answer, Hit, RetrievalDataset, fingerprint
-from retrieval_eval.evaluators import RECALL_AT, SectionMatch
+from retrieval_eval.evaluators import RECALL_AT
 from retrieval_eval.fixture import model_free_container
 from retrieval_eval.golden import (
     CASES_DIR,
@@ -34,8 +34,8 @@ from retrieval_eval.golden import (
     load_golden,
 )
 from retrieval_eval.golden_cli import import_corpus, selected
-from retrieval_eval.golden_run import nested_match
-from retrieval_eval.ingestion_cli import CONFIGURATIONS, Configuration, stored_chunks
+from retrieval_eval.golden_run import held_match
+from retrieval_eval.ingestion_cli import CONFIGURATIONS, Configuration, held_headings
 from retrieval_eval.retrieval_bench_cli import environment
 from retrieval_eval.text_bench import (
     Calibration,
@@ -54,73 +54,8 @@ RESULTS_DIR: Final[Path] = Path(__file__).parents[1] / "results"
 REPORT_NAME: Final[str] = "text-scorer"
 """The report's file name, without the extension."""
 
-type _Held = dict[tuple[str, str, tuple[str, ...]], set[tuple[str, ...]]]
-"""The heading paths each ``(commit, article, heading path)``'s chunks hold."""
 type Found = dict[str, tuple[Answer, list[str]]]
 """Each case's answer (by its name), with the text of each hit."""
-
-
-async def held_headings(container: Container, projects: Sequence[Project]) -> _Held:
-    """Read which headings each stored chunk holds, for the chunk-ID match rules.
-
-    Args:
-        container: The container, running, with the corpus imported.
-        projects: The projects.
-
-    Returns:
-        The heading paths by chunk.
-    """
-    held: _Held = {}
-    for project in projects:
-        for pinned in project.versions:
-            stored = await stored_chunks(container.engine, project.library, pinned.name)
-            for path, cut in stored.items():
-                for chunk in cut:
-                    key = (pinned.commit, path, chunk.heading_path)
-                    held.setdefault(key, set()).update((chunk.heading_path, *chunk.headings))
-    return held
-
-
-def chunk_id_rules(held: _Held) -> tuple[SectionMatch, SectionMatch]:
-    """The chunk-ID match rules: the benchmark's nested rule, and one that counts held headings.
-
-    Args:
-        held: The heading paths each chunk holds.
-
-    Returns:
-        ``golden_run.nested_match`` over the chunks, and the same rule that also counts a chunk
-        of the section's version and article that holds its heading under another heading path.
-    """
-
-    def holds(hit: Hit) -> frozenset[tuple[str, ...]]:
-        """The heading paths a hit's chunk holds.
-
-        Args:
-            hit: A returned hit.
-
-        Returns:
-            Every heading path of the chunk with its commit, article and heading path.
-        """
-        return frozenset(held.get((hit.commit_sha or "", hit.article, tuple(hit.heading_path)), ()))
-
-    nested = nested_match(holds)
-
-    def holding(expected: Hit, hit: Hit) -> bool:
-        """Tell whether a hit answers a section by the nested rule, or holds its heading.
-
-        Args:
-            expected: The expected section.
-            hit: A returned hit.
-
-        Returns:
-            True when it does.
-        """
-        if nested(expected, hit):
-            return True
-        same = (hit.version, hit.article) == (expected.version, expected.article)
-        return same and tuple(expected.heading_path) in holds(hit)
-
-    return nested, holding
 
 
 async def bm25_results(
@@ -166,6 +101,7 @@ async def bm25_results(
                     article=chunk.article_path,
                     heading_path=list(chunk.heading_path),
                     commit_sha=chunk.commit_sha,
+                    chunk_id=chunk.chunk_id,
                 )
             )
             texts.append(chunk.content)
@@ -207,9 +143,9 @@ async def run_chunking(
             names = ", ".join(f"{r.project} {r.version}" for r in wrong)
             message = f"not imported at the pinned commit: {names}"
             raise RuntimeError(message)
-        matches, held = chunk_id_rules(await held_headings(container, projects))
+        matches = held_match(await held_headings(container.engine, projects))
         found = await bm25_results(container, projects, dataset)
-    return calibrate(chunking.name, dataset.cases, found, indexes, matches=matches, held=held)
+    return calibrate(chunking.name, dataset.cases, found, indexes, matches=matches)
 
 
 async def bench(
