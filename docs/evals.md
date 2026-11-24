@@ -340,6 +340,11 @@ Every case file must load as the dataset's models, and every case must:
   cuts at every heading) cut it into. So a case can only name a section ExactDocs produces, and moving the pins (or changing how
   articles are cut) shows every case that no longer holds.
 
+It also checks the review's verdicts, `review.yaml` beside the case files
+([Reviewing the golden set](#reviewing-the-golden-set)): a `correct` or `fixed` case is in the set
+and a `removed` one is not, no case is reviewed twice, a wrong case names its problems and says
+why, and every kind of every project has the sample's number of entries.
+
 It prints every broken case (`<case>: <problem>`, with the closest existing sections when only
 the heading path is wrong) and exits with 1. `uv run pytest` checks the rules on the real files
 in CI; the section check needs the cache, so it runs in pytest only where the cache already holds
@@ -377,6 +382,78 @@ Pitfalls the corpus shows:
 - **Unanswerable** means the pinned docs do not answer it at all: search the whole docs tree at
   that commit (`git grep`) before writing one; a third-party page that mentions the name is enough
   to make it answerable.
+
+### Reviewing the golden set
+
+Agents wrote and checked the cases, so a sample of them is reviewed independently (#490); the
+result is on [Golden set](benchmark/golden-set.md#the-independent-review).
+
+```bash
+just golden-review sample              # draw the sample, write reports/golden-review/sheet.md
+just golden-review sample --seed 7 --per-stratum 5 --no-text
+just golden-review checks              # whole-set checks: reports/golden-review/checks.md, .json
+just golden-review summary             # the recorded review's verdicts and error rate
+```
+
+`sample` draws `--per-stratum` cases (3 by default) of every kind in every project, at random
+with `--seed` (490 by default): each stratum is drawn with its own generator, from its cases in
+name order, so the same seed and cases give the same sample. It writes a sheet with, per case, the
+question, version, kind, reference answer, facts and sections, each linked to the source at the
+pinned commit; with the cache (the default) also the text of each expected section, the sections
+of that version closest to the question and reference, and the same section and the closest ones
+in the neighbouring versions. `review-draft.yaml` lists the sampled cases with the verdict left
+blank.
+
+The verdicts go in `packages/exactdocs/evals/golden/review.yaml`:
+
+```yaml
+sample: {seed: 490, per_stratum: 3, drawn_from: 'sha256:39f6f9d5e909d128'}
+entries:
+- case: 'zod v4.6.7: Is there a util ...'
+  project: zod
+  kind: identifier-lookup        # the stratum it was drawn from; a fix may change the case's kind
+  verdict: fixed                 # correct, fixed (the case was corrected) or removed
+  problems: [unsupported-fact]   # empty when correct
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: The source line that proves the defect, and what was changed.
+```
+
+`drawn_from` is the golden set's fingerprint when the sample was drawn, before any fix: fixes change
+the cases' sections and kinds, so drawing again from today's set gives another sample. A fix that
+rewrites a question renames the case; its entry names the new case and keeps the old name in `was`.
+
+The problem categories:
+
+| Problem | The case |
+|---|---|
+| `unsupported-fact` | lists a fact the expected sections do not state at that version, or only imply |
+| `wrong-reference` | has a reference answer that is wrong or incomplete for that version |
+| `missing-section` | leaves out another section of that version that answers it as well |
+| `wrong-section` | names a section that does not answer it |
+| `wrong-kind` | has the wrong kind; `cross-page` when one article states every fact |
+| `answerable` | is `unanswerable`, but its version's docs answer it |
+| `not-a-change` | is a `version-change` whose change the neighbouring versions contradict |
+| `ambiguous` | has more than one fair answer, or none without guessing |
+| `duplicate` | asks what another case asks of the same version |
+
+`checks` runs over the whole set and needs the cache. It cuts every article of every pinned version
+as the importer does (every heading starts a section) and compares words: lower-case, stemmed,
+stop words left out, each weighted by its inverse document frequency in that version.
+
+- **Lexical overlap**, per answerable case: the weighted share of the question's words its best
+  expected section holds, the same for the best section that is not expected, the expected
+  section's rank among all sections of the version, and the longest run of words the question
+  shares with an expected section. A run of 5 words or more, 3 of them content words, is listed as
+  copied. A question written from its section's words would favour keyword search (BM25).
+- **Near-duplicate questions**: pairs of one project that share at least half their content words
+  (Jaccard), same version or not.
+- **The vocabulary of every `unanswerable` case**: its words no section of its version holds, and
+  the three sections holding most of them; one section with 75% of the weighted words is flagged
+  to check by hand. Synonyms are not searched; the reviewer does that.
+
+The tests (`tests/evals/test_golden_review.py`, `golden_review.feature`) run on a tiny local
+repository; one checks the recorded `review.yaml` against the real case files in CI.
 
 ## The ingestion benchmark
 
@@ -643,40 +720,37 @@ still 1, and a report without them still reads.
 
 ### The recorded run
 
-Measured on an Apple M-series laptop (10 cores) with no network, on the whole golden set, in about
-1 h 40 min. A full local matrix (three embedding models, each with and without the cross-encoder,
-at four chunkings) would take about six hours on that CPU, so it ran on this subset:
+Recorded on 23–24 November 2026 for the golden-set review (#490), on the reviewed set
+(`sha256:7dd51c59057c279a`), by the manual *Retrieval eval (real providers)* workflow with
+`benchmark` ticked and local configurations only
+([run 45276428449](https://github.com/SirCypkowskyy/ExactDocs/actions/runs/45276428449)): one
+self-hosted runner VM (Linux aarch64, 4 CPUs), ExactDocs `861b5ea`, in 3 h 17 min. A full local
+matrix (three embedding models, each with and without the cross-encoder, at four chunkings) would
+take far longer there, so it ran on this subset:
 
 - `bm25` and `hybrid:bge-small-en-v1.5` at every chunking configuration;
-- `bm25+ce` at `h6` and `h2`; `hybrid:bge-small-en-v1.5+ce` at `h6`;
+- `bm25+ce` at `default`, `h6` and `h2`; `hybrid:bge-small-en-v1.5+ce` at `default` and `h6`;
 - `hybrid:snowflake-arctic-embed-s` at `h6` (the second local embedding model);
-- `hybrid:bge-base-en-v1.5` did not run (about 50 minutes of embedding per chunking there);
+- `hybrid:bge-base-en-v1.5` did not run (about 50 minutes of embedding per chunking);
 - every hosted configuration is listed as skipped: it needs a real-providers run.
 
 ```bash
 EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
-  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@h6,bm25+ce@h2,hybrid:bge-small-en-v1.5+ce@h6,hybrid:snowflake-arctic-embed-s@h6,*+judge,*:hosted*' \
+  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@h6,bm25+ce@h2,bm25+ce@default,hybrid:bge-small-en-v1.5+ce@h6,hybrid:bge-small-en-v1.5+ce@default,hybrid:snowflake-arctic-embed-s@h6' \
   --out packages/exactdocs/evals/results
 ```
 
-The run predates #381, so its `default` was today's `h6`; the report was relabelled when the
-default changed (the commands above name today's chunkings). Embedding the whole corpus took 17
-minutes with bge-small at `h6` (8 at `h2`, 13 at `default`, 11 at `merge-400`) and 16 with
-arctic-embed-s; the cross-encoder adds about 1.4 s per question (32 candidates). What it found:
-BM25 is best at `default`, split level 3 and 4,000 characters (recall@5 81.7%, against 79.8% at
-`h6`), which #381 made the default for new libraries; hybrid on bge-small reaches 84.6% at `h6`,
-3 points more, under the 5-point margin, so BM25 stays the default for both the no-model and the
-local budget; the cross-encoder adds as much as hybrid at `h6` and loses recall at `h2`, whose
-chunks are longer than its window; arctic-embed-s is below BM25 (75.3%).
-
-The run kept aggregates only, so it had no per-case outcomes for intervals and tests (#489).
-BM25 was run again at every chunking for #489 (`just retrieval-bench --offline --configs bm25`,
-on Linux x86_64 with 4 CPUs); its recall@k, MRR, nDCG@10, section recall and rates matched the
-recorded ones exactly overall, per kind and per project, so its `rows` were added to the four
-recorded BM25 results, with `rows_from` saying where they come from (their `search_ms` are that
-re-run's; the recorded latencies stay), and the intervals, tests and recommendation were derived
-again. The model configurations were not run again: they have no rows, so no interval and no
-test, until the next recorded run, which keeps rows for every result.
+Every result keeps its per-case `rows`, so every one has intervals and a paired test against its
+budget's default (#489). On that runner, embedding the whole corpus took 24 minutes with
+bge-small at `default` (30 at `h6`, 14 at `h2`, 23 at `merge-400`) and 34 with arctic-embed-s; the
+cross-encoder adds about 2.5 s per question (32 candidates). What it found: BM25 is best at
+`default` (recall@5 81.7%, against 79.8% at `h6`); hybrid on bge-small reaches 84.6% at `h6` and
+the cross-encoder on BM25 84.6% at `default`, both 3 points more, under the 5-point margin and not
+significant (McNemar mid-p 0.11 and 0.18), so BM25 stays the default for both the no-model and the
+local budget; the cross-encoder loses recall at `h2`, whose chunks are longer than its window;
+arctic-embed-s is below BM25 (75.3%). The review (#490) did not change any case's first expected
+section, so recall@k and MRR match the run it replaces (13 November 2026, before the review, on a
+10-core laptop) for every configuration both ran.
 
 ### Running it with local models
 

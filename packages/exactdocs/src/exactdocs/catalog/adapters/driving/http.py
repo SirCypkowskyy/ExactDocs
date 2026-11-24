@@ -21,6 +21,7 @@ from exactdocs.catalog.dtos import (
     ListLibrariesQuery,
     ListTagsQuery,
     ListVersionsQuery,
+    Offset,
     PinDefaultVersionCommand,
     RenameAnswer,
     RenameDirection,
@@ -204,6 +205,16 @@ def build_router(
         ] = None,
         limit: Limit = DEFAULT_LIMIT,
         cursor: str | None = None,
+        offset: Annotated[
+            Offset | None,
+            Query(
+                description=(
+                    "Jump to a page: skip this many matches, in the order and with the filters "
+                    "of the cursor walk. Not with `cursor`; the page's `next_cursor` goes on "
+                    "from it."
+                )
+            ),
+        ] = None,
     ) -> ArticleList:
         """List a version's articles (no ref: the default version), sorted by path.
 
@@ -218,6 +229,7 @@ def build_router(
             sort: The sort field, `-` for descending.
             limit: How many articles per page.
             cursor: The previous page's `next_cursor`.
+            offset: How many matches to skip instead of a cursor.
 
         Returns:
             The page, with its next cursor.
@@ -234,6 +246,7 @@ def build_router(
             sort=sort,
             limit=limit,
             cursor=cursor,
+            offset=offset,
         )
         return await list_articles(query)
 

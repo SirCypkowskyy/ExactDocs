@@ -57,6 +57,7 @@ from exactdocs.catalog.dtos import (
     LibraryDetail,
     LibraryList,
     ListArticlesQuery,
+    ListedVersion,
     ListLibrariesQuery,
     ListRenamesQuery,
     ListTagsQuery,
@@ -88,7 +89,6 @@ from exactdocs.catalog.dtos import (
     TagList,
     UpdateLibraryCommand,
     VersionList,
-    VersionOut,
     VersionTags,
 )
 from exactdocs.catalog.errors import (
@@ -133,6 +133,7 @@ from exactdocs.catalog.models import (
 )
 from exactdocs.catalog.ports.driven import (
     AccessPolicy,
+    ArticleCounts,
     ArticleTitleFinder,
     EntrySearch,
     ImportedTagWriter,
@@ -147,6 +148,7 @@ from exactdocs_kernel import (
     Clock,
     decode_sort_cursor,
     encode_sort_cursor,
+    page_offset,
     parse_sort,
     section_link,
     sorted_page,
@@ -203,6 +205,8 @@ class ListLibrariesUseCase:
 
     repository: LibraryRepository
     """Stores the libraries, their versions, settings and manual tags."""
+    articles: ArticleCounts
+    """Counts the articles of the page's default versions, in one query."""
     access: AccessPolicy
     """Decides what the caller may do with the library."""
 
@@ -250,8 +254,13 @@ class ListLibrariesUseCase:
             key=lambda lib: lib.id.value,
             limit=query.limit,
             cursor=query.cursor,
+            offset=query.offset,
         )
-        return LibraryList.from_page(page)
+        defaults = [(lib.id, d.ref) for lib in page.items if (d := lib.default_version())]
+        counts = await self.articles.count_articles(defaults) if defaults else {}
+        return LibraryList.from_page(
+            page, article_counts={lib.value: n for (lib, _), n in counts.items()}
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -260,6 +269,8 @@ class ListVersionsUseCase:
 
     repository: LibraryRepository
     """Stores the libraries, their versions, settings and manual tags."""
+    articles: ArticleCounts
+    """Counts the articles of the page's versions, in one query."""
     access: AccessPolicy
     """Decides what the caller may do with the library."""
 
@@ -270,7 +281,8 @@ class ListVersionsUseCase:
             query: The library, the filters, the sort and the page.
 
         Returns:
-            The page, the next cursor and the count of every match.
+            The page, the next cursor and the count of every match. Each version carries its
+            article count; its chunk counts are the search index's, which the caller adds.
 
         Raises:
             LibraryNotFoundError: The library is not in the catalog.
@@ -305,10 +317,21 @@ class ListVersionsUseCase:
             key=lambda v: str(v.ref),
             limit=query.limit,
             cursor=query.cursor,
+            offset=query.offset,
+        )
+        counts = (
+            await self.articles.count_articles([(library.id, v.ref) for v in page.items])
+            if page.items
+            else {}
         )
         return VersionList(
             library=str(library.id),
-            versions=[VersionOut.from_model(v, is_default=v == default) for v in page.items],
+            versions=[
+                ListedVersion.listed(
+                    v, is_default=v == default, articles=counts.get((library.id, v.ref), 0)
+                )
+                for v in page.items
+            ],
             next_cursor=page.next_cursor,
             total=len(found),
         )
@@ -1212,6 +1235,7 @@ class ListArticlesUseCase:
         if manifest is None:
             raise ArticleNotFoundError(str(library.id), str(version.ref), None)
         sort = parse_sort(query.sort, allowed=ARTICLE_SORT_FIELDS, default="path")
+        skip = page_offset(cursor=query.cursor, offset=query.offset)
         after = (
             decode_sort_cursor(query.cursor, sort, key_field="path")
             if query.cursor is not None
@@ -1226,6 +1250,7 @@ class ListArticlesUseCase:
             text=query.q,
             sort=sort,
             after=after,
+            offset=skip,
             limit=query.limit + 1,  # one more than asked tells whether another page follows
         )
         page = entries[: query.limit]

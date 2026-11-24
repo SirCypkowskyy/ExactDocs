@@ -285,6 +285,26 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/account/password": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        /**
+         * Put Password
+         * @description Change the signed-in account's own password: give the current one and the new one (12 to 1024 characters, as at setup). The current password is checked like a sign-in and counts against the same throttle: a wrong one is refused with `wrong_password` (403), and after too many failures from the address or for the username the change is refused unchecked with `rate_limited` (429, `Retry-After`). An account that signs in through an identity provider has no password (`has_password` is `false` in `GET /api/v1/session`) and is refused with `external_account` (409). On success (204) every other session of the account ends, this one stays signed in; API tokens keep working. The addresses that signed in with the old password lose their remembered sign-in, as after an operator's reset. Needs a signed-in session; an API token is refused (401).
+         */
+        readonly put: operations["identity-put_password"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries/{owner}/{repo}/grants": {
         readonly parameters: {
             readonly query?: never;
@@ -1094,6 +1114,32 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/ai/usage/history": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * Get Ai Spend History
+         * @description Show what one scope spent per UTC day or month: one entry per window, zero-filled.
+         *
+         *     `scope` and `id` name a scope as `GET /ai/usage` does (`library` and `user` need an
+         *     `id`; `instance` and `embedding` take none). Any day of a month stands for the month.
+         *     Without `to` the range ends today; without `from` it holds 30 days or 12 months. At
+         *     most 366 days or 60 months (422 `invalid_spend_history`, also when `to` is before
+         *     `from` or the `id` does not fit the scope).
+         */
+        readonly get: operations["ai-get_ai_spend_history"];
+        readonly put?: never;
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/libraries/{owner}/{repo}/settings": {
         readonly parameters: {
             readonly query?: never;
@@ -1694,6 +1740,14 @@ export interface components {
              * @description What the account may do: `admin` (an operator, who also manages accounts) or `user`.
              */
             readonly role: string;
+            /**
+             * Has Password
+             * @description Whether the account has a local password: it signs in with it and may change it
+             *     (`PUT /api/v1/account/password`). `false` for an account that only signs in through an
+             *     identity provider (or Cloudflare Access), which has no password to change.
+             * @default false
+             */
+            readonly has_password: boolean;
         };
         /**
          * AddLibraryCommand
@@ -2641,6 +2695,25 @@ export interface components {
              * @default false
              */
             readonly searchFilterApplied: boolean;
+        };
+        /**
+         * ChangePasswordCommand
+         * @description A signed-in person's own password change: the current password, then the new one.
+         */
+        readonly ChangePasswordCommand: {
+            /**
+             * Current Password
+             * Format: password
+             * @description The account's password now; a wrong one is refused with `wrong_password` (403) and
+             *     counts against the sign-in throttle like a failed sign-in.
+             */
+            readonly current_password: string;
+            /**
+             * New Password
+             * Format: password
+             * @description The new password, 12 to 1024 characters.
+             */
+            readonly new_password: string;
         };
         /**
          * CheckRepositoryCommand
@@ -4198,6 +4271,13 @@ export interface components {
              *     with `?v=<logo>` a browser may keep it until the logo changes.
              */
             readonly logo: string | null;
+            /**
+             * Article Count
+             * @description The articles of the default version (its active manifest's entries); 0 while none is
+             *     imported.
+             * @default 0
+             */
+            readonly article_count: number;
         };
         /**
          * LibraryTransferRequest
@@ -4270,6 +4350,60 @@ export interface components {
              * @description A token (https URL) or deploy key (ssh URL) for a private repository. It is stored encrypted, offered only to the repository's own host and never returned.
              */
             readonly credential?: (components["schemas"]["AccessTokenIn"] | components["schemas"]["DeployKeyIn"]) | null;
+        };
+        /**
+         * ListedVersion
+         * @description A version as a library's version list shows it: with its size and embedding progress.
+         */
+        readonly ListedVersion: {
+            /**
+             * Ref
+             * @description The ref as imported, e.g. `v1.4.0`, `main` or a commit SHA; case-sensitive.
+             */
+            readonly ref: string;
+            /** @description Whether the ref is a tag, a branch or a commit. */
+            readonly kind: components["schemas"]["exactdocs__catalog__models__RefKind"];
+            /**
+             * Commit Sha
+             * @description The full commit SHA the ref resolved to at its last import.
+             */
+            readonly commit_sha: string;
+            /**
+             * Imported At
+             * Format: date-time
+             * @description When the version was last imported.
+             */
+            readonly imported_at: string;
+            /**
+             * Is Default
+             * @description True for the version `/owner/repo` resolves to.
+             */
+            readonly is_default: boolean;
+            /**
+             * @description `auto` when the library's scheduled check imported it (retention may remove it), `manual`
+             *     when someone added it.
+             * @default manual
+             */
+            readonly origin: components["schemas"]["exactdocs__catalog__models__VersionOrigin"];
+            /**
+             * Articles
+             * @description The articles the version serves: the entries of its active manifest.
+             * @default 0
+             */
+            readonly articles: number;
+            /**
+             * Chunks
+             * @description The chunks its articles are cut into for search; 0 until it is indexed.
+             * @default 0
+             */
+            readonly chunks: number;
+            /**
+             * Embedded Chunks
+             * @description Of `chunks`, those with a vector from the configured embedding model; 0 while no model
+             *     is configured or nothing is embedded yet.
+             * @default 0
+             */
+            readonly embedded_chunks: number;
         };
         /**
          * LoginForTokenCommand
@@ -5659,6 +5793,90 @@ export interface components {
             readonly end: number;
         };
         /**
+         * SpendHistoryEntryOut
+         * @description What the scope spent in one window; zero for a window it spent nothing in.
+         */
+        readonly SpendHistoryEntryOut: {
+            /**
+             * Input Tokens
+             * @description Tokens sent (an LLM step's total, which the harness does not split, is counted here).
+             */
+            readonly input_tokens: number;
+            /**
+             * Output Tokens
+             * @description Tokens received.
+             */
+            readonly output_tokens: number;
+            /**
+             * Tokens
+             * @description Both, less `local_tokens`: what token budgets limit.
+             */
+            readonly tokens: number;
+            /**
+             * Local Tokens
+             * @description Of the input and output tokens, those of in-process (`local`) models: they cost nothing,
+             *     so no token budget counts them.
+             */
+            readonly local_tokens: number;
+            /**
+             * Requests
+             * @description Calls made.
+             */
+            readonly requests: number;
+            /**
+             * Usd
+             * @description Their price in US dollars (whole millionths); unpriced calls add nothing.
+             */
+            readonly usd: number;
+            /**
+             * Unpriced Requests
+             * @description Calls whose model had no known price.
+             */
+            readonly unpriced_requests: number;
+            /**
+             * Window Start
+             * Format: date
+             * @description The window's first day (UTC).
+             */
+            readonly window_start: string;
+        };
+        /**
+         * SpendHistoryOut
+         * @description What one scope spent per UTC day or month: one entry per window, oldest first.
+         */
+        readonly SpendHistoryOut: {
+            /**
+             * Scope
+             * @description The scope kind.
+             * @enum {string}
+             */
+            readonly scope: "instance" | "embedding" | "library" | "user";
+            /**
+             * Id
+             * @description The library ID (case-folded) or the account ID; empty for `instance` and `embedding`.
+             */
+            readonly id: string;
+            /** @description `day` or `month`. */
+            readonly window: components["schemas"]["SpendWindow"];
+            /**
+             * First
+             * Format: date
+             * @description The first window's first day.
+             */
+            readonly first: string;
+            /**
+             * Last
+             * Format: date
+             * @description The last window's first day.
+             */
+            readonly last: string;
+            /**
+             * Entries
+             * @description Every window from `first` to `last`, both included, each once.
+             */
+            readonly entries: readonly components["schemas"]["SpendHistoryEntryOut"][];
+        };
+        /**
          * SpendWindow
          * @description A budget window of the spend ledger, in UTC.
          * @enum {string}
@@ -6168,6 +6386,14 @@ export interface components {
              */
             readonly role: string;
             /**
+             * Has Password
+             * @description Whether the account has a local password: it signs in with it and may change it
+             *     (`PUT /api/v1/account/password`). `false` for an account that only signs in through an
+             *     identity provider (or Cloudflare Access), which has no password to change.
+             * @default false
+             */
+            readonly has_password: boolean;
+            /**
              * Created At
              * Format: date-time
              * @description When the account was created.
@@ -6203,9 +6429,10 @@ export interface components {
             readonly library: string;
             /**
              * Versions
-             * @description The versions of this page, in the requested order (by ref by default).
+             * @description The versions of this page, in the requested order (by ref by default), each with its
+             *     article, chunk and embedded-chunk counts.
              */
-            readonly versions: readonly components["schemas"]["VersionOut"][];
+            readonly versions: readonly components["schemas"]["ListedVersion"][];
             /**
              * Next Cursor
              * @description Pass as `cursor` to get the next page; null on the last page.
@@ -6950,6 +7177,11 @@ export interface operations {
                  */
                 readonly cursor?: string | null;
                 /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
+                /**
                  * @description Only items whose name contains this text, any case: a user's username, a token's name, a
                  *     grant's username or group.
                  */
@@ -7190,6 +7422,11 @@ export interface operations {
                  *     `sort` and filters of the request that returned it.
                  */
                 readonly cursor?: string | null;
+                /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
                 /**
                  * @description Only items whose name contains this text, any case: a user's username, a token's name, a
                  *     grant's username or group.
@@ -7593,6 +7830,11 @@ export interface operations {
                  *     filters of the request that returned it.
                  */
                 readonly cursor?: string | null;
+                /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
                 /** @description Only events of these changes; repeat for several. */
                 readonly change?: readonly ("library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted")[] | null;
                 /** @description Only the events of this library (`/owner/repo`, any case), removed ones included. */
@@ -7669,6 +7911,93 @@ export interface operations {
             };
         };
     };
+    readonly "identity-put_password": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["ChangePasswordCommand"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Too many failed sign-ins (`rate_limited`); try again after `Retry-After` seconds. */
+            readonly 429: {
+                headers: {
+                    /** @description Seconds to wait before the next attempt. */
+                    readonly "Retry-After"?: number;
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     readonly "identity-list_library_grants": {
         readonly parameters: {
             readonly query?: {
@@ -7679,6 +8008,11 @@ export interface operations {
                  *     `sort` and filters of the request that returned it.
                  */
                 readonly cursor?: string | null;
+                /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
                 /**
                  * @description Only items whose name contains this text, any case: a user's username, a token's name, a
                  *     grant's username or group.
@@ -8016,6 +8350,11 @@ export interface operations {
                  *     filters of the request that returned it.
                  */
                 readonly cursor?: string | null;
+                /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
                 /** @description Only events of these changes; repeat for several. */
                 readonly change?: readonly ("library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted")[] | null;
             };
@@ -8455,6 +8794,11 @@ export interface operations {
                  *     request that returned it.
                  */
                 readonly cursor?: string | null;
+                /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
             };
             readonly header?: never;
             readonly path: {
@@ -8623,6 +8967,11 @@ export interface operations {
                  *     `sort` and filters of the request that returned it.
                  */
                 readonly cursor?: string | null;
+                /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
                 /** @description Sort by one of id, title, last_imported_at, version_count; prefix `-` for descending. Default: `id`. An unknown field is a 422. */
                 readonly sort?: string | null;
                 /** @description Only libraries whose ID, title or description contains this text (any case). */
@@ -9203,6 +9552,8 @@ export interface operations {
                 readonly sort?: string | null;
                 readonly limit?: number;
                 readonly cursor?: string | null;
+                /** @description Jump to a page: skip this many matches, in the order and with the filters of the cursor walk. Not with `cursor`; the page's `next_cursor` goes on from it. */
+                readonly offset?: number | null;
             };
             readonly header?: never;
             readonly path: {
@@ -11398,6 +11749,89 @@ export interface operations {
             };
         };
     };
+    readonly "ai-get_ai_spend_history": {
+        readonly parameters: {
+            readonly query?: {
+                readonly scope?: "instance" | "embedding" | "library" | "user";
+                /** @description Library or account ID. */
+                readonly id?: string;
+                readonly window?: components["schemas"]["SpendWindow"];
+                /** @description A day of the first window (UTC). */
+                readonly from?: string | null;
+                /** @description A day of the last window (UTC). */
+                readonly to?: string | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["SpendHistoryOut"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     readonly "ingestion-update_library_settings": {
         readonly parameters: {
             readonly query?: never;
@@ -12234,6 +12668,11 @@ export interface operations {
                  *     null for the first page.
                  */
                 readonly cursor?: string | null;
+                /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
                 /** @description Only jobs of this library, `/owner/repo`. */
                 readonly library?: string | null;
             };
@@ -12559,6 +12998,11 @@ export interface operations {
                  *     null for the first page.
                  */
                 readonly cursor?: string | null;
+                /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
             };
             readonly header?: never;
             readonly path: {
