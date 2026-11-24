@@ -9,8 +9,8 @@ is significant on the same cases (McNemar's test, p under 5%;
 <!-- bench:defaults -->
 | budget | configuration | chunking | USD / 1000 questions | why |
 |---|---|---|---|---|
-| none | `bm25` | `default` | $0.0000 | best none configuration: `bm25` at `default`: recall@5 81.7%, nDCG@10 0.705, MRR 0.651, wrong-version rate 0, p95 57 ms, $0.0000 per 1000 questions |
-| local | `bm25` | `default` | $0.0000 | best local configuration: `hybrid:bge-small-en-v1.5` at `h6`: recall@5 84.6%, nDCG@10 0.738, MRR 0.675, wrong-version rate 0, p95 127 ms, $0.0000 per 1000 questions; +3.0 points of recall@5 over `bm25`, under the 5-point margin: the cheaper `bm25` at `default` stays the default |
+| none | `bm25` | `default` | $0.0000 | best none configuration: `bm25` at `default`: recall@5 81.7%, nDCG@10 0.705, MRR 0.651, wrong-version rate 0, p95 58 ms, $0.0000 per 1000 questions |
+| local | `bm25` | `default` | $0.0000 | best local configuration: `hybrid:bge-small-en-v1.5` at `h6`: recall@5 84.6%, nDCG@10 0.738, MRR 0.676, wrong-version rate 0, p95 109 ms, $0.0000 per 1000 questions; +3.0 points of recall@5 over `bm25`, under the 5-point margin (McNemar mid-p 0.108): the cheaper `bm25` at `default` stays the default |
 | hosted | not measured yet: needs a real-providers run | - | - | - |
 <!-- /bench -->
 
@@ -37,12 +37,12 @@ none of the libraries that exist. Those added with ExactDocs 0.4 or earlier keep
 
 Keep **BM25 at `default`**. The best local configuration, hybrid search on
 `BAAI/bge-small-en-v1.5` at `h6`, reaches 84.6% recall@5: 3.0 points more, under the 5-point
-margin. It also needs the corpus embedded first (17 minutes for the whole golden corpus on a
-10-core laptop) and a p95 of 127 ms. Hybrid at `default` scores about the same (84.3%), so
-the default chunking does not hurt an instance that turns hybrid on. Whether those 3 points are
-more than noise is not known yet: the run that measured the local models kept no per-case
-outcomes, so it cannot be tested; the next recorded run can. BM25's own interval at `default`
-runs from 76.8% to 86.1%, which holds both.
+margin, and not significant on the same cases (McNemar mid-p 0.11). It also needs the corpus
+embedded first (30 minutes for the whole golden corpus at `h6` on a 4-CPU runner) and a p95 of
+109 ms there. Hybrid at `default` scores about the same (84.3%), so the default chunking does not
+hurt an instance that turns hybrid on; there it ranks the answer higher (MRR and nDCG@10 are
+significantly better than BM25's) without finding more of them in the top 5. The cross-encoder on
+BM25 at `default` also reaches 84.6% (p 0.18) at about 2.5 s per question.
 
 ## Hosted models
 
@@ -66,8 +66,9 @@ Each names the issue whose benchmark found it; none has an issue of its own yet.
   headings, Pydantic keeps `{#id}` attributes in heading paths, MkDocs admonitions and tabs are
   read as code blocks, and Pydantic v1's includes stay unexpanded. Found by the golden set (#345)
   and measured by the ingestion benchmark (#346).
-- **Unreviewed cases.** The golden set was written and checked by agents, not people (#345), so
-  differences of a point or two between configurations may be within its error. The intervals
-  measure sampling noise only (which cases happen to be in the set), not mistakes in the cases.
-- **Gaps in the matrix.** `hybrid:bge-base-en-v1.5` did not run, the cross-encoder ran only at
-  `h6` and `h2` (not at today's `default`), and every hosted configuration is unmeasured (#347).
+- **Cases reviewed by an agent only.** The golden set was written and checked by agents (#345);
+  an independent agent review of 90 cases found 25.6% of them wrong in some way and fixed them
+  (#490, [Golden set](golden-set.md)), but no person has reviewed them. The intervals measure
+  sampling noise only (which cases happen to be in the set), not mistakes in the cases.
+- **Gaps in the matrix.** `hybrid:bge-base-en-v1.5` did not run, and every hosted configuration
+  is unmeasured (#347).

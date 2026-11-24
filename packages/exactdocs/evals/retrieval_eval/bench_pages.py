@@ -16,6 +16,7 @@ from typing import Final, get_args
 
 from retrieval_eval.dataset import GoldenKind
 from retrieval_eval.golden import load_cases, load_corpus
+from retrieval_eval.golden_review import load_review, review_block
 from retrieval_eval.ingestion_cli import IngestionReport
 from retrieval_eval.ingestion_cli import markdown as ingestion_markdown
 from retrieval_eval.retrieval_bench import RetrievalBenchReport
@@ -149,6 +150,7 @@ def blocks(results: Path = RESULTS) -> dict[str, str]:
     )
     return {
         "golden": golden_block(),
+        "golden-review": review_block(load_review()),
         "ingestion": ingestion_block(ingestion),
         **retrieval_blocks(retrieval),
     }

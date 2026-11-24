@@ -1,0 +1,838 @@
+# The golden set's review (#490): the verdict on every case of a seeded, stratified sample.
+#
+# Drawn with `just golden-review sample` (three cases per kind and project) from the golden set as
+# it was before any fix (`drawn_from`), and checked against the docs at each pinned commit by an
+# independent agent with an adversarial brief: every fact stated by the expected sections, the
+# reference right for that version, no other section of that version answering as well, the kind,
+# unanswerable cases searched for in the whole docs tree, version-change cases against the
+# neighbouring versions. `kind` is the stratum the case was drawn from (a fix may have changed it).
+# `just golden-validate` checks this file; `just bench-pages` renders its summary on
+# docs/benchmark/golden-set.md. Problem categories: docs/evals.md#reviewing-the-golden-set.
+sample: {seed: 490, per_stratum: 3, drawn_from: 'sha256:39f6f9d5e909d128'}
+entries:
+- case: 'electron v30.0.0: Should I use child_process.fork or a utility process for CPU-heavy work, and
+    why?'
+  project: electron
+  kind: conceptual
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated in [The utility process]. performance.md [How?] advises worker threads or a dedicated
+    process for CPU-heavy work but does not compare fork and utility processes.
+- case: 'electron v38.0.0: If I stay on an older Electron major, how long will it keep getting fixes?'
+  project: electron
+  kind: conceptual
+  verdict: fixed
+  problems: [missing-section]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Same article, [Electron Releases > Timeline]: ''Electron''s official support policy is the latest
+    3 stable releases'' plus the EOL date of every major answers ''how long'' as well. Added.'
+- case: 'electron v45.3.2: How does a renderer''s LanguageModel.prompt() call end up in my own local model?'
+  project: electron
+  kind: conceptual
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated in [How it works]; the API page for setPromptAPIHandler does not describe the three-process
+    flow.
+- case: 'electron v30.0.0: What do I need on the signing side before autoUpdater can update my Mac app?'
+  project: electron
+  kind: cross-page
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Both sections needed: auto-updater.md ''Your application must be signed for automatic updates
+    on macOS'', code-signing.md the requirements.'
+- case: 'electron v38.0.0: How do I stop people from running my packaged app as plain Node with ELECTRON_RUN_AS_NODE?'
+  project: electron
+  kind: cross-page
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; environment-variables.md 'If the runAsNode fuse is disabled, ELECTRON_RUN_AS_NODE
+    will be ignored' points to the fuse but not how to flip it.
+- case: 'electron v38.0.0: session.setPreloads is deprecated. How do I register a preload for every frame
+    in a session now?'
+  project: electron
+  kind: cross-page
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Facts stated by the three sections; session.md setPreloads only says ''Deprecated: Use the new
+    ses.registerPreloadScript API''.'
+- case: 'electron v30.0.0: How do I turn off the sandbox for just one window?'
+  project: electron
+  kind: how-to
+  verdict: fixed
+  problems: [missing-section]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'breaking-changes.md [Planned Breaking API Changes (20.0) > Default Changed: renderers without
+    nodeIntegration: true are sandboxed by default]: ''renderers will be sandboxed by default, unless
+    nodeIntegration: true or sandbox: false is specified ... explicitly specify sandbox: false for the
+    relevant renderers.'' Added.'
+- case: 'electron v30.0.0: How do I write my main process as an ES module?'
+  project: electron
+  kind: how-to
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated in the two esm.md sections.
+- case: 'electron v45.3.2: How do I keep native .node files outside app.asar when packing?'
+  project: electron
+  kind: how-to
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; --unpack appears nowhere else in v45.3.2.
+- case: 'electron v30.0.0: Inside a sandboxed preload script, what can require() actually load?'
+  project: electron
+  kind: identifier-lookup
+  verdict: fixed
+  problems: [missing-section]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'tutorial-3-preload.md [Augmenting the renderer with a preload script]: ''you have a polyfilled
+    require function that only has access to a limited set of APIs'' with the table Electron modules /
+    events, timers, url / Buffer, process, clearImmediate, setImmediate. Added.'
+- case: 'electron v30.0.0: What does requestSingleInstanceLock return and what should my app do with it?'
+  project: electron
+  kind: identifier-lookup
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; the second-instance event does not give the return value.
+- case: 'electron v38.0.0: What value makes -electron-corner-smoothing match the operating system?'
+  project: electron
+  kind: identifier-lookup
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; the Formal reference only lists system-ui in the grammar.
+- case: 'electron v38.0.0: Can autoUpdater on macOS download a Sparkle binary delta instead of the full
+    ZIP?'
+  project: electron
+  kind: unanswerable
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Unanswerable confirmed: v38.0.0 has no delta, Sparkle or differential update for macOS (updates.md
+    mentions only the .nupkg delta of Windows; forge-overview.md says Conveyor replaces the auto-updaters
+    with Sparkle). v45.3.2 auto-updater.md adds delta.'
+- case: 'electron v45.3.2: How do I trigger haptic feedback on a MacBook trackpad from Electron?'
+  project: electron
+  kind: unanswerable
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Unanswerable confirmed: no haptic, force touch, vibrat or NSHaptic in v45.3.2; trackpad appears
+    only for swipe and rotate events.'
+- case: 'electron v45.3.2: Which Chromium milestone and Node.js version does Electron 45 bundle?'
+  project: electron
+  kind: unanswerable
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Unanswerable confirmed: electron-timelines.md links the external schedule; the gantt shows only
+    v41 = M146 and v42 = M148, so Electron 45''s Chromium is derivable only by arithmetic and its Node.js
+    version not at all.'
+- case: 'electron v38.0.0: ELECTRON_OZONE_PLATFORM_HINT=wayland no longer does anything. How do I run
+    under Wayland now?'
+  project: electron
+  kind: version-change
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; v30.0.0 documents ELECTRON_OZONE_PLATFORM_HINT, v38.0.0 only in the removal note.
+- case: 'electron v38.0.0: Which macOS versions does Electron 38 run on?'
+  project: electron
+  kind: version-change
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; no other page of v38.0.0 gives the supported macOS versions.
+- case: 'electron v45.3.2: My open dialog stopped remembering the last folder the user picked. Why?'
+  project: electron
+  kind: version-change
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; dialog.md 'If not provided, the dialog will default to the user's Downloads folder'
+    gives the default but not the change or why.
+- case: 'pydantic v1.10.22: When does __post_init__ run compared to __post_init_post_parse__ on a pydantic
+    dataclass?'
+  project: pydantic
+  kind: conceptual
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated in [Initialize hooks].
+- case: 'pydantic v2.14.3: Does str_to_lower set on a parent model also apply to a nested model field?'
+  project: pydantic
+  kind: conceptual
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated in [Configuration propagation].
+- case: 'pydantic v2.5.3: How does v2 pick the Union member when the input could match several of them?'
+  project: pydantic
+  kind: conceptual
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated in [Smart Mode]; migration.md [Unions] only covers the exact-type short-circuit.
+- case: 'pydantic v1.10.22: My @validate_arguments function takes an argument of my own plain class; how
+    do I allow it?'
+  project: pydantic
+  kind: cross-page
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Both needed: Custom Config gives the config keyword, model_config [Options] arbitrary_types_allowed
+    and the isinstance check (the decorator example is an un-imported include).'
+- case: 'pydantic v1.10.22: My custom type uses __get_validators__; how do I also control its JSON schema?'
+  project: pydantic
+  kind: cross-page
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated by the two sections.
+- case: 'pydantic v2.14.3: How do I make a whole model strict but let one field still coerce, and can
+    I go strict for a single call?'
+  project: pydantic
+  kind: cross-page
+  verdict: fixed
+  problems: [wrong-kind]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Not cross-page: strict_mode.md alone states every fact ([As a configuration value]: ''strictness
+    can still be overridden at the field level'' with age: int = Field(strict=False); [As a validation
+    parameter] for one call). Kind set to how-to.'
+- case: 'pydantic v1.10.22: How do I install pydantic without the compiled binaries to keep the environment
+    small?'
+  project: pydantic
+  kind: how-to
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; only install.md covers it.
+- case: 'pydantic v1.10.22: How do I load settings from a .env file, and does a real environment variable
+    win over it?'
+  project: pydantic
+  kind: how-to
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated by the two settings.md sections.
+- case: 'pydantic v2.14.3: My Lambda fails with no module named pydantic_core._pydantic_core; how should
+    I package pydantic?'
+  project: pydantic
+  kind: how-to
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated by the two aws_lambda.md sections; the question quotes the error message, not the
+    docs' prose.
+- case: 'pydantic v2.14.3: What annotation drops invalid items from a list instead of failing the whole
+    list?'
+  project: pydantic
+  kind: identifier-lookup
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated, including 'version-added | v2.6'.
+- case: 'pydantic v2.14.3: Which config keys decide whether input may use the field name, the alias, or
+    both?'
+  project: pydantic
+  kind: identifier-lookup
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated by the two alias.md sections; fields.md mentions validate_by_name only in a type-checker
+    note.
+- case: 'pydantic v2.5.3: How do I map a field to the first element of a nested list in the input?'
+  project: pydantic
+  kind: identifier-lookup
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; AliasPath is documented only in fields.md at v2.5.3.
+- case: 'pydantic v2.14.3: Can model_dump output MessagePack directly?'
+  project: pydantic
+  kind: unanswerable
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Unanswerable confirmed: no msgpack, messagepack, cbor or bson in any pinned Pydantic version.'
+- case: 'pydantic v2.14.3: How do I install pydantic without compiling it with Cython, to save space?'
+  project: pydantic
+  kind: unanswerable
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Unanswerable confirmed: no cython or no-binary in v2.14.3 (v2.5.3 mentions Cython only in the
+    V2 plan post).'
+- case: 'pydantic v2.5.3: How do I send failed validations to Logfire?'
+  project: pydantic
+  kind: unanswerable
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Unanswerable confirmed: no logfire in v2.5.3 (v2.14.3 has it on many pages).'
+- case: 'pydantic v2.5.3: Does a TypeError raised inside a validator still turn into a ValidationError?'
+  project: pydantic
+  kind: version-change
+  verdict: fixed
+  problems: [missing-section]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'concepts/validators.md [Handling errors in validators]: ''Any other errors (including TypeError)
+    are bubbled up and not wrapped in a ValidationError.'' Added.'
+- case: 'pydantic v2.5.3: My v1 model uses a __root__ field; what is the v2 way to define a custom root
+    type?'
+  project: pydantic
+  kind: version-change
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; the alpha post's '__root__ ... removed ... use @root_validator' is outdated, not
+    an answer.
+- case: 'pydantic v2.5.3: What do I call instead of .dict() and parse_obj() now?'
+  project: pydantic
+  kind: version-change
+  verdict: fixed
+  problems: [missing-section]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: blog/pydantic-v2.md [Model Namespace Cleanup :thumbsup:] gives model_validate 'previously parse_obj()'
+    and model_dump 'previously dict()'. Added.
+- case: 'starlette 0.27.0: Can I keep request-specific flags as attributes on my ASGI middleware object?'
+  project: starlette
+  kind: conceptual
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated in [ASGI middleware should be stateless].
+- case: 'starlette 1.10.0: I append to a list stored in request.session but the change is lost on the
+    next request. Why?'
+  project: starlette
+  kind: conceptual
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated in [SessionMiddleware].
+- case: 'starlette 1.10.0: If the first of several background tasks raises, do the others still run?'
+  project: starlette
+  kind: conceptual
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; no release note changes the rule.
+- case: 'starlette 0.27.0: In a Jinja template, how do I link to a CSS file served by a mounted StaticFiles
+    app?'
+  project: starlette
+  kind: cross-page
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Cross-page holds: routing.md alone states ''Mounted applications may include a path=... parameter'',
+    templates.md that url_for is in the template context.'
+- case: 'starlette 0.52.1: How do I create an HTTP client once at startup and use it in my request handlers?'
+  project: starlette
+  kind: cross-page
+  verdict: fixed
+  problems: [wrong-kind]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Not cross-page: lifespan.md [Lifespan State] alone states every fact (yield {''http_client'':
+    client}, request.state.http_client, ''a shallow copy''); requests.md [Other state] adds nothing. Kind
+    set to how-to.'
+- case: 'starlette 0.52.1: How do I post a file from a TestClient test and read its name and bytes in
+    the endpoint?'
+  project: starlette
+  kind: cross-page
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Cross-page holds: testclient.md sends the file, requests.md reads the UploadFile.'
+- case: 'starlette 0.27.0: My test needs to check the body of a 500 error page, but TestClient keeps raising
+    the exception. How do I stop that?'
+  project: starlette
+  kind: how-to
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated in testclient.md.
+- case: 'starlette 0.52.1: How do I load a .env file that is not UTF-8?'
+  project: starlette
+  kind: how-to
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; the 0.49.0 release note 'Add encoding parameter to Config class' does not say how
+    to use it.
+- case: 'starlette 1.10.0: How do I clear a CHIPS partitioned cookie from a response?'
+  project: starlette
+  kind: how-to
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated in [Delete Cookie].
+- case: 'starlette 0.52.1: Does TrustedHostMiddleware send example.com visitors to www.example.com, and
+    can I turn that off?'
+  project: starlette
+  kind: identifier-lookup
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated in [TrustedHostMiddleware].
+- case: 'starlette 1.10.0: What arguments does the request method for 103 Early Hints take?'
+  project: starlette
+  kind: identifier-lookup
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; the 1.8.0 release note only announces the method.
+- case: 'starlette 1.10.0: What status does a client get when its upload is over the RequestBodyLimitMiddleware
+    limit?'
+  project: starlette
+  kind: identifier-lookup
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; routing.md [Request body size limits] and requests.md do not give the 413.
+- case: 'starlette 0.27.0: How do I send a 103 Early Hints response?'
+  project: starlette
+  kind: unanswerable
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Unanswerable confirmed: no early hint, 103 or informational response in 0.27.0.'
+- case: 'starlette 0.27.0: How do I set a per-route timeout that aborts a handler running too long?'
+  project: starlette
+  kind: unanswerable
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Unanswerable confirmed: no timeout, fail_after, move_on_after or deadline in 0.27.0.'
+- case: 'starlette 0.27.0: How many threads can run my sync endpoints at once, and how do I raise that
+    limit?'
+  project: starlette
+  kind: unanswerable
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Unanswerable confirmed: 0.27.0 only has the old note ''Use the default ThreadPoolExecutor for
+    all sync endpoints''; no size or limit.'
+- case: 'starlette 0.27.0: Are on_startup and on_shutdown still the recommended way to run setup code?'
+  project: starlette
+  kind: version-change
+  verdict: fixed
+  problems: [unsupported-fact]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: '''the lifespan handler is the replacement'' is stated by neither section: the 0.26.0 note only
+    says ''Deprecate on_startup and on_shutdown events'', lifespan.md only that a lifespan handler deals
+    with startup and shutdown code (and applications.md still shows on_startup=[startup]). Fact and reference
+    reworded to what is stated.'
+- case: 'starlette 0.52.1: Since when can lifespan state be read as request.state["key"]?'
+  project: starlette
+  kind: version-change
+  verdict: fixed
+  problems: [missing-section]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'release-notes.md [0.52.0 (January 18, 2026)]: ''In this release, State can be accessed using
+    dictionary-style syntax for improved type safety.'' Added.'
+- case: 'starlette 1.10.0: Which HTTP client library does TestClient need now?'
+  project: starlette
+  kind: version-change
+  verdict: fixed
+  problems: [missing-section]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'index.md [Introduction > Dependencies]: ''httpx2 - Required if you want to use the TestClient.''
+    Added.'
+- case: 'tanstack-query v4.36.1: What happens to cached todos after every component using that query unmounts?'
+  project: tanstack-query
+  kind: conceptual
+  verdict: fixed
+  problems: [missing-section]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'important-defaults.md []: ''Query results that have no more active instances ... remain in the
+    cache in case they are used again'' and ''inactive queries are garbage collected after 5 minutes''.
+    Added.'
+- case: 'tanstack-query v5.90.3: Can I put the whole useQuery result object in a useEffect dependency
+    array?'
+  project: tanstack-query
+  kind: conceptual
+  verdict: fixed
+  problems: [missing-section]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'eslint/no-unstable-deps.md []: ''The object returned from those hooks should not be put directly
+    into the dependency array of a React hook (e.g. useEffect, useMemo, useCallback).'' Added.'
+- case: 'tanstack-query v5.90.3: Why does my query refetch every time the window gets focus?'
+  project: tanstack-query
+  kind: conceptual
+  verdict: fixed
+  problems: [missing-section]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'guides/window-focus-refetching.md []: ''If a user leaves your application and returns and the
+    query data is stale, TanStack Query automatically requests fresh data for you in the background'';
+    reference/useQuery.md: refetchOnWindowFocus ''Defaults to true ... will refetch on window focus if
+    the data is stale''. Both added.'
+- case: 'tanstack-query v4.36.1: How do I refetch only the first page of an infinite query from a QueryClient
+    call?'
+  project: tanstack-query
+  kind: cross-page
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Cross-page holds: QueryClient.md alone states ''Only for Infinite Queries''.'
+- case: 'tanstack-query v4.36.1: Without suspense, how do I send query errors to an error boundary and
+    let the user retry?'
+  project: tanstack-query
+  kind: cross-page
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated by the useQuery reference and the reset sections.
+- case: 'tanstack-query v5.90.3: useSuspenseQuery keeps showing stale data on refetch errors, how do I
+    send every error to my boundary and let users retry?'
+  project: tanstack-query
+  kind: cross-page
+  verdict: fixed
+  problems: [wrong-kind, missing-section]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'suspense.md states every fact: [throwOnError default] and [Resetting Error Boundaries] ''Query
+    errors can be reset with the QueryErrorResetBoundary component or with the useQueryErrorResetBoundary
+    hook''; that section was missing. Added; kind set to how-to.'
+- case: 'tanstack-query v4.36.1: In a paginated table, how do I keep the current page on screen while
+    the next page loads?'
+  project: tanstack-query
+  kind: how-to
+  verdict: fixed
+  problems: [missing-section]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'reference/useQuery.md []: keepPreviousData ''If set, any previous data will be kept when fetching
+    new data because the query key changed'' and isPreviousData. Added. (The case name lacks the query''s
+    last words ''instead of flashing a loading state''.)'
+- case: 'tanstack-query v5.90.3: How do I consume a useQuery result with React.use inside a Suspense boundary?'
+  project: tanstack-query
+  kind: how-to
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; useQuery.md's promise entry does not show React.use or Suspense.
+- case: 'tanstack-query v5.90.3: How do I queue mutations so that repeated mutate calls run one at a time?'
+  project: tanstack-query
+  kind: how-to
+  verdict: fixed
+  problems: [missing-section]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'reference/useMutation.md []: scope ''Defaults to a unique id (so that all mutations run in parallel)
+    ... Mutations with the same scope id will run in serial''. Added.'
+- case: 'tanstack-query v4.36.1: What is the default cacheTime of useQuery?'
+  project: tanstack-query
+  kind: identifier-lookup
+  verdict: fixed
+  problems: [missing-section]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'important-defaults.md []: ''alter the default cacheTime for queries to something other than 1000
+    * 60 * 5 milliseconds''; caching.md [Basic Example]: ''the default cacheTime of 5 minutes''. Both
+    added.'
+- case: 'tanstack-query v5.90.3: Is there a util to test whether a given query matches a set of query
+    filters?'
+  project: tanstack-query
+  kind: identifier-lookup
+  verdict: fixed
+  problems: [unsupported-fact]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: '''matchMutation is the equivalent for mutations'' is in [Utils > matchMutation], not the expected
+    [Utils > matchQuery]; the question does not ask about mutations. Fact and reference sentence dropped.'
+- case: 'tanstack-query v5.90.3: What is the default refetchMode of streamedQuery, and what does it do
+    on refetch?'
+  project: tanstack-query
+  kind: identifier-lookup
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated in streamedQuery.md.
+- case: 'tanstack-query v4.36.1: How can I cap how many queries fetch at the same time, say four requests
+    in flight?'
+  project: tanstack-query
+  kind: unanswerable
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Unanswerable confirmed: v4.36.1 has parallel queries, in-flight wording and a batching community
+    page, no concurrency limit.'
+- case: 'tanstack-query v5.0.0: How do I disable a query in a type-safe way with skipToken?'
+  project: tanstack-query
+  kind: unanswerable
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Unanswerable confirmed: no skipToken in v5.0.0.'
+- case: 'tanstack-query v5.90.3: How do I stop iframes from triggering false window-focus refetches?'
+  project: tanstack-query
+  kind: unanswerable
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Unanswerable confirmed: only v4.36.1 has [Ignoring Iframe Focus Events]; v5.90.3''s [Custom Window
+    Focus Event] does not mention iframes.'
+- case: 'tanstack-query v4.36.1: After upgrading, useQuery with a plain string key breaks, what changed
+    about keys?'
+  project: tanstack-query
+  kind: version-change
+  verdict: fixed
+  problems: [unsupported-fact]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: '''a codemod helps with the migration'' is in the child section [... need to be an Array > Codemod]
+    (''we decided to deliver a codemod''), not the expected one. Fact and reference sentence dropped.
+    (The case name says ''a plain string key'', the query useQuery(''todos'', fetchTodos).)'
+- case: 'tanstack-query v5.0.0: Can I still pass onSuccess and onError to useQuery?'
+  project: tanstack-query
+  kind: version-change
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; v4.36.1 documents onSuccess on useQuery.
+- case: 'tanstack-query v5.90.3: Where did hashQueryKey go, and why was it renamed?'
+  project: tanstack-query
+  kind: version-change
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; v5.0.0 has no hashQueryKey or hashKey.
+- case: 'zod v3.23.8: Why can I not call .email() on a string schema after .transform()?'
+  project: zod
+  kind: conceptual
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated in [Chaining order].
+- case: 'zod v4.0.17: Is Zod Mini worth it for a Node API on AWS Lambda?'
+  project: zod
+  kind: conceptual
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated by the two mini.mdx sections.
+- case: 'zod v4.6.7: If I set an error message on z.string() and another on .min(5), which one wins, and
+    does an error map passed to .parse() override them?'
+  project: zod
+  kind: conceptual
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated in [Error precedence]; [Per-parse error customization] answers only the second half.
+- case: 'zod v4.0.17: How do I add length limits and a custom refine to a string in zod/mini, and why
+    are they not methods there?'
+  project: zod
+  kind: cross-page
+  verdict: fixed
+  problems: [wrong-kind, missing-section]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'packages/mini.mdx [Tree-shaking]: ''Bundlers are generally not able to remove ("treeshake") unused
+    method implementations ... As such, the API of Zod Mini uses more functions than methods'' with z.string().check(z.minLength(5),
+    z.maxLength(10), z.trim()). With [.check()] every fact is in mini.mdx. Added; kind set to how-to.'
+- case: 'zod v4.0.17: How do I define a validated async function now that z.function() has no .args()
+    and .returns()?'
+  project: zod
+  kind: cross-page
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Cross-page holds: implementAsync only in the changelog section (its heading is swallowed into
+    [z.function()] by the MDX fence pairing).'
+- case: 'zod v4.6.7: How do I compile every schema in my Node app automatically, and what does it cost
+    in bundle size?'
+  project: zod
+  kind: cross-page
+  verdict: fixed
+  problems: [wrong-kind, missing-section]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'compile.mdx states every fact ([import "zod/compile"], [Bundle size]: ''It adds about 7 KB gzipped'');
+    blog/introducing-z-compile.mdx [Compile all the things!] and blog/zod-4-5.mdx [z.compile() > import
+    "zod/compile"] (''To compile every schema in an application, import zod/compile once'') answer the
+    first half too. Both added; kind set to how-to.'
+- case: 'zod v3.23.8: How do I stop later refinements from running once an earlier check has failed?'
+  project: zod
+  kind: how-to
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated in [Abort early].
+- case: 'zod v3.23.8: My password/confirm check fails but the error shows on the whole form; how do I
+    attach it to the confirm field?'
+  project: zod
+  kind: how-to
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated by the two .refine sections.
+- case: 'zod v3.23.8: z.coerce.date() accepts null and z.coerce.bigint() throws on null; how do I restrict
+    what gets coerced?'
+  project: zod
+  kind: how-to
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated in the .pipe section.
+- case: 'zod v3.23.8: My enum comes from a third-party TypeScript library; how do I validate values against
+    it?'
+  project: zod
+  kind: identifier-lookup
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated in [Native enums].
+- case: 'zod v4.6.7: How can I reuse a helper that adds common checks to a schema without breaking the
+    method chain?'
+  project: zod
+  kind: identifier-lookup
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; .apply() appears only in api.mdx.
+- case: 'zod v4.6.7: I need a record that validates keys ending in _phone but leaves other keys alone;
+    what do I use?'
+  project: zod
+  kind: identifier-lookup
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; looseRecord appears only in api.mdx.
+- case: 'zod v3.23.8: How do I cancel a pending parseAsync with an AbortSignal?'
+  project: zod
+  kind: unanswerable
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Unanswerable confirmed: README mentions abort only for superRefine''s Abort early, no signal
+    or cancel.'
+- case: 'zod v4.0.17: How can TypeScript tell me when an object schema has a key that my existing interface
+    does not?'
+  project: zod
+  kind: unanswerable
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Unanswerable confirmed: no toZod, satisfies or existing-type check in v4.0.17 (v4.6.7 has api.mdx
+    [Matching an existing type]).'
+- case: 'zod v4.6.7: Can Zod generate Protocol Buffers .proto definitions from a schema?'
+  project: zod
+  kind: unanswerable
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Unanswerable confirmed: no proto or protobuf in v4.6.7.'
+- case: 'zod v4.0.17: An error map passed to .parse() no longer overrides the message set on my schema;
+    is that intended?'
+  project: zod
+  kind: version-change
+  verdict: fixed
+  problems: [missing-section]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'error-customization.mdx [Per-parse error customization]: ''This has lower precedence than any
+    schema-level custom messages.'' Added. (Its [Error precedence] heading is swallowed into [Internationalization]
+    by the MDX fence pairing, so it cannot be named.)'
+- case: 'zod v4.6.7: An object with an a: z.unknown() field now fails when a is missing; did that change?'
+  project: zod
+  kind: version-change
+  verdict: correct
+  problems: []
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: Facts stated; v4.0.17's section has the inferred-type change without the v4.4.0 paragraph.
+- case: 'zod v4.6.7: Can a record use z.number() as its key schema, and what does it accept?'
+  project: zod
+  kind: version-change
+  verdict: fixed
+  problems: [wrong-kind]
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: 'Not a version change: the question asks no change and v4.6.7 states none; api.mdx [Records >
+    z.record] only describes the behaviour. The change shows only against v4.0.17 api.mdx (''will always
+    throw an error during parsing''). Kind set to conceptual; the v4.0.17 sentence dropped from the reference.'
