@@ -22,6 +22,7 @@ from exactdocs.identity.models import (
     SubjectKind,
     Username,
 )
+from exactdocs_kernel import Sort, SortValue
 
 
 class AccountRepository(Protocol):
@@ -767,19 +768,30 @@ class AccessLog(Protocol):
         """
         ...
 
-    async def newest(
-        self, where: AccessLogFilter, *, older_than: str | None, limit: int, offset: int = 0
+    async def search(
+        self,
+        where: AccessLogFilter,
+        *,
+        sort: Sort,
+        after: tuple[SortValue, str] | None,
+        limit: int,
+        offset: int = 0,
     ) -> list[AccessEvent]:
-        """Return the newest events that match, newest first.
+        """Return the events that match, in ``sort`` order, after the ``after`` key.
+
+        The order is the sort field's value (``AccessEvent.sort_value``), then the ID, both in
+        the sort's direction.
 
         Args:
             where: Which events.
-            older_than: Only events recorded before the one with this ID (a page's cursor).
+            sort: The order (a field of ``ACCESS_LOG_SORT_FIELDS``).
+            after: The sort value and ID of the last event of the previous page; ``None``
+                starts at the first.
             limit: Most events returned.
-            offset: How many of the matching events, newest first, to skip first.
+            offset: How many of the matching events in order (after ``after``) to skip first.
 
         Returns:
-            Up to ``limit`` events, by ID descending.
+            Up to ``limit`` events, in order.
         """
         ...
 

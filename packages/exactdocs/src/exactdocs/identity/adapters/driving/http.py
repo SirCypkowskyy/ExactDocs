@@ -467,11 +467,12 @@ def build_access_log_router(
 
         Creations, grants (a new role, or another one), revocations, ownership transfers and
         removals, each with who made it and when; a removed library's events stay. Filter with
-        `library` and `change`; `total` counts every match.
+        `library`, `change`, `actor`, `subject`, `at_after` and `at_before`, and order with
+        `sort`; `total` counts every match.
 
         Args:
             who: The caller.
-            query: The filters, the page size and the cursor of the previous page.
+            query: The filters, the sort, the page size and the cursor of the previous page.
 
         Returns:
             The page of events, its next cursor and the total.
@@ -945,14 +946,15 @@ def build_grants_router(
 
         Its creation, grants (a new role, or another one), revocations and ownership transfers,
         each with who made it and when. Operators see every event under the library's ID;
-        anyone else only those since it was last removed. Filter with `change`; `total` counts
-        every match.
+        anyone else only those since it was last removed. Filter with `change`, `actor`,
+        `subject`, `at_after` and `at_before`, and order with `sort`; `total` counts every
+        match.
 
         Args:
             owner: The library's owner segment.
             repo: The library's repository segment.
             who: The caller.
-            query: The filter, the page size and the cursor of the previous page.
+            query: The filters, the sort, the page size and the cursor of the previous page.
 
         Returns:
             The page of events, its next cursor and the total.

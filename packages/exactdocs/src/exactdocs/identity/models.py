@@ -6,7 +6,7 @@ import re
 import unicodedata
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import NewType
 from urllib.parse import urlsplit
@@ -841,6 +841,29 @@ class AccessEvent:
             message = "a library_deleted event names no subject or role"
             raise ValueError(message)
 
+    def sort_value(self, field: str) -> str:
+        """Return what the event sorts by in the log sorted by ``field``.
+
+        Args:
+            field: One of ``ACCESS_LOG_SORT_FIELDS``.
+
+        Returns:
+            ``at`` as fixed-width UTC ISO 8601 text with microseconds (as the log stores it, so
+            the text sorts in time order), or the library ID, or the change.
+
+        Raises:
+            ValueError: The log cannot be sorted by ``field``.
+        """
+        match field:
+            case "at":
+                return self.at.astimezone(UTC).isoformat(timespec="microseconds")
+            case "library":
+                return self.library
+            case "change":
+                return self.change.value
+        message = f"the access log cannot be sorted by {field!r}"
+        raise ValueError(message)
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AccessLogFilter:
@@ -852,6 +875,15 @@ class AccessLogFilter:
     """Only events of these changes; ``None`` for all."""
     newer_than: str | None = None
     """Only events recorded after the one with this ID."""
+    actor: AccountId | None = None
+    """Only events made by this account; ``None``: by anyone, the instance included."""
+    subjects: frozenset[tuple[SubjectKind, str]] | None = None
+    """Only events about one of these users (account IDs) or groups (names as stored);
+    ``None``: about anyone, deletions included."""
+    at_after: datetime | None = None
+    """Only events that happened at or after this time."""
+    at_before: datetime | None = None
+    """Only events that happened before this time."""
 
 
 def effective_role(grants: Iterable[LibraryGrant]) -> LibraryRole | None:

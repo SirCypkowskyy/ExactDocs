@@ -274,7 +274,8 @@ export interface paths {
          *
          *     Creations, grants (a new role, or another one), revocations, ownership transfers and
          *     removals, each with who made it and when; a removed library's events stay. Filter with
-         *     `library` and `change`; `total` counts every match.
+         *     `library`, `change`, `actor`, `subject`, `at_after` and `at_before`, and order with
+         *     `sort`; `total` counts every match.
          */
         readonly get: operations["identity-list_access_log"];
         readonly put?: never;
@@ -372,8 +373,9 @@ export interface paths {
          *
          *     Its creation, grants (a new role, or another one), revocations and ownership transfers,
          *     each with who made it and when. Operators see every event under the library's ID;
-         *     anyone else only those since it was last removed. Filter with `change`; `total` counts
-         *     every match.
+         *     anyone else only those since it was last removed. Filter with `change`, `actor`,
+         *     `subject`, `at_after` and `at_before`, and order with `sort`; `total` counts every
+         *     match.
          */
         readonly get: operations["identity-list_library_access_log"];
         readonly put?: never;
@@ -1606,7 +1608,7 @@ export interface components {
         };
         /**
          * AccessLogPage
-         * @description A page of the access log, newest first.
+         * @description A page of the access log, newest first unless sorted otherwise.
          */
         readonly AccessLogPage: {
             /**
@@ -1616,7 +1618,8 @@ export interface components {
             readonly events: readonly components["schemas"]["AccessEventSummary"][];
             /**
              * Next Cursor
-             * @description Pass as `cursor` to get the next (older) page; null on the last page.
+             * @description Pass as `cursor` (with the same `sort` and filters) to get the next page; null on the
+             *     last page.
              */
             readonly next_cursor: string | null;
             /**
@@ -7560,7 +7563,8 @@ export interface operations {
                 readonly limit?: number;
                 /**
                  * @description Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
-                 *     filters of the request that returned it.
+                 *     `sort` and filters of the request that returned it (another `sort` is a 422
+                 *     `invalid_cursor`).
                  */
                 readonly cursor?: string | null;
                 /**
@@ -7568,8 +7572,18 @@ export interface operations {
                  *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
                  */
                 readonly offset?: number | null;
+                /** @description Sort by one of at, library, change; prefix `-` for descending. Default: `-at` (newest first). Ties go by the event's ID (the order it was recorded in), in the same direction. An unknown field is a 422. */
+                readonly sort?: string | null;
                 /** @description Only events of these changes; repeat for several. */
                 readonly change?: readonly ("library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted")[] | null;
+                /** @description Only changes made by this person: a username (any case), or the account ID the log shows as `actor` for an account that no longer exists. Changes the instance made (`actor` null) never match. */
+                readonly actor?: string | null;
+                /** @description Only changes about this user or group: a username (any case), the account ID the log shows as `subject` for an account that no longer exists, or a group name (exact case, as the log shows it). A user and a group of the same name both match. Deletions, which are about nobody, never match. */
+                readonly subject?: string | null;
+                /** @description Only events that happened at or after this time (ISO 8601; no offset means UTC). */
+                readonly at_after?: string | null;
+                /** @description Only events that happened before this time (ISO 8601; no offset means UTC). */
+                readonly at_before?: string | null;
                 /** @description Only the events of this library (`/owner/repo`, any case), removed ones included. */
                 readonly library?: string | null;
             };
@@ -7993,7 +8007,8 @@ export interface operations {
                 readonly limit?: number;
                 /**
                  * @description Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
-                 *     filters of the request that returned it.
+                 *     `sort` and filters of the request that returned it (another `sort` is a 422
+                 *     `invalid_cursor`).
                  */
                 readonly cursor?: string | null;
                 /**
@@ -8001,8 +8016,18 @@ export interface operations {
                  *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
                  */
                 readonly offset?: number | null;
+                /** @description Sort by one of at, library, change; prefix `-` for descending. Default: `-at` (newest first). Ties go by the event's ID (the order it was recorded in), in the same direction. An unknown field is a 422. */
+                readonly sort?: string | null;
                 /** @description Only events of these changes; repeat for several. */
                 readonly change?: readonly ("library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted")[] | null;
+                /** @description Only changes made by this person: a username (any case), or the account ID the log shows as `actor` for an account that no longer exists. Changes the instance made (`actor` null) never match. */
+                readonly actor?: string | null;
+                /** @description Only changes about this user or group: a username (any case), the account ID the log shows as `subject` for an account that no longer exists, or a group name (exact case, as the log shows it). A user and a group of the same name both match. Deletions, which are about nobody, never match. */
+                readonly subject?: string | null;
+                /** @description Only events that happened at or after this time (ISO 8601; no offset means UTC). */
+                readonly at_after?: string | null;
+                /** @description Only events that happened before this time (ISO 8601; no offset means UTC). */
+                readonly at_before?: string | null;
             };
             readonly header?: never;
             readonly path: {

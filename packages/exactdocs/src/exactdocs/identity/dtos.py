@@ -1,6 +1,6 @@
 """Data crossing the identity boundary (into and out of driving ports). Immutable, validated."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Annotated, Literal, Self
 
 from pydantic import (
@@ -15,6 +15,8 @@ from pydantic import (
 )
 
 from exactdocs.identity.constants import (
+    ACCESS_LOG_DEFAULT_SORT,
+    ACCESS_LOG_SORT_FIELDS,
     GRANT_SORT_FIELDS,
     MAX_PASSWORD_LENGTH,
     MAX_RETURN_TO_LENGTH,
@@ -775,24 +777,75 @@ _Change = Literal[
 
 
 class LibraryAccessLogQuery(_Dto):
-    """How a page of one library's access log is filtered and paged (newest first)."""
+    """How a page of one library's access log is filtered, sorted and paged (newest first)."""
 
     limit: Annotated[int, Field(ge=1, le=MAX_LIMIT)] = DEFAULT_LIMIT
     """How many events per page."""
     cursor: str | None = None
     """Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
-    filters of the request that returned it."""
+    `sort` and filters of the request that returned it (another `sort` is a 422
+    `invalid_cursor`)."""
     offset: Annotated[int, Field(ge=0, le=MAX_OFFSET)] | None = None
     """Jump to a page: skip this many matches, in the order and with the filters of the cursor
     walk. Not with `cursor`; the page's `next_cursor` goes on from it."""
+    sort: str | None = Field(
+        default=None,
+        max_length=MAX_NAME,
+        description=(
+            f"Sort by one of {', '.join(ACCESS_LOG_SORT_FIELDS)}; prefix `-` for descending. "
+            f"Default: `{ACCESS_LOG_DEFAULT_SORT}` (newest first). Ties go by the event's ID "
+            "(the order it was recorded in), in the same direction. An unknown field is a 422."
+        ),
+    )
+    """The sort field; its schema description names ``ACCESS_LOG_SORT_FIELDS``."""
     change: list[_Change] | None = Field(
         default=None, description="Only events of these changes; repeat for several."
     )
     """Only events of these changes."""
+    actor: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_NAME,
+        description=(
+            "Only changes made by this person: a username (any case), or the account ID the "
+            "log shows as `actor` for an account that no longer exists. Changes the instance "
+            "made (`actor` null) never match."
+        ),
+    )
+    """Who made the change, as the log shows it."""
+    subject: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_NAME,
+        description=(
+            "Only changes about this user or group: a username (any case), the account ID the "
+            "log shows as `subject` for an account that no longer exists, or a group name "
+            "(exact case, as the log shows it). A user and a group of the same name both "
+            "match. Deletions, which are about nobody, never match."
+        ),
+    )
+    """Who the change is about, as the log shows it."""
+    at_after: datetime | None = None
+    """Only events that happened at or after this time (ISO 8601; no offset means UTC)."""
+    at_before: datetime | None = None
+    """Only events that happened before this time (ISO 8601; no offset means UTC)."""
+
+    @field_validator("at_after", "at_before")
+    @classmethod
+    def _utc(cls, value: datetime | None) -> datetime | None:
+        """Read a time without an offset as UTC.
+
+        Args:
+            value: The time as sent.
+
+        Returns:
+            The time with an offset, or ``None``.
+        """
+        return value if value is None or value.tzinfo else value.replace(tzinfo=UTC)
 
 
 class AccessLogQuery(LibraryAccessLogQuery):
-    """How a page of the instance's access log is filtered and paged (newest first)."""
+    """How a page of the instance's access log is filtered, sorted and paged (newest first)."""
 
     library: _LibraryId | None = None
     """Only the events of this library (`/owner/repo`, any case), removed ones included."""
@@ -864,11 +917,12 @@ class AccessEventSummary(_Dto):
 
 
 class AccessLogPage(_Dto):
-    """A page of the access log, newest first."""
+    """A page of the access log, newest first unless sorted otherwise."""
 
     events: list[AccessEventSummary]
     """The events of this page."""
     next_cursor: str | None
-    """Pass as `cursor` to get the next (older) page; null on the last page."""
+    """Pass as `cursor` (with the same `sort` and filters) to get the next page; null on the
+    last page."""
     total: int
     """How many events match the filters, across every page."""

@@ -25,6 +25,7 @@ from exactdocs.identity.models import (
     known_sign_ins_prefix,
 )
 from exactdocs.identity.ports.driven import LinkOutcome
+from exactdocs_kernel import Sort, SortValue, is_after
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -776,43 +777,60 @@ class InMemoryAccessLog:
         self.events.append(event)
 
     def _matching(self, where: AccessLogFilter) -> list[AccessEvent]:
-        """Return the events that match, newest first.
+        """Return the events that match, in the order they were recorded.
 
         Args:
             where: Which events.
 
         Returns:
-            The events, by ID descending.
+            The events.
         """
-        return sorted(
-            (
-                e
-                for e in self.events
-                if (where.library is None or e.library == where.library)
-                and (where.changes is None or e.change in where.changes)
-                and (where.newer_than is None or e.id > where.newer_than)
-            ),
-            key=lambda e: e.id,
-            reverse=True,
-        )
+        return [
+            e
+            for e in self.events
+            if (where.library is None or e.library == where.library)
+            and (where.changes is None or e.change in where.changes)
+            and (where.newer_than is None or e.id > where.newer_than)
+            and (where.actor is None or e.actor == where.actor)
+            and (
+                where.subjects is None
+                or (e.kind is not None and (e.kind, e.subject) in where.subjects)
+            )
+            and (where.at_after is None or e.at >= where.at_after)
+            and (where.at_before is None or e.at < where.at_before)
+        ]
 
-    async def newest(
-        self, where: AccessLogFilter, *, older_than: str | None, limit: int, offset: int = 0
+    async def search(
+        self,
+        where: AccessLogFilter,
+        *,
+        sort: Sort,
+        after: tuple[SortValue, str] | None,
+        limit: int,
+        offset: int = 0,
     ) -> list[AccessEvent]:
-        """Return the newest events that match, newest first.
+        """Return the events that match, in ``sort`` order, after the ``after`` key.
 
         Args:
             where: Which events.
-            older_than: Only events recorded before the one with this ID.
+            sort: The order.
+            after: The sort value and ID of the last event of the previous page.
             limit: Most events returned.
-            offset: How many of the matching events, newest first, to skip first.
+            offset: How many of the matching events in order (after ``after``) to skip first.
 
         Returns:
-            Up to ``limit`` events, by ID descending.
+            Up to ``limit`` events, in order.
         """
-        found = self._matching(where)
-        older = [e for e in found if older_than is None or e.id < older_than]
-        return older[offset : offset + limit]
+        ordered = sorted(
+            self._matching(where),
+            key=lambda e: (e.sort_value(sort.field), e.id),
+            reverse=sort.descending,
+        )
+        if after is not None:
+            ordered = [
+                e for e in ordered if is_after((e.sort_value(sort.field), e.id), after, sort=sort)
+            ]
+        return ordered[offset : offset + limit]
 
     async def count(self, where: AccessLogFilter) -> int:
         """Count the events that match.
