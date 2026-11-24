@@ -945,16 +945,16 @@ per chunking on 4 CPUs:
 
 | chunking | same rank | hit / miss | rendered as plain text | BM25 recall@5, text (chunk ID) |
 |---|---|---|---|---|
-| `default` | **99.8%** | 100.0% | 99.8% | 81.7% (81.7%) |
-| `h6` | 99.8% | 100.0% | 99.8% | 79.8% (79.8%) |
-| `h2` | 99.8% | 100.0% | 99.5% | 82.8% (82.8%) |
-| `merge-400` | 99.5% | 99.8% | 99.5% | 81.7% (81.7%) |
+| `default` | **99.8%** | 100.0% | 99.8% | 87.6% (87.6%) |
+| `h6` | 99.8% | 100.0% | 99.8% | 85.8% (85.8%) |
+| `h2` | 99.8% | 100.0% | 99.5% | 89.1% (89.1%) |
+| `merge-400` | 99.5% | 99.8% | 99.5% | 87.6% (87.6%) |
 
 The criterion is met at `default`, and the agreement is above it at every chunking. Both
 scorings take the same wrong-version decision on every case at every chunking (BM25 returns
 nothing of another version, and no result's text is only in another version). At `default`, 72%
 of BM25's results are version-neutral; its ten results hold 3,464 tokens of context on average,
-736 of them up to the first hit; they hold 87% of the cases' facts, where the expected sections'
+656 of them up to the first hit; they hold 87% of the cases' facts, where the expected sections'
 own text holds 81% and another question's results 25%.
 
 The threshold is 0.8 because of the sweep: below it, results of other articles that share part of
@@ -971,7 +971,8 @@ with its subsections; small sections merged with the next), as did one at `defau
 1.0.0rc1 release notes are longer than 4,000 characters, so they are cut again at their `####`
 headings, and the chunk `1.0.0rc1 > Removed` also holds `Fixed`. Chunk-ID scoring now reads what
 each chunk holds, and BM25's recall@5 at `h2` and `merge-400` went from 76.0% and 74.2% to the
-82.8% and 81.7% the text gives.
+82.8% and 81.7% the text gives. Then #501 counted a hit on any section a case lists (the recall@5
+column above), which moved both scorings alike.
 
 What still disagrees, and why:
 
