@@ -9,7 +9,22 @@ import { cn } from "@/shared/lib/utils";
  */
 
 export const Tabs = T.Root;
-export const TabsContent = T.Content;
+
+/**
+ * A tab's panel. Radix makes it focusable (Tab from the tab list lands on it when its first
+ * content is text), so it shows the focus ring like any control.
+ */
+export function TabsContent({ className, ...props }: ComponentProps<typeof T.Content>) {
+  return (
+    <T.Content
+      className={cn(
+        "rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-background",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
 
 export function TabsList({ className, children, ...props }: ComponentProps<typeof T.List>) {
   const ref = useRef<HTMLDivElement>(null);
