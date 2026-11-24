@@ -29,7 +29,7 @@ from pydantic_evals import Case, Dataset
 from exactdocs.retrieval.adapters.driven.genai_prices import GenaiPrices
 from exactdocs.retrieval.constants import TOKENS_PER_MILLION
 from fixture_import import embed_fixture
-from retrieval_eval.dataset import Hit, Question
+from retrieval_eval.dataset import Hit, Question, parts_of
 from retrieval_eval.fixture import configured_container
 from retrieval_eval.golden import Corpus, GoldenCase, Project
 from retrieval_eval.golden_cli import ImportedVersion, import_corpus
@@ -273,11 +273,12 @@ async def record_tool_call(
 
 
 def grounded(info: BenchInfo, run: AgentRun) -> bool | None:
-    """Tell whether the agent read every section that answers the case.
+    """Tell whether the agent read every part of the answer: a section of each, or an alternative.
 
     A section counts when the agent read its chunk (``read_chunk``, or ``query-docs`` which
     returns chunks in full) or its whole article (``read_article``), of the asked library and the
-    section's version. Search snippets do not count.
+    section's version. Search snippets do not count. A part is read when one of its sections or
+    of its alternatives is (#501).
 
     Args:
         info: The case's expectations.
@@ -295,8 +296,9 @@ def grounded(info: BenchInfo, run: AgentRun) -> bool | None:
             and s.article == hit.article
             and (s.whole_article or s.heading_path == hit.heading_path)
             for s in run.read
+            for hit in part
         )
-        for hit in info.hits
+        for part in parts_of(info.hits)
     )
 
 

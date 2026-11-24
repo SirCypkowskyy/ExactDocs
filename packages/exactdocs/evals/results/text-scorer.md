@@ -1,6 +1,6 @@
 # Text scorer calibration
 
-ExactDocs' BM25 results for the golden set's 321 cases (`sha256:7dd51c59057c279a`) on starlette, pydantic, tanstack-query, zod, electron, scored by chunk ID and from their text alone: 5-word shingles, threshold 0.8, facts at 0.75 of their words. A decision is where an expected section is in the top 10 (its rank), or that it is not; the criterion is 98.0% agreement at `default`. ExactDocs `dcd7c1fccb99e7fd72b9707d53a05b1518bed808`. Definitions: docs/evals.md#scoring-text-results.
+ExactDocs' BM25 results for the golden set's 321 cases (`sha256:a00997851150e3b0`) on starlette, pydantic, tanstack-query, zod, electron, scored by chunk ID and from their text alone: 5-word shingles, threshold 0.8, facts at 0.75 of their words. A decision is where an expected section is in the top 10 (its rank), or that it is not; the criterion is 98.0% agreement at `default`. ExactDocs `8e789e67177adf9514418b566473dca937ca638d`. Definitions: docs/evals.md#scoring-text-results.
 
 ## Agreement with chunk-ID scoring
 
@@ -26,23 +26,23 @@ ExactDocs' BM25 results for the golden set's 321 cases (`sha256:7dd51c59057c279a
 
 | chunking | scored by | recall@1 | recall@5 | recall@10 | section recall@5 | MRR | nDCG@10 | wrong version | no answer |
 |---|---|---|---|---|---|---|---|---|---|
-| `default` | chunk ID | 52.1% | 81.7% | 89.1% | 74.9% | 0.651 | 0.706 | 0.0% | 0.0% |
-| `default` | text | 52.1% | 81.7% | 89.1% | 74.9% | 0.651 | 0.706 | 0.0% | 0.0% |
-| `h6` | chunk ID | 49.8% | 79.8% | 86.9% | 73.4% | 0.626 | 0.683 | 0.0% | 0.0% |
-| `h6` | text | 49.8% | 79.8% | 86.9% | 73.4% | 0.626 | 0.683 | 0.0% | 0.0% |
-| `h2` | chunk ID | 55.4% | 82.8% | 90.3% | 75.5% | 0.677 | 0.714 | 0.0% | 0.0% |
-| `h2` | text | 55.4% | 82.8% | 90.3% | 75.5% | 0.677 | 0.714 | 0.0% | 0.0% |
-| `merge-400` | chunk ID | 53.9% | 81.7% | 88.8% | 75.5% | 0.662 | 0.713 | 0.0% | 0.0% |
-| `merge-400` | text | 53.9% | 81.7% | 88.8% | 75.5% | 0.662 | 0.712 | 0.0% | 0.0% |
+| `default` | chunk ID | 58.8% | 87.6% | 93.6% | 76.6% | 0.711 | 0.714 | 0.0% | 0.0% |
+| `default` | text | 58.8% | 87.6% | 93.6% | 76.6% | 0.711 | 0.714 | 0.0% | 0.0% |
+| `h6` | chunk ID | 56.9% | 85.8% | 92.1% | 75.3% | 0.689 | 0.692 | 0.0% | 0.0% |
+| `h6` | text | 56.9% | 85.8% | 92.1% | 75.3% | 0.689 | 0.692 | 0.0% | 0.0% |
+| `h2` | chunk ID | 61.8% | 89.1% | 94.0% | 77.4% | 0.737 | 0.724 | 0.0% | 0.0% |
+| `h2` | text | 61.8% | 89.1% | 94.0% | 77.4% | 0.737 | 0.724 | 0.0% | 0.0% |
+| `merge-400` | chunk ID | 59.6% | 87.6% | 93.3% | 77.3% | 0.715 | 0.720 | 0.0% | 0.0% |
+| `merge-400` | text | 59.6% | 87.6% | 93.3% | 77.3% | 0.715 | 0.719 | 0.0% | 0.0% |
 
 ## What only the text tells
 
 | chunking | results / q | version-neutral | unmatched | context tokens / q | p95 | tokens to first hit | facts found | facts in the expected sections | facts in another question's results |
 |---|---|---|---|---|---|---|---|---|---|
-| `default` | 10.0 | 72.2% | 0.0% | 3464 | 5945 | 736 | 87.0% | 80.6% | 24.6% |
-| `h6` | 10.0 | 72.2% | 0.0% | 2876 | 5345 | 649 | 84.2% | 80.6% | 21.2% |
-| `h2` | 10.0 | 75.5% | 0.0% | 7065 | 11346 | 1525 | 92.8% | 80.6% | 41.8% |
-| `merge-400` | 10.0 | 73.3% | 0.0% | 3534 | 5957 | 733 | 87.1% | 80.6% | 26.2% |
+| `default` | 10.0 | 72.2% | 0.0% | 3464 | 5945 | 656 | 87.0% | 80.6% | 24.6% |
+| `h6` | 10.0 | 72.2% | 0.0% | 2876 | 5345 | 583 | 84.2% | 80.6% | 21.2% |
+| `h2` | 10.0 | 75.5% | 0.0% | 7065 | 11346 | 1366 | 92.8% | 80.6% | 41.8% |
+| `merge-400` | 10.0 | 73.3% | 0.0% | 3534 | 5957 | 656 | 87.1% | 80.6% | 26.2% |
 
 ## Disagreements
 

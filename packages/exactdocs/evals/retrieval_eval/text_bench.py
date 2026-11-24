@@ -20,7 +20,7 @@ from typing import Any, Final, Self
 from markdown_it import MarkdownIt
 from pydantic import BaseModel, ConfigDict
 
-from retrieval_eval.dataset import Answer, Hit
+from retrieval_eval.dataset import Answer, Hit, parts_of
 from retrieval_eval.evaluators import SectionMatch, wrong_version_hits
 from retrieval_eval.golden import GoldenCase
 from retrieval_eval.ingestion import tokens
@@ -159,8 +159,8 @@ class TextRow(_Model):
     context_tokens: int
     """Estimated tokens of every result's text (``ingestion.tokens``: characters / 4)."""
     tokens_to_hit: int | None
-    """Estimated tokens of the results up to and including the first expected section's; None
-    when it is not in the top 10."""
+    """Estimated tokens of the results up to and including the first that answers a section the
+    case lists; None when none is in the top 10."""
     facts: int
     """The facts the case lists."""
     facts_found: int
@@ -191,21 +191,29 @@ def first_ranks(expected: Sequence[Hit], matches: Sequence[TextMatch]) -> list[i
 
 
 def _section_ranks(expected: Sequence[Hit], matches: Sequence[TextMatch]) -> tuple[int, ...]:
-    """The ranks of the results that answer an expected section no earlier result answered.
+    """The ranks of the results that answer a part of the case no earlier result answered.
 
-    The text form of ``retrieval_bench.section_ranks``.
+    The text form of ``retrieval_bench.section_ranks``: a part is answered by one of its
+    sections or of its alternatives (#501), and counts once.
 
     Args:
-        expected: The sections that answer the case.
+        expected: The sections the case lists.
         matches: Each result's matches, best first.
 
     Returns:
-        One rank per expected section found in the top 10, ascending.
+        One rank per part found in the top 10, ascending.
     """
-    left = list(expected)
+    left = parts_of(expected)
     ranks = []
     for rank, match in enumerate(matches[:NDCG_AT], start=1):
-        found = next((e for e in left if match.answers(e.version, e.article, e.heading_path)), None)
+        found = next(
+            (
+                part
+                for part in left
+                if any(match.answers(e.version, e.article, e.heading_path) for e in part)
+            ),
+            None,
+        )
         if found is not None:
             left.remove(found)
             ranks.append(rank)
@@ -216,7 +224,7 @@ def _ndcg(expected: int, ranks: Sequence[int]) -> float:
     """nDCG@10 with binary relevance, as ``retrieval_bench.ndcg_at`` defines it.
 
     Args:
-        expected: How many sections the case expects.
+        expected: How many parts the case needs.
         ranks: The ranks of the relevant results (``_section_ranks``).
 
     Returns:
@@ -242,8 +250,9 @@ def text_row(case: GoldenCase, answer: TextAnswer, index: SectionIndex) -> TextR
     facts = [f for f in (case.expected_output.facts if case.expected_output else []) if f.strip()]
     matches = index.match_all(answer.texts)
     verdicts = [m.verdict(case.inputs.version) for m in matches]
-    rank = first_ranks(expected[:1], matches)[0] if expected else None
+    rank = min((r for r in first_ranks(expected, matches) if r is not None), default=None)
     ranks = _section_ranks(expected, matches)
+    parts = len(parts_of(expected))
     sizes = [tokens(text) for text in answer.texts]
     return TextRow(
         case=case.name or "",
@@ -253,8 +262,8 @@ def text_row(case: GoldenCase, answer: TextAnswer, index: SectionIndex) -> TextR
             project=case.inputs.project or "",
             answerable=bool(expected),
             rank=rank,
-            ndcg=_ndcg(len(expected), ranks),
-            sections=len(expected),
+            ndcg=_ndcg(parts, ranks),
+            sections=parts,
             section_ranks=ranks,
             wrong_version=Verdict.WRONG in verdicts,
             empty=not answer.texts,
@@ -289,8 +298,8 @@ class TextMetrics(_Model):
     context_tokens_p95: float
     """Nearest-rank p95 of the same."""
     tokens_to_first_hit: float | None
-    """Over answerable cases whose first expected section is in the top 10: estimated tokens of
-    the results up to and including it."""
+    """Over answerable cases with a section they list in the top 10: estimated tokens of the
+    results up to and including the first that answers one."""
     facts_found_rate: float | None
     """Over answerable cases: the mean share of the case's facts the returned text holds."""
 

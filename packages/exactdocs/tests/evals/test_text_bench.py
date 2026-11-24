@@ -4,6 +4,7 @@ The scoring runs over ``text_corpus``'s guide at two versions; the command at th
 the retrieval benchmark's tiny corpus and runs BM25 over it, as ``just text-bench`` does.
 """
 
+import math
 from pathlib import Path
 
 import pytest
@@ -119,8 +120,21 @@ def test_a_cross_page_case_scores_every_section_it_finds() -> None:
 
     row = text_row(case, TextAnswer(texts=[CONFIGURE_V2, UNRELATED, LIFESPAN]), INDEX)
 
-    assert row.row.rank == 3  # recall counts the first expected section
+    assert row.row.rank == 1  # recall counts a hit on any section the case lists (#501)
     assert row.row.section_ranks == (1, 3)
+
+
+def test_an_alternative_section_is_a_hit_and_answers_its_part() -> None:
+    either = [
+        _expected("v2", "Lifespan"),
+        _expected("v2", "Configure").model_copy(update={"alternative": True}),
+    ]
+
+    row = text_row(_case(expected=either), TextAnswer(texts=[UNRELATED, CONFIGURE_V2]), INDEX)
+
+    assert (row.row.rank, row.row.sections, row.row.section_ranks) == (2, 1, (2,))
+    assert row.row.ndcg == pytest.approx(1 / math.log2(3))
+    assert row.tokens_to_hit == tokens(UNRELATED) + tokens(CONFIGURE_V2)
 
 
 # ---------------------------------------------------------------- facts
