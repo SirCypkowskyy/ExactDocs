@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowRight, Copy, GitBranch, Pin, Trash2 } from "lucide-react";
@@ -13,8 +14,10 @@ import type { RowAction } from "@/shared/ui/data-table/row-actions";
 import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
 import { type TableFilter, useDataTable } from "@/shared/ui/data-table/use-data-table";
 import { VersionStation } from "@/shared/ui/route";
+import { libraryRetrievalQueryOptions } from "../api/retrieval";
 import { versionsSource } from "../api/settings";
 import { versionsMessages } from "../messages/versions";
+import type { LibraryRetrieval } from "../model/retrieval";
 import type { SettingsVersion } from "../model/settings";
 import {
   IMPORTED_WITHIN,
@@ -23,6 +26,7 @@ import {
   VERSION_ORIGINS,
   VERSIONS_TABLE,
 } from "../model/versions-view";
+import { ArticlesCell, EmbeddingCell, type NoEmbedding } from "./version-counts";
 
 /*
  * The library's versions (blocks-map §2.3, "Versions") on DataTable v2: numbered pages sorted and
@@ -65,9 +69,24 @@ function VersionName({ v, pinned, t }: { v: SettingsVersion; pinned: boolean; t:
   );
 }
 
-// Built once per language and pin state: a cell is rendered as a component, so a new function
-// would remount it.
-const columnsOf = (t: Texts, pinned: boolean): ColumnDef<SettingsVersion>[] => [
+/**
+ * Why nothing of the library is embedded, from its retrieval settings (the AI section reads them
+ * too, so this costs no request): AI off for it, or no embedding model on the instance. Undefined
+ * while they are unknown (loading, or not readable by this caller): the meter then says "0 of N".
+ */
+function noEmbeddingOf(retrieval: LibraryRetrieval | undefined): NoEmbedding | undefined {
+  if (!retrieval) return undefined;
+  if (!retrieval.ai_enabled) return "aiOff";
+  return retrieval.configured_roles.includes("embedding") ? undefined : "noModel";
+}
+
+// Built once per language, pin state and embedding state: a cell is rendered as a component, so a
+// new function would remount it.
+const columnsOf = (
+  t: Texts,
+  pinned: boolean,
+  none: NoEmbedding | undefined,
+): ColumnDef<SettingsVersion>[] => [
   {
     accessorKey: "ref",
     header: t.columns.version,
@@ -109,6 +128,33 @@ const columnsOf = (t: Texts, pinned: boolean): ColumnDef<SettingsVersion>[] => [
     meta: { priority: 3 },
     cell: ({ row }) => <RelativeTime iso={row.original.imported_at} />,
   },
+  {
+    // Neither count is a sort field of `GET .../versions`.
+    accessorKey: "articles",
+    header: t.columns.articles,
+    enableSorting: false,
+    meta: { priority: 3, align: "end", skeleton: "number", className: "max-lg:hidden" },
+    cell: ({ row }) => <ArticlesCell value={row.original.articles} t={t} />,
+  },
+  {
+    id: "embedding",
+    header: t.columns.embedding,
+    enableSorting: false,
+    meta: {
+      priority: 3,
+      skeleton: "meter",
+      label: t.columns.embedding,
+      className: "max-lg:hidden",
+    },
+    cell: ({ row }) => (
+      <EmbeddingCell
+        embedded={row.original.embedded_chunks}
+        chunks={row.original.chunks}
+        none={none}
+        t={t}
+      />
+    ),
+  },
 ];
 
 const filtersOf = (t: Texts): TableFilter[] => [
@@ -132,7 +178,8 @@ export function VersionsTable({ owner, repo, pinned, onRemove }: Props) {
   const view = parseVersionsView(useSearch({ strict: false }) as Record<string, unknown>);
   const navigate = useNavigate();
   const now = useNow();
-  const columns = useMemo(() => columnsOf(t, pinned), [t, pinned]);
+  const none = noEmbeddingOf(useQuery(libraryRetrievalQueryOptions(owner, repo)).data);
+  const columns = useMemo(() => columnsOf(t, pinned, none), [t, pinned, none]);
   const filters = useMemo(() => filtersOf(t), [t]);
   const model = useDataTable({
     config: VERSIONS_TABLE,

@@ -38,6 +38,9 @@ const library = {
       commit_sha: SHA,
       imported_at: "2026-11-01T10:00:00Z",
       is_default: true,
+      articles: 12,
+      chunks: 40,
+      embedded_chunks: 40,
     },
     {
       ref: "main",
@@ -45,6 +48,9 @@ const library = {
       commit_sha: SHA,
       imported_at: "2026-11-01T10:00:00Z",
       is_default: false,
+      articles: 12,
+      chunks: 40,
+      embedded_chunks: 0,
     },
   ],
 };
@@ -985,6 +991,9 @@ describe("the versions table", () => {
     imported_at: "2026-11-01T10:00:00Z",
     is_default: n === 1,
     origin: n % 2 ? "manual" : "auto",
+    articles: n,
+    chunks: 4 * n,
+    embedded_chunks: 2 * n,
   });
 
   /**
