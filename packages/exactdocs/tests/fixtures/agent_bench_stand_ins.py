@@ -10,15 +10,22 @@ prove the plumbing.
 import contextlib
 import re
 from collections.abc import AsyncGenerator, Sequence
+from dataclasses import dataclass
 from typing import Any, Final
 
 from fastmcp import FastMCP
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.messages import ModelMessage, ModelResponse
+from pydantic_ai.models import Model
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_evals import Case
 
 from agent_bench.arms import NONE, Arm
 from agent_bench.harness import Recorder, RetrievalConfig, record_tool_call
+from agent_bench.models import chat_model
+from agent_bench.offline import OFFLINE_JUDGE
 from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question
 from retrieval_eval.golden import Corpus, GoldenCase, PinnedVersion, Project
 
@@ -157,3 +164,55 @@ def golden() -> tuple[Corpus, list[tuple[str, GoldenCase]]]:
         _case("demo v2: Which file holds the settings?", "v2", "unanswerable", [], []),
     ]
     return corpus, [("demo", c) for c in cases]
+
+
+@dataclass(slots=True)  # conventions: allow-mutable-dataclass -- a test heals it between runs
+class FlakyProvider:
+    """Resolves model names to the stand-ins, whose provider is rate limited on some questions.
+
+    Pass it to ``run_bench(models=...)``. While ``failing``, every agent request whose prompt
+    holds ``on`` is answered 429 after the client's retries; the judge never fails.
+    """
+
+    on: str
+    """A part of the questions the provider fails on."""
+    failing: bool = True
+    """Whether it still fails (set it to False before a resumed run)."""
+
+    def __call__(self, name: str) -> Model | str:
+        """Resolve one model name.
+
+        Args:
+            name: A stand-in's name.
+
+        Returns:
+            The stand-in; an agent's is rate limited on the questions holding ``on``.
+        """
+        model = chat_model(name)
+        if name == OFFLINE_JUDGE or not isinstance(model, FunctionModel):
+            return model
+        script = model.function
+        if script is None:
+            return model
+
+        def flaky(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            """Answer, or fail as a rate-limited provider does.
+
+            Args:
+                messages: The run so far.
+                info: The run's tools.
+
+            Returns:
+                The stand-in's step.
+
+            Raises:
+                ModelHTTPError: 429, while failing on this question.
+            """
+            asked = " ".join(str(getattr(part, "content", "")) for part in messages[0].parts)
+            if self.failing and self.on in asked:
+                raise ModelHTTPError(429, name, body="rate limited")
+            step = script(messages, info)
+            assert isinstance(step, ModelResponse)  # the stand-ins answer synchronously
+            return step
+
+        return FunctionModel(flaky, model_name=name)

@@ -43,7 +43,7 @@ from agent_bench.redact import REDACTED as SECRET
 from agent_bench.redact import recorded_settings, safe_url, scrub
 from agent_bench.report import QuestionResult, against_arms, markdown, results_of, summarize
 from agent_bench.retries import RETRIES, RetryLog, on_request, on_response
-from agent_bench_stand_ins import golden, stand_in_tools
+from agent_bench_stand_ins import FlakyProvider, golden, stand_in_tools
 from retrieval_eval.dataset import Question
 from retrieval_eval.golden import load_cases
 
@@ -397,6 +397,61 @@ async def test_a_resumed_run_asks_only_what_failed_on_the_provider_s_side(tmp_pa
     assert len(rows) == len(first.questions)
     assert rows[failed_key].grade != "error"  # asked again
     assert rows[kept_key].judge_reason == "from the checkpoint"  # not asked again
+
+
+async def test_a_provider_failure_is_an_error_not_a_wrong_answer_and_is_asked_again_on_resume(
+    tmp_path: Path,
+) -> None:
+    corpus, cases = golden()
+    flaky = FlakyProvider(on="install the package now")
+    checkpoint = tmp_path / "rows.jsonl"
+    retrieval = [RetrievalConfig.parse("bm25:mode=bm25")]
+
+    first = await run_bench(
+        cases,
+        corpus,
+        {},
+        agent_models=["offline:read"],
+        judge_model=OFFLINE_JUDGE,
+        arms=parse_arms([]),
+        retrieval=retrieval,
+        work_dir=tmp_path,
+        tools=stand_in_tools,
+        models=flaky,
+        checkpoint=checkpoint,
+    )
+
+    failed = [q for q in first.questions if q.grade == "error"]
+    assert sorted((q.arm, q.kind) for q in failed) == [
+        ("exactdocs", "version-change"),
+        ("none", "version-change"),
+    ]
+    assert all("429" in q.judge_reason for q in failed)
+    exact = next(c for c in first.cells if c.arm == "exactdocs")
+    assert (exact.questions, exact.answered, exact.grades["wrong"]) == (3, 2, 0)
+    assert exact.accuracy == 1  # over the two answered
+    assert exact.versus[0].cases == 2  # the paired test leaves the failed case out
+    assert "## Runs without an answer" in markdown(first)
+
+    flaky.failing = False
+    again = await run_bench(
+        cases,
+        corpus,
+        {},
+        agent_models=["offline:read"],
+        judge_model=OFFLINE_JUDGE,
+        arms=parse_arms([]),
+        retrieval=retrieval,
+        work_dir=tmp_path,
+        tools=stand_in_tools,
+        models=flaky,
+        done=load_rows(checkpoint),
+    )
+    assert [q.grade for q in again.questions if q.kind == "version-change"] == [
+        "refused",
+        "correct",
+    ]
+    assert all(c.answered == 3 for c in again.cells)
 
 
 # --------------------------------------------------------------------------- report, sample

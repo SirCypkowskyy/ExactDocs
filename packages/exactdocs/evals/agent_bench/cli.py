@@ -6,6 +6,7 @@ See docs/evals.md#the-agent-benchmark.
 import argparse
 import asyncio
 import contextlib
+import functools
 import importlib.metadata
 import itertools
 import json
@@ -20,6 +21,7 @@ from typing import Final
 
 import yaml
 from pydantic_ai import Agent
+from pydantic_ai.models import Model
 from pydantic_evals import Case, Dataset
 
 from agent_bench.agreement import LABELLING_HEADER, SAMPLE_SIZE, agreement, sample
@@ -290,6 +292,7 @@ async def run_bench(
     max_retries: int = DEFAULT_RETRIES,
     selection: str = "all",
     tools: ArmTools | None = None,
+    models: Callable[[str], Model | str] | None = None,
     checkpoint: Path | None = None,
     done: dict[JobKey, QuestionResult] | None = None,
 ) -> BenchReport:
@@ -318,6 +321,7 @@ async def run_bench(
         max_retries: Retries of a failed Ollama request.
         selection: How the cases were picked, for the report.
         tools: Gives each arm its toolsets; ``ArmServers`` (the real servers) by default.
+        models: Resolves a model name; ``models.chat_model`` with ``max_retries`` by default.
         checkpoint: Where each finished question is appended (JSON lines).
         done: Questions answered by an earlier run of the same command (``--resume``).
 
@@ -329,8 +333,9 @@ async def run_bench(
     projects = [p for p in corpus.projects if p.id in {project for project, _ in cases}]
     servers = ArmServers(projects=projects, repos=repos, work_dir=work_dir)
     setups = setups_of(arms, retrieval)
+    resolve = models or functools.partial(chat_model, max_retries=max_retries)
     asking = Asking(
-        judge=AnswerJudge(judge=judge_agent(chat_model(judge_model, max_retries=max_retries))),
+        judge=AnswerJudge(judge=judge_agent(resolve(judge_model))),
         gate=asyncio.Semaphore(concurrency),
         checkpoint=checkpoint,
         done={k: r for k, r in (done or {}).items() if counted(r)},
@@ -343,7 +348,7 @@ async def run_bench(
             for name in agent_models:
                 asking.tasks[name, *_key(setup)] = asker(
                     Agent[Recorder, str](
-                        chat_model(name, max_retries=max_retries),
+                        resolve(name),
                         deps_type=Recorder,
                         instructions=setup.arm.instructions,
                         toolsets=list(toolsets),
