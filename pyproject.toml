@@ -251,6 +251,12 @@ filterwarnings = [
     "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:chromadb.telemetry.opentelemetry",
 ]
 
+# ---------------------------------------------------------------- coverage
+[tool.coverage.run]
+# Paths relative to the repository root: CI combines the shards' data files on whichever runner
+# the aggregate job lands on, and absolute paths differ between runners (#541).
+relative_files = true
+
 # ---------------------------------------------------------------- behave (BDD acceptance)
 [tool.behave]
 paths = ["packages/exactdocs/features"]
