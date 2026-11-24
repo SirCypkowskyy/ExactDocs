@@ -106,6 +106,13 @@ no cycles. An architecture test (`tests/architecture/test_bridge_direction.py`) 
 imports of every bridge class in `bootstrap/bridges.py`: the consumer's `models` / `ports.driven`
 on one side, the provider's `ports.driving` / `dtos` on the other, and only the edges above pass.
 
+**When the catalog's answer needs another domain's data**, the composition root composes it
+instead of a bridge against the direction: it wraps the catalog's driving port and asks the
+other domain's driving port once per page. `ListLibrariesByAi` (`bootstrap/library_filters.py`)
+turns retrieval's AI switch into the IDs the catalog lists; `ListVersionsWithChunks`
+(`bootstrap/version_counts.py`) adds retrieval's chunk and embedded-chunk counts of a whole page
+of versions (`CountVersionChunks`) to the catalog's list, which counts the articles itself (#513).
+
 **Secrets every domain seals: one box, one port per domain.** The instance's secret box
 (`bootstrap/secret_box.py:FernetSecretBox`: Fernet keyed from `EXACTDOCS_SECRET_KEY` with HKDF,
 rotation through `EXACTDOCS_SECRET_KEY_PREVIOUS`, or a generated `secret.key` in the data

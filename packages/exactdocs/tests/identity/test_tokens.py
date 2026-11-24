@@ -105,7 +105,7 @@ async def test_a_token_acts_as_its_account_and_records_when_it_was_used(world: W
     grant = await world.identity.create_token(world.ada, CreateTokenCommand(name="laptop"))
 
     assert (await world.identity.identify_token(grant.token)).model_dump(
-        include={"id", "username", "role"}
+        include={"id", "username", "role", "has_password"}
     ) == world.ada.model_dump()
     listed = (await tokens_of(world))[0]
     assert listed.last_used_at == START

@@ -10,13 +10,16 @@ from typing import Self
 from exactdocs.catalog.constants import SCAN_PAGE
 from exactdocs.catalog.models import (
     Access,
+    LibraryId,
     ManifestEntry,
     ManifestId,
     ManifestInstruction,
     TagSelection,
+    VersionRef,
 )
 from exactdocs.catalog.ports.driven import (
     AccessPolicy,
+    ArticleCounts,
     ArticleTitleFinder,
     EntrySearch,
     ImportedTagWriter,
@@ -174,6 +177,33 @@ class _EveryoneMayDoAnything:
             library: The library ID.
         """
         del library
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _ScannedArticleCounts:
+    """The default ``article_counts`` of ``build``: reads each version's entries (for tests)."""
+
+    manifests: ManifestRepository
+    """Where the entries are read from."""
+
+    async def count_articles(
+        self, versions: Sequence[tuple[LibraryId, VersionRef]]
+    ) -> Mapping[tuple[LibraryId, VersionRef], int]:
+        """Count the entries of these versions' active manifests, one version at a time.
+
+        Args:
+            versions: The versions, as ``(library, ref)``.
+
+        Returns:
+            The number of entries of each version's active manifest.
+        """
+        found: dict[tuple[LibraryId, VersionRef], int] = {}
+        entries = _ScannedEntries(manifests=self.manifests)
+        for version, manifest in (await self.manifests.get_active_many(versions)).items():
+            found[version] = await entries.count(
+                manifest.id, prefix="", tags=TagSelection(), text=None
+            )
+        return found
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -384,6 +414,7 @@ class CatalogModule:
         instruction_files: InstructionFileReader | None = None,
         access: AccessPolicy | None = None,
         entry_search: EntrySearch | None = None,
+        article_counts: ArticleCounts | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -406,6 +437,8 @@ class CatalogModule:
             access: Library roles: what the caller may do with a library; everything without it.
             entry_search: Filters, sorts and pages entries in the store; without it every entry is
                 read through ``manifests`` and sorted in memory (for tests).
+            article_counts: Counts many versions' articles at once; without it each version's
+                entries are read through ``manifests`` (for tests).
 
         Returns:
             The module, every driving port wired.
@@ -414,8 +447,11 @@ class CatalogModule:
         access = access or _EveryoneMayDoAnything()
         titles = article_titles or _NoTitles()
         tagger = ManualTagger(repository=repository, manifests=manifests)
+        counts = article_counts or _ScannedArticleCounts(manifests=manifests)
         return cls(
-            list_libraries=ListLibrariesUseCase(repository=repository, access=access),
+            list_libraries=ListLibrariesUseCase(
+                repository=repository, articles=counts, access=access
+            ),
             create_library=CreateLibraryUseCase(repository=repository, access=access),
             discard_library=DiscardLibraryUseCase(repository=repository, access=access),
             is_library_id_taken=IsLibraryIdTakenUseCase(repository=repository, access=access),
@@ -436,7 +472,9 @@ class CatalogModule:
             activate_manifest=ActivateManifestUseCase(
                 repository=repository, manifests=manifests, clock=clock
             ),
-            list_versions=ListVersionsUseCase(repository=repository, access=access),
+            list_versions=ListVersionsUseCase(
+                repository=repository, articles=counts, access=access
+            ),
             list_articles=ListArticlesUseCase(
                 repository=repository,
                 manifests=manifests,

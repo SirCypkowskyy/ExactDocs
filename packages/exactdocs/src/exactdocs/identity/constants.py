@@ -248,6 +248,19 @@ USERS_DESCRIPTION: Final[str] = (
     "or, for the first admin, by the setup."
 )
 """OpenAPI description shared by the ``/users`` routes."""
+CHANGE_PASSWORD_DESCRIPTION: Final[str] = (
+    "Change the signed-in account's own password: give the current one and the new one "
+    f"({NEW_PASSWORD_DESCRIPTION[:-1]}, as at setup). The current password is checked like a "
+    "sign-in and counts against the same throttle: a wrong one is refused with `wrong_password` "
+    "(403), and after too many failures from the address or for the username the change is "
+    "refused unchecked with `rate_limited` (429, `Retry-After`). An account that signs in "
+    "through an identity provider has no password (`has_password` is `false` in "
+    "`GET /api/v1/session`) and is refused with `external_account` (409). On success (204) every "
+    "other session of the account ends, this one stays signed in; API tokens keep working. The "
+    "addresses that signed in with the old password lose their remembered sign-in, as after an "
+    "operator's reset. Needs a signed-in session; an API token is refused (401)."
+)
+"""OpenAPI description of ``PUT /account/password``, built from the length limits."""
 CREATE_TOKEN_DESCRIPTION: Final[str] = (
     "Create an API token for the signed-in account. The secret is in this response only. "
     f"An account holds at most {MAX_TOKENS_PER_ACCOUNT} tokens; one more is refused with "

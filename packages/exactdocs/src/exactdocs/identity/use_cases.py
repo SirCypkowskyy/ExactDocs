@@ -41,6 +41,7 @@ from exactdocs.identity.dtos import (
     AccountSummary,
     ApiTokenIdentity,
     AuthenticateQuery,
+    ChangePasswordCommand,
     ClaimLibraryCommand,
     CreateFirstAdminCommand,
     CreateTokenCommand,
@@ -111,6 +112,7 @@ from exactdocs.identity.errors import (
     UnknownTokenError,
     UsernameTakenError,
     UsernameUnavailableError,
+    WrongPasswordError,
 )
 from exactdocs.identity.models import (
     AccessChange,
@@ -772,6 +774,94 @@ class ResetPasswordUseCase:
         return PasswordReset(account=AccountSummary.from_model(account), throttle=throttle)
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ChangePasswordUseCase:
+    """Implements ``ports.driving.ChangePassword``.
+
+    The current password is checked by ``Authenticate``, so a wrong one costs what a failed
+    sign-in costs (the same counts, per client address and per username) and too many of them are
+    refused unchecked. Once the new password is stored, every other session of the account ends;
+    the one the change was made from stays. API tokens are not touched: they never held the
+    password, and the person revokes them on their own page if they may have leaked. Then, as a
+    reset does (#322), the username's throttle count and every address remembered for it are
+    dropped (those addresses signed in with the old password), and the address the change was
+    made from, which knows the new one, is remembered again.
+    """
+
+    accounts: AccountRepository
+    """Where accounts are stored."""
+    sessions: SessionRepository
+    """Where browser sessions are stored."""
+    hasher: PasswordHasher
+    """The password hasher."""
+    authenticate: Authenticate
+    """Checks the current password, under the sign-in throttle."""
+    failures: FailedSignInLog
+    """The sign-in throttle; the username's count and remembered addresses are dropped."""
+    clock: Clock
+    """The current time."""
+
+    async def __call__(
+        self,
+        account: AccountSummary,
+        command: ChangePasswordCommand,
+        *,
+        session_token: str | None = None,
+        client: str | None = None,
+    ) -> None:
+        """Check the current password, store the new one and end the account's other sessions.
+
+        Args:
+            account: The signed-in account.
+            command: The current password and the new one.
+            session_token: The session the change is made from, which stays signed in.
+            client: The caller's address, for the sign-in throttle.
+
+        Raises:
+            NotSignedInError: The account no longer exists.
+            ExternalAccountError: The account has no password (it signs in through a provider).
+            WrongPasswordError: The current password is wrong.
+        """
+        stored = await self.accounts.get_by_id(AccountId(account.id))
+        if stored is None:
+            raise NotSignedInError
+        if stored.is_external:
+            raise ExternalAccountError
+        query = AuthenticateQuery(username=stored.username.value, password=command.current_password)
+        try:
+            await self.authenticate(query, client=client)
+        except InvalidCredentialsError:
+            raise WrongPasswordError from None
+        password_hash = await self.hasher.hash(command.new_password.get_secret_value())
+        await self.accounts.set_password_hash(stored.id, password_hash)
+        await self.sessions.delete_others(
+            stored.id, keep=hash_token(session_token) if session_token else None
+        )
+        username = stored.username.value
+        await _clear_throttle(self.failures, username)
+        if client:
+            known = known_sign_in_key(stored.username, address_key(client))
+            await _forget_throttle(
+                lambda: _remember(self.failures, known, self.clock.now()),
+                "the address the password was changed from is not remembered",
+            )
+
+
+async def _remember(failures: FailedSignInLog, key: str, now: datetime) -> bool:
+    """Remember a successful sign-in, in the shape ``_forget_throttle`` reports on.
+
+    Args:
+        failures: The sign-in throttle.
+        key: The sign-in key (a username at an address).
+        now: When it succeeded.
+
+    Returns:
+        ``True``: remembering has no busy outcome.
+    """
+    await failures.remember_sign_in(key, now)
+    return True
+
+
 async def _find_account(
     accounts: AccountRepository, *, account_id: str | None, username: str | None
 ) -> Account:
@@ -1297,7 +1387,12 @@ class IdentifyExternalTokenUseCase:
             raise NotAllowedError
         role = policy.role_for(claims.groups).value
         if account is not None:
-            caller = AccountSummary(id=account.id, username=account.username.value, role=role)
+            caller = AccountSummary(
+                id=account.id,
+                username=account.username.value,
+                role=role,
+                has_password=not account.is_external,
+            )
         else:
             candidates = username_candidates(claims, policy.name)
             username = candidates[0].value if candidates else claims.subject

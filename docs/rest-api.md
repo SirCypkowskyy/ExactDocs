@@ -43,8 +43,9 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   forgotten after an hour without an attempt; a right password takes its attempt back (without restarting the wait), clears
   its username's count, and lets that address skip the username's count for 30 days. The counts
   live in the server's memory on SQLite (a restart clears them) and in the database on
-  PostgreSQL, where every server process shares them. Only these two operations document 429. `GET /session` returns `{"state": "setup_required" | "signed_out" |
-  "signed_in", "account": ..., "providers": [{"name", "display_name"}]}` and never fails
+  PostgreSQL, where every server process shares them. `PUT /account/password` checks the current
+  password under the same throttle (see *Own password*); only these three operations document 429. `GET /session` returns `{"state": "setup_required" | "signed_out" |
+  "signed_in", "account": {"id", "username", "role", "has_password"}, "providers": [{"name", "display_name"}]}` and never fails
   (`providers` lists the configured identity providers, empty while setup is due); `DELETE /session` ends the session on the server
   and is always 204. The cookie is an opaque random token (stored hashed), HttpOnly,
   SameSite=Lax, `Secure` over HTTPS (or with `EXACTDOCS_SECURE_COOKIES`, or an `https://` `EXACTDOCS_PUBLIC_URL`), `Path=/api`, ends after
@@ -108,6 +109,18 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `kind`, `role` and `sort`; and the users page and the token list their `q`, `sort` and
   filters. The libraries, versions, jobs, articles and grants lists fetch the next page ahead,
   so "Load more" shows it without waiting.
+- **Sizes on the lists** (#513): each entry of `GET /libraries/{owner}/{repo}/versions` carries
+  `articles` (the entries of the version's active manifest, what `list_articles` lists),
+  `chunks` (the chunks they are cut into for search, one per article path that holds it) and
+  `embedded_chunks` (of those, the ones with a vector from the configured embedding model, in
+  its current space). Each library of `GET /libraries` (and of the MCP `list_libraries`)
+  carries `article_count`: the articles of its **default version**, the one `/owner/repo`
+  resolves to. A count is 0, never null, when there is nothing to count: a library without a
+  version, a version not indexed, `embedded_chunks` while no embedding model or vector store is
+  configured, or while the configured model has no space yet or no vector of the version (a
+  library with AI off is never sent to it). The counts are read once per page whatever its size
+  (a grouped query per domain, no request or query per version), so the versions table and the
+  overview need one request.
 - **Close matches**: a 404 for a missing article lists up to five paths of the same version it may have
   meant in `close_matches` (repository data, not instructions); the field is empty on every other error.
 - **Taken IDs**: a 409 `library_id_taken` (checking a repository, adding a library) names the
@@ -201,6 +214,21 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   operator: an API token is 401 (a stolen token cannot create accounts), and a signed-in account
   that is not an `admin` gets 403 `forbidden`. Library roles (who may read or change a library)
   are separate: see the *Library roles* bullet below.
+- **Own password** (#505): `PUT /account/password` (`{"current_password", "new_password"}`)
+  changes the signed-in account's own password; the new one follows the setup's limits (12 to
+  1024 characters, else 422 `validation_error`). The current password is checked like a sign-in,
+  under the same throttle: a wrong one is 403 `wrong_password` (the caller stays signed in) and
+  counts as a failed sign-in of its address and username, and once they are past the free
+  failures the change, like `POST /session`, is 429 `rate_limited` with `Retry-After`, its
+  password unchecked. On success it answers 204: every other session of the account ends and
+  the one that made the change stays; API tokens keep working (revoke them under `/tokens` if
+  they may have leaked); the username's throttle count and every address remembered for it
+  (they signed in with the old password) are dropped, as after an operator's reset, and the
+  caller's own address is remembered again. An account without a password (it signs in through
+  an identity provider or Cloudflare Access) is 409 `external_account`: `has_password` in the
+  `account` of `GET /session` (and of `GET /users`) is `false` for it, so the UI hides the form.
+  It needs the **session cookie**; an API token is 401, so a stolen token cannot take the
+  account over.
 - **Library roles** (ACL-02): `viewer < contributor < admin < creator` on each library, granted
   to users and to groups; an account's role is the highest it holds, and an operator (role
   `admin`) is `creator` of every library. Every library route asks for one: `viewer` reads and
@@ -717,6 +745,21 @@ See [AI retrieval decisions](decisions/ai-retrieval.md) for the kinds and what e
   per-library ones, with `usd_left` and `tokens_left` against it; where the instance's is lower (it was lowered after
   the library set its own), `own_usd_limit` / `own_tokens_limit` give the library's own ceiling,
   otherwise they are `null`.
+- `GET /ai/usage/history?scope=&id=&window=&from=&to=`: what one scope spent per UTC day or month,
+  for charts: `{"scope", "id", "window", "first", "last", "entries": [{"window_start",
+  "input_tokens", "output_tokens", "tokens", "local_tokens", "requests", "usd",
+  "unpriced_requests"}]}`, one entry per window from `first` to `last` (both included, oldest
+  first), counted as in `GET /ai/usage` and zero for a window with no spend. `scope` and `id` name
+  a scope as `GET /ai/usage` does: `instance` (the default) and `embedding` take no `id`;
+  `library` needs the library ID (any letter case; `id` comes back case-folded, as the ledger keeps
+  it) and `user` the account ID. `window` is `day` (the default) or `month`. `from` and `to` are
+  UTC dates (`YYYY-MM-DD`); for months any day of a month stands for it, and `first` / `last` are
+  the windows' first days. Without `to` the range ends with today's window; without `from` it holds
+  30 days or 12 months up to `to`. A range ends after it starts and holds at most 366 days or 60
+  months; otherwise, or for an `id` that does not fit the `scope`, it is 422
+  `invalid_spend_history`. Dates in the future are allowed (zero). Operators only, like the rest of
+  `/ai`. Libraries and accounts that no longer exist keep their rows, so their history is still
+  shown.
 
 ## Jobs, access and health
 

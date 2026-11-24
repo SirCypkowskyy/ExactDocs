@@ -25,6 +25,7 @@ from exactdocs.retrieval.adapters.driven.memory import (
 from exactdocs.retrieval.dtos import (
     ArticleChunksIn,
     ChunkIn,
+    CountVersionChunksQuery,
     EmbedBatchCommand,
     EmbeddedBatchOut,
     EmbeddingPlanOut,
@@ -35,7 +36,11 @@ from exactdocs.retrieval.dtos import (
     SearchDocsQuery,
     UnembeddedVersionsQuery,
 )
-from exactdocs.retrieval.errors import ProviderUnsupportedError, VectorStoreUnavailableError
+from exactdocs.retrieval.errors import (
+    ProviderUnsupportedError,
+    UnknownLibraryError,
+    VectorStoreUnavailableError,
+)
 from exactdocs.retrieval.models import (
     DocTarget,
     EmbeddingSkip,
@@ -69,6 +74,7 @@ from exactdocs.retrieval.models import (
 from exactdocs.retrieval.module import RetrievalModule
 from exactdocs.retrieval.ports import VectorIndex
 from exactdocs.retrieval.ports.driven import Reranker
+from library_access import FakeAccess
 
 LIB = "/acme/payments"
 SECRET = "/acme/secret"
@@ -213,6 +219,7 @@ def _module(
     dimensions: int | None = None,
     batch: int = 2,
     vectors: VectorIndex | Literal["stores"] | None = "stores",
+    access: FakeAccess | None = None,
 ) -> RetrievalModule:
     index = InMemorySearchIndex(chunks=stores.chunks)
     return RetrievalModule.build(
@@ -239,6 +246,7 @@ def _module(
         prices=PRICES,
         embedding_dimensions=dimensions,
         embedding_batch_size=batch,
+        access=access or FakeAccess(role="creator"),
     )
 
 
@@ -760,3 +768,49 @@ async def test_progress_without_a_model_or_a_vector_store_has_no_space(stores: S
     assert await _module(stores, vectors=None).get_embedding_progress() == EmbeddingProgressOut(
         model="corp:a", spaces=[]
     )
+
+
+# ---------------------------------------------------------------- counts per version (#513)
+
+
+async def _counts(module: RetrievalModule, *refs: str) -> dict[str, tuple[int, int]]:
+    counted = await module.count_version_chunks(
+        CountVersionChunksQuery(library=LIB, refs=list(refs))
+    )
+    return {ref: (v.chunks, v.embedded_chunks) for ref, v in counted.versions.items()}
+
+
+async def test_a_version_counts_the_chunks_the_configured_models_space_has_vectors_for(
+    stores: Stores,
+) -> None:
+    first = _module(stores, model="a")
+    await _two_versions(stores, first)
+    assert await _counts(first, "v1", "v2") == {"v1": (3, 0), "v2": (4, 0)}  # nothing yet
+
+    await _embed(first, LIB, "v1")
+    # v2 shares v1's blob: 3 of its 4 chunks already have vectors.
+    assert await _counts(first, "v1", "v2", "v9") == {"v1": (3, 3), "v2": (4, 3), "v9": (0, 0)}
+
+    await _embed(first, LIB, "v2")
+    second = _module(stores, model="b")  # the operator switched models: b has no space yet
+    assert await _counts(second, "v1", "v2") == {"v1": (3, 0), "v2": (4, 0)}
+    await _embed(second, LIB, "v1")
+    assert await _counts(second, "v1", "v2") == {"v1": (3, 3), "v2": (4, 3)}
+
+
+async def test_without_a_model_or_a_vector_store_no_chunk_counts_as_embedded(
+    stores: Stores,
+) -> None:
+    module = _module(stores)
+    await _two_versions(stores, module)
+    await _embed(module, LIB, "v1")
+
+    assert await _counts(_module(stores, model=None), "v1") == {"v1": (3, 0)}
+    assert await _counts(_module(stores, vectors=None), "v1") == {"v1": (3, 0)}
+
+
+async def test_the_chunks_of_a_hidden_library_are_not_counted(stores: Stores) -> None:
+    module = _module(stores, access=FakeAccess(role=None))
+
+    with pytest.raises(UnknownLibraryError):
+        await _counts(module, "v1")
