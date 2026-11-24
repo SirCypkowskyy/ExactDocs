@@ -270,7 +270,7 @@ function viewSetters(
   size: PageSize,
   filters: readonly TableFilter[],
   params: readonly TableParam[],
-  qParam: string,
+  qParam = "q",
 ) {
   const keep = sizeParam(size);
   return {
@@ -350,6 +350,21 @@ function sortWriter(write: Write, sorting: SortingState, defaultSort: string | u
   };
 }
 
+/**
+ * Client mode sorts, filters, pages and counts facets in the browser; server mode leaves all of it
+ * to the API and only says how many rows there are.
+ */
+const rowModelsOf = <T>(server: boolean, total: number | undefined) =>
+  server
+    ? { rowCount: total ?? -1 }
+    : {
+        getSortedRowModel: getSortedRowModel<T>(),
+        getFilteredRowModel: getFilteredRowModel<T>(),
+        getPaginationRowModel: getPaginationRowModel<T>(),
+        getFacetedRowModel: getFacetedRowModel<T>(),
+        getFacetedUniqueValues: getFacetedUniqueValues<T>(),
+      };
+
 /** A narrowing parameter's value from the URL, when it has one. */
 const paramOf = (values: Readonly<Record<string, unknown>>, id: string) => {
   const value = values[id];
@@ -413,23 +428,13 @@ function useTableModel<T>(options: DataTableOptions<T>, write: Write): DataTable
   const data = useMemo(() => (rows ?? []) as T[], [rows]);
 
   // The view lives in the URL: never let the table reset it on its own (a reset on new data would
-  // be a state update per render, and a URL write). Client mode sorts, filters, pages and counts
-  // facets in the browser; server mode leaves all of it to the API.
-  const rowModels = server
-    ? { rowCount: serverFeed.total ?? -1 }
-    : {
-        getSortedRowModel: getSortedRowModel<T>(),
-        getFilteredRowModel: getFilteredRowModel<T>(),
-        getPaginationRowModel: getPaginationRowModel<T>(),
-        getFacetedRowModel: getFacetedRowModel<T>(),
-        getFacetedUniqueValues: getFacetedUniqueValues<T>(),
-      };
+  // be a state update per render, and a URL write).
   const table = useReactTable<T>({
     data,
     columns,
     getRowId,
     getCoreRowModel: getCoreRowModel(),
-    ...rowModels,
+    ...rowModelsOf<T>(server, serverFeed.total),
     manualSorting: server,
     manualFiltering: server,
     manualPagination: server,
@@ -480,7 +485,7 @@ function useTableModel<T>(options: DataTableOptions<T>, write: Write): DataTable
     param: (id) => paramOf(values, id),
     counts: (id) =>
       columnIds.has(id) && !server ? table.getColumn(id)?.getFacetedUniqueValues() : undefined,
-    ...viewSetters(write, config, size, filters, params, options.qParam ?? "q"),
+    ...viewSetters(write, config, size, filters, params, options.qParam),
     goTo,
     retry: feed.retry,
     frameRef,
