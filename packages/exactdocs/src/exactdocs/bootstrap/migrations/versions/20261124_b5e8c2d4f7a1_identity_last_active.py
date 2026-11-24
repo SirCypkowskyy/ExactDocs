@@ -1,14 +1,14 @@
 """An account's last activity (#515), kept to the hour; NULL until its next sign-in or request.
 
 Revision ID: b5e8c2d4f7a1
-Revises: 9d4f2b7e1c83
+Revises: 19725bf1e467
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "b5e8c2d4f7a1"
-down_revision = "9d4f2b7e1c83"
+down_revision = "19725bf1e467"
 branch_labels = None
 depends_on = None
 
