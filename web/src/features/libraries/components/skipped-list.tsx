@@ -10,8 +10,8 @@ import { DataTablePagination } from "@/shared/ui/data-table/pagination";
 import type { RowAction } from "@/shared/ui/data-table/row-actions";
 import type { TableConfig } from "@/shared/ui/data-table/table-search";
 import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
-import type { TableFilter } from "@/shared/ui/data-table/use-data-table";
-import { useLocalTable } from "../hooks/use-local-table";
+import { type TableFilter, useLocalDataTable } from "@/shared/ui/data-table/use-data-table";
+
 import { progressMessages } from "../messages/progress";
 import { type ProblemSummary, skippedLabel } from "../model/add-library";
 
@@ -125,7 +125,7 @@ export function SkippedList({ summary }: { summary: ProblemSummary }) {
     ],
     [summary, t],
   );
-  const model = useLocalTable({
+  const model = useLocalDataTable({
     config: PROBLEMS_TABLE,
     rows,
     columns,

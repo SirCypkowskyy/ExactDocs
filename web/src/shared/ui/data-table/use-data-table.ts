@@ -22,6 +22,7 @@ import { pageQueryOptions, type ServerSource } from "./server-pages";
 import {
   type PageSize,
   pageOf,
+  parseTableSearch,
   rememberSize,
   sizesFor,
   sortingOf,
@@ -74,6 +75,8 @@ export interface ClientQuery<T> {
   data: readonly T[] | undefined;
   isPending: boolean;
   isError: boolean;
+  /** Why it failed, for a page that explains it (`model.error`). */
+  error?: unknown;
   isPlaceholderData?: boolean;
   refetch: () => unknown;
 }
@@ -88,10 +91,22 @@ interface BaseOptions<T> {
   params?: readonly TableParam[];
   /** Columns hidden until someone shows them in the Columns menu. */
   initialColumnVisibility?: VisibilityState;
+  /**
+   * The URL parameter the search box writes, when `q` already belongs to the page (the library
+   * page's `q` is its search, so its articles table filters by `filter`). The route hands its
+   * value to the table as `search.q`.
+   */
+  qParam?: string;
 }
 
 export type DataTableOptions<T> = BaseOptions<T> &
   ({ source: ServerSource<T>; query?: never } | { query: ClientQuery<T>; source?: never });
+
+/** A table inside another page whose URL is not its own: the view lives in the component. */
+export type LocalDataTableOptions<T> = Omit<BaseOptions<T>, "search" | "qParam"> & {
+  /** The whole bounded list (client mode). */
+  rows: readonly T[];
+};
 
 export interface DataTableModel<T> {
   table: Table<T>;
@@ -111,6 +126,8 @@ export interface DataTableModel<T> {
   /** How many rows come before the shown page. */
   offset: number;
   status: "pending" | "error" | "ready";
+  /** Why the rows failed to load (`status` is "error"), for a page that explains it. */
+  error: unknown;
   /** Rows of the previous view stay on screen while the new ones load. */
   busy: boolean;
   /** Any page can be reached in one step: Last is offered. */
@@ -137,23 +154,32 @@ export interface DataTableModel<T> {
 
 type Patch = Record<string, string | number | undefined>;
 
-/** Writes part of the view to the URL, in the URL's form (`a,b` lists, no empty values). */
-function useWriteSearch() {
+/** Writes part of the view (to the URL, or to the component in local mode). */
+type Write = (patch: Patch, keepPage: boolean) => void;
+
+/** Applies part of the view in the URL's form (`a,b` lists, no empty values). */
+function patched(prev: Record<string, unknown>, patch: Patch, keepPage: boolean) {
+  const next: Record<string, unknown> = { ...prev, ...patch };
+  if (!keepPage) delete next.page;
+  for (const [key, value] of Object.entries(next)) {
+    if (Array.isArray(value)) next[key] = value.length ? value.join(",") : undefined;
+    if (next[key] === undefined || next[key] === "") delete next[key];
+  }
+  return next;
+}
+
+/** Writes part of the view to the URL. */
+function useWriteSearch(): Write {
   const navigate = useNavigate();
-  return (patch: Patch, keepPage: boolean) => {
-    const update = (prev: Record<string, unknown>) => {
-      const next: Record<string, unknown> = { ...prev, ...patch };
-      if (!keepPage) delete next.page;
-      for (const [key, value] of Object.entries(next)) {
-        if (Array.isArray(value)) next[key] = value.length ? value.join(",") : undefined;
-        if (next[key] === undefined || next[key] === "") delete next[key];
-      }
-      return next;
-    };
-    // The current path; only its search changes. Scroll stays where it is (pagination scrolls the
-    // table's own top into view).
-    void navigate({ search: update, replace: true, resetScroll: false } as never);
-  };
+  return (patch, keepPage) =>
+    // The current path and its hash (a section the page scrolled to); only its search changes.
+    // Scroll stays where it is (pagination scrolls the table's own top into view).
+    void navigate({
+      search: (prev: Record<string, unknown>) => patched(prev, patch, keepPage),
+      hash: true,
+      replace: true,
+      resetScroll: false,
+    } as never);
 }
 
 const columnId = <T>(c: ColumnDef<T>): string | undefined =>
@@ -239,22 +265,23 @@ function useClampPage(
 
 /** The setters of the view: each writes the URL, and all but paging go back to page 1. */
 function viewSetters(
-  write: ReturnType<typeof useWriteSearch>,
+  write: Write,
   config: TableConfig,
   size: PageSize,
   filters: readonly TableFilter[],
   params: readonly TableParam[],
+  qParam: string,
 ) {
   const keep = sizeParam(size);
   return {
-    setQ: (q: string | undefined) => write({ q, size: keep }, false),
+    setQ: (q: string | undefined) => write({ [qParam]: q, size: keep }, false),
     setFilter: (id: string, values: readonly string[]) =>
       write({ [id]: values.length ? values.join(",") : undefined, size: keep }, false),
     setParam: (id: string, value: string | undefined) => write({ [id]: value, size: keep }, false),
     clearFilters: () =>
       write(
         Object.fromEntries([
-          ["q", undefined],
+          [qParam, undefined],
           ...filters.map((f) => [f.id, undefined]),
           ...params.map((p) => [p.id, undefined]),
           ["size", keep],
@@ -282,6 +309,7 @@ const isFiltered = (
 interface Feed<T> {
   rows: readonly T[] | undefined;
   status: Status;
+  error: unknown;
   /** Rows of the previous view are shown while the new ones load. */
   busy: boolean;
   retry: () => void;
@@ -297,6 +325,7 @@ function useServerFeed<T>(source: ServerSource<T> | undefined, page: number, siz
     rows: query.data?.rows,
     total: query.data?.total,
     status: statusOf(query.data, query.isError),
+    error: query.error ?? undefined,
     busy: Boolean(query.isPlaceholderData),
     retry: () => void query.refetch(),
     loaded: Boolean(query.data) && !query.isPlaceholderData,
@@ -308,16 +337,13 @@ function useServerFeed<T>(source: ServerSource<T> | undefined, page: number, siz
 const clientFeed = <T>(query: ClientQuery<T> | undefined): Feed<T> => ({
   rows: query?.data,
   status: statusOf(query?.data, query?.isError),
+  error: query?.isError ? query.error : undefined,
   busy: Boolean(query?.isPlaceholderData),
   retry: () => void query?.refetch(),
 });
 
 /** The sort as the API writes it, from the header the person pressed. */
-function sortWriter(
-  write: ReturnType<typeof useWriteSearch>,
-  sorting: SortingState,
-  defaultSort: string | undefined,
-) {
+function sortWriter(write: Write, sorting: SortingState, defaultSort: string | undefined) {
   return (updater: Updater<SortingState>) => {
     const sort = sortOf(typeof updater === "function" ? updater(sorting) : updater);
     write({ sort: sort === defaultSort ? undefined : sort }, false);
@@ -331,6 +357,29 @@ const paramOf = (values: Readonly<Record<string, unknown>>, id: string) => {
 };
 
 export function useDataTable<T>(options: DataTableOptions<T>): DataTableModel<T> {
+  return useTableModel(options, useWriteSearch());
+}
+
+const READY = { isPending: false, isError: false, refetch: () => {} } as const;
+
+/**
+ * A client-mode table shown inside another page (a job's problems on the add page or in a
+ * library's settings), where the URL already belongs to that page and its own table: the view
+ * (`q`, filters, sort, page, size) lives in the component. Everything else is the kit's: the same
+ * toolbar, faceted filters, pagination and states.
+ */
+export function useLocalDataTable<T>({
+  rows,
+  ...options
+}: LocalDataTableOptions<T>): DataTableModel<T> {
+  const [raw, setRaw] = useState<Record<string, unknown>>({});
+  const search = { ...raw, ...parseTableSearch(raw, options.config) };
+  return useTableModel({ ...options, search, query: { data: rows, ...READY } }, (patch, keep) =>
+    setRaw((prev) => patched(prev, patch, keep)),
+  );
+}
+
+function useTableModel<T>(options: DataTableOptions<T>, write: Write): DataTableModel<T> {
   const { config, search, getRowId, source } = options;
   const values = search as Readonly<Record<string, unknown>>;
   const filters = options.filters ?? NONE;
@@ -338,7 +387,6 @@ export function useDataTable<T>(options: DataTableOptions<T>): DataTableModel<T>
   const server = source !== undefined;
   const mode = server ? "server" : "client";
   const { page, size } = pageOf(search, config);
-  const write = useWriteSearch();
   const frameRef = useRef<HTMLDivElement | null>(null);
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
     options.initialColumnVisibility ?? {},
@@ -422,6 +470,7 @@ export function useDataTable<T>(options: DataTableOptions<T>): DataTableModel<T>
     rows: table.getRowModel().rows,
     offset: (page - 1) * size,
     status: feed.status,
+    error: feed.error,
     busy: feed.busy,
     canJump: !server || source.paging === "offset",
     filtered: isFiltered(values, filters, params),
@@ -431,7 +480,7 @@ export function useDataTable<T>(options: DataTableOptions<T>): DataTableModel<T>
     param: (id) => paramOf(values, id),
     counts: (id) =>
       columnIds.has(id) && !server ? table.getColumn(id)?.getFacetedUniqueValues() : undefined,
-    ...viewSetters(write, config, size, filters, params),
+    ...viewSetters(write, config, size, filters, params, options.qParam ?? "q"),
     goTo,
     retry: feed.retry,
     frameRef,

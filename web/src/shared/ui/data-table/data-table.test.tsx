@@ -25,7 +25,12 @@ import { restoreRowFocus } from "./row-actions";
 import type { ServerSource } from "./server-pages";
 import { parseFacet, parseTableSearch, stringifySearch, type TableConfig } from "./table-search";
 import { DataTableToolbar } from "./toolbar";
-import { type ClientQuery, type TableFilter, useDataTable } from "./use-data-table";
+import {
+  type ClientQuery,
+  type TableFilter,
+  useDataTable,
+  useLocalDataTable,
+} from "./use-data-table";
 
 const STATES = ["queued", "running", "failed"] as const;
 
@@ -403,6 +408,130 @@ function ConfirmingThings() {
     </>
   );
 }
+
+/** Things on a page whose `q` is its own: the table's search box writes `filter`. */
+function FilteredThings() {
+  const raw = useSearch({ strict: false }) as Record<string, unknown>;
+  const search = { ...parseTableSearch({ ...raw, q: raw.filter }, CLIENT) };
+  const model = useDataTable({
+    config: CLIENT,
+    search,
+    qParam: "filter",
+    columns,
+    getRowId: (t) => t.id,
+    query: ready(THINGS),
+  });
+  return (
+    <>
+      <DataTableToolbar model={model} search={{ label: "Find things" }} columns={false} />
+      <DataTable model={model} label="Things" />
+      <DataTablePagination model={model} />
+    </>
+  );
+}
+
+/** A table inside another page: its view lives in the component, not in the URL. */
+function EmbeddedThings() {
+  const model = useLocalDataTable({
+    config: CLIENT,
+    rows: THINGS,
+    columns,
+    getRowId: (t) => t.id,
+    filters,
+  });
+  return (
+    <>
+      <DataTableToolbar model={model} search={{ label: "Find things" }} columns={false} />
+      <DataTable model={model} label="Things" />
+      <DataTablePagination model={model} />
+    </>
+  );
+}
+
+/** A list that failed: the page explains the failure the model hands it. */
+function FailingThings({ query }: { query?: ClientQuery<Thing> }) {
+  const raw = useSearch({ strict: false }) as Record<string, unknown>;
+  const search = parseTableSearch(raw, query ? CLIENT : SERVER);
+  const options = { search, columns, getRowId: (t: Thing) => t.id };
+  const model = useDataTable(
+    query
+      ? { ...options, config: CLIENT, query }
+      : {
+          ...options,
+          config: SERVER,
+          source: {
+            key: ["refused things"],
+            fetchPage: () => Promise.reject(new Error("You can't list these.")),
+          },
+        },
+  );
+  return (
+    <DataTable
+      model={model}
+      label="Things"
+      errorMessage={model.error instanceof Error ? model.error.message : "Unknown"}
+    />
+  );
+}
+
+describe("DataTable v2's view options", () => {
+  it("keeps the URL's hash when it writes the view", async () => {
+    const history = renderAt("/things#versions", () => <ClientThings query={ready(THINGS)} />);
+    await screen.findByText("1–20 of 23");
+
+    await userEvent.click(screen.getByRole("button", { name: "Next page" }));
+
+    expect(await screen.findByText("21–23 of 23")).toBeInTheDocument();
+    expect(history.location.hash).toBe("#versions");
+    expect(params(history).get("page")).toBe("2");
+  });
+
+  it("writes its search box to another URL key when the page owns `q`", async () => {
+    const history = renderAt("/things?q=page%20search&filter=Thing%202", () => <FilteredThings />);
+    expect(await screen.findByText("1–4 of 4")).toBeInTheDocument();
+    expect(screen.getByLabelText("Find things")).toHaveValue("Thing 2");
+
+    await userEvent.clear(screen.getByLabelText("Find things"));
+    await userEvent.type(screen.getByLabelText("Find things"), "nothing like this");
+    expect(await screen.findByText("Nothing matches")).toBeInTheDocument();
+    expect(params(history).get("filter")).toBe("nothing like this");
+    expect(params(history).get("q")).toBe("page search");
+
+    await userEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+
+    expect(await screen.findByText("1–20 of 23")).toBeInTheDocument();
+    expect(Object.fromEntries(params(history))).toEqual({ q: "page search" });
+  });
+
+  it("keeps an embedded table's view out of the page's URL", async () => {
+    const history = renderAt("/things?q=page%20search", () => <EmbeddedThings />);
+    expect(await screen.findByText("1–20 of 23")).toBeInTheDocument();
+    expect(screen.getByLabelText("Find things")).toHaveValue("");
+
+    await userEvent.click(screen.getByRole("button", { name: "Next page" }));
+    expect(await screen.findByText("21–23 of 23")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "State" }));
+    await userEvent.click(await screen.findByRole("option", { name: /failed/ }));
+    await userEvent.keyboard("{Escape}");
+
+    expect(await screen.findByText("1–7 of 7")).toBeInTheDocument();
+    expect(history.location.search).toBe("?q=page%20search");
+  });
+
+  it("hands the page why a client list failed", async () => {
+    renderAt("/things", () => (
+      <FailingThings
+        query={ready([], { data: undefined, isError: true, error: new Error("Sign in again.") })}
+      />
+    ));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Sign in again.");
+  });
+
+  it("hands the page why a server page failed", async () => {
+    renderAt("/things", () => <FailingThings />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("You can't list these.");
+  });
+});
 
 describe("DataTable v2's row actions and focus", () => {
   it("gives focus back to the row's kebab after a dialog its mouse-opened menu asked for", async () => {
