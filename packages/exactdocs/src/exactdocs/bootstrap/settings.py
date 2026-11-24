@@ -35,14 +35,24 @@ from exactdocs.bootstrap.constants import (
     LIBSQL_DRIVER,
     LIBSQL_SCHEME,
     LOCAL_HOSTS,
+    MICROSOFT_CONSUMERS,
+    MICROSOFT_CONSUMERS_TENANT_ID,
+    MICROSOFT_LOGIN,
+    MICROSOFT_MULTI_TENANTS,
     MODELS_SUBDIR,
     POSTGRES_DRIVER,
     POSTGRES_DRIVERS,
+    PRESET_FIXED_FIELDS,
     SECRETS_REFUSED_IN_FILE,
     SETTINGS_FILE_VARIABLE,
+    SIGN_IN_PRESETS,
 )
 from exactdocs.identity.adapters.driven.oidc import secure_url
-from exactdocs.identity.constants import PROVIDER_NAME_PATTERN
+from exactdocs.identity.constants import (
+    PROVIDER_NAME_PATTERN,
+    TENANT_ID_PATTERN,
+    TENANT_PLACEHOLDER,
+)
 from exactdocs.identity.errors import InvalidUsernameError
 from exactdocs.identity.models import Username
 from exactdocs.retrieval.constants import (
@@ -460,11 +470,27 @@ class SignInProviderSettings(BaseModel):
 
     model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
 
-    kind: Literal["oidc", "oauth2", "github"]
+    kind: Literal["oidc", "oauth2", "github", "discord", "google", "microsoft"]
     """`oidc`: OpenID Connect with discovery, authorization code + PKCE S256 (Keycloak, Entra ID,
-    Okta, Google, ADFS). `oauth2`: explicit endpoints/userinfo. `github`: OAuth App/membership."""
+    Okta, Google, ADFS). `oauth2`: explicit endpoints/userinfo. `github`: OAuth App/membership.
+    `discord`, `google`, `microsoft`: presets that need only the client ID and secret (and
+    Microsoft's `tenant`)."""
     display_name: str | None = None
-    """What the sign-in button says (`Sign in with <display_name>`); default: the name."""
+    """What the sign-in button says (`Sign in with <display_name>`); default: the preset's name
+    (`Discord`, `Google`, `Microsoft`), else the provider's name."""
+    tenant: str | None = None
+    """Microsoft only (required): the directory (tenant) ID, a GUID, for one organization;
+    `organizations` for any work or school account, `common` for those and personal accounts,
+    `consumers` for personal accounts only."""
+    auto_create_users: bool | None = None
+    """Create an account at an identity's first sign-in. When false, only identities people
+    linked to their account (Account settings) sign in. Default: true, except for the presets
+    (`discord`, `google`, `microsoft`), where anyone could otherwise get an account."""
+    icon: Literal["discord", "github", "google", "microsoft"] | None = None
+    """A built-in icon for the buttons; default: the preset's (and GitHub's for `github`)."""
+    icon_file: Path | None = None
+    """An icon of the operator's own, served from ExactDocs: a PNG, WebP or SVG of at most
+    64 KiB and 512x512 pixels (an SVG is sanitised). Read at start; not together with `icon`."""
     issuer: str = ""
     """The issuer URL, exactly as its discovery document's `issuer` says (HTTPS; plain HTTP only
     to a loopback host, for development)."""
@@ -520,6 +546,76 @@ class SignInProviderSettings(BaseModel):
     """How long access lasts without a successful check (the provider unreachable, or no refresh
     token at all); then it fails closed until the next sign-in."""
 
+    @property
+    def protocol(self) -> Literal["oidc", "oauth2", "github"]:
+        """The protocol the provider speaks: a preset's, or its kind.
+
+        Returns:
+            `oauth2` for Discord, `oidc` for Google and Microsoft, else the kind.
+        """
+        match self.kind:
+            case "discord":
+                return "oauth2"
+            case "google" | "microsoft":
+                return "oidc"
+            case kind:
+                return kind
+
+    @property
+    def creates_accounts(self) -> bool:
+        """Whether an identity's first sign-in creates its account.
+
+        Returns:
+            `auto_create_users`, by default true except for the presets.
+        """
+        if self.auto_create_users is not None:
+            return self.auto_create_users
+        return self.kind not in SIGN_IN_PRESETS
+
+    @property
+    def admits_anyone(self) -> bool:
+        """Whether everyone the provider vouches for is admitted (no group decides).
+
+        True with `allow_any_user`; for GitHub with membership filters and no `allowed_groups`
+        (the filters decide); and for a provider that creates no accounts and names no
+        `allowed_groups`: only identities people linked themselves sign in there.
+
+        Returns:
+            Whether the policy admits anyone.
+        """
+        if self.allow_any_user or self.allowed_groups:
+            return self.allow_any_user
+        return (self.kind == "github" and bool(self.allowed_orgs or self.allowed_teams)) or (
+            not self.creates_accounts
+        )
+
+    @property
+    def built_in_icon(self) -> Literal["discord", "github", "google", "microsoft"] | None:
+        """The built-in icon of the provider's buttons.
+
+        Returns:
+            `icon`; else the preset's (GitHub's for `github`) unless `icon_file` is set.
+        """
+        if self.icon is not None or self.icon_file is not None:
+            return self.icon
+        match self.kind:
+            case "discord" | "github" | "google" | "microsoft":
+                return self.kind
+            case _:
+                return None
+
+    @property
+    def discovery_url(self) -> str:
+        """Where the OpenID Connect discovery document is.
+
+        Returns:
+            The tenant's for a Microsoft multi-tenant or personal-accounts provider, else
+            `<issuer>/.well-known/openid-configuration`.
+        """
+        if self.kind == "microsoft" and self.tenant is not None:
+            return f"{MICROSOFT_LOGIN}/{self.tenant}/v2.0/.well-known/openid-configuration"
+        return f"{self.issuer.rstrip('/')}/.well-known/openid-configuration"
+
     @field_validator("client_secret", "client_secret_file", "display_name", mode="before")
     @classmethod
     def _blank_is_unset(cls, value: object) -> object:
@@ -548,6 +644,8 @@ class SignInProviderSettings(BaseModel):
             return value
         data = dict(value)
         kind = data.get("kind")
+        if isinstance(kind, str) and kind in SIGN_IN_PRESETS:
+            return _preset(kind, data)
         if kind == "github":
             data["scopes"] = ["read:user", "read:org"]
         elif kind == "oauth2":
@@ -579,6 +677,22 @@ class SignInProviderSettings(BaseModel):
                 message = "allowed_teams must contain org/team-slug names"
                 raise ValueError(message)
 
+    def _preset_consistent(self) -> None:
+        """Refuse a tenant outside Microsoft, a Microsoft provider without one, and two icons.
+
+        Raises:
+            ValueError: One of those.
+        """
+        if (self.kind == "microsoft") != (self.tenant is not None):
+            message = "tenant is required for kind = microsoft, and only there"
+            raise ValueError(message)
+        if TENANT_PLACEHOLDER in self.issuer and self.kind != "microsoft":
+            message = f"only kind = microsoft has a multi-tenant issuer ({TENANT_PLACEHOLDER})"
+            raise ValueError(message)
+        if self.icon is not None and self.icon_file is not None:
+            message = "set icon or icon_file, not both"
+            raise ValueError(message)
+
     @model_validator(mode="after")
     def _consistent(self) -> Self:
         """Refuse a provider that would sign in nobody on purpose, or insecurely.
@@ -588,12 +702,13 @@ class SignInProviderSettings(BaseModel):
 
         Raises:
             ValueError: The issuer is not HTTPS (nor loopback HTTP), `openid` is not asked for,
-                both secret settings are given, or nobody is admitted without
-                `allow_any_user`.
+                both secret settings are given, nobody is admitted without `allow_any_user`, or
+                a preset's own settings are not consistent.
         """
         if self.kind == "github":
             self._github_consistent()
-        if self.kind == "oauth2":
+        self._preset_consistent()
+        if self.protocol == "oauth2":
             endpoints = (self.authorization_url, self.token_url, self.userinfo_url)
             if not all(isinstance(url, str) and secure_url(url) for url in endpoints):
                 message = "oauth2 requires secure authorization_url, token_url and userinfo_url"
@@ -601,20 +716,75 @@ class SignInProviderSettings(BaseModel):
         if self.kind != "github" and not secure_url(self.issuer):
             message = "issuer must be an https:// URL (http:// only to a loopback host)"
             raise ValueError(message)
-        if self.kind == "oidc" and "openid" not in self.scopes:
+        if self.protocol == "oidc" and "openid" not in self.scopes:
             message = "scopes must include openid"
             raise ValueError(message)
         if self.client_secret is not None and self.client_secret_file is not None:
             message = "set client_secret or client_secret_file, not both"
             raise ValueError(message)
-        if (
-            not self.allowed_groups
-            and not self.allow_any_user
-            and not (self.kind == "github" and (self.allowed_orgs or self.allowed_teams))
-        ):
+        if not self.allowed_groups and not self.admits_anyone:
             message = "set allowed_groups, or allow_any_user = true to admit everyone"
             raise ValueError(message)
         return self
+
+
+def _preset(kind: str, data: dict[str, Any]) -> dict[str, Any]:
+    """Fill in what a preset sets: its endpoints, scopes and claims, and its display name.
+
+    Args:
+        kind: The preset (`discord`, `google` or `microsoft`).
+        data: The raw provider settings.
+
+    Returns:
+        The settings with the preset's values; explicit scopes, claims and a display name stay.
+
+    Raises:
+        ValueError: The settings set an endpoint the preset sets itself, or Microsoft's tenant
+            is not a directory ID, `common`, `organizations` or `consumers`.
+    """
+    if fixed := sorted(PRESET_FIXED_FIELDS.intersection(k for k, v in data.items() if v)):
+        message = f"kind = {kind} sets {', '.join(fixed)} itself: remove them"
+        raise ValueError(message)
+    preset: dict[str, Any] = {
+        name: list(value) if isinstance(value, tuple) else value
+        for name, value in SIGN_IN_PRESETS[kind].items()
+    }
+    if kind == "microsoft":
+        tenant = data.get("tenant")
+        if isinstance(tenant, str) and tenant.strip():
+            data["tenant"] = tenant = tenant.strip().lower()
+            preset["issuer"] = _microsoft_issuer(tenant)
+    if not data.get("display_name"):
+        data.pop("display_name", None)
+    return {**preset, **data}
+
+
+def _microsoft_issuer(tenant: str) -> str:
+    """Return the issuer of a Microsoft tenant (the template of a multi-tenant one).
+
+    Args:
+        tenant: A directory ID, `common`, `organizations` or `consumers` (lower case).
+
+    Returns:
+        `https://login.microsoftonline.com/<directory ID>/v2.0`, with `{tenantid}` for `common`
+        and `organizations`.
+
+    Raises:
+        ValueError: The tenant is none of those (a domain name's issuer names its ID instead).
+    """
+    if tenant in MICROSOFT_MULTI_TENANTS:
+        directory = TENANT_PLACEHOLDER
+    elif tenant == MICROSOFT_CONSUMERS:
+        directory = MICROSOFT_CONSUMERS_TENANT_ID
+    elif re.fullmatch(TENANT_ID_PATTERN, tenant):
+        directory = tenant
+    else:
+        message = (
+            "tenant must be the directory (tenant) ID, a GUID, or common, organizations or "
+            "consumers"
+        )
+        raise ValueError(message)
+    return f"{MICROSOFT_LOGIN}/{directory}/v2.0"
 
 
 class LibraryCreationSettings(BaseModel):

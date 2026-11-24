@@ -579,7 +579,7 @@
           "identity"
         ],
         "summary": "Callback",
-        "description": "Finish signing in: the identity provider sends the browser here.\n\nThe binding cookie is cleared whatever happens. Refusals go back to the sign-in page\nwith `?error=` and one of `sign_in_failed`, `sign_in_cancelled`, `not_allowed`,\n`account_disabled`, `username_unavailable` or `provider_unavailable`; no session is\ncreated then.",
+        "description": "Finish signing in (or linking): the identity provider sends the browser here.\n\nThe binding cookie is cleared whatever happens. Refusals go back to the sign-in page\nwith `?error=` and one of `sign_in_failed`, `sign_in_cancelled`, `not_allowed`,\n`not_linked` (the provider creates no accounts, and nobody linked this identity),\n`account_disabled`, `username_unavailable`, `provider_access_revoked` or\n`provider_unavailable`; no session is created then. A link started from Account\nsettings goes back to where it started, with `?linked=<provider>` or\n`?link_error=<code>`, and leaves the session as it was.",
         "operationId": "identity-callback",
         "parameters": [
           {
@@ -645,7 +645,7 @@
         ],
         "responses": {
           "303": {
-            "description": "Signed in, or back to the sign-in page with `?error=`"
+            "description": "Signed in, or back to the sign-in page with `?error=`; after a link, back to where it started, with `?linked=` or `?link_error=`"
           },
           "400": {
             "description": "The request cannot be processed (error code in `error`).",
@@ -706,6 +706,117 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/{provider}/icon": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Icon",
+        "description": "Serve a provider's own icon, from this server (never from the provider's).\n\nOnly for a provider with an operator's `icon_file` (its `icon_url`); a built-in icon\n(`icon`) is the web UI's own, and anything else is `no_icon` (404). The response may be\ncached: its URL carries the icon's version, which is also its ETag.",
+        "operationId": "identity-icon",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          },
+          {
+            "name": "if-none-match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-None-Match"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The icon (PNG, WebP or a sanitised SVG)",
+            "content": {
+              "image/png": {},
+              "image/webp": {},
+              "image/svg+xml": {}
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The browser's copy is current (`If-None-Match`)"
           }
         }
       }
@@ -1885,6 +1996,306 @@
         }
       }
     },
+    "/api/v1/account/providers": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Get Providers",
+        "description": "List the signed-in account's ways to sign in: its password and every provider.\n\nEach configured provider says whether an identity of it is linked and whether it may\nbe linked or unlinked now; an identity of a provider no longer configured is listed\nlast, to be unlinked.",
+        "operationId": "identity-get_providers",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountProviders"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/account/providers/{provider}/link": {
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Link Provider",
+        "description": "Start linking an identity of this provider to the signed-in account. Answers `redirect_url`, where the browser goes next (the provider's sign-in), and sets the `exactdocs_sign_in` binding cookie, exactly as `GET /auth/{provider}/start` does; the attempt is also bound to this session. The provider then comes back to `GET /auth/{provider}/callback`, which links the identity to this account (no new session) and redirects to `return_to` with `?linked=<provider>`, or `?link_error=<code>`: `identity_linked_elsewhere`, `provider_linked`, `not_allowed`, `sign_in_failed`, `sign_in_cancelled`, `unauthenticated` (the session ended meanwhile) or `provider_unavailable`. Refused at once with `provider_linked` (409) when the account has an identity of the provider already, `unknown_provider` (404) for a provider not configured, and `provider_unavailable` (429) when it cannot be reached. Needs a session cookie (401 otherwise, an API token included).",
+        "operationId": "identity-link_provider",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/StartAccountLinkRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Body"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountLinkStart"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/account/providers/{provider}": {
+      "delete": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Delete Provider",
+        "description": "Unlink the signed-in account's identity of this provider: it no longer signs the account in. Answers the account's providers as `GET /account/providers` does. Refused with `last_sign_in_method` (409) for the provider an account without a password was created through (its role, groups and access follow it, and it is the account's way in), and with `provider_not_linked` (404) when the account has no identity of this provider. Needs a session cookie.",
+        "operationId": "identity-delete_provider",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountProviders"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/account/password": {
       "put": {
         "tags": [
@@ -2878,6 +3289,138 @@
               "image/png": {},
               "image/jpeg": {},
               "image/gif": {},
+              "image/webp": {},
+              "image/svg+xml": {}
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The caller's copy (`If-None-Match`) is current."
+          }
+        }
+      }
+    },
+    "/api/v1/libraries/{owner}/{repo}/logo": {
+      "get": {
+        "tags": [
+          "catalog",
+          "catalog"
+        ],
+        "summary": "Get Library Logo",
+        "description": "Serve the library's project logo, found by the importer in its default version.\n\nFrom ExactDocs' own origin, never from the repository's host. The `ETag` is the logo's\nversion (the library's `logo` field). Asked for with `?v=` set to that version, it is\ncached for a year; otherwise the browser asks again (`no-cache`) and gets a 304 while the\nlogo is the same. An SVG is served as an attachment (an `<img>` still shows it) under a\nCSP that forbids scripts and any request. 404 `not_found` when the library has no logo.",
+        "operationId": "catalog-get_library_logo",
+        "security": [
+          {
+            "ApiToken": []
+          },
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "owner",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Owner"
+            }
+          },
+          {
+            "name": "repo",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Repo"
+            }
+          },
+          {
+            "name": "v",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "The library's `logo` version: when it is the current one, the answer may be cached for a year (the URL changes with the logo).",
+              "title": "V"
+            },
+            "description": "The library's `logo` version: when it is the current one, the answer may be cached for a year (the URL changes with the logo)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The logo's bytes: a PNG, JPEG or WebP as the repository has it, or an SVG as the importer cleaned it.",
+            "content": {
+              "image/png": {},
+              "image/jpeg": {},
               "image/webp": {},
               "image/svg+xml": {}
             }
@@ -11208,6 +11751,157 @@
         "title": "AccessTokenIn",
         "description": "An HTTPS access token for a private repository. Write-only: no response repeats it."
       },
+      "AccountLinkStart": {
+        "properties": {
+          "redirect_url": {
+            "type": "string",
+            "title": "Redirect Url",
+            "description": "The identity provider's authorization URL: the browser goes there next."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "redirect_url"
+        ],
+        "title": "AccountLinkStart",
+        "description": "A started link: send the browser to ``redirect_url`` (the binding cookie is set)."
+      },
+      "AccountProvider": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "The provider's name: sign in at `GET /api/v1/auth/{name}/start`."
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name",
+            "description": "What its sign-in button says."
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "discord",
+                  "github",
+                  "google",
+                  "microsoft"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon",
+            "description": "The built-in icon its button shows (the web UI ships these); `null` when it has none, or\nan icon of its own (`icon_url`)."
+          },
+          "icon_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon Url",
+            "description": "Where ExactDocs serves the provider's own icon, an operator's file (a same-origin path,\n`/api/v1/auth/{name}/icon?v=<version>`, which changes with the icon); `null` when it has\nnone."
+          },
+          "configured": {
+            "type": "boolean",
+            "title": "Configured",
+            "description": "`false` for an identity linked through a provider that is no longer configured (or\nthrough Cloudflare Access): it signs nobody in, and only unlinking it is offered."
+          },
+          "linked": {
+            "type": "boolean",
+            "title": "Linked",
+            "description": "Whether an identity of this provider is linked to the account."
+          },
+          "origin": {
+            "type": "boolean",
+            "title": "Origin",
+            "description": "Whether the account was created through this provider. An account without a password\nfollows it (its role, groups and access) and always keeps it."
+          },
+          "linked_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linked At",
+            "description": "When the person linked it here; `null` for the origin, and when it is not linked."
+          },
+          "last_signed_in_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Signed In At",
+            "description": "The latest sign-in through it (or when it was linked); `null` when it is not linked."
+          },
+          "can_link": {
+            "type": "boolean",
+            "title": "Can Link",
+            "description": "Whether `POST /api/v1/account/providers/{name}/link` may start: configured, not linked."
+          },
+          "can_unlink": {
+            "type": "boolean",
+            "title": "Can Unlink",
+            "description": "Whether `DELETE /api/v1/account/providers/{name}` may unlink it: linked, and not the\naccount's only way to sign in."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "display_name",
+          "configured",
+          "linked",
+          "origin",
+          "linked_at",
+          "last_signed_in_at",
+          "can_link",
+          "can_unlink"
+        ],
+        "title": "AccountProvider",
+        "description": "A provider as the signed-in person's Account settings show it: linked or not."
+      },
+      "AccountProviders": {
+        "properties": {
+          "has_password": {
+            "type": "boolean",
+            "title": "Has Password",
+            "description": "Whether the account has a password (it always keeps that way in)."
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/AccountProvider"
+            },
+            "type": "array",
+            "title": "Providers",
+            "description": "Every configured provider, in configuration order, then every identity linked through a\nprovider no longer configured."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "has_password",
+          "providers"
+        ],
+        "title": "AccountProviders",
+        "description": "The signed-in account's ways to sign in: its password and its providers."
+      },
       "AccountSummary": {
         "properties": {
           "id": {
@@ -14406,6 +15100,18 @@
             "type": "array",
             "title": "Rules",
             "description": "The rules of the default version's `context7.json`, shown to agents with every `query-docs`\nanswer. Untrusted repository text."
+          },
+          "logo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo",
+            "description": "Version of the library's project logo (hex digits of its SHA-256); null when the importer\nfound none in the default version. The image is `GET /api/v1/libraries/{owner}/{repo}/logo`;\nwith `?v=<logo>` a browser may keep it until the logo changes."
           }
         },
         "additionalProperties": false,
@@ -14420,7 +15126,8 @@
           "settings",
           "versions",
           "default_version",
-          "default_pinned"
+          "default_pinned",
+          "logo"
         ],
         "title": "LibraryDetail",
         "description": "Everything known about one library."
@@ -15423,6 +16130,18 @@
             "title": "Last Imported At",
             "description": "When any version was last imported; null while none is."
           },
+          "logo": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Logo",
+            "description": "Version of the library's project logo (hex digits of its SHA-256); null when the importer\nfound none in the default version. The image is `GET /api/v1/libraries/{owner}/{repo}/logo`;\nwith `?v=<logo>` a browser may keep it until the logo changes."
+          },
           "article_count": {
             "type": "integer",
             "minimum": 0.0,
@@ -15444,6 +16163,7 @@
           "version_count",
           "tags",
           "last_imported_at",
+          "logo",
           "article_count"
         ],
         "title": "LibrarySummary",
@@ -17924,6 +18644,36 @@
             "type": "string",
             "title": "Display Name",
             "description": "What its sign-in button says."
+          },
+          "icon": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "discord",
+                  "github",
+                  "google",
+                  "microsoft"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon",
+            "description": "The built-in icon its button shows (the web UI ships these); `null` when it has none, or\nan icon of its own (`icon_url`)."
+          },
+          "icon_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Icon Url",
+            "description": "Where ExactDocs serves the provider's own icon, an operator's file (a same-origin path,\n`/api/v1/auth/{name}/icon?v=<version>`, which changes with the icon); `null` when it has\nnone."
           }
         },
         "additionalProperties": false,
@@ -18409,6 +19159,27 @@
         ],
         "title": "SpentOut",
         "description": "What one scope spent in one window, as the providers reported it."
+      },
+      "StartAccountLinkRequest": {
+        "properties": {
+          "return_to": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 8192
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Return To",
+            "description": "A path on this server; default `/account`. `?linked=<provider>` or\n`?link_error=<code>` is added to it."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "StartAccountLinkRequest",
+        "description": "Where to come back to once the provider linked the identity (or refused it)."
       },
       "SyncStatus": {
         "type": "string",

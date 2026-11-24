@@ -42,6 +42,7 @@ from exactdocs.identity.dtos import (
     FinishExternalSignInCommand,
     ResetPasswordCommand,
     SetUserDisabledCommand,
+    StartAccountLinkCommand,
     StartExternalSignInCommand,
     UserListQuery,
 )
@@ -49,11 +50,18 @@ from exactdocs.identity.errors import (
     AccountDisabledError,
     ExternalAccountError,
     ExternalSignInFailedError,
+    IdentityLinkedElsewhereError,
     InvalidCredentialsError,
     InvalidTokenError,
+    LastSignInMethodError,
+    LinkRefusedError,
+    NoLinkedAccountError,
+    NoProviderIconError,
     NotAllowedError,
     NotSignedInError,
     ProviderAccessRevokedError,
+    ProviderAlreadyLinkedError,
+    ProviderNotLinkedError,
     ProviderUnavailableError,
     SignInCancelledError,
     UnknownSignInProviderError,
@@ -62,9 +70,11 @@ from exactdocs.identity.errors import (
 from exactdocs.identity.models import (
     Account,
     AccountId,
+    BuiltInIcon,
     ExternalClaims,
     ExternalGrant,
     ExternalIdentity,
+    ProviderIcon,
     Role,
     SignInPolicy,
     Username,
@@ -245,6 +255,7 @@ async def sign_in(world: SignsIn, subject: str, **command: Any) -> AccountSummar
             provider="corp", binding=SecretStr(binding), state=state, code="code", **command
         )
     )
+    assert result.session is not None
     world.last_session = result.session.token.get_secret_value()
     return result.session.account
 
@@ -1058,3 +1069,358 @@ async def test_oauth_uses_signed_groups_without_overwriting_web_memberships() ->
     assert caller.groups == frozenset({"readers"})
     assert await world.externals.groups_of(AccountId(account.id)) == frozenset({"docs"})
     assert await world.externals.get(ISSUER, "u-1") == before
+
+
+# ---------------------------------------------------------------- linking from Account settings
+
+
+async def local_session(world: World, name: str = "lena", role: Role = Role.USER) -> str:
+    """Create a local account with a password and sign it in; return the session token."""
+    await world.accounts.add(
+        Account(
+            id=AccountId(f"local-{name}"),
+            username=Username(name),
+            password_hash=await world.hasher.hash(HORSE),
+            role=role,
+            created_at=START,
+        )
+    )
+    grant = await world.identity.sign_in(
+        AuthenticateQuery(username=name, password=SecretStr(HORSE)), None
+    )
+    return grant.token.get_secret_value()
+
+
+async def start_link(world: World, session: str | None, return_to: str | None = None) -> str:
+    """Start a link from the session's Account settings; return the browser's binding."""
+    account = await world.identity.identify_caller(session) if session else None
+    begun = await world.identity.start_account_link(
+        account or AccountSummary(id="nobody", username="nobody", role="user"),
+        StartAccountLinkCommand(provider="corp", return_to=return_to),
+        session,
+    )
+    return begun.binding.get_secret_value()
+
+
+async def link(
+    world: World,
+    session: str,
+    subject: str,
+    *,
+    back_with: str | None = None,
+    **command: Any,
+) -> Any:
+    """The whole link: start it from ``session``, come back with ``back_with`` (default same)."""
+    world.provider.next_subject = subject
+    binding = await start_link(world, session)
+    return await world.identity.finish_external_sign_in(
+        FinishExternalSignInCommand(
+            provider="corp",
+            binding=SecretStr(binding),
+            state=world.provider.started[-1]["state"],
+            **{"code": "code", **command},
+        ),
+        session if back_with is None else back_with,
+    )
+
+
+async def test_a_link_attaches_the_identity_and_signs_nobody_in(world: World) -> None:
+    session = await local_session(world, role=Role.ADMIN)
+    world.provider.add("u-7", "lena-at-corp", "payments")
+    sessions_before = dict(world.sessions.sessions)
+
+    result = await link(world, session, "u-7")
+
+    assert (result.session, result.linked, result.return_to) == (None, "corp", "/account")
+    assert world.sessions.sessions == sessions_before  # the session stays, no new one
+    identity = await world.externals.get(ISSUER, "u-7")
+    assert identity is not None
+    assert (identity.account_id, identity.linked_at, identity.sealed_tokens) == (
+        "local-lena",
+        START,
+        None,  # a linked identity keeps no refresh token: nothing follows it
+    )
+    assert not identity.is_origin
+    assert await world.externals.get_for_account(AccountId("local-lena")) is None
+    assert await world.externals.groups_of(AccountId("local-lena")) == frozenset()
+
+
+async def test_a_linked_identity_signs_the_account_in_without_changing_it(world: World) -> None:
+    session = await local_session(world, role=Role.ADMIN)
+    world.provider.add("u-7", "someone-else")  # in no admin group
+    await link(world, session, "u-7")
+    world.clock.at += timedelta(minutes=5)
+
+    account = await sign_in(world, "u-7")
+
+    assert (account.id, account.username, account.role) == ("local-lena", "lena", "admin")
+    assert await world.externals.groups_of(AccountId("local-lena")) == frozenset()
+    identity = await world.externals.get(ISSUER, "u-7")
+    assert identity is not None
+    assert identity.signed_in_at == START + timedelta(minutes=5)
+    assert len(await world.accounts.list_all()) == 1  # no account was created
+
+
+async def test_a_link_must_come_back_to_the_session_that_started_it(world: World) -> None:
+    session = await local_session(world)
+    other = await local_session(world, "otto")
+    world.provider.add("u-7", "lena")
+
+    for back_with in (other, ""):
+        with pytest.raises(LinkRefusedError) as refused:
+            await link(world, session, "u-7", back_with=back_with)
+        assert refused.value.code == "sign_in_failed"
+        assert refused.value.return_to == "/account"
+    assert world.provider.exchanged == []  # the code is never exchanged for the wrong session
+    assert await world.externals.get(ISSUER, "u-7") is None
+
+
+async def test_an_identity_linked_to_another_account_is_refused(world: World) -> None:
+    world.provider.add("u-7", "alice")
+    alice = await sign_in(world, "u-7")  # u-7 created alice's account
+    session = await local_session(world)
+
+    with pytest.raises(LinkRefusedError) as refused:
+        await link(world, session, "u-7")
+
+    assert refused.value.code == IdentityLinkedElsewhereError.code
+    identity = await world.externals.get(ISSUER, "u-7")
+    assert identity is not None
+    assert identity.account_id == alice.id
+
+
+async def test_a_provider_already_linked_is_refused_at_the_start(world: World) -> None:
+    session = await local_session(world)
+    world.provider.add("u-7", "lena")
+    await link(world, session, "u-7")
+    started = len(world.provider.started)
+
+    with pytest.raises(ProviderAlreadyLinkedError):
+        await start_link(world, session)
+    assert len(world.provider.started) == started  # the provider was not even asked
+
+
+async def test_a_link_needs_a_session_to_bind_to(world: World) -> None:
+    with pytest.raises(NotSignedInError):
+        await start_link(world, None)
+    assert world.attempts.attempts == {}
+
+
+async def test_a_link_keeps_only_a_same_origin_return_path(world: World) -> None:
+    session = await local_session(world)
+    world.provider.add("u-7", "lena")
+    world.provider.next_subject = "u-7"
+
+    binding = await start_link(world, session, return_to="https://evil.example/account")
+
+    [attempt] = world.attempts.attempts.values()
+    assert attempt.return_to == "/"
+    assert attempt.link_session_hash is not None
+    assert attempt.link_session_hash != session  # only its hash is kept
+    assert binding
+
+
+async def test_a_refused_link_names_the_providers_refusal(world: World) -> None:
+    session = await local_session(world)
+    world.provider.add("u-7", "lena")
+
+    with pytest.raises(LinkRefusedError) as cancelled:
+        await link(world, session, "u-7", error="access_denied", code=None)
+
+    assert (cancelled.value.code, cancelled.value.return_to) == ("sign_in_cancelled", "/account")
+    assert isinstance(cancelled.value.refusal, SignInCancelledError)
+
+
+async def test_a_link_outside_the_allowed_groups_is_refused() -> None:
+    world = build(policy(allow_any_user=False, allowed_groups=frozenset({"docs"})))
+    session = await local_session(world)
+    world.provider.add("u-7", "lena", "other")
+
+    with pytest.raises(LinkRefusedError) as refused:
+        await link(world, session, "u-7")
+
+    assert refused.value.code == NotAllowedError.code
+    assert await world.externals.get(ISSUER, "u-7") is None
+
+
+async def test_unlinking_ends_the_sign_in_and_keeps_the_password(world: World) -> None:
+    session = await local_session(world)
+    world.provider.add("u-7", "lena-at-corp")
+    await link(world, session, "u-7")
+    lena = await world.identity.identify_caller(session)
+
+    providers = await world.identity.unlink_provider(lena, "corp")
+
+    assert providers.has_password
+    [corp] = providers.providers
+    assert (corp.linked, corp.can_link, corp.can_unlink) == (False, True, False)
+    assert await world.externals.get(ISSUER, "u-7") is None
+    # The identity no longer reaches lena: its next sign-in is a stranger's first one.
+    stranger = await sign_in(world, "u-7")
+    assert (stranger.id, stranger.username) != ("local-lena", "lena")
+    assert await world.identity.identify_caller(session) == lena  # her session stays
+
+
+async def test_the_identity_an_account_was_created_through_is_never_unlinked(
+    world: World,
+) -> None:
+    world.provider.add("u-1", "alice")
+    alice = await sign_in(world, "u-1")
+
+    with pytest.raises(LastSignInMethodError):
+        await world.identity.unlink_provider(alice, "corp")
+    assert await world.externals.get(ISSUER, "u-1") is not None
+
+
+async def test_unlinking_a_provider_that_is_not_linked_is_refused(world: World) -> None:
+    session = await local_session(world)
+    lena = await world.identity.identify_caller(session)
+
+    with pytest.raises(ProviderNotLinkedError):
+        await world.identity.unlink_provider(lena, "corp")
+
+
+async def test_account_providers_say_what_may_be_linked_and_unlinked(world: World) -> None:
+    world.provider.add("u-1", "alice")
+    alice = await sign_in(world, "u-1")
+    gone = await world.externals.get(ISSUER, "u-1")
+    assert gone is not None
+    # An identity of a provider no longer configured, linked earlier.
+    world.externals.links["https://old.example.com", "o-1"] = replace(
+        gone, issuer="https://old.example.com", subject="o-1", provider="old", linked_at=START
+    )
+
+    providers = await world.identity.list_account_providers(alice)
+
+    assert providers.has_password is False
+    corp, old = providers.providers
+    assert (corp.name, corp.display_name, corp.configured) == ("corp", "Corp SSO", True)
+    assert (corp.linked, corp.origin, corp.linked_at) == (True, True, None)
+    assert (corp.can_link, corp.can_unlink) == (False, False)  # alice's only way in
+    assert corp.last_signed_in_at == START
+    assert (old.name, old.display_name, old.configured, old.origin) == ("old", "old", False, False)
+    assert (old.can_link, old.can_unlink, old.linked_at) == (False, True, START)
+    assert (await world.identity.unlink_provider(alice, "old")).providers == [corp]
+
+
+async def test_a_provider_that_creates_no_accounts_signs_in_linked_identities_only() -> None:
+    world = build(policy(auto_create_users=False))
+    world.provider.add("u-7", "lena-at-corp")
+
+    with pytest.raises(NoLinkedAccountError):
+        await sign_in(world, "u-7")
+    assert await world.accounts.any_exists() is False
+    session = await local_session(world)
+    await link(world, session, "u-7")
+    assert (await sign_in(world, "u-7")).id == "local-lena"
+
+
+async def test_a_linked_identity_cannot_outlive_the_origins_access() -> None:
+    world = build(policy(), policy(name="other", display_name="Other"))
+    world.provider.refresh_token = None
+    world.provider.add("u-1", "alice")
+    alice = await sign_in(world, "u-1")  # through corp: her account follows corp
+    world.provider.next_subject = "u-2"
+    world.provider.add("u-2", "alice-elsewhere")
+    begun = await world.identity.start_account_link(
+        alice, StartAccountLinkCommand(provider="other"), world.last_session
+    )
+    linked = await world.identity.finish_external_sign_in(
+        FinishExternalSignInCommand(
+            provider="other",
+            binding=begun.binding,
+            state=world.provider.started[-1]["state"],
+            code="code",
+        ),
+        world.last_session,
+    )
+    assert linked.linked == "other"
+    world.clock.at += timedelta(days=2)  # corp's grace is over: alice's access ended
+
+    begun = await world.identity.start_external_sign_in(
+        StartExternalSignInCommand(provider="other")
+    )
+    with pytest.raises(ProviderAccessRevokedError):
+        await world.identity.finish_external_sign_in(
+            FinishExternalSignInCommand(
+                provider="other",
+                binding=begun.binding,
+                state=world.provider.started[-1]["state"],
+                code="code",
+            )
+        )
+
+
+async def test_revalidation_and_revocation_leave_linked_identities_alone(world: World) -> None:
+    session = await local_session(world)
+    world.provider.add("u-7", "lena")
+    await link(world, session, "u-7")
+    world.clock.at += timedelta(days=3)
+
+    report = await world.identity.revalidate_external_accounts()
+
+    assert (report.extended, report.revoked) == (0, 0)
+    await world.identity.set_user_disabled(SetUserDisabledCommand(id="local-lena", disabled=True))
+    assert await world.externals.get(ISSUER, "u-7") is not None
+    assert (await world.identity.list_users(UserListQuery())).users[0].provider is None
+
+
+async def test_an_id_token_of_a_linked_identity_acts_as_the_account_with_its_own_role() -> None:
+    world = build()
+    session = await local_session(world, role=Role.ADMIN)
+    world.provider.add("u-7", "lena-at-corp", "docs")
+    await link(world, session, "u-7")
+    world.provider.id_tokens["tok"] = world.provider.people["u-7"]
+
+    caller = await world.identity.identify_external_token("corp", "tok")
+
+    assert (caller.account.id, caller.account.role, caller.linked) == ("local-lena", "admin", True)
+    assert caller.groups == frozenset()  # the account's own groups, not the provider's
+
+
+async def test_an_unlinked_id_token_is_refused_where_no_accounts_are_created() -> None:
+    world = build(policy(auto_create_users=False))
+    world.provider.add("u-9", "dora")
+    world.provider.id_tokens["tok"] = world.provider.people["u-9"]
+
+    with pytest.raises(NoLinkedAccountError):
+        await world.identity.identify_external_token("corp", "tok")
+
+
+# ---------------------------------------------------------------- icons
+
+
+async def test_providers_carry_their_icons() -> None:
+    icon = ProviderIcon(media_type="image/png", content=b"png bytes")
+    world = build(
+        policy(icon=BuiltInIcon.GOOGLE),
+        policy(name="own", display_name="Own", icon_file=icon),
+        policy(name="plain", display_name="Plain"),
+    )
+    await local_session(world)  # set up: the sign-in page offers the providers
+
+    state = await world.identity.get_session_state(None)
+
+    assert [(p.name, p.icon, p.icon_url) for p in state.providers] == [
+        ("corp", "google", None),
+        ("own", None, f"/api/v1/auth/own/icon?v={icon.version}"),
+        ("plain", None, None),
+    ]
+    served = await world.identity.get_provider_icon("own")
+    assert (served.media_type, served.content, served.version) == (
+        "image/png",
+        b"png bytes",
+        icon.version,
+    )
+    for name in ("corp", "plain"):
+        with pytest.raises(NoProviderIconError):
+            await world.identity.get_provider_icon(name)
+    with pytest.raises(UnknownSignInProviderError):
+        await world.identity.get_provider_icon("nope")
+
+
+def test_a_policy_has_one_icon_at_most() -> None:
+    with pytest.raises(ValueError, match="icon or icon_file"):
+        policy(
+            icon=BuiltInIcon.GOOGLE, icon_file=ProviderIcon(media_type="image/png", content=b"x")
+        )

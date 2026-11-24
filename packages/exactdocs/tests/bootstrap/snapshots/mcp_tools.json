@@ -443,6 +443,17 @@
                 ],
                 "description": "When any version was last imported; null while none is."
               },
+              "logo": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Version of the library's project logo (hex digits of its SHA-256); null when the importer\nfound none in the default version. The image is `GET /api/v1/libraries/{owner}/{repo}/logo`;\nwith `?v=<logo>` a browser may keep it until the logo changes."
+              },
               "refs": {
                 "description": "The imported versions with kind, commit SHA and default flag: the default one, then the most recently imported, at most 50, sorted by ref. Pass any ref as `ref` to `list_articles` or `search_docs`.",
                 "items": {
@@ -527,6 +538,7 @@
               "version_count",
               "tags",
               "last_imported_at",
+              "logo",
               "article_count"
             ],
             "type": "object"

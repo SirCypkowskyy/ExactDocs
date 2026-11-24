@@ -11,6 +11,7 @@ from exactdocs.catalog.models import (
     ImportedTags,
     Library,
     LibraryId,
+    LibraryLogo,
     LibrarySettings,
     Manifest,
     ManifestEntry,
@@ -154,6 +155,42 @@ class LibraryRepository(Protocol):
         Args:
             library_id: The library.
             tags: The path and its new tags.
+        """
+        ...
+
+
+class LibraryLogos(Protocol):
+    """Where each library's logo is kept (#504): one per library, gone with the library.
+
+    ``LibraryRepository`` reads its ``digest`` into ``Library.logo``, so a repository and this
+    store of one composition share their data.
+    """
+
+    async def get(self, library_id: LibraryId) -> LibraryLogo | None:
+        """Return the library's logo.
+
+        Args:
+            library_id: The library.
+
+        Returns:
+            The logo; ``None`` when the library has none, or is not stored.
+        """
+        ...
+
+    async def put(self, library_id: LibraryId, logo: LibraryLogo) -> None:
+        """Make ``logo`` the library's logo, replacing any; nothing happens for an unknown library.
+
+        Args:
+            library_id: The library.
+            logo: Its new logo.
+        """
+        ...
+
+    async def remove(self, library_id: LibraryId) -> None:
+        """Forget the library's logo, if it has one.
+
+        Args:
+            library_id: The library.
         """
         ...
 

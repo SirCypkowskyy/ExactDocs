@@ -62,6 +62,30 @@ def _username_of(
     return username
 
 
+def _include_external_sign_in_routers(v1: APIRouter, container: Container) -> None:
+    """Add the routes of sign-in through an identity provider, reachable without a caller.
+
+    The browser navigations to and back from the provider (behind the setup guard too), and the
+    providers' own icons, which the sign-in page shows to people not signed in yet.
+
+    Args:
+        v1: The ``/api/v1`` router.
+        container: The wired domains.
+    """
+    v1.include_router(
+        identity_http.build_external_sign_in_router(
+            start_external_sign_in=container.identity.start_external_sign_in,
+            finish_external_sign_in=container.identity.finish_external_sign_in,
+            secure_cookies=container.settings.cookies_always_secure,
+        )
+    )
+    v1.include_router(
+        identity_http.build_provider_icon_router(
+            get_provider_icon=container.identity.get_provider_icon
+        )
+    )
+
+
 def _include_session_routers(v1: APIRouter, container: Container) -> identity_http.CurrentCaller:
     """Add the routes that take a signed-in session and never an API token.
 
@@ -104,7 +128,12 @@ def _include_session_routers(v1: APIRouter, container: Container) -> identity_ht
     )
     v1.include_router(
         identity_http.build_account_router(
-            change_password=container.identity.change_password, session_caller=session_caller
+            change_password=container.identity.change_password,
+            list_account_providers=container.identity.list_account_providers,
+            start_account_link=container.identity.start_account_link,
+            unlink_provider=container.identity.unlink_provider,
+            session_caller=session_caller,
+            secure_cookies=container.settings.cookies_always_secure,
         )
     )
     return session_caller
@@ -262,14 +291,7 @@ def create_app(container: Container) -> FastAPI:
             secure_cookies=settings.cookies_always_secure,
         )
     )
-    # Browser navigations to and back from an identity provider (behind the setup guard too).
-    v1.include_router(
-        identity_http.build_external_sign_in_router(
-            start_external_sign_in=container.identity.start_external_sign_in,
-            finish_external_sign_in=container.identity.finish_external_sign_in,
-            secure_cookies=settings.cookies_always_secure,
-        )
-    )
+    _include_external_sign_in_routers(v1, container)
     session_caller = _include_session_routers(v1, container)
     # Everything else needs a caller: a session cookie or an API token. Add new domain routers here.
     current_caller = identity_http.build_current_caller(
@@ -312,6 +334,7 @@ def create_app(container: Container) -> FastAPI:
             get_asset=container.catalog.get_asset,
             update_library=container.catalog.update_library,
             pin_default_version=container.catalog.pin_default_version,
+            get_logo=container.catalog.get_logo,
         )
     )
     protected.include_router(

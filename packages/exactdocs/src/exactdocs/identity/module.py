@@ -33,6 +33,7 @@ from exactdocs.identity.ports.driving import (
     CreateUser,
     DropLibraryGrants,
     FinishExternalSignIn,
+    GetProviderIcon,
     GetSessionState,
     GetSetupState,
     GrantLibraryRole,
@@ -41,6 +42,7 @@ from exactdocs.identity.ports.driving import (
     IdentifyExternalToken,
     IdentifyToken,
     ListAccessLog,
+    ListAccountProviders,
     ListLibraryAccessLog,
     ListLibraryGrants,
     ListTokens,
@@ -54,8 +56,10 @@ from exactdocs.identity.ports.driving import (
     SetUserDisabled,
     SignIn,
     SignOut,
+    StartAccountLink,
     StartExternalSignIn,
     TransferLibrary,
+    UnlinkProvider,
 )
 from exactdocs.identity.use_cases import (
     AuthenticateUseCase,
@@ -67,6 +71,7 @@ from exactdocs.identity.use_cases import (
     CreateUserUseCase,
     DropLibraryGrantsUseCase,
     FinishExternalSignInUseCase,
+    GetProviderIconUseCase,
     GetSessionStateUseCase,
     GetSetupStateUseCase,
     GrantLibraryRoleUseCase,
@@ -75,6 +80,7 @@ from exactdocs.identity.use_cases import (
     IdentifyExternalTokenUseCase,
     IdentifyTokenUseCase,
     ListAccessLogUseCase,
+    ListAccountProvidersUseCase,
     ListLibraryAccessLogUseCase,
     ListLibraryGrantsUseCase,
     ListTokensUseCase,
@@ -89,8 +95,10 @@ from exactdocs.identity.use_cases import (
     Sharing,
     SignInUseCase,
     SignOutUseCase,
+    StartAccountLinkUseCase,
     StartExternalSignInUseCase,
     TransferLibraryUseCase,
+    UnlinkProviderUseCase,
 )
 from exactdocs_kernel import Clock
 
@@ -140,7 +148,15 @@ class IdentityModule:
     start_external_sign_in: StartExternalSignIn
     """Start a sign-in through a configured identity provider."""
     finish_external_sign_in: FinishExternalSignIn
-    """Finish an external sign-in (the provider's callback) and start a session."""
+    """Finish an external sign-in (the provider's callback) and start a session, or a link."""
+    get_provider_icon: GetProviderIcon
+    """Return a provider's own icon, for ExactDocs to serve."""
+    list_account_providers: ListAccountProviders
+    """List the signed-in account's providers, linked or not."""
+    start_account_link: StartAccountLink
+    """Start linking an identity of a provider to the signed-in account."""
+    unlink_provider: UnlinkProvider
+    """Unlink the signed-in account's identity of a provider (never its last way in)."""
     revalidate_external_accounts: RevalidateExternalAccounts
     """Check again the memberships of the external identities that are due."""
     can_create_library: CanCreateLibrary
@@ -305,8 +321,23 @@ class IdentityModule:
                 accounts=repository,
                 externals=externals,
                 sessions=sessions,
+                identify_caller=identify_caller,
                 box=box,
                 clock=clock,
+            ),
+            get_provider_icon=GetProviderIconUseCase(policies=policies),
+            list_account_providers=ListAccountProvidersUseCase(
+                policies=policies, accounts=repository, externals=externals
+            ),
+            start_account_link=StartAccountLinkUseCase(
+                providers=providers,
+                policies=policies,
+                attempts=attempts,
+                externals=externals,
+                clock=clock,
+            ),
+            unlink_provider=UnlinkProviderUseCase(
+                policies=policies, accounts=repository, externals=externals
             ),
             revalidate_external_accounts=RevalidateExternalAccountsUseCase(
                 providers=providers,
