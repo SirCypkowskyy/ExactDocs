@@ -105,7 +105,10 @@ starts on an empty data directory and imports the fixture docs repository at two
 build starts on the same directory and must migrate it to its head revision and serve the same
 libraries, articles and search results to the same API token. Last, `exactdocs reindex` runs while
 that server keeps answering searches. Run it locally with `python3 deploy/upgrade_check.py`
-(`--previous X.Y.Z` to pick the release). The behave scenario *Upgrading keeps the libraries*
+(`--previous X.Y.Z` to pick the release). A yanked release still counts and still installs
+(0.1.0 to 0.2.0 are yanked, #533): the check pins both `exactdocs==X.Y.Z` and
+`exactdocs-kernel==X.Y.Z` itself, because uv takes a yanked version only for an exact pin the user
+gives, not for one in another package's metadata. The behave scenario *Upgrading keeps the libraries*
 (`features/upgrade.feature`) is its in-process half: it takes the schema back to the previous
 release's head revision. After tagging a stable release, move `PREVIOUS_RELEASE` and
 `PREVIOUS_REVISION` in `features/steps/upgrade_steps.py` to it (the head is
@@ -254,9 +257,8 @@ croniter, python-dateutil and tzdata: about 28 MB in all. That took the image fr
 measured above to 374.5 MB in CI (Docker image job of #218), 0.5 MB under the old 375 MB budget, so
 the budget was raised to 400 MB: the same headroom (about 7 %) as before, for dependency and Debian
 updates. A smaller footprint stays possible behind the same `Checkpoints` port (an ingestion-owned
-checkpoint table instead of DBOS). psycopg is LGPL-3.0: list it if the image ever gets a
-third-party notices file (the `-local` image has one for its model weights only,
-`/opt/exactdocs/models/NOTICE`; see *Model licenses* above).
+checkpoint table instead of DBOS). psycopg is LGPL-3.0; like every Python distribution in the
+image, it carries its licence in its `.dist-info` (see [Licences](#licences)).
 
 **Telemetry since E10-07 (#87): 384.4 MB.** The OpenTelemetry SDK and its OTLP/HTTP exporter (with
 protobuf, googleapis-common-protos and requests) are imported only when `EXACTDOCS_TELEMETRY=otlp`,
@@ -279,6 +281,25 @@ UI from a CDN, which keeps the offline guarantee; that page is nearly all of the
 adds. The maintainer chose to raise the budget by 10 MB rather than move MCP Apps into an optional
 extra, so every install gets them. The headroom is now about 1.5 %: the next dependency that needs
 room must first look for something to drop.
+
+## Licences
+
+What is published carries the licences of what it holds (#533):
+
+- **Wheels and sdists** of `exactdocs` and `exactdocs-kernel` carry the repository's `LICENSE`
+  (`license-files` in each `pyproject.toml`; PEP 639 allows no path outside the package, so each
+  package holds a copy, which `tests/ci/test_licenses.py` keeps equal to the root one).
+- **The web UI** carries `THIRD_PARTY_NOTICES.txt`, written by `vite build`
+  (`web/scripts/third-party-notices.ts`, [web/README.md](https://github.com/SirCypkowskyy/ExactDocs/blob/develop/web/README.md)):
+  the licences of the npm packages in the bundle and of its fonts (SIL Open Font License 1.1), and
+  the terms of the source adapted into it. It ships in `exactdocs/_web/` in the wheel and in every
+  image. `check_artifacts.py wheel` fails a wheel without it or without the `LICENSE`, and the
+  release's *Build Python distributions* job checks the `LICENSE` in every wheel and sdist.
+- **The images'** Python distributions each carry their licence in their `.dist-info`; the
+  `-local` default models' licences are in `/opt/exactdocs/models/NOTICE`
+  (see *Model licenses* above).
+- **Test data from other projects** names its source and licence beside it
+  (`packages/exactdocs/tests/fixtures/readmes/README.md`); the sdist carries both.
 
 ## Image scan
 

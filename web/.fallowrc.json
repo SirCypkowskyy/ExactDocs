@@ -74,6 +74,8 @@
         "scripts/check-dist.mjs",
         "scripts/bundle-size.mjs",
         "scripts/check-dist.test.mjs",
+        "scripts/third-party-notices.ts",
+        "scripts/third-party-notices.test.ts",
         ".pnpmfile.cjs"
       ]
     }

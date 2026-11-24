@@ -284,7 +284,20 @@ jobs:
           ls dist
           test -f "dist/exactdocs-$v-py3-none-any.whl"
           test -f "dist/exactdocs_kernel-$v-py3-none-any.whl"
-          unzip -l "dist/exactdocs-$v-py3-none-any.whl" | grep -q 'exactdocs/_web/index.html'
+          # The bundled UI with its third-party notices, the LICENSE, size and requirements.
+          python3 deploy/check_artifacts.py wheel "dist/exactdocs-$v-py3-none-any.whl"
+          # Every wheel and sdist carries the LICENSE (license-files, #533).
+          python3 - dist/*.whl dist/*.tar.gz <<'PY'
+          import sys, tarfile, zipfile
+          for path in sys.argv[1:]:
+              if path.endswith(".whl"):
+                  ok = any(n.endswith(".dist-info/licenses/LICENSE") for n in zipfile.ZipFile(path).namelist())
+              else:
+                  ok = any(n.count("/") == 1 and n.endswith("/LICENSE") for n in tarfile.open(path).getnames())
+              if not ok:
+                  print(f"::error::{path} has no LICENSE")
+                  sys.exit(1)
+          PY
           # An exact twine: the release build runs no tool at a version it was not tested with.
           uvx twine==7.0.0 check --strict dist/*
       - name: Smoke test the wheel like uvx would

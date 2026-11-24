@@ -1,6 +1,7 @@
 """Release-artifact guard (RUN-02): size budgets and no ML models or libraries. Stdlib only.
 
-    check_artifacts.py wheel <file.whl>                       size, model files, ML dependencies
+    check_artifacts.py wheel <file.whl>                       size, model files, ML dependencies,
+                                                              LICENSE and the UI's notices
     check_artifacts.py image <image-ref> [base|ai|local]      size, installed packages, model
                       [--no-python]                           files (needs docker)
 
@@ -72,6 +73,8 @@ Qdrant/bge-small-en-v1.5-onnx-Q@aa8f8b06 and Xenova/ms-marco-MiniLM-L-6-v2@a0914
 `-local` image must hold exactly these bytes. Change with PINNED_MODEL_REVISIONS."""
 SITE_ROOTS = ("/app/.venv", "/usr/local/lib")
 """Where an image's distributions are installed (`--no-python` reads their `.dist-info` there)."""
+WEB_NOTICES = "exactdocs/_web/THIRD_PARTY_NOTICES.txt"
+"""The bundled UI's third-party licences (`vite build`: web/scripts/third-party-notices.ts)."""
 MODEL_NOTICE = "NOTICE"
 """The models' licenses and attribution in MODELS_DIR (deploy/model-notices/NOTICE)."""
 
@@ -202,7 +205,7 @@ def report(kind: str, size: int, budget: int, problems: list[str]) -> int:
 
 
 def wheel(path: Path) -> int:
-    """Check a built wheel: size, model files, bundled UI, default ML requirements.
+    """Check a built wheel: size, model files, bundled UI and its notices, LICENSE, ML requirements.
 
     Returns:
         The exit code: 1 when the wheel has problems, else 0.
@@ -217,6 +220,12 @@ def wheel(path: Path) -> int:
     problems = [f"model file in wheel: {n}" for n in names if n.endswith(MODEL_SUFFIXES)]
     if not has_web:
         problems.append("wheel has no exactdocs/_web/index.html (UI not bundled)")
+    elif WEB_NOTICES not in names:
+        problems.append(f"wheel has no {WEB_NOTICES} (the UI's third-party licences)")
+    if not any(n.endswith(".dist-info/licenses/LICENSE") for n in names):
+        problems.append(
+            "wheel has no .dist-info/licenses/LICENSE (license-files in pyproject.toml)"
+        )
     for r, rest in requires:
         if "extra ==" not in rest and r.lower().replace("_", "-") in ML_PACKAGES:
             problems.append(f"wheel requires ML package {r}")
