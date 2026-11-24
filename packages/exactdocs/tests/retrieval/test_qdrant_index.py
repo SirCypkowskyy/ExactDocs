@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+import integration
 from exactdocs.bootstrap.index_backends import build_index_backends
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.adapters.driven.qdrant_index import (
@@ -44,12 +45,12 @@ T0 = datetime(2026, 11, 22, 12, 0, tzinfo=UTC)
 LIB = "/acme/payments"
 URL = "http://127.0.0.1:6333"
 
-needs_server = pytest.mark.skipif(
-    QDRANT_URL in {None, LOCAL}, reason="needs a Qdrant server: set EXACTDOCS_TEST_QDRANT_URL"
+needs_qdrant = integration.QDRANT
+"""Qdrant, a server or the client's local mode (``:memory:``): integration tests (#507)."""
+not_local_mode = pytest.mark.skipif(
+    QDRANT_URL == LOCAL, reason="needs a Qdrant server, not the client's local mode"
 )
-needs_qdrant = pytest.mark.skipif(
-    QDRANT_URL is None, reason="needs Qdrant: set EXACTDOCS_TEST_QDRANT_URL"
-)
+"""With ``needs_qdrant``: a Qdrant server, which the client's local mode does not stand for."""
 
 
 def manifest(manifest_id: str, ref: str = "v1") -> IndexedManifest:
@@ -186,7 +187,8 @@ def test_the_words_are_weighed_as_bm25_does_headings_counting_more() -> None:
 # ---------------------------------------------------------------- against Qdrant
 
 
-@needs_server
+@needs_qdrant
+@not_local_mode
 async def test_a_spaces_collection_and_payload_indexes_are_made_from_the_space() -> None:
     async with fresh() as backend:
         assert isinstance(backend, QdrantVectorBackend)
@@ -217,7 +219,8 @@ async def test_a_spaces_collection_and_payload_indexes_are_made_from_the_space()
     ]
 
 
-@needs_server
+@needs_qdrant
+@not_local_mode
 async def test_a_collection_dropped_behind_its_back_is_made_again_on_the_next_write() -> None:
     async with fresh() as backend:
         assert isinstance(backend, QdrantVectorBackend)
@@ -237,7 +240,8 @@ async def test_a_collection_dropped_behind_its_back_is_made_again_on_the_next_wr
         ]
 
 
-@needs_server
+@needs_qdrant
+@not_local_mode
 async def test_another_instances_collection_of_other_dimensions_is_never_written() -> None:
     async with fresh() as backend:
         v1 = manifest("m1")
@@ -252,7 +256,8 @@ async def test_another_instances_collection_of_other_dimensions_is_never_written
             await other.close()
 
 
-@needs_server
+@needs_qdrant
+@not_local_mode
 @pytest.mark.skipif(not QDRANT_API_KEY, reason="the test server takes no API key")
 async def test_a_server_with_an_api_key_refuses_a_backend_without_it() -> None:
     assert QDRANT_URL is not None
@@ -278,6 +283,10 @@ async def test_a_hybrid_search_without_words_ranks_by_the_vector() -> None:
     assert [h.chunk_id for h in found] == ["near"]
 
 
-def test_the_contract_cases_cover_qdrant_when_a_server_is_given() -> None:
-    expected = {"qdrant", "qdrant_hybrid"} if QDRANT_URL else set()
-    assert expected <= set(VECTOR_BACKEND_CASES)
+def test_the_contract_cases_cover_qdrant_as_integration_cases() -> None:
+    cases = {name: VECTOR_BACKEND_CASES[name] for name in ("qdrant", "qdrant_hybrid")}
+
+    assert {name: case.marks for name, case in cases.items()} == {
+        "qdrant": integration.QDRANT,
+        "qdrant_hybrid": integration.QDRANT,
+    }

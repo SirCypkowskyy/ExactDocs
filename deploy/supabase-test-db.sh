@@ -3,7 +3,7 @@
 # of its `postgres` role with sslmode=require, ready for EXACTDOCS_TEST_SUPABASE_URL:
 #
 #   export EXACTDOCS_TEST_SUPABASE_URL=$(deploy/supabase-test-db.sh exactdocs-supabase)
-#   uv run behave packages/exactdocs/features/supabase.feature
+#   EXACTDOCS_INTEGRATION=1 uv run behave packages/exactdocs/features/supabase.feature   # #507
 #   docker rm -f exactdocs-supabase
 #
 # The container gets a throwaway self-signed certificate and password, and a free port on
