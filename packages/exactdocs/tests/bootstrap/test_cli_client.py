@@ -1,9 +1,11 @@
 """The CLI as a client of the REST API: stored credentials, URL safety, error mapping."""
 
+import http.server
 import inspect
 import os
 import stat
-from collections.abc import AsyncIterator
+import threading
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +31,8 @@ from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.identity.constants import FIRST_WAIT, FREE_FAILURES
 from exactdocs.identity.dtos import CreateFirstAdminCommand
+from forward_proxy import clear_outbound, forward_proxy
+from tls_stand_in import CompanyCa, company_ca, https_server
 
 HORSE = "correct horse battery staple"
 URL = "https://docs.example.com"
@@ -300,10 +304,142 @@ async def test_control_characters_from_a_server_never_reach_the_terminal() -> No
     assert str(raised.value) == "[2Jboom"
 
 
-def test_proxy_variables_are_ignored_for_loopback_only() -> None:
-    assert ApiClient("http://localhost:3000")._http.trust_env is False  # ruff: ignore[private-member-access]
-    assert ApiClient("http://[::1]:3000")._http.trust_env is False  # ruff: ignore[private-member-access]
-    assert ApiClient("https://docs.example.com")._http.trust_env is True  # ruff: ignore[private-member-access]
+class _ListAnswer(http.server.BaseHTTPRequestHandler):
+    """Answers every ``GET`` with an empty JSON list, as ``GET /api/v1/libraries`` would."""
+
+    def do_GET(self) -> None:
+        body = b"[]"
+        self.send_response(200)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_request(self, code: int | str = "-", size: int | str = "-") -> None:
+        del code, size
+
+
+@pytest.fixture
+def company(tmp_path: Path) -> CompanyCa:
+    return company_ca(tmp_path / "ca", ["docs.example.test"])
+
+
+@pytest.fixture
+def remote_api(company: CompanyCa) -> Iterator[tuple[str, int]]:
+    """``https://docs.example.test``, on loopback, with a certificate of the company CA.
+
+    Yields:
+        Its loopback address, for the proxy's route.
+    """
+    with https_server(company, _ListAnswer) as address:
+        yield address
+
+
+@pytest.fixture
+def plain_api() -> Iterator[tuple[str, int]]:
+    """The same answers over plain HTTP on 127.0.0.1.
+
+    Yields:
+        Its address.
+    """
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _ListAnswer)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield ("127.0.0.1", server.server_address[1])
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+REMOTE = "https://docs.example.test"
+"""A ``.test`` name resolves nowhere: only a proxy can reach it."""
+
+
+async def test_a_remote_server_is_reached_through_the_proxy_and_its_ca(
+    monkeypatch: pytest.MonkeyPatch, company: CompanyCa, remote_api: tuple[str, int]
+) -> None:
+    clear_outbound(monkeypatch)
+    with forward_proxy({"docs.example.test:443": remote_api}, credentials="ada:s3cr") as proxy:
+        monkeypatch.setenv("HTTPS_PROXY", proxy.url_with("ada:s3cr"))
+        monkeypatch.setenv("EXACTDOCS_CA_BUNDLE", str(company.bundle))
+        async with ApiClient(REMOTE, "exd_token") as api:
+            await api.check_token()
+
+    assert proxy.seen == ["CONNECT docs.example.test:443"]
+
+
+async def test_a_proxy_that_wants_credentials_is_named_in_the_error(
+    monkeypatch: pytest.MonkeyPatch, company: CompanyCa, remote_api: tuple[str, int]
+) -> None:
+    clear_outbound(monkeypatch)
+    with forward_proxy({"docs.example.test:443": remote_api}, credentials="ada:right") as proxy:
+        monkeypatch.setenv("HTTPS_PROXY", proxy.url_with("ada:wrong-pass"))
+        monkeypatch.setenv("SSL_CERT_FILE", str(company.bundle))
+        async with ApiClient(REMOTE, "exd_token") as api:
+            with pytest.raises(ClientError) as refused:
+                await api.check_token()
+
+    message = str(refused.value)
+    shown = proxy.url.replace("://", "://***@")
+    assert f"the proxy {shown} wants credentials to reach docs.example.test:443" in message
+    assert "wrong-pass" not in message
+
+
+async def test_a_certificate_the_ca_bundle_does_not_vouch_for_is_refused_naming_the_proxy(
+    monkeypatch: pytest.MonkeyPatch, remote_api: tuple[str, int], tmp_path: Path
+) -> None:
+    clear_outbound(monkeypatch)
+    other = company_ca(tmp_path / "other", ["docs.example.test"])  # not the server's CA
+    with forward_proxy({"docs.example.test:443": remote_api}) as proxy:
+        monkeypatch.setenv("HTTPS_PROXY", proxy.url)
+        monkeypatch.setenv("EXACTDOCS_CA_BUNDLE", str(other.bundle))
+        async with ApiClient(REMOTE, "exd_token") as api:
+            with pytest.raises(ClientError) as refused:
+                await api.check_token()
+
+    message = str(refused.value)
+    assert f"TLS failed reaching docs.example.test:443 through the proxy {proxy.url}" in message
+    assert "CA bundle" in message
+
+
+async def test_loopback_never_goes_through_the_proxy(
+    monkeypatch: pytest.MonkeyPatch, plain_api: tuple[str, int]
+) -> None:
+    clear_outbound(monkeypatch)
+    with forward_proxy() as proxy:  # no route: anything sent to it would be refused
+        monkeypatch.setenv("ALL_PROXY", proxy.url)
+        host, port = plain_api
+        async with ApiClient(f"http://{host}:{port}", "exd_token") as api:
+            await api.check_token()
+
+    assert proxy.seen == []
+
+
+async def test_an_exactdocs_override_replaces_the_standard_proxy(
+    monkeypatch: pytest.MonkeyPatch, company: CompanyCa, remote_api: tuple[str, int]
+) -> None:
+    clear_outbound(monkeypatch)
+    with forward_proxy({"docs.example.test:443": remote_api}) as proxy, forward_proxy() as other:
+        monkeypatch.setenv("HTTPS_PROXY", other.url)
+        monkeypatch.setenv("EXACTDOCS_HTTPS_PROXY", proxy.url)
+        monkeypatch.setenv("EXACTDOCS_CA_BUNDLE", str(company.bundle))
+        async with ApiClient(REMOTE) as api:
+            await api.check_token()
+
+    assert proxy.seen == ["CONNECT docs.example.test:443"]
+    assert other.seen == []
+
+
+def test_an_unusable_proxy_is_a_client_error_without_its_password(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clear_outbound(monkeypatch)
+    monkeypatch.setenv("HTTPS_PROXY", "ftp://ada:hunter22@proxy.example.com:21")
+
+    with pytest.raises(ClientError, match="not a proxy URL") as refused:
+        ApiClient(URL)
+
+    assert "hunter22" not in str(refused.value)
 
 
 @pytest.mark.parametrize("library_ids", [None, [], ["/acme/docs", "/acme/api"]])
