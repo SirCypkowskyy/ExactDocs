@@ -19,6 +19,8 @@ const user = (id: string, username: string, extra = {}) => ({
   role: "user",
   created_at: "2026-11-13T10:00:00Z",
   disabled: false,
+  last_active_at: null,
+  token_count: 0,
   ...extra,
 });
 const json = (body: unknown, status = 200) => Response.json(body, { status });
@@ -113,9 +115,18 @@ describe("users page", () => {
     expect(bob).toHaveTextContent(/User.*Password.*Active/);
     expect(screen.getByText("2 accounts")).toBeInTheDocument();
     // Nobody disables themselves from here (the server keeps the last admin anyway), nor resets
-    // their own password (it would sign them out): the operator's own row has no menu.
-    expect(screen.queryByRole("button", { name: "More actions for ada" })).not.toBeInTheDocument();
-    expect(items(await menuOf("bob"))).toEqual(["Reset password…", "Disable…"]);
+    // their own password (it would sign them out): the operator's own row only leads elsewhere.
+    expect(items(await menuOf("ada"))).toEqual([
+      "Show their API tokens",
+      "Show their access-log entries",
+    ]);
+    await userEvent.keyboard("{Escape}");
+    expect(items(await menuOf("bob"))).toEqual([
+      "Show their API tokens",
+      "Show their access-log entries",
+      "Reset password…",
+      "Disable…",
+    ]);
   });
 
   it("offers the same actions in a context menu from the keyboard", async () => {
@@ -125,7 +136,12 @@ describe("users page", () => {
     bob.focus();
     await userEvent.keyboard("{Shift>}{F10}{/Shift}");
     const menu = await screen.findByRole("menu");
-    expect(items(menu)).toEqual(["Reset password…", "Disable…"]);
+    expect(items(menu)).toEqual([
+      "Show their API tokens",
+      "Show their access-log entries",
+      "Reset password…",
+      "Disable…",
+    ]);
     await userEvent.click(within(menu).getByRole("menuitem", { name: "Disable…" }));
     expect(await screen.findByRole("alertdialog", { name: "Disable “bob”?" })).toBeInTheDocument();
   });
@@ -247,7 +263,11 @@ describe("users page", () => {
       ),
     );
     renderPage();
-    expect(items(await menuOf("ada"))).toEqual(["Enable"]);
+    expect(items(await menuOf("ada"))).toEqual([
+      "Show their API tokens",
+      "Show their access-log entries",
+      "Enable",
+    ]);
   });
 
   it("says plainly when the API refuses a non-operator", async () => {
@@ -326,7 +346,11 @@ describe("user form rules", () => {
     expect(within(carol).getByText("docs")).toBeInTheDocument();
     expect(within(carol).getByText("payments")).toBeInTheDocument();
     expect(dave).toHaveTextContent(/corp–/);
-    expect(items(await menuOf("carol"))).toEqual(["Disable…"]);
+    expect(items(await menuOf("carol"))).toEqual([
+      "Show their API tokens",
+      "Show their access-log entries",
+      "Disable…",
+    ]);
   });
 
   it("shows the first two groups and the rest on demand", async () => {
@@ -385,9 +409,25 @@ describe("users page in Polish", () => {
     expect(screen.getByText("1–2 z 2")).toBeInTheDocument();
     expect(screen.getByRole("columnheader", { name: "Logowanie" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Rola" })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /Ostatnia aktywność/ })).toBeInTheDocument();
+    expect(screen.getByRole("columnheader", { name: /Tokeny/ })).toBeInTheDocument();
+    expect(within(bob).getByText("Nigdy")).toBeInTheDocument();
+    const views = screen.getByRole("navigation", { name: "Widoki użytkowników" });
+    expect(within(views).getByRole("link", { name: "Konta" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Logowanie" }));
+    expect(await screen.findByRole("option", { name: "Hasło" })).toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
 
     const menu = await menuOf("bob", "Więcej opcji: bob");
-    expect(items(menu)).toEqual(["Zresetuj hasło…", "Wyłącz…"]);
+    expect(items(menu)).toEqual([
+      "Pokaż tokeny API tej osoby",
+      "Pokaż wpisy tej osoby w dzienniku dostępu",
+      "Zresetuj hasło…",
+      "Wyłącz…",
+    ]);
     await userEvent.click(within(menu).getByRole("menuitem", { name: "Wyłącz…" }));
     const confirm = await screen.findByRole("alertdialog");
     expect(within(confirm).getByText("Wyłączyć konto „bob”?")).toBeInTheDocument();

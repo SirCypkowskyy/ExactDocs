@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useSearch } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import type { ColumnDef } from "@tanstack/react-table";
 import {
   Ban,
@@ -7,6 +7,7 @@ import {
   KeyRound,
   LogIn,
   Plus,
+  ScrollText,
   ShieldCheck,
   UserCheck,
   UserRound,
@@ -21,7 +22,7 @@ import { cn } from "@/shared/lib/utils";
 import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
-import { Chips, Person, RelativeTime } from "@/shared/ui/data-table/cells";
+import { Chips, Count, Person, RelativeTime } from "@/shared/ui/data-table/cells";
 import { DataTable } from "@/shared/ui/data-table/data-table";
 import { DataTablePagination } from "@/shared/ui/data-table/pagination";
 import { type RowAction, restoreRowFocus } from "@/shared/ui/data-table/row-actions";
@@ -31,10 +32,17 @@ import { FormAlert } from "@/shared/ui/form-alert";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { setUserDisabled, usersKey, usersSource } from "../api/users-query";
 import { messages } from "../messages";
-import { parseUsersView, USER_ROLES, USER_STATUSES, USERS_TABLE } from "../model/list-view";
+import {
+  PASSWORD,
+  parseUsersView,
+  USER_ROLES,
+  USER_STATUSES,
+  USERS_TABLE,
+} from "../model/list-view";
 import { explainUserError, type Role, type User } from "../model/user";
 import { CreateUserDialog } from "./create-user-dialog";
 import { ResetPasswordDialog } from "./reset-password-dialog";
+import { UsersViews } from "./users-views";
 
 /*
  * The operator's users page (blocks-map §2.3, Users): every account in DataTable v2, numbered
@@ -43,6 +51,15 @@ import { ResetPasswordDialog } from "./reset-password-dialog";
  */
 
 type UsersMessages = (typeof messages)["en"];
+
+/** A configured sign-in provider, as `GET /session` lists it: its name and what people call it. */
+export interface SignInProvider {
+  name: string;
+  display_name: string;
+}
+
+/** A provider's name in words, when it is configured; else its name as the account shows it. */
+type ProviderNames = ReadonlyMap<string, string>;
 
 /** A role the API sends, by its name; one this client does not know shows as sent. */
 const roleName = (m: UsersMessages, role: string) => m.roles[role as Role] ?? role;
@@ -56,20 +73,22 @@ function UserCell({ user, you }: { user: User; you: boolean }) {
   );
 }
 
-function SignInCell({ user }: { user: User }) {
+function SignInCell({ user, names }: { user: User; names: ProviderNames }) {
   const t = useMessages(messages).row;
   const Icon = user.provider ? LogIn : KeyRound;
   return (
     <span className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground">
       <Icon aria-hidden="true" className="size-3.5 flex-none" />
-      <span className="truncate">{user.provider ?? t.password}</span>
+      <span className="truncate">
+        {user.provider ? (names.get(user.provider) ?? user.provider) : t.password}
+      </span>
     </span>
   );
 }
 
 // Built once per language and operator: a cell is rendered as a component, so a new function
 // would remount it.
-const columnsOf = (m: UsersMessages, me: string): ColumnDef<User>[] => [
+const columnsOf = (m: UsersMessages, me: string, names: ProviderNames): ColumnDef<User>[] => [
   {
     accessorKey: "username",
     header: m.list.columns.account,
@@ -96,7 +115,7 @@ const columnsOf = (m: UsersMessages, me: string): ColumnDef<User>[] => [
     header: m.list.signIn,
     enableSorting: false,
     meta: { label: m.list.signIn, className: "max-md:hidden" },
-    cell: ({ row }) => <SignInCell user={row.original} />,
+    cell: ({ row }) => <SignInCell user={row.original} names={names} />,
   },
   {
     id: "groups",
@@ -130,12 +149,46 @@ const columnsOf = (m: UsersMessages, me: string): ColumnDef<User>[] => [
     accessorKey: "created_at",
     header: m.list.columns.created,
     sortDescFirst: true,
-    meta: { priority: 3 },
+    meta: { priority: 3, className: "max-xl:hidden" },
     cell: ({ row }) => <RelativeTime iso={row.original.created_at} />,
+  },
+  {
+    // Kept to the hour by the server: the tooltip's exact time says so.
+    accessorKey: "last_active_at",
+    header: m.list.columns.lastActive,
+    sortDescFirst: true,
+    meta: { priority: 3, label: m.list.columns.lastActive },
+    cell: ({ row }) => <RelativeTime iso={row.original.last_active_at} empty={m.list.never} />,
+  },
+  {
+    accessorKey: "token_count",
+    header: m.list.columns.tokens,
+    sortDescFirst: true,
+    meta: { align: "end", skeleton: "number", className: "max-md:hidden" },
+    cell: ({ row }) => (
+      <Count value={row.original.token_count} muted={row.original.token_count === 0} />
+    ),
   },
 ];
 
-const filtersOf = (m: UsersMessages): TableFilter[] => [
+/**
+ * The sign-in filter's choices: a password, each configured provider, and any other the URL names
+ * (an account can come from a provider that is no longer configured).
+ */
+function providerOptions(m: UsersMessages, names: ProviderNames, picked: readonly string[]) {
+  const others = picked.filter((p) => p !== PASSWORD && !names.has(p));
+  return [
+    { value: PASSWORD, label: m.row.password, icon: KeyRound },
+    ...[...names].map(([name, label]) => ({ value: name, label, icon: LogIn })),
+    ...others.map((name) => ({ value: name, label: name, icon: LogIn })),
+  ];
+}
+
+const filtersOf = (
+  m: UsersMessages,
+  names: ProviderNames,
+  picked: readonly string[],
+): TableFilter[] => [
   {
     id: "role",
     title: m.list.role,
@@ -154,18 +207,39 @@ const filtersOf = (m: UsersMessages): TableFilter[] => [
       icon: s === "active" ? CircleCheck : Ban,
     })),
   },
+  { id: "provider", title: m.list.signIn, options: providerOptions(m, names, picked) },
 ];
 
-/** The operator's users page: list, create, disable or enable, and reset a password. */
-export function UsersPage({ currentUserId }: { currentUserId: string }) {
+const NO_PROVIDERS: readonly SignInProvider[] = [];
+
+/**
+ * The operator's users page: list, create, disable or enable, and reset a password. `providers`
+ * are the configured sign-in providers (from `GET /session`): the sign-in filter offers them.
+ */
+export function UsersPage({
+  currentUserId,
+  providers = NO_PROVIDERS,
+}: {
+  currentUserId: string;
+  providers?: readonly SignInProvider[] | undefined;
+}) {
   const view = parseUsersView(useSearch({ strict: false }) as Record<string, unknown>);
   const language = useLanguage();
   const m = useMessages(messages);
   const t = m.page;
   const heading = usePageTitle(t.title);
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const columns = useMemo(() => columnsOf(m, currentUserId), [m, currentUserId]);
-  const filters = useMemo(() => filtersOf(m), [m]);
+  const names: ProviderNames = useMemo(
+    () => new Map(providers.map((p) => [p.name, p.display_name])),
+    [providers],
+  );
+  const pickedKey = (view.provider ?? []).join(",");
+  const columns = useMemo(() => columnsOf(m, currentUserId, names), [m, currentUserId, names]);
+  const filters = useMemo(
+    () => filtersOf(m, names, pickedKey ? pickedKey.split(",") : []),
+    [m, names, pickedKey],
+  );
   const source = usersSource(view);
   const model = useDataTable({
     config: USERS_TABLE,
@@ -198,6 +272,21 @@ export function UsersPage({ currentUserId }: { currentUserId: string }) {
   const actions = (user: User): RowAction<User>[] => {
     const you = user.id === currentUserId;
     return [
+      // Where the account shows up elsewhere: its tokens, and the access changes it made.
+      {
+        id: "tokens",
+        label: m.actions.tokens,
+        icon: KeyRound,
+        motion: "tilt",
+        onSelect: () => void navigate({ to: "/users/tokens", search: { owner: user.id } }),
+      },
+      {
+        id: "access-log",
+        label: m.actions.accessLog,
+        icon: ScrollText,
+        motion: "tilt",
+        onSelect: () => void navigate({ to: "/access-log", search: { actor: user.username } }),
+      },
       // A reset ends every session of the account, the operator's own included. An account of
       // an identity provider has no password to reset.
       ...(!you && !user.provider
@@ -207,6 +296,7 @@ export function UsersPage({ currentUserId }: { currentUserId: string }) {
               label: m.actions.reset,
               icon: KeyRound,
               motion: "tilt" as const,
+              group: true,
               onSelect: () => setResetting(user),
             },
           ]
@@ -218,6 +308,7 @@ export function UsersPage({ currentUserId }: { currentUserId: string }) {
               label: m.actions.enable,
               icon: UserCheck,
               motion: "pop" as const,
+              group: true,
               onSelect: () => {
                 if (!toggle.isPending) toggle.mutate({ user, disabled: false });
               },
@@ -267,6 +358,7 @@ export function UsersPage({ currentUserId }: { currentUserId: string }) {
           </Button>
         }
       />
+      <UsersViews current="accounts" />
       <p role="status" className="sr-only">
         {announcement}
       </p>

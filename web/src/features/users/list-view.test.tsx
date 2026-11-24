@@ -14,8 +14,11 @@ const user = (n: number) => ({
   role: n % 4 === 0 ? "admin" : "user",
   created_at: "2026-11-13T10:00:00Z",
   disabled: n % 5 === 0,
-  provider: null,
+  // Every third account signs in through GitHub; the first was active an hour ago, the second never.
+  provider: n % 3 === 0 ? "github" : null,
   groups: [],
+  last_active_at: n === 1 ? new Date(Date.now() - 3_600_000).toISOString() : null,
+  token_count: n === 1 ? 3 : 0,
 });
 
 /**
@@ -26,7 +29,11 @@ function serve(count = 45) {
   const all = Array.from({ length: count }, (_, i) => user(i + 1));
   const fetchMock = vi.fn(async (input: string) => {
     const url = new URL(String(input), "http://x");
-    const rows = url.searchParams.get("q") === "nobody" ? [] : all;
+    const providers = url.searchParams.getAll("provider");
+    const rows =
+      url.searchParams.get("q") === "nobody"
+        ? []
+        : all.filter((u) => !providers.length || providers.includes(u.provider ?? "password"));
     const start = Number(
       url.searchParams.get("offset") ?? url.searchParams.get("cursor")?.slice(1) ?? 0,
     );
@@ -54,7 +61,19 @@ function renderPage(start = "/users") {
       <TooltipProvider>
         <TestRouter
           history={history}
-          pages={{ "/users": () => <UsersPage currentUserId="u1" /> }}
+          pages={{
+            "/users": () => (
+              <UsersPage
+                currentUserId="u1"
+                providers={[
+                  { name: "github", display_name: "GitHub" },
+                  { name: "corp", display_name: "Corp SSO" },
+                ]}
+              />
+            ),
+            "/access-log": () => <p>Access log</p>,
+            "/users/tokens": () => <p>All tokens</p>,
+          }}
         />
       </TooltipProvider>
     </QueryClientProvider>,
@@ -91,7 +110,18 @@ describe("the users table", () => {
       size: undefined,
       role: undefined,
       status: undefined,
+      provider: undefined,
     });
+    // Sign-in methods: `password` or provider names as the server allows them, each once.
+    expect(parseUsersView({ provider: "password,github,Bad Name,github,-x" }).provider).toEqual([
+      "password",
+      "github",
+    ]);
+    expect(usersParams(usersFilters({ provider: ["password", "github"] }), 20)).toBe(
+      "limit=20&provider=password&provider=github",
+    );
+    expect(parseUsersView({ sort: "-last_active_at" }).sort).toBe("-last_active_at");
+    expect(parseUsersView({ sort: "token_count" }).sort).toBe("token_count");
     expect(
       usersParams(
         usersFilters({ q: "b", sort: "role", role: ["user"], status: ["active"] }),
@@ -183,6 +213,112 @@ describe("the users table", () => {
         .getAllByRole("listitem")
         .map((c) => c.textContent),
     ).toEqual(["Role: Admin", "Status: Disabled"]);
+  });
+
+  it("shows when each account was last active and how many tokens it holds", async () => {
+    serve();
+    renderPage();
+    const table = await screen.findByRole("table", { name: "User accounts" });
+    await within(table).findByText("user01");
+    const rowOf = (name: string) => within(table).getByText(name).closest("tr") as HTMLElement;
+    expect(within(table).getByRole("columnheader", { name: /Last active/ })).toBeInTheDocument();
+    expect(within(table).getByRole("columnheader", { name: /Tokens/ })).toBeInTheDocument();
+    expect(within(rowOf("user01")).getByText("1 hour ago")).toBeInTheDocument();
+    expect(within(rowOf("user01")).getByText("3")).toBeInTheDocument();
+    expect(within(rowOf("user02")).getByText("Never")).toBeInTheDocument();
+    // A configured provider by the name people know it by.
+    expect(within(rowOf("user03")).getByText("GitHub")).toBeInTheDocument();
+  });
+
+  it("sorts by last activity and by tokens on the server, newest and most first", async () => {
+    const fetchMock = serve();
+    const history = renderPage();
+    await screen.findByText("1–20 of 45");
+
+    await userEvent.click(screen.getByRole("button", { name: "Sort by Last active" }));
+    await waitFor(() =>
+      expect(urls(fetchMock)).toContain("/api/v1/users?limit=20&sort=-last_active_at&offset=0"),
+    );
+    expect(history.location.search).toContain("sort=-last_active_at");
+
+    await userEvent.click(screen.getByRole("button", { name: "Sort by Tokens" }));
+    await waitFor(() =>
+      expect(urls(fetchMock)).toContain("/api/v1/users?limit=20&sort=-token_count&offset=0"),
+    );
+  });
+
+  it("filters by where accounts sign in: a password or a configured provider", async () => {
+    const fetchMock = serve();
+    const history = renderPage();
+    await screen.findByText("1–20 of 45");
+
+    await userEvent.click(screen.getByRole("button", { name: "Sign-in" }));
+    const options = within(await screen.findByRole("listbox")).getAllByRole("option");
+    expect(options.map((o) => o.textContent)).toEqual(["Password", "GitHub", "Corp SSO"]);
+    await userEvent.click(screen.getByRole("option", { name: "GitHub" }));
+    await userEvent.click(screen.getByRole("option", { name: "Password" }));
+    await userEvent.keyboard("{Escape}");
+
+    await waitFor(() =>
+      expect(urls(fetchMock)).toContain(
+        "/api/v1/users?limit=20&provider=password&provider=github&offset=0",
+      ),
+    );
+    expect(history.location.search).toContain("provider=password%2Cgithub");
+    expect(await screen.findByText("1–20 of 45")).toBeInTheDocument();
+    const chips = screen.getByRole("list", { name: "Active filters" });
+    expect(
+      within(chips)
+        .getAllByRole("listitem")
+        .map((c) => c.textContent),
+    ).toEqual(["Sign-in: Password", "Sign-in: GitHub"]);
+  });
+
+  it("keeps a provider from a link that is no longer configured", async () => {
+    const fetchMock = serve();
+    renderPage("/users?provider=okta");
+    expect(await screen.findByText("No accounts match")).toBeInTheDocument();
+    expect(urls(fetchMock)[0]).toBe("/api/v1/users?limit=20&provider=okta&offset=0");
+    await userEvent.click(screen.getByRole("button", { name: "Sign-in, 1 selected" }));
+    expect(await screen.findByRole("option", { name: "okta" })).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("leads from an account to its access-log entries and to its tokens", async () => {
+    serve();
+    const history = renderPage();
+    await screen.findByText("1–20 of 45");
+
+    await userEvent.click(screen.getByRole("button", { name: "More actions for user02" }));
+    await userEvent.click(
+      await screen.findByRole("menuitem", { name: "Show their access-log entries" }),
+    );
+    expect(await screen.findByText("Access log")).toBeInTheDocument();
+    expect(history.location.pathname).toBe("/access-log");
+    expect(history.location.search).toBe("?actor=user02");
+
+    history.back();
+    await userEvent.click(await screen.findByRole("button", { name: "More actions for user02" }));
+    await userEvent.click(await screen.findByRole("menuitem", { name: "Show their API tokens" }));
+    expect(await screen.findByText("All tokens")).toBeInTheDocument();
+    expect(history.location.pathname).toBe("/users/tokens");
+    expect(history.location.search).toBe("?owner=u2");
+  });
+
+  it("links to every account's tokens beside the accounts", async () => {
+    serve();
+    renderPage();
+    const views = await screen.findByRole("navigation", { name: "Users views" });
+    expect(within(views).getByRole("link", { name: "Accounts" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(within(views).getByRole("link", { name: "API tokens" })).toHaveAttribute(
+      "href",
+      "/users/tokens",
+    );
   });
 
   it("says when nothing matches and clears the filters", async () => {
