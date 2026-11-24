@@ -1813,7 +1813,7 @@
           "identity"
         ],
         "summary": "List Access Log",
-        "description": "List the access changes of every library, newest first. Operators only.\n\nCreations, grants (a new role, or another one), revocations, ownership transfers and\nremovals, each with who made it and when; a removed library's events stay. Filter with\n`library` and `change`; `total` counts every match.",
+        "description": "List the access changes of every library, newest first. Operators only.\n\nCreations, grants (a new role, or another one), revocations, ownership transfers and\nremovals, each with who made it and when; a removed library's events stay. Filter with\n`library`, `change`, `actor`, `subject`, `at_after` and `at_before`, and order with\n`sort`; `total` counts every match.",
         "operationId": "identity-list_access_log",
         "security": [
           {
@@ -1848,10 +1848,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it.",
+              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it (another `sort` is a 422\n`invalid_cursor`).",
               "title": "Cursor"
             },
-            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it."
+            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it (another `sort` is a 422\n`invalid_cursor`)."
           },
           {
             "name": "offset",
@@ -1872,6 +1872,25 @@
               "title": "Offset"
             },
             "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort by one of at, library, change; prefix `-` for descending. Default: `-at` (newest first). Ties go by the event's ID (the order it was recorded in), in the same direction. An unknown field is a 422.",
+              "title": "Sort"
+            },
+            "description": "Sort by one of at, library, change; prefix `-` for descending. Default: `-at` (newest first). Ties go by the event's ID (the order it was recorded in), in the same direction. An unknown field is a 422."
           },
           {
             "name": "change",
@@ -1900,6 +1919,84 @@
               "title": "Change"
             },
             "description": "Only events of these changes; repeat for several."
+          },
+          {
+            "name": "actor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only changes made by this person: a username (any case), or the account ID the log shows as `actor` for an account that no longer exists. Changes the instance made (`actor` null) never match.",
+              "title": "Actor"
+            },
+            "description": "Only changes made by this person: a username (any case), or the account ID the log shows as `actor` for an account that no longer exists. Changes the instance made (`actor` null) never match."
+          },
+          {
+            "name": "subject",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only changes about this user or group: a username (any case), the account ID the log shows as `subject` for an account that no longer exists, or a group name (exact case, as the log shows it). A user and a group of the same name both match. Deletions, which are about nobody, never match.",
+              "title": "Subject"
+            },
+            "description": "Only changes about this user or group: a username (any case), the account ID the log shows as `subject` for an account that no longer exists, or a group name (exact case, as the log shows it). A user and a group of the same name both match. Deletions, which are about nobody, never match."
+          },
+          {
+            "name": "at_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events that happened at or after this time (ISO 8601; no offset means UTC).",
+              "title": "At After"
+            },
+            "description": "Only events that happened at or after this time (ISO 8601; no offset means UTC)."
+          },
+          {
+            "name": "at_before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events that happened before this time (ISO 8601; no offset means UTC).",
+              "title": "At Before"
+            },
+            "description": "Only events that happened before this time (ISO 8601; no offset means UTC)."
           },
           {
             "name": "library",
@@ -3216,7 +3313,7 @@
           "identity"
         ],
         "summary": "List Library Access Log",
-        "description": "List who changed the library's access, how and when, newest first. Library admins only.\n\nIts creation, grants (a new role, or another one), revocations and ownership transfers,\neach with who made it and when. Operators see every event under the library's ID;\nanyone else only those since it was last removed. Filter with `change`; `total` counts\nevery match.",
+        "description": "List who changed the library's access, how and when, newest first. Library admins only.\n\nIts creation, grants (a new role, or another one), revocations and ownership transfers,\neach with who made it and when. Operators see every event under the library's ID;\nanyone else only those since it was last removed. Filter with `change`, `actor`,\n`subject`, `at_after` and `at_before`, and order with `sort`; `total` counts every\nmatch.",
         "operationId": "identity-list_library_access_log",
         "security": [
           {
@@ -3272,10 +3369,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it.",
+              "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it (another `sort` is a 422\n`invalid_cursor`).",
               "title": "Cursor"
             },
-            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\nfilters of the request that returned it."
+            "description": "Opaque: only ever a `next_cursor`; absent for the first page. It only works with the\n`sort` and filters of the request that returned it (another `sort` is a 422\n`invalid_cursor`)."
           },
           {
             "name": "offset",
@@ -3296,6 +3393,25 @@
               "title": "Offset"
             },
             "description": "Jump to a page: skip this many matches, in the order and with the filters of the cursor\nwalk. Not with `cursor`; the page's `next_cursor` goes on from it."
+          },
+          {
+            "name": "sort",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Sort by one of at, library, change; prefix `-` for descending. Default: `-at` (newest first). Ties go by the event's ID (the order it was recorded in), in the same direction. An unknown field is a 422.",
+              "title": "Sort"
+            },
+            "description": "Sort by one of at, library, change; prefix `-` for descending. Default: `-at` (newest first). Ties go by the event's ID (the order it was recorded in), in the same direction. An unknown field is a 422."
           },
           {
             "name": "change",
@@ -3324,6 +3440,84 @@
               "title": "Change"
             },
             "description": "Only events of these changes; repeat for several."
+          },
+          {
+            "name": "actor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only changes made by this person: a username (any case), or the account ID the log shows as `actor` for an account that no longer exists. Changes the instance made (`actor` null) never match.",
+              "title": "Actor"
+            },
+            "description": "Only changes made by this person: a username (any case), or the account ID the log shows as `actor` for an account that no longer exists. Changes the instance made (`actor` null) never match."
+          },
+          {
+            "name": "subject",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 256
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only changes about this user or group: a username (any case), the account ID the log shows as `subject` for an account that no longer exists, or a group name (exact case, as the log shows it). A user and a group of the same name both match. Deletions, which are about nobody, never match.",
+              "title": "Subject"
+            },
+            "description": "Only changes about this user or group: a username (any case), the account ID the log shows as `subject` for an account that no longer exists, or a group name (exact case, as the log shows it). A user and a group of the same name both match. Deletions, which are about nobody, never match."
+          },
+          {
+            "name": "at_after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events that happened at or after this time (ISO 8601; no offset means UTC).",
+              "title": "At After"
+            },
+            "description": "Only events that happened at or after this time (ISO 8601; no offset means UTC)."
+          },
+          {
+            "name": "at_before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Only events that happened before this time (ISO 8601; no offset means UTC).",
+              "title": "At Before"
+            },
+            "description": "Only events that happened before this time (ISO 8601; no offset means UTC)."
           }
         ],
         "responses": {
@@ -12700,7 +12894,7 @@
               }
             ],
             "title": "Next Cursor",
-            "description": "Pass as `cursor` to get the next (older) page; null on the last page."
+            "description": "Pass as `cursor` (with the same `sort` and filters) to get the next page; null on the\nlast page."
           },
           "total": {
             "type": "integer",
@@ -12716,7 +12910,7 @@
           "total"
         ],
         "title": "AccessLogPage",
-        "description": "A page of the access log, newest first."
+        "description": "A page of the access log, newest first unless sorted otherwise."
       },
       "AccessTokenIn": {
         "properties": {

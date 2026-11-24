@@ -96,10 +96,10 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   10000, or reverse the `sort` to reach the end of a longer list. Helpers:
   `exactdocs_kernel.page_offset`, `MAX_OFFSET`.
 - **Sort, filter and total**: the lists of libraries, versions, jobs (global and per library),
-  articles, users, API tokens and a library's grants also take `sort` (one whitelisted field,
+  articles, users, API tokens, a library's grants and both access logs also take `sort` (one whitelisted field,
   `-field` for descending) and filters such as `q` (text, any case), `state`, `kind`, `role`,
   `disabled`, `ai_enabled`, `has_versions`, `origin` (jobs), `sync_state` (libraries) and date
-  ranges (`updated_after`, `created_before`, ...); each parameter's description in the OpenAPI schema names its fields. They run in the
+  ranges (`updated_after`, `created_before`, `at_after`, ...); each parameter's description in the OpenAPI schema names its fields. They run in the
   database, permissions apply before paging, and a cursor only works with the `sort` and filters
   of the request that returned it. Every one of these pages carries `total`, the number of rows
   that match the filters across all pages. An unknown sort field is a 422 `invalid_sort` naming
@@ -318,11 +318,29 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   [{"id", "library", "at", "actor", "change", "kind", "subject", "role", "previous_role"}],
   "next_cursor", "total"}`; `change` is `library_created`, `granted`, `revoked`,
   `ownership_transferred` or `library_deleted`; `actor` is a username, null when the instance
-  made the change; `role` is the role given, or taken away for `revoked`; filter with `change`,
-  repeated). It needs `admin` on the library. Operators see every event recorded under the
-  library's ID; anyone else only those since it was last removed. `GET /access-log` is the
-  operators' log of every library, removed ones included (filter with `library` and `change`); like
-  `/users` it needs the session cookie of an `admin` (an API token is 401, anyone else 403).
+  made the change; `role` is the role given, or taken away for `revoked`). It needs `admin` on
+  the library. Operators see every event recorded under the library's ID; anyone else only those
+  since it was last removed. `GET /access-log` is the operators' log of every library, removed
+  ones included (it also filters with `library`); like `/users` it needs the session cookie of an
+  `admin` (an API token is 401, anyone else 403). Both logs (#514) take `sort` (`at`, `library`
+  or `change`, `-` for descending; default `-at`, newest first; ties go by the order the events
+  were recorded in, in the same direction) and these filters, which compose with each other and
+  with `offset` and the cursor:
+  - `change`, repeated: only those changes.
+  - `actor`: only changes made by that person, named as the log shows them: a username (any
+    case), or the account ID the log shows for an account that no longer exists. Changes the
+    instance made (`actor` null) never match.
+  - `subject`: only changes about that user or group, named as the log shows them: a username
+    (any case), the account ID of an account that no longer exists, or a group name (exact case,
+    `group_prefix` included). A user and a group with the same name both match (`kind` tells
+    them apart); a `library_deleted` event is about nobody and never matches.
+  - `at_after` / `at_before`: only events at or after / before that time (ISO 8601; no offset
+    means UTC). The last 7 days are `at_after=<now − 7 days>`.
+
+  A cursor is made for one `sort`: sending it with another is a 422 `invalid_cursor` (cursors
+  from before this change, which held the event ID alone, are refused the same way; start again
+  from the first page). An unknown sort field is a 422 `invalid_sort`.
+
   A transfer records one `granted` entry per creator before (now `admin`, `previous_role`
   `creator`) and then one `ownership_transferred` entry whose subject is the new creator (`role`
   `creator`, `previous_role` the role they held, if any), with the caller as actor.

@@ -17,14 +17,17 @@ from sqlalchemy import (
     MetaData,
     Table,
     Text,
+    and_,
     delete,
     exists,
+    false,
     func,
     insert,
     literal,
     or_,
     select,
     text,
+    tuple_,
     update,
 )
 from sqlalchemy.dialects import postgresql, sqlite
@@ -71,6 +74,7 @@ from exactdocs.identity.models import (
     known_sign_ins_prefix,
 )
 from exactdocs.identity.ports.driven import AttachOutcome, LinkOutcome
+from exactdocs_kernel import Sort, SortValue
 
 # The identity tables, prefixed `identity_`. The schema itself is created by an Alembic revision
 # in `exactdocs.bootstrap`; this is only the adapter's query-side description of it.
@@ -1638,24 +1642,42 @@ class SqliteAccessLog:
                 )
             )
 
-    async def newest(
-        self, where: AccessLogFilter, *, older_than: str | None, limit: int, offset: int = 0
+    async def search(
+        self,
+        where: AccessLogFilter,
+        *,
+        sort: Sort,
+        after: tuple[SortValue, str] | None,
+        limit: int,
+        offset: int = 0,
     ) -> list[AccessEvent]:
-        """Return the newest events that match, newest first.
+        """Return the events that match, in ``sort`` order, after the ``after`` key.
+
+        A keyset query: ``(sort value, id)`` compares as a row, in the sort's direction. The
+        text columns compare by code point on both databases (PostgreSQL's are collated ``C``
+        by the migration), as Python compares str, and ``at`` is fixed-width UTC text
+        (``_stamp``), so it sorts in time order. ``(at, id)``, ``(library, at, id)``,
+        ``(actor, at, id)`` and ``(subject, at, id)`` are indexed for the default order. An
+        offset is the database's ``OFFSET`` over the same order.
 
         Args:
             where: Which events.
-            older_than: Only events recorded before the one with this ID.
+            sort: The order.
+            after: The sort value and ID of the last event of the previous page.
             limit: Most events returned.
-            offset: How many of the matching events, newest first, to skip first (``OFFSET``).
+            offset: How many of the matching events in order (after ``after``) to skip first.
 
         Returns:
-            Up to ``limit`` events, by ID descending.
+            Up to ``limit`` events, in order.
         """
+        column = access_events.c[sort.field]
+        key = access_events.c.id
         query = select(access_events).where(*_access_conditions(where))
-        if older_than is not None:
-            query = query.where(access_events.c.id < older_than)
-        query = query.order_by(access_events.c.id.desc()).limit(limit)
+        if after is not None:
+            row, bound = tuple_(column, key), tuple_(*after)
+            query = query.where(row < bound if sort.descending else row > bound)
+        order = (column.desc(), key.desc()) if sort.descending else (column, key)
+        query = query.order_by(*order).limit(limit)
         if offset:
             query = query.offset(offset)
         async with self.engine.connect() as connection:
@@ -1692,6 +1714,22 @@ def _access_conditions(where: AccessLogFilter) -> list[Any]:
         conditions.append(access_events.c.change.in_(sorted(c.value for c in where.changes)))
     if where.newer_than is not None:
         conditions.append(access_events.c.id > where.newer_than)
+    if where.actor is not None:
+        conditions.append(access_events.c.actor == where.actor)
+    if where.subjects is not None:
+        conditions.append(
+            or_(
+                false(),
+                *(
+                    and_(access_events.c.kind == kind.value, access_events.c.subject == subject)
+                    for kind, subject in sorted(where.subjects)
+                ),
+            )
+        )
+    if where.at_after is not None:
+        conditions.append(access_events.c.at >= _stamp(where.at_after))
+    if where.at_before is not None:
+        conditions.append(access_events.c.at < _stamp(where.at_before))
     return conditions
 
 

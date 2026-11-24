@@ -106,6 +106,11 @@ TOKEN_SORT_FIELDS: Final[tuple[str, ...]] = ("created_at", "name", "expires_at",
 """What the token list can be sorted by; `-created_at` (newest first) is the default."""
 GRANT_SORT_FIELDS: Final[tuple[str, ...]] = ("kind", "subject", "role")
 """What a library's grants can be sorted by; `kind` (users, then groups, by name) is the default."""
+ACCESS_LOG_SORT_FIELDS: Final[tuple[str, ...]] = ("at", "library", "change")
+"""What the access log can be sorted by; `-at` (newest first) is the default. Ties go by the
+event's ID, in the same direction."""
+ACCESS_LOG_DEFAULT_SORT: Final[str] = "-at"
+"""The access log's order without a ``sort``: newest first."""
 ACCESS_LOG_ACTION: Final[str] = "reads the access log of every library"
 """What only an instance operator does, for the 403 of the instance-wide access log."""
 
