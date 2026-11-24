@@ -45,7 +45,7 @@ export type DayRange = { from?: string | undefined; to?: string | undefined };
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 /** A calendar day `YYYY-MM-DD` that exists (no 31 November). */
-export function isDay(text: string): boolean {
+function isDay(text: string): boolean {
   if (!DAY.test(text)) return false;
   const [y = 0, m = 0, d = 0] = text.split("-").map(Number);
   const date = new Date(y, m - 1, d);
@@ -61,6 +61,28 @@ export function parseRange(value: string): DayRange | undefined {
   if ((from && !isDay(from)) || (to && !isDay(to))) return undefined;
   if (from && to && from > to) return undefined;
   return { ...(from && { from }), ...(to && { to }) };
+}
+
+type ListMessages = (typeof messages)["en"]["list"];
+
+const dayFormats = new Map<Language, Intl.DateTimeFormat>();
+
+/** "Nov 1, 2026" ("1 lis 2026"): a day of the range, as this browser's calendar names it. */
+function formatDay(day: string, language: Language): string {
+  let format = dayFormats.get(language);
+  if (!format) {
+    format = new Intl.DateTimeFormat(language, { dateStyle: "medium" });
+    dayFormats.set(language, format);
+  }
+  const [y = 0, m = 0, d = 0] = day.split("-").map(Number);
+  return format.format(new Date(y, m - 1, d));
+}
+
+/** A custom range in words: "Nov 1, 2026 – Nov 20, 2026", "From Nov 1, 2026", "Until …". */
+export function rangeLabel({ from, to }: DayRange, t: ListMessages, language: Language): string {
+  if (from && to) return t.range(formatDay(from, language), formatDay(to, language));
+  if (from) return t.since(formatDay(from, language));
+  return t.until(formatDay(to ?? "", language));
 }
 
 /** A range as the URL writes it. */

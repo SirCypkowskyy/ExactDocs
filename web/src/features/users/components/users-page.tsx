@@ -53,7 +53,7 @@ import { UsersViews } from "./users-views";
 type UsersMessages = (typeof messages)["en"];
 
 /** A configured sign-in provider, as `GET /session` lists it: its name and what people call it. */
-export interface SignInProvider {
+interface SignInProvider {
   name: string;
   display_name: string;
 }

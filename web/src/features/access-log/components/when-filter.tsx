@@ -1,13 +1,13 @@
 import { CalendarRange, Check } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
-import { type Language, useMessages } from "@/shared/lib/i18n";
+import { useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "@/shared/ui/button";
 import type { DataTableModel } from "@/shared/ui/data-table/use-data-table";
 import { Input } from "@/shared/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/shared/ui/popover";
 import { messages } from "../messages";
-import { type DayRange, parseRange, rangeParam } from "../model/access-log";
+import { parseRange, rangeParam } from "../model/access-log";
 
 /*
  * The access log's custom dates (blocks-map §2.2: dates are presets, 24 h, 7 d, 30 d, and custom).
@@ -15,28 +15,6 @@ import { type DayRange, parseRange, rangeParam } from "../model/access-log";
  * range of days, `from..to`, either end open. The facet then lists the range as its picked value,
  * so the chip, Clear all and the facet's own Clear treat it like a preset.
  */
-
-type Messages = (typeof messages)["en"]["list"];
-
-const dayFormats = new Map<Language, Intl.DateTimeFormat>();
-
-/** "Nov 1, 2026" ("1 lis 2026"): a day of the range, as this browser's calendar names it. */
-function formatDay(day: string, language: Language): string {
-  let format = dayFormats.get(language);
-  if (!format) {
-    format = new Intl.DateTimeFormat(language, { dateStyle: "medium" });
-    dayFormats.set(language, format);
-  }
-  const [y = 0, m = 0, d = 0] = day.split("-").map(Number);
-  return format.format(new Date(y, m - 1, d));
-}
-
-/** A custom range in words: "Nov 1, 2026 – Nov 20, 2026", "From Nov 1, 2026", "Until …". */
-export function rangeLabel({ from, to }: DayRange, t: Messages, language: Language): string {
-  if (from && to) return t.range(formatDay(from, language), formatDay(to, language));
-  if (from) return t.since(formatDay(from, language));
-  return t.until(formatDay(to ?? "", language));
-}
 
 /** The "Custom dates" button and its form: two days, both included, in this browser's zone. */
 export function CustomDates<T>({ model }: { model: DataTableModel<T> }) {

@@ -45,9 +45,10 @@ import {
   explainAccessLogError,
   isLibraryId,
   parseRange,
+  rangeLabel,
   WHEN_PRESETS,
 } from "../model/access-log";
-import { CustomDates, rangeLabel } from "./when-filter";
+import { CustomDates } from "./when-filter";
 
 /*
  * The access log as a table (blocks-map §2.3, "Access log"): who changed access, how and when,
