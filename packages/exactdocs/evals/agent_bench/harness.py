@@ -520,29 +520,28 @@ class ArmServers:
     records: list[ImportedVersion] = field(default_factory=list)
     """Every imported version, from the first import."""
 
-    async def prepare(self, arm: Arm, config: RetrievalConfig | None) -> None:
-        """Import the corpus the arm needs under the configuration, once per embedding model.
+    async def imported(self, config: RetrievalConfig) -> Path:
+        """Import the corpus for a configuration, once per embedding model.
 
         Args:
-            arm: The arm.
-            config: Its retrieval configuration.
+            config: The retrieval configuration.
+
+        Returns:
+            The data directory the corpus is imported into (embedded with its model).
         """
-        if arm.name != EXACTDOCS or config is None:
-            return
         embedding = config.env.get(EMBEDDING_VARIABLE, os.environ.get(EMBEDDING_VARIABLE, ""))
-        if embedding in self.imports:
-            return
-        self.imports[embedding] = self.work_dir / f"data-{len(self.imports)}"
-        records = await import_golden(
-            self.imports[embedding], self.projects, self.repos, config.env
-        )
-        self.records = self.records or records
+        if embedding not in self.imports:
+            data_dir = self.work_dir / f"data-{len(self.imports)}"
+            records = await import_golden(data_dir, self.projects, self.repos, config.env)
+            self.imports[embedding] = data_dir
+            self.records = self.records or records
+        return self.imports[embedding]
 
     @contextlib.asynccontextmanager
     async def tools(
         self, arm: Arm, config: RetrievalConfig | None
     ) -> AsyncGenerator[Sequence[AbstractToolset[Recorder]]]:
-        """Give an arm its toolsets for the block (after ``prepare``).
+        """Give an arm its toolsets for the block.
 
         Args:
             arm: The arm.
@@ -558,10 +557,9 @@ class ArmServers:
         if arm.name == NONE:
             yield []
         elif arm.name == EXACTDOCS and config is not None:
-            await self.prepare(arm, config)
-            embedding = config.env.get(EMBEDDING_VARIABLE, os.environ.get(EMBEDDING_VARIABLE, ""))
+            data_dir = await self.imported(config)
             log_file = self.work_dir / f"server-{config.name}.log"
-            async with exactdocs_toolset(self.imports[embedding], config.env, log_file) as server:
+            async with exactdocs_toolset(data_dir, config.env, log_file) as server:
                 yield [server]
         else:
             message = f"the {arm.name} arm's toolset is not built ({arm.planned or 'no setup'})"
