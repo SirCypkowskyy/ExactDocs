@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { FlaskConical, Search, Sparkles } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { common, useMessages } from "@/shared/lib/i18n";
+import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Button } from "@/shared/ui/button";
 import { Field } from "@/shared/ui/field";
 import { Page, PageHeader } from "@/shared/ui/page";
@@ -126,6 +127,7 @@ function RunButton({ agent, disabled }: { agent: boolean; disabled: boolean }) {
  */
 export function PlaygroundPage() {
   const t = useMessages(messages);
+  const heading = usePageTitle(t.page.title);
   const { data: summaries } = useQuery(playgroundLibrariesQueryOptions());
   const libraries = searchableLibraries(summaries ?? []);
   const [q, setQ] = useState("");
@@ -157,7 +159,12 @@ export function PlaygroundPage() {
 
   return (
     <Page>
-      <PageHeader icon={<FlaskConical />} title={t.page.title} description={t.page.description} />
+      <PageHeader
+        icon={<FlaskConical />}
+        title={t.page.title}
+        headingRef={heading}
+        description={t.page.description}
+      />
       <form
         onSubmit={submit}
         className="max-w-3xl space-y-5 rounded-lg border border-border bg-raised p-5"

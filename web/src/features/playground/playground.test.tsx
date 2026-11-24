@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Suspense } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -104,6 +104,14 @@ const searches = (fetchMock: ReturnType<typeof serve>) =>
 describe("search playground", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("names the tab and puts focus on its heading when it opens", async () => {
+    serve(() => Response.json(result("hybrid", [])));
+    renderPage();
+    const heading = await screen.findByRole("heading", { level: 1, name: "Search playground" });
+    await waitFor(() => expect(heading).toHaveFocus());
+    expect(document.title).toBe("Search playground - ExactDocs");
   });
 
   it("searches the chosen libraries in the chosen mode and shows each result's ranks", async () => {

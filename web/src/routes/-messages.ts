@@ -6,13 +6,11 @@ import { defineMessages } from "@/shared/lib/i18n";
 export const messages = defineMessages(
   {
     account: { tabs: "Account", tokens: "API tokens", interface: "Interface" },
-    playgroundTitle: "Search playground",
     searchTitle: "Search",
     searchFor: (q: string) => `Search: ${q}`,
   },
   {
     account: { tabs: "Konto", tokens: "Tokeny API", interface: "Interfejs" },
-    playgroundTitle: "Piaskownica wyszukiwania",
     searchTitle: "Wyszukiwanie",
     searchFor: (q) => `Wyszukiwanie: ${q}`,
   },
