@@ -3,8 +3,8 @@
 # EXACTDOCS_TEST_MILVUS_URL:
 #
 #   export EXACTDOCS_TEST_MILVUS_URL=$(deploy/milvus-test-server.sh exactdocs-milvus)
-#   uv run pytest packages/exactdocs/tests/retrieval -k milvus
-#   uv run behave packages/exactdocs/features/milvus_index.feature
+#   uv run pytest --integration packages/exactdocs/tests/retrieval -k milvus   # integration tests (#507)
+#   EXACTDOCS_INTEGRATION=1 uv run behave packages/exactdocs/features/milvus_index.feature
 #   docker rm -f exactdocs-milvus
 #
 # Standalone with its embedded etcd and local storage (no etcd or MinIO containers), on a free

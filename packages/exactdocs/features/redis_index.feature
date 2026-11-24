@@ -1,4 +1,4 @@
-@redis
+@integration @redis
 Feature: Redis holds the search and vector indexes
   As an operator who runs Redis 8 (its Query Engine)
   I want ExactDocs' chunks and vectors indexed and searched there, filtered to the asked version

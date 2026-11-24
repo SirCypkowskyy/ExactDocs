@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.pool import QueuePool
 
+import integration
 from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import Settings
@@ -259,7 +260,7 @@ async def test_old_sign_ins_are_pruned_when_another_is_remembered(
     assert {key for (key,) in rows} == {"ada@address:recent", "ada@address:new"}
 
 
-@pytest.fixture(params=[backend for backend in SQL_BACKENDS if backend == "postgres"])
+@pytest.fixture(params=[pytest.param("postgres", marks=integration.POSTGRES)])
 async def postgres_log(request: pytest.FixtureRequest) -> AsyncIterator[SqliteFailedSignInLog]:
     async with _sql_log(request) as sql:
         yield sql
