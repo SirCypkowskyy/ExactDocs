@@ -545,18 +545,18 @@ and the lamp on the one lit thing.
 | `codeWell`, `kbd` | `recipes.ts` | Literal text (tokens, snippets) and key hints. |
 | `LibraryBullet`, `VersionStation`, `Commit`, `RouteStrip` | `ui/route.tsx` | Use them wherever a library, version or commit is named. |
 | `LibraryMark` | `ui/library-mark.tsx` | A library's logo on the `logo-tile`, else a generic icon on its line colour; the monogram bullet when the person turned logos off. Sizes `sm` 24, `md` 28, `lg` 36, `xl` 48. |
-| `Page`, `PageHeader`, `Section`, `EmptyState` | `ui/page.tsx` | The page frame. `PageHeader` takes the page's nav `icon`, `description`, `actions` and `above` (a breadcrumb). |
-| `Breadcrumb` and its parts | `ui/breadcrumb.tsx` | Slash separators, the way back in muted ink, the current page in ink with `aria-current`. One for the library page, settings, sharing and the library's access log. |
+| `Page`, `PageHeader`, `Section`, `EmptyState` | `ui/page.tsx` | The page frame. `PageHeader` takes the page's nav `icon`, `description`, `actions` and `above` (a breadcrumb). `EmptyState` draws its `icon` at 32px with a 1.5 stroke (like a table's empty frame), takes `headingLevel` when its title is the page's answer ("No results") and `role="alert"` when it says something failed. |
+| `Breadcrumb` and its parts | `ui/breadcrumb.tsx` | Slash separators, the way back in muted ink, the current page in ink with `aria-current`. One for the library page, settings, sharing and the library's access log. `BreadcrumbLink` is a 44px target on touch and a line high with a mouse on its own. |
 | `Mark`, `Wordmark` | `ui/wordmark.tsx` | The small mole (28px) and the lockup; light and dark files swap with the theme. |
 | `TextSizeControl`, `ThemeButton`, `LanguageMenu`, `InterfaceMenu`, `InterfaceCluster` | `ui/interface-controls.tsx` | The band's interface console (#486); every trigger is a band `IconButton`. |
 | `InterfaceSettings` | `ui/interface-settings.tsx` | Account → Interface: every preference, with a reset. |
 | `Tooltip` | `ui/tooltip.tsx` | A short name or a key for an icon control. `IconButton` brings its own. |
 | `Tabs` | `ui/tabs.tsx` | Underline tabs with one sliding indicator. |
 | `AlertDialog` and its parts | `ui/alert-dialog.tsx` | The one way to confirm: `role="alertdialog"`, Cancel focused first, Escape cancels, a click outside does nothing; 12px corners, 24px padding. |
-| `ConfirmDialog`, `TypedConfirmDialog` | `ui/confirm-dialog.tsx` | The usual confirmation built on AlertDialog: a question as the title, what happens, Cancel and the verb. The confirm runs `onConfirm` and the dialog stays open until the caller closes it, so a refusal shows inside it (`error`); while `pending` it cannot be closed. The typed one keeps the confirm inert until the field holds `phrase` exactly. Focus goes back to what opened it. |
+| `ConfirmDialog`, `TypedConfirmDialog` | `ui/confirm-dialog.tsx` | The usual confirmation built on AlertDialog: a question as the title, what happens, Cancel and the verb. The confirm runs `onConfirm` and the dialog stays open until the caller closes it, so a refusal shows inside it (`error`, with `errorLink` for its way out, e.g. Sign in); while `pending` it cannot be closed. The typed one keeps the confirm inert until the field holds `phrase` exactly. Focus goes back to what opened it. |
 | `DropdownMenu`, `ContextMenu` | `ui/dropdown-menu.tsx`, `ui/context-menu.tsx` | One menu feel (Menus below). A context menu only mirrors a visible menu. |
 | `Popover`, `Command` | `ui/popover.tsx`, `ui/command.tsx` | A floating card like a menu, and the filterable list (cmdk) inside pickers and faceted filters; rows use the menu recipe. |
-| `Table` and its parts | `ui/table.tsx` | The shadcn table primitives on the tokens: headers `text-small` muted, rows on `rule` hairlines, figures tabular. |
+| `Table` and its parts | `ui/table.tsx` | The shadcn table primitives on the tokens: headers `text-small` muted, rows on `rule` hairlines, figures tabular. `TableRowHeader` is a body cell that names its row (`<th scope="row">`), set like any cell. |
 | `DataTable` (v2) | `ui/data-table/` | Every list with many rows (Data tables below): `useDataTable`, `DataTable`, `DataTableToolbar`, `DataTablePagination`, row actions and the cell kit. `ui/data-table.tsx` is v1 ("Load more"), kept until the last page moves. |
 | `Skeleton` | `ui/skeleton.tsx` | A flat bar at the size of the value it stands for; no pulse. |
 | `Dialog`, `Sheet` | `ui/` | shadcn on these tokens. A dialog only for confirmations (as an `AlertDialog`) and for showing a secret once. |
@@ -650,6 +650,10 @@ shadcn/ui's data-table guide) is the one way to show a list with many rows.
   200 rows. Last and a reload on page *n* in one request need `paging: "offset"`.
 - **Client mode** (`query`): a bounded list arrives in one request and is sorted, filtered,
   paged and counted in the browser; `maxRows` hides sizes above the list's cap; Last is offered.
+- **A table inside another page** whose URL is not its own (a job's problems) uses
+  `useLocalDataTable({ rows, … })`: the same model, its view kept in the component. When the page
+  owns `q`, `qParam` names the key the search box writes (the articles table's `filter`). Writing
+  the view keeps the URL's hash (a settings section stays where it is).
 - **Filterable and sortable** only where the server filters and sorts (never a client filter over
   one server page). Enum filters are faceted multi-selects (an outline button with a count pill,
   a Popover with a Command list, counts per value in client mode); date filters are single presets.
@@ -660,15 +664,22 @@ shadcn/ui's data-table guide) is the one way to show a list with many rows.
 - **States in the frame:** loading is skeleton rows at the page size, each cell in its column's
   shape (`meta.skeleton`: text, mono, pill, avatar, number, meter), shown after 150ms; while
   another page or view loads the shown rows stay, at 60% with `aria-busy`; empty and no-match keep
-  the frame with a dashed border and the next step; an error is one sentence and Retry.
-- **Rows:** `aria-rowcount` and `aria-rowindex` place the page in the whole list. Below `md` rows
+  the frame with a dashed border and the next step; an error is one sentence and Retry
+  (`errorMessage` from `model.error`, the page query's failure; `retryLabel` when another Try
+  again sits beside the table). A route's `pendingComponent` draws `DataTableSkeleton` (toolbar,
+  real headers, skeleton rows per column shape, the pagination line).
+- **Rows:** `aria-rowcount` and `aria-rowindex` place the page in the whole list. The
+  `meta.priority` 1 cell (else the first) is the row's header (`<th scope="row">`). A dialog a row
+  action opens returns focus to that row's kebab (`onCloseAutoFocus={restoreRowFocus}`), whether
+  the menu was opened with the keyboard or the mouse. Below `md` rows
   become cards: the `meta.priority` 1 cell as the title, 2 and 3 under it with their column named
   for screen readers, the row menu at the right; the Columns menu is not offered there. Give
   every cell a reader needs to tell rows apart (the version, not only the library) a priority. Page changes swap rows at once; only rows that
   arrive on a refresh use `row-in`.
-- **Cells** (`cells.tsx`): `RelativeTime`, `VersionCell`, `LibraryCell`, `Person`, `StateBadge`,
-  `Progress`, `Bytes`, `Count`, `Money`, `MonoCopy`; literals in mono, figures tabular and at
-  the end.
+- **Cells** (`cells.tsx`): `RelativeTime` (`future` for an expiry: "in 12 days"), `VersionCell`,
+  `LibraryCell` (title link, mono ID, `description` line from `lg`), `Person`, `StateBadge`,
+  `Progress`, `Bytes`, `Count`, `Money`, `MonoCopy`, `Chips` (a few literals, the rest behind a
+  "+N" popover; `look="pill"` for tags); literals in mono, figures tabular and at the end.
 
 ### Interface settings
 Each preference is a row: label and description on the left (240px column from `md`), the control
