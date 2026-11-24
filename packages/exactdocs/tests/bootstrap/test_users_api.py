@@ -58,6 +58,7 @@ async def test_an_operator_creates_and_lists_users(
         "id",
         "username",
         "role",
+        "has_password",
         "created_at",
         "disabled",
         "provider",

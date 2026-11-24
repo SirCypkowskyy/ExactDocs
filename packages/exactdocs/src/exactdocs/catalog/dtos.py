@@ -27,6 +27,7 @@ from exactdocs.catalog.constants import (
     MAX_INSTRUCTION_FILES,
     MAX_LIBRARY_RULE_CHARS,
     MAX_LIBRARY_RULES,
+    MAX_LOGO_BYTES,
     MAX_STORED_ARTICLE_FILES,
     MAX_SUMMARY_REFS,
     MAX_TAG_RULES,
@@ -166,6 +167,35 @@ class VersionOut(_Dto):
         )
 
 
+class ListedVersion(VersionOut):
+    """A version as a library's version list shows it: with its size and embedding progress."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
+
+    articles: int = Field(default=0, ge=0)
+    """The articles the version serves: the entries of its active manifest."""
+    chunks: int = Field(default=0, ge=0)
+    """The chunks its articles are cut into for search; 0 until it is indexed."""
+    embedded_chunks: int = Field(default=0, ge=0)
+    """Of `chunks`, those with a vector from the configured embedding model; 0 while no model
+    is configured or nothing is embedded yet."""
+
+    @classmethod
+    def listed(cls, version: Version, *, is_default: bool, articles: int) -> Self:
+        """Map a domain entity and its article count; the search index adds the chunk counts.
+
+        Args:
+            version: The version.
+            is_default: Whether it is the library's default version.
+            articles: The entries of its active manifest.
+
+        Returns:
+            The version at the boundary, with no chunk counted yet.
+        """
+        found = VersionOut.from_model(version, is_default=is_default)
+        return cls(articles=articles, **found.model_dump())
+
+
 class ResolvedVersion(VersionOut):
     """The version an ID resolved to; always states which one was used."""
 
@@ -189,6 +219,8 @@ class ResolvedVersion(VersionOut):
 
 class LibrarySummary(_Dto):
     """A library and its imported versions."""
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
     id: str
     """Library ID, `/owner/repo`."""
@@ -216,13 +248,22 @@ class LibrarySummary(_Dto):
     """The tags the library's tag rules give its articles."""
     last_imported_at: datetime | None
     """When any version was last imported; null while none is."""
+    logo: str | None
+    """Version of the library's project logo (hex digits of its SHA-256); null when the importer
+    found none in the default version. The image is `GET /api/v1/libraries/{owner}/{repo}/logo`;
+    with `?v=<logo>` a browser may keep it until the logo changes.
+    """
+    article_count: int = Field(default=0, ge=0)
+    """The articles of the default version (its active manifest's entries); 0 while none is
+    imported."""
 
     @classmethod
-    def from_model(cls, library: Library) -> Self:
+    def from_model(cls, library: Library, *, article_count: int = 0) -> Self:
         """Map a domain entity to its boundary representation.
 
         Args:
             library: The library.
+            article_count: The articles of its default version.
 
         Returns:
             The summary: the default version and the newest ones, at most ``MAX_SUMMARY_REFS``.
@@ -244,6 +285,8 @@ class LibrarySummary(_Dto):
             version_count=len(library.versions),
             tags=sorted({rule.tag for rule in library.settings.tag_rules}),
             last_imported_at=max((v.imported_at for v in library.versions), default=None),
+            logo=library.logo,
+            article_count=article_count,
         )
 
 
@@ -274,6 +317,11 @@ class LibraryDetail(_Dto):
     """The rules of the default version's `context7.json`, shown to agents with every `query-docs`
     answer. Untrusted repository text.
     """
+    logo: str | None
+    """Version of the library's project logo (hex digits of its SHA-256); null when the importer
+    found none in the default version. The image is `GET /api/v1/libraries/{owner}/{repo}/logo`;
+    with `?v=<logo>` a browser may keep it until the logo changes.
+    """
 
     @classmethod
     def from_model(cls, library: Library) -> Self:
@@ -301,10 +349,13 @@ class LibraryDetail(_Dto):
             default_version=str(default.ref) if default else None,
             default_pinned=library.default_is_pinned(),
             rules=list(library.rules),
+            logo=library.logo,
         )
 
 
 Limit = Annotated[int, Field(ge=1, le=MAX_LIMIT)]
+SyncState = Literal["queued", "running", "succeeded", "failed", "cancelled"]
+"""The state of a library's latest sync: its newest import job's (ingestion's ``JobState``)."""
 Offset = Annotated[int, Field(ge=0, le=MAX_OFFSET)]
 
 
@@ -338,6 +389,14 @@ class ListLibrariesQuery(_Dto):
     """`true`: only libraries with an imported version; `false`: only those without one."""
     ai_enabled: bool | None = None
     """`true`: only libraries that may use AI providers; `false`: only those with AI turned off."""
+    sync_state: list[SyncState] | None = Field(
+        default=None,
+        description=(
+            "Only libraries whose latest sync (their newest `import` or `refresh` job) is in one "
+            "of these states; repeat for several. A library that never synced matches none."
+        ),
+    )
+    """Only libraries whose latest sync is in one of these states (resolved by the instance)."""
     updated_after: datetime | None = None
     """Only libraries whose latest import is at or after this time (ISO 8601)."""
     updated_before: datetime | None = None
@@ -422,8 +481,9 @@ class VersionList(_Dto):
 
     library: str
     """Library ID, `/owner/repo`."""
-    versions: list[VersionOut]
-    """The versions of this page, in the requested order (by ref by default)."""
+    versions: list[ListedVersion]
+    """The versions of this page, in the requested order (by ref by default), each with its
+    article, chunk and embedded-chunk counts."""
     next_cursor: str | None
     """Pass as `cursor` to get the next page; null on the last page."""
     total: int
@@ -446,17 +506,22 @@ class LibraryList(_Dto):
     """How many libraries match the filters and are visible to the caller, across every page."""
 
     @classmethod
-    def from_page(cls, page: Page[Library]) -> Self:
+    def from_page(cls, page: Page[Library], *, article_counts: Mapping[str, int]) -> Self:
         """Map a page of domain entities.
 
         Args:
             page: The libraries and the cursor of the next page.
+            article_counts: The articles of each library's default version, by library ID; a
+                library left out counts 0.
 
         Returns:
             The page at the boundary.
         """
         return cls(
-            libraries=[LibrarySummary.from_model(lib) for lib in page.items],
+            libraries=[
+                LibrarySummary.from_model(lib, article_count=article_counts.get(lib.id.value, 0))
+                for lib in page.items
+            ],
             next_cursor=page.next_cursor,
             total=len(page.items) if page.total is None else page.total,
         )
@@ -1545,6 +1610,50 @@ class ApplyReadmeCommand(_Dto):
     """The description it gives; null: none."""
     rules: list[_Rule] = Field(default_factory=list, max_length=MAX_LIBRARY_RULES)
     """Its `context7.json` rules; they replace the library's."""
+
+
+class LogoIn(_Dto):
+    """A logo found in an imported version, already checked (raster) or cleaned (SVG)."""
+
+    path: str = Field(min_length=1, max_length=MAX_PATH)
+    """The repository path it was read from."""
+    content_type: Literal["image/png", "image/jpeg", "image/webp", "image/svg+xml"]
+    """Its media type."""
+    data: bytes = Field(min_length=1, max_length=MAX_LOGO_BYTES, repr=False)
+    """Its bytes."""
+
+
+class ApplyLogoCommand(_Dto):
+    """What logo an imported version has; used only if it is the default version (#504)."""
+
+    library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
+    ref: str = Field(min_length=1)
+    """The version imported; nothing changes unless it is the default."""
+    logo: LogoIn | None = None
+    """Its logo; null: it has none, and the library's logo is removed."""
+
+
+class GetLogoQuery(_Dto):
+    """Read a library's logo."""
+
+    library: str = Field(min_length=1)
+    """Library ID, `/owner/repo`, any letter case."""
+    known_digests: list[str] = Field(default=[])
+    """Logo versions the caller holds; a match answers `unchanged`."""
+
+
+class Logo(_Dto):
+    """A library's logo: its bytes, its type and the version that names them."""
+
+    digest: str
+    """Version of the logo (hex digits of its SHA-256): its ETag."""
+    content_type: str
+    """Media type, one of PNG, JPEG, WebP or SVG."""
+    data: bytes = Field(repr=False)
+    """The image's bytes; empty when `unchanged`."""
+    unchanged: bool = False
+    """The logo is one of `known_digests`; `data` is empty."""
 
 
 class DiscardLibraryCommand(_Dto):

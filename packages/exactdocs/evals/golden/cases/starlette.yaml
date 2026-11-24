@@ -59,6 +59,7 @@ cases:
   expected_output:
     hits:
     - {version: '0.52.1', article: docs/lifespan.md, heading_path: [Accessing State]}
+    - {version: '0.52.1', article: docs/release-notes.md, heading_path: ['0.52.0 (January 18, 2026)']}
     reference: Dictionary-style access to the state was introduced in Starlette 0.52.0 (January
       2026), with `Request` generic over the state type for type safety.
     facts:
@@ -70,7 +71,7 @@ cases:
     project: starlette
     version: '0.52.1'
     query: 'How do I create an HTTP client once at startup and use it in my request handlers?'
-  metadata: {kind: cross-page}
+  metadata: {kind: how-to}
   expected_output:
     hits:
     - {version: '0.52.1', article: docs/lifespan.md, heading_path: [Lifespan State]}
@@ -297,11 +298,11 @@ cases:
     - {version: '0.27.0', article: docs/release-notes.md, heading_path: ['0.26.0', Deprecated]}
     - {version: '0.27.0', article: docs/lifespan.md, heading_path: []}
     reference: >-
-      No. 0.26.0 deprecated the `on_startup` and `on_shutdown` events; the lifespan handler (an
-      async context manager passed as `lifespan=`) replaces them.
+      No. 0.26.0 deprecated the `on_startup` and `on_shutdown` events. Startup and shutdown code
+      goes in a lifespan handler, an async context manager passed as `lifespan=`.
     facts:
     - on_startup and on_shutdown were deprecated in 0.26.0
-    - the lifespan handler is the replacement
+    - a lifespan handler runs code at startup and at shutdown
 
 - name: 'starlette 0.27.0: What security problem does upgrading to 0.27.0 fix?'
   inputs:
@@ -952,6 +953,7 @@ cases:
     hits:
     - {version: '1.10.0', article: docs/testclient.md, heading_path: []}
     - {version: '1.10.0', article: docs/release-notes.md, heading_path: ['1.2.0 (May 28, 2026)', Added]}
+    - {version: '1.10.0', article: docs/index.md, heading_path: [Introduction, Dependencies]}
     reference: >-
       `httpx2`. 1.2.0 added httpx2 support to the test client; `TestClient` is now built on it and
       plain `httpx` still works but is deprecated. `httpx2` is included in `starlette[full]`.

@@ -621,3 +621,24 @@ def github_credentials_refused(context: Context) -> None:
     assert response.status_code == HTTPStatus.UNAUTHORIZED, response.text
     github_sign_in(context)
     github_refused(context, "github_team_required")
+
+
+# ---------------------------------------------------------------- shared with other features
+
+
+def signed_in_through_provider(context: Context, name: str, subject: str) -> str:
+    """Sign ``name`` in through the configured provider in a fresh browser; return the session.
+
+    For features about something else that need an account of an identity provider (no password).
+    """
+    person(context, name, subject, email=f"{name}@example.com", groups=[])
+    return session_of(sign_in(context, subject))
+
+
+# Shared with other features (linked providers): the instance, the browser and the people
+# (`send`, `admin_session`, `person`, `sign_in` and `session_of` are shared under their own names).
+instance_client = _client
+send_as = send
+add_person = person
+browser_sign_in = sign_in
+whoami = _whoami

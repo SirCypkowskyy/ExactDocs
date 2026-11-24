@@ -197,6 +197,7 @@ def build(tokens: InMemoryTokenRepository | OneQueryTokens | None = None) -> Wor
         access_log=stand_ins["access_log"],
         attempts=stand_ins["attempts"],
         box=stand_ins["box"],
+        preferences=stand_ins["preferences"],
         providers={"google": provider},
         policies={"google": policy},
     )
@@ -228,6 +229,7 @@ async def sign_in_through_google(world: World, subject: str) -> AccountSummary:
             provider="google", binding=begun.binding, state=state, code="code"
         )
     )
+    assert result.session is not None
     return result.session.account
 
 

@@ -35,6 +35,7 @@ from exactdocs.ingestion.models import (
     JobId,
     JobState,
     PathSelection,
+    Person,
     ProposedId,
     RefKind,
     RemoteRef,
@@ -43,9 +44,12 @@ from exactdocs.ingestion.models import (
     RepositoryUrl,
     SyncErrorCode,
     SyncStatus,
+    VersionOrigin,
 )
 from exactdocs.ingestion.module import IngestionModule
+from exactdocs.ingestion.use_cases import SyncLibraryUseCase
 from exactdocs_kernel import NotFoundError
+from library_access import FakeAccess
 from unfinished_jobs import UnfinishedOnly, finished_imports
 
 LIBRARY = "/acme/docs"
@@ -765,3 +769,88 @@ async def test_a_login_prompt_without_a_credential_means_the_repository_is_gone(
 
     with pytest.raises(NotAGitRepositoryError):
         await module.reimport_version(reimport())
+
+
+# ---------------------------------------------------------------- who queued it (#512)
+
+ALICE = Person(id="acc-alice", username="alice")
+
+
+async def _alice() -> Person | None:
+    return ALICE
+
+
+def module_for_alice(
+    remote: Remote, versions: list[ImportedRef], jobs: InMemoryJobRepository, clock
+) -> IngestionModule:
+    return IngestionModule.build(
+        jobs=jobs,
+        clock=clock,
+        remote=remote,
+        library_ids=None,  # ty: ignore[invalid-argument-type]
+        libraries=None,  # ty: ignore[invalid-argument-type]
+        sources=InMemoryLibrarySources(sources={LIBRARY: SOURCE}, versions={LIBRARY: versions}),
+        removals=NoRemovals(),
+        index=NoIndex(),
+        handlers={IMPORT_JOB: _noop, REFRESH_JOB: _noop},
+        requester=_alice,
+    )
+
+
+async def test_a_sync_by_hand_names_the_person_on_every_job_it_queues_or_records(
+    remote: Remote, versions: list[ImportedRef], jobs: InMemoryJobRepository, clock
+) -> None:
+    module = module_for_alice(remote, versions, jobs, clock)
+    remote.error = RepositoryUnreachableError("connection refused")
+    with pytest.raises(SyncFailedError):
+        await module.sync_library(SYNC)  # records a failed job per branch
+    remote.error = None
+    remote.heads["next"] = NEW
+
+    await module.sync_library(SYNC)  # a no-op job for main, an import for next
+
+    assert len(jobs.jobs) == 4
+    assert {(j.created_by, j.origin) for j in jobs.jobs.values()} == {(ALICE, VersionOrigin.MANUAL)}
+
+
+def sync_for_alice(
+    remote: Remote, versions: list[ImportedRef], jobs: InMemoryJobRepository, clock
+) -> SyncLibraryUseCase:
+    """The use case itself: the scheduled check and a push call it with more than a person."""
+    return SyncLibraryUseCase(
+        remote=remote,
+        sources=InMemoryLibrarySources(sources={LIBRARY: SOURCE}, versions={LIBRARY: versions}),
+        jobs=jobs,
+        clock=clock,
+        enqueue_job=module_for_alice(remote, versions, jobs, clock).enqueue_job,
+        vault=InMemoryCredentialVault(),
+        access=FakeAccess(role="admin"),
+        requester=_alice,  # a person is bound, and still named on no job
+    )
+
+
+async def test_a_scheduled_sync_is_automatic_and_names_nobody(
+    remote: Remote, versions: list[ImportedRef], jobs: InMemoryJobRepository, clock
+) -> None:
+    remote.heads["next"] = NEW
+    remote.heads.pop("main")  # gone upstream: a failed job is recorded
+
+    await sync_for_alice(remote, versions, jobs, clock)(SYNC, scheduled=True)
+
+    assert sorted((j.version, j.state) for j in jobs.jobs.values()) == [
+        ("main", JobState.FAILED),
+        ("next", JobState.QUEUED),
+    ]
+    assert {(j.created_by, j.origin) for j in jobs.jobs.values()} == {(None, VersionOrigin.AUTO)}
+
+
+async def test_a_sync_a_push_asks_for_is_automatic(
+    remote: Remote, versions: list[ImportedRef], jobs: InMemoryJobRepository, clock
+) -> None:
+    remote.heads["next"] = NEW
+    sync = sync_for_alice(remote, versions, jobs, clock)
+
+    await sync(SyncLibraryCommand(library=LIBRARY, refs=("next",)), origin=VersionOrigin.AUTO)
+
+    (job,) = jobs.jobs.values()
+    assert (job.kind, job.created_by, job.origin) == (REFRESH_JOB, None, VersionOrigin.AUTO)
