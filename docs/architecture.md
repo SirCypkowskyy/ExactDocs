@@ -20,8 +20,9 @@ flowchart TD
         catalog["Catalog<br/>libraries, versions, manifests"]
         importer["Ingestion and job worker<br/>fetch → parse → chunk → index → activate"]
         identity["Identity<br/>accounts, sessions, API tokens"]
-        mcp --> retrieval & catalog
-        api --> retrieval & catalog & importer & identity
+        usage["Usage<br/>daily counts, leaderboards"]
+        mcp --> retrieval & catalog & usage
+        api --> retrieval & catalog & importer & identity & usage
         importer --> catalog & retrieval
     end
     db[("SQLite in the data directory<br/>or PostgreSQL")]
@@ -52,6 +53,7 @@ re-sync of a branch re-chunks only the files that changed. [Flows](flows.md) dra
 | `packages/exactdocs/src/exactdocs/identity/` | domain: local and external accounts (admins and users), web sessions, API tokens and library roles |
 | `packages/exactdocs/src/exactdocs/retrieval/` | domain: chunks, the BM25 index, `search_docs`, `query-docs`, `resolve-library-id` |
 | `packages/exactdocs/src/exactdocs/ingestion/` | domain: jobs, the DBOS worker, git access, parsing, chunking and the import |
+| `packages/exactdocs/src/exactdocs/usage/` | domain: daily counts of reads, searches and answers, usage reports and leaderboards |
 | `packages/exactdocs/src/exactdocs/_web/` | the built web UI (gitignored, added by CI / Docker) |
 | `packages/exactdocs/tests/`, `packages/exactdocs/features/` | pytest (unit, integration, architecture) and behave (Gherkin acceptance scenarios) |
 | `packages/exactdocs/evals/` | the retrieval eval suite (Pydantic Evals), not shipped; see [Retrieval evals](evals.md) |
@@ -71,19 +73,22 @@ flowchart TD
         identity
         retrieval
         ingestion
+        usage
     end
     kernel["<b>exactdocs_kernel</b><br/>shared kernel, standard library only"]
-    boot --> catalog & identity & retrieval & ingestion
-    catalog & identity & retrieval & ingestion --> kernel
+    boot --> catalog & identity & retrieval & ingestion & usage
+    catalog & identity & retrieval & ingestion & usage --> kernel
     retrieval -. "bridges: SearchableVersions,<br/>article titles" .-> catalog
     ingestion -. "bridges: library sources,<br/>version publisher, logos, removals" .-> catalog
     ingestion -. "bridges: chunk index,<br/>version embedder" .-> retrieval
     catalog & retrieval & ingestion -. "bridge: AccessPolicy<br/>(library roles)" .-> identity
+    usage -. "bridges: People (opt-in),<br/>LibraryAccess (library roles)" .-> identity
 ```
 
 Solid arrows are imports; dotted arrows are runtime calls through a bridge that lives in
 `bootstrap`, so the domains stay unaware of each other. `identity` asks for nothing, but the other
-three ask it what the caller may do with a library ([Library roles](#library-roles)).
+four ask it what the caller may do with a library ([Library roles](#library-roles)); `usage` also
+asks who opted in to the people leaderboard ([Usage counts](#usage-counts)).
 
 | From \ may import | own domain | other domain | `bootstrap` | `exactdocs_kernel` |
 |---|---|---|---|---|
@@ -100,9 +105,10 @@ later move to its own package or service without touching the other.
 ### Bridges are one-way
 
 Bridges point in one direction only: **retrieval → catalog**, **ingestion → catalog /
-retrieval** and **catalog / retrieval / ingestion → identity** (library roles). Identity and
-catalog call no domain for their own needs, and nothing calls ingestion, so the domain graph has
-no cycles. An architecture test (`tests/architecture/test_bridge_direction.py`) reads the
+retrieval**, **catalog / retrieval / ingestion → identity** (library roles) and **usage →
+identity** (library roles and the people leaderboard's opt-in). Identity and catalog call no
+domain for their own needs, and nothing calls ingestion or usage, so the domain graph has no
+cycles. An architecture test (`tests/architecture/test_bridge_direction.py`) reads the
 imports of every bridge class in `bootstrap/bridges.py`: the consumer's `models` / `ports.driven`
 on one side, the provider's `ports.driving` / `dtos` on the other, and only the edges above pass.
 
@@ -947,6 +953,39 @@ identity's `ResolveLibraryRoles`, `ClaimLibrary` and `DropLibraryGrants`).
   transaction: a crash between the two loses that entry.
 - **Upgrading**: libraries that exist when the migration runs get no grant. Operators keep full
   access; other accounts hold no role until an operator or the creator shares the library.
+
+## Usage counts
+
+`usage` (#510) counts how ExactDocs is used: one number per UTC day, account, API token, library
+and operation (`read`, `search`, `answer`) in `usage_daily_counts`, never a query, a path or any
+text. Accounts, tokens and libraries are held by value (empty for none: no person, a browser
+session, an operation over several libraries), so the table depends on no other domain's.
+
+- **Who counts.** No domain knows it is counted. `bootstrap/usage_meter.py` wraps the driving
+  ports the REST and MCP adapters serve reads, searches and answers with (catalog's `GetArticle`,
+  retrieval's `ReadChunk`, `SearchDocs`, `SearchAllLibraries`, `QueryDocs` and `AnswerQuestion`):
+  the request is served, then counted with the account and token of the request
+  (`bootstrap.caller`). A request that fails is not counted; calls made inside the server (the
+  answering agent's own reads, jobs) use the plain ports, and a stdio MCP process (read-only)
+  counts nothing.
+- **Never on the request's path.** `RecordUsage` adds to an in-memory `UsageTally` (at most
+  100,000 counters; past that, new ones are dropped and logged); `bootstrap.usage_meter.flushing`
+  writes it every `USAGE_FLUSH_SECONDS` (10 s) and once more when the server stops, as one
+  `INSERT ... ON CONFLICT DO UPDATE` transaction per write, in key order, so processes sharing a
+  PostgreSQL database never deadlock. A failed write keeps its counts for the next one. A report
+  writes the pending counts first, so it includes the requests just served.
+- **Retention.** The nightly upkeep runs `PruneUsage`, deleting the days before
+  `EXACTDOCS_USAGE__RETENTION_MONTHS` (13 by default).
+- **Reports and leaderboards.** Counts are summed in SQL by day and operation, then bucketed into
+  days, ISO weeks, months or years in UTC. A leaderboard ranks libraries (always, only those the
+  caller may read: the `LibraryAccess` port, bridged to identity's library roles by
+  `IdentityAccessPolicy.readable`) or people (only while `EXACTDOCS_USAGE__PEOPLE_LEADERBOARD` is
+  on), with each subject's rank in the previous period among the same subjects.
+- **People are opt-in.** The `People` port (`bootstrap/bridges.py:IdentityLeaderboardPeople`, over
+  identity's `FindLeaderboardPeople`) answers which accounts exist, are enabled and set the
+  `leaderboard_opt_in` interface preference. Whether the board is on is usage's own setting
+  (`UsagePolicy`); identity only knows who agreed. Anyone not shown by name is summed into one
+  `others` group of the operators' report.
 
 ## Background jobs
 

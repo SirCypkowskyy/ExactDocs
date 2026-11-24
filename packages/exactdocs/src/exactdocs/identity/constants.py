@@ -415,3 +415,7 @@ OAUTH_CLIENT_POST: Final[str] = "client_secret_post"
 TEXT_SCALES: Final[tuple[int, ...]] = (90, 100, 110, 125, 150)
 """The text sizes the interface offers, in percent of its default size (#487); the same as
 ``models.TextScale``, which types them."""
+
+ACCOUNTS_PER_QUERY: Final[int] = 500
+"""How many account IDs one ``IN (...)`` list holds when the leaderboard asks who opted in
+(#510); longer lists are asked in turns, within every database's limit on bound parameters."""

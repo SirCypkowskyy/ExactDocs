@@ -96,8 +96,9 @@ def build_router(
     async def list_all(query: Annotated[ListLibrariesQuery, Query()]) -> LibraryList:
         """List the libraries the caller may read, a page at a time; sort by ID unless told.
 
-        Filter with `q`, `has_versions`, `ai_enabled`, `updated_after` and `updated_before`;
-        `total` counts every match (never a library hidden from the caller).
+        Filter with `q`, `has_versions`, `ai_enabled`, `sync_state` (the state of the library's
+        newest import job), `updated_after` and `updated_before`; `total` counts every match
+        (never a library hidden from the caller).
 
         Args:
             query: The filters, the sort, the page size and the cursor of the previous page.

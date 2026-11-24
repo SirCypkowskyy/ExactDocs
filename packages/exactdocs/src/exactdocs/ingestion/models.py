@@ -14,7 +14,7 @@ import math
 import re
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 from fnmatch import fnmatchcase
 from functools import lru_cache
@@ -915,6 +915,8 @@ class JobFilter:
     """Only jobs in one of these states; empty: any state."""
     kinds: frozenset[str] = frozenset()
     """Only jobs of one of these kinds; empty: any kind."""
+    origins: frozenset[VersionOrigin] = frozenset()
+    """Only jobs with one of these origins (who queued them); empty: any origin."""
     version: str | None = None
     """Only jobs for this exact ref."""
     text: str | None = None
@@ -995,6 +997,33 @@ class FileProblem:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class Person:
+    """The account of a person who asked for something, as it was when they asked.
+
+    The name is kept with the ID, so a job still names who queued it after the account is gone.
+    """
+
+    id: str
+    """The account's stable ID."""
+    username: str
+    """The account's user name, the name people see."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class JobDayCount:
+    """How many jobs of one kind, now in one state, were queued on one UTC day."""
+
+    day: date
+    """The UTC day the jobs were queued on."""
+    state: JobState
+    """The state they are in now."""
+    kind: str
+    """What they do."""
+    count: int
+    """How many there are; never 0 (a day without such jobs has no count)."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class Job:
     """A long task for one library (optionally one version) and how far it got.
 
@@ -1043,7 +1072,12 @@ class Job:
     error_code: str | None = None
     """The stable code of ``error``: a ``SyncErrorCode``, an error's own code or ``unexpected``."""
     origin: VersionOrigin = VersionOrigin.MANUAL
-    """Who queued it; the first import of a version gives the version this origin."""
+    """``auto`` when the instance queued it on its own (the scheduled check, a repository's
+    webhook, the embedding of what an import stored), else ``manual``; the first import of a
+    version gives the version this origin."""
+    created_by: Person | None = None
+    """The person whose request queued it; ``None`` for the instance's own work, the command
+    line, and jobs queued before #512."""
     created_at: datetime
     """When the job was queued."""
     started_at: datetime | None = None
@@ -1077,6 +1111,7 @@ class Job:
         commit_sha: str | None = None,
         ref_kind: RefKind | None = None,
         origin: VersionOrigin = VersionOrigin.MANUAL,
+        created_by: Person | None = None,
     ) -> Self:
         """Create a job that waits for the worker.
 
@@ -1088,7 +1123,8 @@ class Job:
             now: The time it is queued.
             commit_sha: The commit ``version`` is pinned to.
             ref_kind: What ``version`` is.
-            origin: Who queued it.
+            origin: Whether the instance queued it on its own (``auto``) or not.
+            created_by: The person whose request queued it, if any.
 
         Returns:
             The queued job.
@@ -1101,6 +1137,7 @@ class Job:
             commit_sha=commit_sha,
             ref_kind=ref_kind,
             origin=origin,
+            created_by=created_by,
             state=JobState.QUEUED,
             created_at=now,
         )

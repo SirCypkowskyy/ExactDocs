@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 from exactdocs.identity.constants import (
     _LOCK_NOT_AVAILABLE,
     _SIGN_IN_LOCKS,
+    ACCOUNTS_PER_QUERY,
     FORGET_FAILURES_AFTER,
     FORGOTTEN_SIGN_INS_PER_TURN,
     MAX_CONCURRENT_SIGN_IN_TURNS,
@@ -1878,6 +1879,31 @@ class SqlitePreferencesRepository:
                 )
             )
 
+    async def opted_in(self, account_ids: Collection[AccountId]) -> frozenset[AccountId]:
+        """Return the accounts among these that agreed to be on the people leaderboard.
+
+        Asked ``ACCOUNTS_PER_QUERY`` IDs at a time; a row whose ``leaderboard_opt_in`` is missing
+        or not ``true`` has not agreed.
+
+        Args:
+            account_ids: The accounts to ask about.
+
+        Returns:
+            Those that opted in.
+        """
+        wanted = sorted(set(account_ids))
+        found: set[AccountId] = set()
+        async with self.engine.connect() as connection:
+            for start in range(0, len(wanted), ACCOUNTS_PER_QUERY):
+                batch = wanted[start : start + ACCOUNTS_PER_QUERY]
+                query = select(account_preferences).where(
+                    account_preferences.c.account_id.in_(batch)
+                )
+                for row in await connection.execute(query):
+                    if _preferences(json.loads(row.preferences)).leaderboard_opt_in:
+                        found.add(AccountId(row.account_id))
+        return frozenset(found)
+
 
 def _conflict_insert(
     bind: AsyncConnection | AsyncEngine, table: Table
@@ -1916,6 +1942,7 @@ def _preference_values(preferences: Preferences) -> dict[str, Any]:
         "large_targets": preferences.large_targets,
         "language": preferences.language.value,
         "library_logos": preferences.library_logos,
+        "leaderboard_opt_in": preferences.leaderboard_opt_in,
     }
 
 
@@ -1943,6 +1970,9 @@ def _preferences(stored: object) -> Preferences:
         large_targets=_flag(values.get("large_targets"), default=defaults.large_targets),
         language=_choice(Language, values.get("language"), defaults.language),
         library_logos=_flag(values.get("library_logos"), default=defaults.library_logos),
+        leaderboard_opt_in=_flag(
+            values.get("leaderboard_opt_in"), default=defaults.leaderboard_opt_in
+        ),
     )
 
 

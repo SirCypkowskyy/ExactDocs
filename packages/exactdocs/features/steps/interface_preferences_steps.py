@@ -27,6 +27,7 @@ DEFAULTS: dict[str, Any] = {
     "large_targets": False,
     "language": "system",
     "library_logos": True,
+    "leaderboard_opt_in": False,
 }
 ADMINS: dict[str, Any] = {
     **DEFAULTS,
@@ -44,6 +45,7 @@ PROBLEMS: dict[str, dict[str, Any]] = {
     "a theme it does not offer": {**ADMINS, "theme": "sepia"},
     "a language it does not offer": {**ADMINS, "language": "de"},
     "library logos neither shown nor hidden": {**ADMINS, "library_logos": "no"},
+    "a leaderboard opt-in neither given nor refused": {**ADMINS, "leaderboard_opt_in": "yes"},
     "a missing setting": {k: v for k, v in {**ADMINS, "theme": "light"}.items() if k != "font"},
 }
 
@@ -215,3 +217,23 @@ def step_signed_out_read(context: Context) -> None:
 @when("a signed-out client saves interface preferences")
 def step_signed_out_save(context: Context) -> None:
     context.response = _send(context, "PUT", json=ADMINS)
+
+
+@when("the admin opts in to the people leaderboard")
+def step_opt_in(context: Context) -> None:
+    opted = {**_admins_now(context)["preferences"], "leaderboard_opt_in": True}
+    body = _ok(_send(context, "PUT", session=context.session_token, json=opted))
+    assert body == {"saved": True, "preferences": opted}, body
+
+
+@when("a browser with an interface older than the opt-in switches to English")
+def step_older_client(context: Context) -> None:
+    older = dict(_admins_now(context)["preferences"])
+    del older["leaderboard_opt_in"]
+    _ok(_send(context, "PUT", session=context.session_token, json={**older, "language": "en"}))
+
+
+@then("the admin is still opted in, with the rest as saved but in English")
+def step_same_opted_in(context: Context) -> None:
+    expected = {**ADMINS, "language": "en", "leaderboard_opt_in": True}
+    assert context.preferences == {"saved": True, "preferences": expected}, context.preferences

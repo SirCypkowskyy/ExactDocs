@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable, Collection, Generator, Mapping,
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, contextmanager, suppress
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from functools import partial
 from itertools import starmap
 from pathlib import Path
@@ -31,6 +31,7 @@ from exactdocs.ingestion.constants import (
     DEFAULT_MAX_IMAGE_BYTES,
     DEFAULT_MAX_IMAGES_BYTES,
     DEFAULT_MAX_IMPORT_BYTES,
+    DEFAULT_STATS_DAYS,
     EMBED_ATTEMPTS,
     EMBED_JOB,
     EMBED_RETRY_SECONDS,
@@ -47,6 +48,7 @@ from exactdocs.ingestion.constants import (
     MAX_LISTED_REFS,
     MAX_LOGO_BYTES,
     MAX_PREVIEW_FILES,
+    MAX_STATS_DAYS,
     MAX_WANTED_IMAGES,
     OUTSIDE_IMAGES_BATCH,
     PARSER_VERSION,
@@ -83,9 +85,12 @@ from exactdocs.ingestion.dtos import (
     GetLibraryAccessQuery,
     JobList,
     JobListQuery,
+    JobStats,
+    JobStatsQuery,
     JobSummary,
     LatestJob,
     LatestJobs,
+    LibrariesInSyncStates,
     LibraryAccess,
     LibraryOutcome,
     ListJobsQuery,
@@ -111,6 +116,7 @@ from exactdocs.ingestion.dtos import (
     SyncedLibrary,
     SyncedVersion,
     SyncLibraryCommand,
+    SyncStatesQuery,
     TagArticleCommand,
     TaggedArticle,
     TagRuleIn,
@@ -132,6 +138,7 @@ from exactdocs.ingestion.errors import (
     ImportTooLargeError,
     InvalidContext7Error,
     InvalidSourcesError,
+    InvalidStatsRangeError,
     InvalidWebhookSignatureError,
     JobCancelledError,
     JobFinishedError,
@@ -190,6 +197,7 @@ from exactdocs.ingestion.models import (
     NewLibrary,
     ParsedArticle,
     PathSelection,
+    Person,
     ProblemCode,
     ProposedId,
     PushEvent,
@@ -266,6 +274,7 @@ from exactdocs.ingestion.ports.driven import (
     RenameSource,
     RepositoryFiles,
     RepositoryTree,
+    Requester,
     ScheduleSwitch,
     StoredArticleSource,
     VersionCopier,
@@ -282,7 +291,6 @@ from exactdocs.ingestion.ports.driving import (
     RemoveLibrary,
     RemoveVersion,
     SetAutoSync,
-    SyncLibrary,
     SyncLibraryFromRefs,
     UpdateLibrarySettings,
 )
@@ -299,6 +307,25 @@ from exactdocs_kernel import (
 )
 
 log = logging.getLogger(__name__)
+
+
+async def _nobody() -> Person | None:
+    """The default ``Requester``: no person asks (the command line, a test).
+
+    Returns:
+        ``None``.
+    """
+    return None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Stamp:
+    """Who the jobs of one request are queued by."""
+
+    origin: VersionOrigin
+    """``auto`` when the instance asks on its own."""
+    created_by: Person | None
+    """The person whose request it is; ``None`` for the instance."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -383,9 +410,11 @@ class EnqueueJobUseCase:
     """What runs each job kind; a kind not in it is refused."""
     runner: JobRunner
     """What runs queued jobs."""
+    requester: Requester = field(default_factory=lambda: _nobody)
+    """Names the person whose request queues the job; an ``auto`` job names nobody."""
 
     async def __call__(self, command: EnqueueJobCommand) -> JobSummary:
-        """Queue the job and hand it to the runner.
+        """Queue the job, recording who asked for it, and hand it to the runner.
 
         Args:
             command: The job's kind, library and version.
@@ -407,6 +436,7 @@ class EnqueueJobUseCase:
             commit_sha=command.commit_sha,
             ref_kind=command.ref_kind,
             origin=command.origin,
+            created_by=None if command.origin is VersionOrigin.AUTO else await self.requester(),
             now=self.clock.now(),
         )
         await self.jobs.add(job)
@@ -576,6 +606,7 @@ async def _job_page(
         libraries=libraries,
         states=frozenset(query.state or ()),
         kinds=frozenset(query.kind or ()),
+        origins=frozenset(query.origin or ()),
         version=query.version,
         text=query.q,
         created_after=query.created_after,
@@ -705,6 +736,77 @@ class ListLatestJobsUseCase:
         cancellable = await _cancellable(self.access, shown)
         return LatestJobs(
             jobs=[LatestJob.from_model(job, cancellable=job.id in cancellable) for job in shown]
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GetJobStatsUseCase:
+    """Implements ``ports.driving.GetJobStats``."""
+
+    jobs: JobRepository
+    """Where jobs are stored."""
+    clock: Clock
+    """Tells today's date, the default last day."""
+
+    async def __call__(self, query: JobStatsQuery) -> JobStats:
+        """Count the jobs queued on each UTC day from ``start`` to ``end``, both included.
+
+        One grouped query; the days without jobs are filled in with zeros here.
+
+        Args:
+            query: The days; without ``end`` the range ends today, without ``start`` it covers
+                ``DEFAULT_STATS_DAYS`` days.
+
+        Returns:
+            One entry per day, oldest first.
+
+        Raises:
+            InvalidStatsRangeError: The range ends before it starts, or is longer than
+                ``MAX_STATS_DAYS`` days.
+        """
+        end = query.end or self.clock.now().astimezone(UTC).date()
+        start = query.start or end - timedelta(days=DEFAULT_STATS_DAYS - 1)
+        if start > end:
+            message = f"`from` ({start}) is after `to` ({end})"
+            raise InvalidStatsRangeError(message)
+        if (end - start).days + 1 > MAX_STATS_DAYS:
+            message = f"at most {MAX_STATS_DAYS} days at once, from `from` to `to`"
+            raise InvalidStatsRangeError(message)
+        counts = await self.jobs.daily_counts(
+            start=datetime.combine(start, datetime.min.time(), tzinfo=UTC),
+            end=datetime.combine(end + timedelta(days=1), datetime.min.time(), tzinfo=UTC),
+        )
+        return JobStats.of(counts, start=start, end=end)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ListLibrariesInSyncStatesUseCase:
+    """Implements ``ports.driving.ListLibrariesInSyncStates``."""
+
+    jobs: JobRepository
+    """Where jobs are stored."""
+    access: AccessPolicy
+    """Decides which libraries the caller may read."""
+
+    async def __call__(self, query: SyncStatesQuery) -> LibrariesInSyncStates:
+        """Name the libraries whose newest ``import`` or ``refresh`` job is in one of the states.
+
+        One grouped query for every library's latest sync, then one question to the library
+        roles for all of them.
+
+        Args:
+            query: The states.
+
+        Returns:
+            The readable libraries among them, case-folded and sorted.
+        """
+        wanted = set(query.states)
+        matching = [
+            library for library, state in (await self.jobs.sync_states()).items() if state in wanted
+        ]
+        readable = await self.access.readable(matching)
+        return LibrariesInSyncStates(
+            libraries=sorted({lib.casefold() for lib in matching} & set(readable))
         )
 
 
@@ -1480,6 +1582,8 @@ class SyncLibraryUseCase:
     """Where the library's credential is kept."""
     access: AccessPolicy
     """Decides what the caller may do with the library."""
+    requester: Requester = field(default_factory=lambda: _nobody)
+    """Names the person whose request the sync serves; the jobs it records name them."""
 
     async def __call__(
         self,
@@ -1487,6 +1591,7 @@ class SyncLibraryUseCase:
         *,
         refs: RemoteRefs | None = None,
         scheduled: bool = False,
+        origin: VersionOrigin = VersionOrigin.MANUAL,
     ) -> SyncedLibrary:
         """Ask the remote where each branch and tag is now, queue an import for moved branches.
 
@@ -1513,6 +1618,35 @@ class SyncLibraryUseCase:
             command: The library.
             refs: The refs the remote advertised; ``None`` lists them now.
             scheduled: The scheduled check asks (not a person).
+            origin: ``auto`` when the instance syncs on its own (the scheduled check, a push):
+                the jobs it queues and records say so, and name no person.
+
+        Returns:
+            What happened to each version (``_run`` says what it raises).
+        """
+        await _require(self.access, command.library, Access.CONTRIBUTE)
+        stamp = (
+            _Stamp(origin=VersionOrigin.AUTO, created_by=None)
+            if scheduled or origin is VersionOrigin.AUTO
+            else _Stamp(origin=VersionOrigin.MANUAL, created_by=await self.requester())
+        )
+        return await self._run(command, refs=refs, scheduled=scheduled, stamp=stamp)
+
+    async def _run(
+        self,
+        command: SyncLibraryCommand,
+        *,
+        refs: RemoteRefs | None,
+        scheduled: bool,
+        stamp: _Stamp,
+    ) -> SyncedLibrary:
+        """Sync the library, as ``__call__`` says, once the caller may.
+
+        Args:
+            command: The library to sync.
+            refs: The refs the remote advertised; ``None`` lists them now.
+            scheduled: The scheduled check asks (not a person).
+            stamp: Who the jobs it queues or records are queued by.
 
         Returns:
             What happened to each version.
@@ -1521,7 +1655,6 @@ class SyncLibraryUseCase:
             SyncFailedError: The remote could not be read; the failed jobs record it.
             VersionImportingError: A branch's import is running and nothing could be queued.
         """
-        await _require(self.access, command.library, Access.CONTRIBUTE)
         library = command.library
         source = await self.sources.get(library)
         versions = await self.sources.imported_versions(library)
@@ -1547,7 +1680,11 @@ class SyncLibraryUseCase:
                 error = _anonymous(raised, credential)
                 code = failure_code(error)
                 recorded = [
-                    (await self._failed(library, v, _describe(error), code, newest.get(v.ref))).id
+                    (
+                        await self._failed(
+                            library, v, _describe(error), code, newest.get(v.ref), stamp
+                        )
+                    ).id
                     for v in checked
                     if v.ref not in busy
                 ]
@@ -1556,7 +1693,7 @@ class SyncLibraryUseCase:
         # The busy check is repeated, atomically, by ``enqueue_job`` (the repository).
         if scheduled:  # a sync a person cancelled is not re-queued at the same tip
             busy = {**_cancelled_tips(newest, tips), **busy}
-        synced = [await self._sync(library, v, tips, busy, newest) for v in versions]
+        synced = [await self._sync(library, v, tips, busy, newest, stamp) for v in versions]
         importing = [v for v in synced if v.status is SyncStatus.IMPORTING]
         if importing and not any(v.status is SyncStatus.QUEUED for v in synced):
             raise VersionImportingError(library, importing[0].ref)
@@ -1569,6 +1706,7 @@ class SyncLibraryUseCase:
         tips: Mapping[tuple[RefKind, str], str],
         busy: Mapping[str, Job],
         newest: Mapping[str, Job],
+        stamp: _Stamp,
     ) -> SyncedVersion:
         """Check one version against the remote's tips.
 
@@ -1578,6 +1716,7 @@ class SyncLibraryUseCase:
             tips: The commit of each advertised branch and tag.
             busy: The library's unfinished imports, by ref.
             newest: The newest job of each version, by ref.
+            stamp: Who the jobs it queues or records are queued by.
 
         Returns:
             What happened to the version.
@@ -1630,10 +1769,12 @@ class SyncLibraryUseCase:
         if tip is None:
             what = "branch" if current.kind is RefKind.BRANCH else "tag"
             reason = f"the {what} {current.ref!r} no longer exists in the repository"
-            failed = await self._failed(library, current, reason, SyncErrorCode.REF_DELETED, last)
+            failed = await self._failed(
+                library, current, reason, SyncErrorCode.REF_DELETED, last, stamp
+            )
             return failure(failed)
         if tip == current.commit_sha:
-            noop = await self._confirm(library, current, tip, last)
+            noop = await self._confirm(library, current, tip, last, stamp)
             kept = SyncStatus.UP_TO_DATE if current.kind is RefKind.BRANCH else SyncStatus.PINNED
             return outcome(kept, tip, noop)
         if current.kind is RefKind.TAG:
@@ -1643,12 +1784,14 @@ class SyncLibraryUseCase:
                 "which this version serves; it is not re-imported until you confirm the re-import "
                 "of the version at the new commit"
             )
-            failed = await self._failed(library, current, reason, SyncErrorCode.TAG_MOVED, last)
+            failed = await self._failed(
+                library, current, reason, SyncErrorCode.TAG_MOVED, last, stamp
+            )
             return failure(failed)
-        return await self._moved(library, current, tip, outcome)
+        return await self._moved(library, current, tip, outcome, stamp)
 
     async def _confirm(
-        self, library: str, current: ImportedRef, tip: str, last: Job | None
+        self, library: str, current: ImportedRef, tip: str, last: Job | None, stamp: _Stamp
     ) -> str | None:
         """Record a succeeded no-op job when the version last failed: its error is over.
 
@@ -1657,6 +1800,7 @@ class SyncLibraryUseCase:
             current: The version.
             tip: The commit its ref names, the one it serves.
             last: The version's newest job, if any.
+            stamp: Who the job is queued by.
 
         Returns:
             The no-op job's ID, or ``None`` when the version did not last fail.
@@ -1664,7 +1808,7 @@ class SyncLibraryUseCase:
         if last is None or last.state is not JobState.FAILED:
             return None
         now = self.clock.now()
-        noop = self._job(library, current, now, commit_sha=tip).started(now).succeeded(now)
+        noop = self._job(library, current, now, stamp, commit_sha=tip).started(now).succeeded(now)
         await self.jobs.add(noop)
         return noop.id
 
@@ -1674,6 +1818,7 @@ class SyncLibraryUseCase:
         current: ImportedRef,
         tip: str,
         outcome: Callable[[SyncStatus, str, str | None], SyncedVersion],
+        stamp: _Stamp,
     ) -> SyncedVersion:
         """Queue the import of a branch that moved.
 
@@ -1682,6 +1827,7 @@ class SyncLibraryUseCase:
             current: The version.
             tip: The commit the branch names now.
             outcome: Describes the version's outcome.
+            stamp: Who the import is queued by (``enqueue_job`` names the person itself).
 
         Returns:
             ``queued``; ``importing`` when another request queued it first; ``failed`` when it
@@ -1695,6 +1841,7 @@ class SyncLibraryUseCase:
                     version=current.ref,
                     commit_sha=tip,
                     ref_kind=RefKind.BRANCH,
+                    origin=stamp.origin,
                 )
             )
         except VersionImportingError:  # another request queued it since the check above
@@ -1708,7 +1855,13 @@ class SyncLibraryUseCase:
         return outcome(SyncStatus.QUEUED, tip, job.id)
 
     def _job(
-        self, library: str, current: ImportedRef, now: datetime, *, commit_sha: str | None = None
+        self,
+        library: str,
+        current: ImportedRef,
+        now: datetime,
+        stamp: _Stamp,
+        *,
+        commit_sha: str | None = None,
     ) -> Job:
         """Make a ``refresh`` job of the version, not yet stored.
 
@@ -1716,6 +1869,7 @@ class SyncLibraryUseCase:
             library: The library ID.
             current: The version.
             now: The time it is queued.
+            stamp: Who it is queued by.
             commit_sha: The commit it is pinned to, if any.
 
         Returns:
@@ -1729,10 +1883,18 @@ class SyncLibraryUseCase:
             commit_sha=commit_sha,
             ref_kind=current.kind,
             now=now,
+            origin=stamp.origin,
+            created_by=stamp.created_by,
         )
 
     async def _failed(
-        self, library: str, current: ImportedRef, reason: str, code: str, last: Job | None
+        self,
+        library: str,
+        current: ImportedRef,
+        reason: str,
+        code: str,
+        last: Job | None,
+        stamp: _Stamp,
     ) -> Job:
         """Record a failed job, unless the version's newest job already says the same.
 
@@ -1742,6 +1904,7 @@ class SyncLibraryUseCase:
             reason: Why it failed, for users.
             code: The stable code.
             last: The version's newest job, if any.
+            stamp: Who the job is queued by.
 
         Returns:
             The failed job, new or the newest one.
@@ -1753,7 +1916,7 @@ class SyncLibraryUseCase:
         ):
             return last
         now = self.clock.now()
-        job = self._job(library, current, now).failed(reason, now, code=code)
+        job = self._job(library, current, now, stamp).failed(reason, now, code=code)
         await self.jobs.add(job)
         return job
 
@@ -5068,6 +5231,7 @@ class EmbeddingQueue:
                 library=version.library,
                 version=version.ref,
                 now=self.clock.now(),
+                origin=VersionOrigin.AUTO,  # the instance embeds on its own, nobody asks
             )
             await self.jobs.add(job)
             await self.runner.submit(job)
@@ -5777,7 +5941,11 @@ class ReceiveWebhookUseCase:
             try:
                 job = await self.enqueue_job(
                     EnqueueJobCommand(
-                        kind=PUSH_JOB, library=library, version=ref.name, ref_kind=ref.kind
+                        kind=PUSH_JOB,
+                        library=library,
+                        version=ref.name,
+                        ref_kind=ref.kind,
+                        origin=VersionOrigin.AUTO,
                     )
                 )
             except PushQueuedError:
@@ -5821,7 +5989,7 @@ class PushJobUseCase:
     commits are never used: the remote is asked.
     """
 
-    sync_library: SyncLibrary
+    sync_library: SyncLibraryFromRefs
     """Syncs the pushed branch."""
     sources: LibrarySources
     """Where the library's repository is read."""
@@ -5861,7 +6029,9 @@ class PushJobUseCase:
             ref: The branch.
         """
         try:
-            await self.sync_library(SyncLibraryCommand(library=library, refs=(ref,)))
+            await self.sync_library(
+                SyncLibraryCommand(library=library, refs=(ref,)), origin=VersionOrigin.AUTO
+            )
         except VersionImportingError:
             pass  # an import of the branch waits: it runs after this job, at the tip it lists
         except SyncFailedError as failed:  # recorded on a failed job of the version

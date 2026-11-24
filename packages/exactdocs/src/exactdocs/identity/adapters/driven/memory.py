@@ -943,6 +943,21 @@ class InMemoryPreferencesRepository:
         """
         self.preferences[account_id] = preferences
 
+    async def opted_in(self, account_ids: Collection[AccountId]) -> frozenset[AccountId]:
+        """Return the accounts among these that agreed to be on the people leaderboard.
+
+        Args:
+            account_ids: The accounts to ask about.
+
+        Returns:
+            Those that opted in.
+        """
+        return frozenset(
+            account_id
+            for account_id in account_ids
+            if (saved := self.preferences.get(account_id)) is not None and saved.leaderboard_opt_in
+        )
+
 
 def _revision(link: ExternalIdentity) -> tuple[object, ...]:
     """Return what a sign-in, a revalidation, a revocation or a disable changes in a link.

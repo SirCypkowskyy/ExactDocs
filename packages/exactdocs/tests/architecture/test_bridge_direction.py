@@ -21,6 +21,8 @@ ALLOWED = {
     ("catalog", "identity"),
     ("retrieval", "identity"),
     ("ingestion", "identity"),
+    # Usage counts (#510): who opted in to the people leaderboard, and library roles.
+    ("usage", "identity"),
 }
 CONSUMER_MODULES = {"models", "ports.driven"}
 PROVIDER_MODULES = {"ports.driving", "dtos"}

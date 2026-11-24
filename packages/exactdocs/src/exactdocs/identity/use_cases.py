@@ -57,6 +57,9 @@ from exactdocs.identity.dtos import (
     FinishExternalSignInCommand,
     GetPreferencesQuery,
     GrantLibraryRoleCommand,
+    LeaderboardPeople,
+    LeaderboardPeopleQuery,
+    LeaderboardPerson,
     LibraryCreationQuery,
     LibraryGrantList,
     LibraryGrants,
@@ -2890,7 +2893,9 @@ class SavePreferencesUseCase:
         """Save the account's preferences, replacing the ones it had.
 
         Saving the defaults saves them too: the account then has preferences of its own, which
-        win over a browser's on the next sign-in.
+        win over a browser's on the next sign-in. A save that leaves ``leaderboard_opt_in`` out
+        (a client older than it) keeps the account's saved choice, so it neither opts the person
+        in nor drops an opt-in it never showed.
 
         Args:
             command: The account and its new preferences.
@@ -2898,6 +2903,41 @@ class SavePreferencesUseCase:
         Returns:
             The preferences as saved.
         """
+        account_id = AccountId(command.account_id)
         chosen = command.preferences.to_model()
-        await self.preferences.put(AccountId(command.account_id), chosen)
+        if "leaderboard_opt_in" not in command.preferences.model_fields_set:
+            saved = await self.preferences.get(account_id)
+            chosen = replace(
+                chosen, leaderboard_opt_in=saved is not None and saved.leaderboard_opt_in
+            )
+        await self.preferences.put(account_id, chosen)
         return AccountPreferences.from_model(chosen)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FindLeaderboardPeopleUseCase:
+    """Implements ``ports.driving.FindLeaderboardPeople``."""
+
+    preferences: PreferencesRepository
+    """Where each account's interface preferences are saved."""
+    accounts: AccountRepository
+    """The accounts, for their usernames and whether they are disabled."""
+
+    async def __call__(self, query: LeaderboardPeopleQuery) -> LeaderboardPeople:
+        """Return the accounts among those asked about that opted in, exist and are enabled.
+
+        One query finds who opted in; only those accounts are then read, one by one.
+
+        Args:
+            query: The accounts asked about.
+
+        Returns:
+            Those that may be shown by name, sorted by ID.
+        """
+        opted = await self.preferences.opted_in({AccountId(i) for i in query.account_ids})
+        people = []
+        for account_id in sorted(opted):
+            account = await self.accounts.get_by_id(account_id)
+            if account is not None and not account.is_disabled:
+                people.append(LeaderboardPerson(id=account.id, username=str(account.username)))
+        return LeaderboardPeople(people=people)

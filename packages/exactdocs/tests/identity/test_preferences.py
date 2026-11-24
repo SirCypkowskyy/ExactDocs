@@ -20,7 +20,10 @@ from exactdocs.identity.dtos import (
     CreateUserCommand,
     GetPreferencesQuery,
     InterfacePreferences,
+    LeaderboardPeopleQuery,
+    LeaderboardPerson,
     SavePreferencesCommand,
+    SetUserDisabledCommand,
 )
 from exactdocs.identity.errors import InvalidPreferencesError
 from exactdocs.identity.models import (
@@ -47,6 +50,7 @@ DEFAULTS: dict[str, Any] = {
     "large_targets": False,
     "language": "system",
     "library_logos": True,
+    "leaderboard_opt_in": False,
 }
 CHOSEN: dict[str, Any] = {
     "theme": "dark",
@@ -59,6 +63,7 @@ CHOSEN: dict[str, Any] = {
     "large_targets": True,
     "language": "pl",
     "library_logos": False,
+    "leaderboard_opt_in": True,
 }
 
 
@@ -110,6 +115,9 @@ def test_every_offered_text_size_is_accepted(scale: int) -> None:
         ("library_logos", "false"),
         ("library_logos", 0),
         ("library_logos", None),
+        ("leaderboard_opt_in", "true"),
+        ("leaderboard_opt_in", 1),
+        ("leaderboard_opt_in", None),
     ],
 )
 def test_a_value_the_interface_does_not_offer_is_refused(field: str, value: object) -> None:
@@ -128,12 +136,23 @@ def test_an_unknown_setting_is_refused() -> None:
     ]
 
 
-@pytest.mark.parametrize("field", list(DEFAULTS))
+def without(field: str) -> dict[str, Any]:
+    return {k: v for k, v in CHOSEN.items() if k != field}
+
+
+@pytest.mark.parametrize("field", [field for field in DEFAULTS if field != "leaderboard_opt_in"])
 def test_every_setting_is_required(field: str) -> None:
     with pytest.raises(ValidationError) as raised:
-        InterfacePreferences.model_validate({k: v for k, v in CHOSEN.items() if k != field})
+        InterfacePreferences.model_validate(without(field))
 
     assert [(e["loc"], e["type"]) for e in raised.value.errors()] == [((field,), "missing")]
+
+
+def test_the_leaderboard_opt_in_may_be_left_out_by_a_client_older_than_it() -> None:
+    sent = InterfacePreferences.model_validate(without("leaderboard_opt_in"))
+
+    assert sent.leaderboard_opt_in is False
+    assert "leaderboard_opt_in" not in sent.model_fields_set
 
 
 def test_the_boundary_offers_exactly_the_domains_choices() -> None:
@@ -185,6 +204,7 @@ def test_the_domain_defaults_follow_the_operating_system_and_change_nothing() ->
         large_targets=False,
         language=Language.SYSTEM,
         library_logos=True,
+        leaderboard_opt_in=False,
     )
 
 
@@ -304,5 +324,70 @@ async def test_the_store_holds_domain_preferences_by_account() -> None:
             large_targets=True,
             language=Language.PL,
             library_logos=False,
+            leaderboard_opt_in=True,
         )
     }
+
+
+# --- the people leaderboard (#510): nobody is on it without opting in
+
+
+async def test_nobody_is_on_the_people_leaderboard_without_opting_in() -> None:
+    identity, ada, bob = await _module()
+
+    before = await identity.get_preferences(GetPreferencesQuery(account_id=ada))
+    await identity.save_preferences(save(bob, {**DEFAULTS, "font": "system"}))
+    found = await identity.find_leaderboard_people(
+        LeaderboardPeopleQuery(account_ids=[ada, bob, "id-nobody"])
+    )
+
+    assert before.preferences.leaderboard_opt_in is False
+    assert found.people == []
+
+
+async def test_the_people_who_opted_in_are_found_with_their_usernames() -> None:
+    identity, ada, bob = await _module()
+
+    await identity.save_preferences(save(ada, {**DEFAULTS, "leaderboard_opt_in": True}))
+    await identity.save_preferences(save(bob, {**DEFAULTS, "leaderboard_opt_in": True}))
+    found = await identity.find_leaderboard_people(
+        LeaderboardPeopleQuery(account_ids=[bob, ada, "id-nobody"])
+    )
+    only_ada = await identity.find_leaderboard_people(LeaderboardPeopleQuery(account_ids=[ada]))
+
+    assert found.people == sorted(
+        [LeaderboardPerson(id=ada, username="ada"), LeaderboardPerson(id=bob, username="bob")],
+        key=lambda person: person.id,
+    )
+    assert only_ada.people == [LeaderboardPerson(id=ada, username="ada")]
+
+
+async def test_opting_out_again_takes_a_person_off_and_a_disabled_one_is_never_on() -> None:
+    identity, ada, bob = await _module()
+    await identity.save_preferences(save(ada, {**DEFAULTS, "leaderboard_opt_in": True}))
+    await identity.save_preferences(save(bob, {**DEFAULTS, "leaderboard_opt_in": True}))
+
+    await identity.save_preferences(save(ada, {**DEFAULTS, "leaderboard_opt_in": False}))
+    await identity.set_user_disabled(SetUserDisabledCommand(id=bob, disabled=True))
+    found = await identity.find_leaderboard_people(LeaderboardPeopleQuery(account_ids=[ada, bob]))
+
+    assert found.people == []
+
+
+async def test_a_save_without_the_opt_in_keeps_the_one_saved() -> None:
+    # A web client from before #510 sends every other setting; it must not drop an opt-in.
+    identity, ada, bob = await _module()
+    await identity.save_preferences(save(ada, {**DEFAULTS, "leaderboard_opt_in": True}))
+
+    older = {k: v for k, v in CHOSEN.items() if k != "leaderboard_opt_in"}
+    kept = await identity.save_preferences(save(ada, older))
+    never = await identity.save_preferences(save(bob, older))
+
+    assert kept.preferences.leaderboard_opt_in is True
+    assert kept.preferences.theme == "dark"
+    assert never.preferences.leaderboard_opt_in is False
+    found = await identity.find_leaderboard_people(LeaderboardPeopleQuery(account_ids=[ada, bob]))
+    assert found.people == [LeaderboardPerson(id=ada, username="ada")]
+    # Sent explicitly, it is saved like any other setting.
+    out = await identity.save_preferences(save(ada, {**older, "leaderboard_opt_in": False}))
+    assert out.preferences.leaderboard_opt_in is False

@@ -285,6 +285,20 @@ How a request is checked and linked:
 
 [Observability](deployment.md#observability) explains what each of these exports.
 
+### Usage counts and leaderboards
+
+ExactDocs counts reads, searches and agent answers per UTC day, account, API token, library and
+operation (#510): counts only, never a query, a path or any text. Operators read them at
+`GET /api/v1/stats/usage`, everyone their own at `GET /api/v1/account/usage`, and the leaderboards
+at `GET /api/v1/stats/leaderboard` (see [REST API](rest-api.md)). Per-person usage is monitoring
+data under the GDPR, hence the opt-in for people and the bounded retention. The `[usage]` table
+of the TOML file takes the same settings.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `EXACTDOCS_USAGE__PEOPLE_LEADERBOARD` | `false` | Turn the people leaderboard on. Even then it ranks, and operators' usage reports name, only people who opted in (the `leaderboard_opt_in` interface preference, off by default); everyone else counts in totals only. Off, nobody is shown by name to anyone, operators included. The libraries leaderboard is always on |
+| `EXACTDOCS_USAGE__RETENTION_MONTHS` | `13` | How many months of daily counts are kept (1 to 120). Every night the days before it are deleted: 13 keeps a year and the month before it |
+
 ### Command-line client
 
 These are read by the CLI commands that talk to a server (`login`, `add`, `sync` and the rest), not

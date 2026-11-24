@@ -21,6 +21,8 @@ from exactdocs.identity.dtos import (
     FinishExternalSignInCommand,
     GetPreferencesQuery,
     GrantLibraryRoleCommand,
+    LeaderboardPeople,
+    LeaderboardPeopleQuery,
     LibraryCreationQuery,
     LibraryGrantList,
     LibraryGrants,
@@ -709,5 +711,24 @@ class SavePreferences(Protocol):
 
         Returns:
             The preferences as saved.
+        """
+        ...
+
+
+class FindLeaderboardPeople(Protocol):
+    """Tell which accounts may be shown by name on the people leaderboard (#510).
+
+    Only accounts that exist, are enabled and opted in (``leaderboard_opt_in``); whether the
+    operator turned the board on is not identity's to know.
+    """
+
+    async def __call__(self, query: LeaderboardPeopleQuery) -> LeaderboardPeople:
+        """Run the use case.
+
+        Args:
+            query: The accounts asked about.
+
+        Returns:
+            Those that may be shown, with their usernames.
         """
         ...
