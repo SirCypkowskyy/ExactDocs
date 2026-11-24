@@ -140,6 +140,23 @@ The kernel `NOTICE` constant (the untrusted-content notice every MCP result carr
 *MCP-07* story) is a reviewed kernel addition: it is shared text, not business logic, so it lives
 in the kernel instead of being duplicated per domain.
 
+**Outbound connections: one resolution, in the kernel (#538).** Which proxy a connection goes
+through, which hosts `NO_PROXY` keeps direct (names and the names under them, addresses, CIDR
+ranges, ports, `*`; loopback and link-local always) and which CA bundle TLS trusts is
+`exactdocs_kernel.OutboundNetwork`, built by `resolve_outbound` from the standard variables
+(`HTTP(S)_PROXY`, `ALL_PROXY`, `NO_PROXY`, `SSL_CERT_FILE`...) and the `EXACTDOCS_` overrides
+(`Settings.outbound()`). It is a reviewed kernel addition: standard library only, no business
+concept, and the domains' driven adapters need it as much as bootstrap does. Bootstrap resolves it
+once and hands it to every client: `outbound.RoutedTransport` (an `httpx2` transport that picks
+the direct or proxied connection per request, never reads the environment, and turns a failure
+on the way through a proxy into an error naming the proxy and the host) for the CLI's, the sign-in
+providers' and the AI profiles' clients; `GitCli.network` for git (its environment, with the CA
+as `GIT_SSL_CAINFO`); `hub_client.py` for `exactdocs models pull`; the index backends' factories
+(`network=`, for the kinds marked `outbound`) and the OpenTelemetry exporter. Libraries that read
+only the environment see the same settings: `cli.main` writes the resolution into the process's
+standard variables (`outbound.publish`). Proxy credentials are never shown: `redact_url` and
+`OutboundNetwork.redact` mask them in reprs, logs and errors.
+
 **Why not a `shared` domain?** Everything shared ends up there. The kernel is a separate
 *package* on purpose: adding to it is a visible, reviewed decision, it may only use the
 standard library, and it cannot import the app. If two domains need the same *business*
@@ -1477,14 +1494,15 @@ fills with the Fernet box under its own HKDF purpose (`AI_KEYS_PURPOSE`). The `M
 (pydantic-ai, the OpenAI, Anthropic and Google SDKs, azure-identity) and builds every client with
 explicit values, after removing `OPENAI_CUSTOM_HEADERS` / `ANTHROPIC_CUSTOM_HEADERS` from the
 process (the SDKs merge them over the key, in the constructor, so `copy()` cannot undo them).
-Each profile has one `httpx2` client, built under a per-profile lock (proxy on the transport,
-`trust_env=False`, extra headers, no transport retries so the SDK's are the one layer, an overall
+Each profile has one `httpx2` client, built under a per-profile lock (proxy on the transport:
+the profile's own, else the instance's outbound proxy when `ai.use_instance_proxy` is on and
+`NO_PROXY` does not list the endpoint; the instance's CA bundle; `trust_env=False`, extra headers, no transport retries so the SDK's are the one layer, an overall
 timeout, and a request hook that refuses any scheme, host or port but the profile's endpoint,
 drops `OpenAI-Organization` / `OpenAI-Project` filled from the environment and, for Claude on
 Foundry with Entra ID, signs each request with a fresh token), rebuilt when the profile changes
 and closed when it is deleted (`ModelFactory.release`). An Entra ID token provider is built once
 per profile (a chain of client secret or certificate, workload identity and managed identity; the
-profile's proxy goes to the first two only). Profiles signed with the server's own cloud identity
+profile's proxy, or the instance's with `ai.use_instance_proxy`, goes to the first two only). Profiles signed with the server's own cloud identity
 (ADC, a service-account file, Entra ID, Claude on Bedrock) come from configuration only and take
 no `base_url`: `ProviderProfile` refuses both, so their endpoint is always derived. `resource`,
 `location` and `project` are single DNS labels, and `ai_sdk._official_url` builds a derived

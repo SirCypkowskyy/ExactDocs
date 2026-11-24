@@ -231,6 +231,29 @@ How a request is checked and linked:
 
 [Observability](deployment.md#observability) explains what each of these exports.
 
+### Outbound connections
+
+ExactDocs reads the standard proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`,
+`NO_PROXY`, in upper or lower case, lower case winning) and the standard CA bundle variables
+(`SSL_CERT_FILE`, then `REQUESTS_CA_BUNDLE`, then `CURL_CA_BUNDLE`) once, and every outbound
+client takes them from there: git, model downloads, AI providers, index backends, sign-in
+providers, the OpenTelemetry exporter and the command-line client. Each `EXACTDOCS_` variable
+below replaces its standard one, so ExactDocs can use another proxy than the rest of the machine.
+[Behind a corporate proxy](deployment.md#behind-a-corporate-proxy) shows complete setups.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `EXACTDOCS_HTTPS_PROXY` | `https_proxy`, `HTTPS_PROXY`, then `ALL_PROXY` | The forward proxy of `https://` connections, as `http://host:port`; credentials go in the URL (`http://user:password@host:port`, percent-encoded) and are never logged or shown |
+| `EXACTDOCS_HTTP_PROXY` | `http_proxy`, `HTTP_PROXY`, then `ALL_PROXY` | The forward proxy of plain `http://` connections |
+| `EXACTDOCS_NO_PROXY` | `no_proxy`, `NO_PROXY` | Hosts reached without the proxy, separated by commas or spaces: a host name (and every name under it: `example.com`, `.example.com` and `*.example.com` all match `docs.example.com`), an IP address, a CIDR range (`10.0.0.0/8`, `fd00::/8`, matched against URLs that name an address; a host name is never resolved for it), `host:port` for one port only, or `*` for every host. Set but empty, it lists no host. Loopback (`localhost`, `127.0.0.0/8`, `::1`), link-local addresses (`169.254.0.0/16`, the cloud metadata endpoints) and `metadata.google.internal` are never proxied, whatever it says |
+| `EXACTDOCS_CA_BUNDLE` | `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, then `CURL_CA_BUNDLE` | A PEM file of the CA certificates every outbound TLS connection trusts, git included (as its `http.sslCAInfo`), instead of the system's: the company CA of a proxy that re-signs TLS. It replaces the system's certificates, so include the public ones too when some hosts are reached without the re-signing proxy. A file that cannot be read stops the server at start. Verification is never turned off |
+| `EXACTDOCS_AI__USE_INSTANCE_PROXY` | `false` | AI provider profiles without a `proxy` of their own call their provider (and Entra ID) through the proxy above, unless `NO_PROXY` lists the endpoint. Off, they connect directly, as before #538; a profile's own `proxy` always wins. The CA bundle applies to them either way. See [Behind a corporate proxy](deployment.md#behind-a-corporate-proxy) |
+
+The proxy can be `socks5://` (or `socks5h://`) where the client supports it: git does, the Python
+clients need the `socksio` package. Redis and MongoDB backends speak their own protocols, which no
+HTTP proxy carries: they connect directly, and use the CA bundle for TLS when their options name
+no CA file.
+
 ### Command-line client
 
 These are read by the CLI commands that talk to a server (`login`, `add`, `sync` and the rest), not
@@ -241,6 +264,11 @@ by the server.
 | `EXACTDOCS_URL` | The server, when `--url` is not given |
 | `EXACTDOCS_TOKEN` | The API token, when `--token` is not given; also what `exactdocs config` snippets refer to |
 | `EXACTDOCS_CLIENT_CONFIG` | Another file instead of `config.json` in your user config directory |
+
+The client follows the [outbound connections](#outbound-connections) settings too (the standard
+variables and their `EXACTDOCS_` overrides, from its own environment): a remote server is reached
+through the proxy unless `NO_PROXY` lists it, a server on `localhost` or a loopback address never
+is, and the CA bundle is trusted.
 
 ## External index backends
 

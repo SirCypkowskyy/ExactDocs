@@ -121,6 +121,14 @@ Mode, `SpendLimits` and guardrails. A profile has a `kind`:
 - **One HTTP client per profile** on `httpx2` (what pydantic-ai 2.60.0 uses): proxy on the
   transport (a retrying transport stops httpx reading `HTTPS_PROXY`), extra headers (values masked
   in logs), exactly one retry layer, and an overall `request_timeout`.
+- **The instance's proxy is opt-in for profiles (#538).** The client never reads the proxy
+  variables itself; it gets the profile's `proxy`, else, with `ai.use_instance_proxy`
+  (`EXACTDOCS_AI__USE_INSTANCE_PROXY`, off by default), the instance's outbound proxy unless
+  `NO_PROXY` lists the endpoint. Off by default because an ambient variable must not reroute a
+  profile's traffic (the hostile-environment test sets `HTTPS_PROXY` to a trap), and because an
+  instance that set `HTTPS_PROXY` for git, with an internal gateway missing from `NO_PROXY`,
+  would otherwise send that gateway's calls (its key, over plain `http://` too) to the proxy after
+  an upgrade. The instance's CA bundle applies to every profile: it adds no route, only trust.
 
 ### Embeddings: a small port with two kinds of adapter
 

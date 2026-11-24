@@ -129,8 +129,10 @@ on the server until you revoke it on the web UI's **Account** page.
 The CLI looks for the server and token in this order: flags, then `EXACTDOCS_URL` and
 `EXACTDOCS_TOKEN`, then that file. A stored token is only sent to the server it came from. Plain
 `http://` is accepted for loopback (`localhost`, `127.0.0.1`, `::1`) only; anything else needs
-`https://`. Proxy variables (`HTTPS_PROXY` and the like) are honoured for remote servers, where the
-proxy sees where you connect but not your HTTPS traffic, and ignored for loopback.
+`https://`. Proxy variables (`HTTPS_PROXY`, `NO_PROXY` and the like, or their `EXACTDOCS_`
+overrides) and a CA bundle are honoured for remote servers, where the proxy sees where you connect
+but not your HTTPS traffic, and ignored for loopback
+([Outbound connections](configuration.md#outbound-connections)).
 
 ### Manage libraries and tokens
 
