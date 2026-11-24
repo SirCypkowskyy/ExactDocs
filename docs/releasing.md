@@ -70,7 +70,8 @@ commit is visible on the image tag and in the release instead.
 Any other tag shape, or a tag on the wrong branch, fails the workflow before anything is published.
 
 Before a stable release, run `just screenshots` on `develop` and merge the retaken pictures in
-`docs/assets/screenshots/` if they changed, so the README and the docs show the UI being released.
+`docs/assets/screenshots/` if they changed (with their alt texts in the README and the docs, if
+what they show changed), so the README and the docs show the UI being released.
 
 ```bash
 # stable
