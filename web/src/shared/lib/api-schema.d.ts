@@ -175,7 +175,7 @@ export interface paths {
         };
         /**
          * Get Users
-         * @description List the local accounts, disabled ones included, oldest first unless `sort` says otherwise, a page at a time. Filter with `q`, `role` and `disabled`; `total` counts every match. Operators only (`admin`): any other signed-in account is refused with `forbidden` (403). Needs a signed-in session; an API token is refused (401), so a leaked token cannot create accounts. There is no self-signup: accounts are created here, by `exactdocs user create` or, for the first admin, by the setup.
+         * @description List the local accounts, disabled ones included, oldest first unless `sort` says otherwise, a page at a time. Filter with `q`, `role`, `disabled` and `provider`; `total` counts every match. Each account shows when it was last active (to the hour), where it signs in and how many live API tokens it holds; every account's tokens are at `GET /users/tokens`. Operators only (`admin`): any other signed-in account is refused with `forbidden` (403). Needs a signed-in session; an API token is refused (401), so a leaked token cannot create accounts. There is no self-signup: accounts are created here, by `exactdocs user create` or, for the first admin, by the setup.
          */
         readonly get: operations["identity-get_users"];
         readonly put?: never;
@@ -254,6 +254,31 @@ export interface paths {
          *     session (see `GET /users`).
          */
         readonly put: operations["identity-set_user_password"];
+        readonly post?: never;
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/users/tokens": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List All Tokens
+         * @description List the API tokens of every account, newest first, never their secrets. Operators only.
+         *
+         *     Each token comes with its owner (`owner_id`, `owner`), its prefix, its expiry and its
+         *     last use, expired ones not yet removed included. Filter with `q` (the token's name),
+         *     `owner_id`, `expired` and `unused`; order with `sort`; `total` counts every match. Needs
+         *     a signed-in session; an API token is refused (401).
+         */
+        readonly get: operations["identity-list_all_tokens"];
+        readonly put?: never;
         readonly post?: never;
         readonly delete?: never;
         readonly options?: never;
@@ -1670,6 +1695,58 @@ export interface components {
             readonly role: string;
         };
         /**
+         * AccountTokenSummary
+         * @description A token as an operator sees it in the list of every token: with its owner, no secret.
+         */
+        readonly AccountTokenSummary: {
+            /**
+             * Library Ids
+             * @description Selected library IDs; omit or use null for all libraries the user can access.
+             */
+            readonly library_ids?: readonly string[] | null;
+            /**
+             * Id
+             * @description Stable identifier of the token, used to revoke it.
+             */
+            readonly id: string;
+            /**
+             * Name
+             * @description Label the token was given when it was created.
+             */
+            readonly name: string;
+            /**
+             * Prefix
+             * @description The first characters of the secret (`exd_` and four more), to recognise the token.
+             */
+            readonly prefix: string;
+            /**
+             * Created At
+             * Format: date-time
+             * @description When the token was created.
+             */
+            readonly created_at: string;
+            /**
+             * Expires At
+             * @description When the token stops working; `null` for a token that never expires.
+             */
+            readonly expires_at: string | null;
+            /**
+             * Last Used At
+             * @description When the token last authenticated a request; `null` if it was never used.
+             */
+            readonly last_used_at: string | null;
+            /**
+             * Owner Id
+             * @description The id of the account that holds the token.
+             */
+            readonly owner_id: string;
+            /**
+             * Owner
+             * @description The username of the account that holds the token.
+             */
+            readonly owner: string;
+        };
+        /**
          * AddLibraryCommand
          * @description Create a library from a git repository, with its doc selection, and queue its import.
          */
@@ -1833,6 +1910,27 @@ export interface components {
              *     something this month.
              */
             readonly scopes: readonly components["schemas"]["ScopeUsageOut"][];
+        };
+        /**
+         * AllTokensList
+         * @description A page of every account's tokens, newest first unless sorted otherwise.
+         */
+        readonly AllTokensList: {
+            /**
+             * Tokens
+             * @description The tokens of this page.
+             */
+            readonly tokens: readonly components["schemas"]["AccountTokenSummary"][];
+            /**
+             * Next Cursor
+             * @description Pass as `cursor` to get the next page; null on the last page.
+             */
+            readonly next_cursor: string | null;
+            /**
+             * Total
+             * @description How many tokens match the filters, across every page.
+             */
+            readonly total: number;
         };
         /**
          * AnswerAvailabilityOut
@@ -6142,6 +6240,7 @@ export interface components {
             /**
              * Provider
              * @description The sign-in provider the account signs in through; `null` for a local account (password).
+             *     An account created through a provider keeps that provider here.
              */
             readonly provider?: string | null;
             /**
@@ -6150,6 +6249,18 @@ export interface components {
              *     (with the provider's `group_prefix`); empty for a local account.
              */
             readonly groups?: readonly string[];
+            /**
+             * Last Active At
+             * @description The hour (UTC, minutes always zero) of the account's latest sign-in or request with one
+             *     of its sessions or API tokens; `null` while it has not been active since this was recorded.
+             */
+            readonly last_active_at?: string | null;
+            /**
+             * Token Count
+             * @description How many API tokens the account holds that have not expired.
+             * @default 0
+             */
+            readonly token_count: number;
         };
         /**
          * VersionList
@@ -7165,12 +7276,14 @@ export interface operations {
                  *     grant's username or group.
                  */
                 readonly q?: string | null;
-                /** @description Sort by one of created_at, username, role; prefix `-` for descending. Default: `created_at`. An unknown field is a 422. */
+                /** @description Sort by one of created_at, username, role, last_active_at, token_count; prefix `-` for descending. Default: `created_at`. An unknown field is a 422. */
                 readonly sort?: string | null;
                 /** @description Only accounts with one of these roles; repeat for several. */
                 readonly role?: readonly ("admin" | "user")[] | null;
                 /** @description `true`: only disabled accounts; `false`: only enabled ones. */
                 readonly disabled?: boolean | null;
+                /** @description Only accounts that sign in through one of these: `password` for a local account, else the provider's name, as `provider` shows it (the provider the account was created through); repeat for several. */
+                readonly provider?: readonly string[] | null;
             };
             readonly header?: never;
             readonly path?: never;
@@ -7495,6 +7608,109 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["PasswordReset"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-list_all_tokens": {
+        readonly parameters: {
+            readonly query?: {
+                /** @description How many items per page. */
+                readonly limit?: number;
+                /**
+                 * @description Opaque: only ever a `next_cursor`; absent for the first page. It only works with the
+                 *     `sort` and filters of the request that returned it.
+                 */
+                readonly cursor?: string | null;
+                /**
+                 * @description Jump to a page: skip this many matches, in the order and with the filters of the cursor
+                 *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
+                 */
+                readonly offset?: number | null;
+                /**
+                 * @description Only items whose name contains this text, any case: a user's username, a token's name, a
+                 *     grant's username or group.
+                 */
+                readonly q?: string | null;
+                /** @description Sort by one of created_at, name, expires_at, last_used_at, owner; prefix `-` for descending. Default: `-created_at`. A token that never expires or was never used sorts first by `expires_at` or `last_used_at`; `owner` sorts by username. An unknown field is a 422. */
+                readonly sort?: string | null;
+                /** @description Only the tokens of the account with this id. */
+                readonly owner_id?: string | null;
+                /**
+                 * @description `true`: only tokens whose expiry has passed (they no longer work); `false`: only the
+                 *     others.
+                 */
+                readonly expired?: boolean | null;
+                /** @description `true`: only tokens that never authenticated a request; `false`: only used ones. */
+                readonly unused?: boolean | null;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AllTokensList"];
                 };
             };
             /** @description The request cannot be processed (error code in `error`). */
