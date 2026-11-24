@@ -207,9 +207,10 @@ just eval --write-baseline
 
 The fingerprint (`sha256:...` in `baseline.json`) is a hash of what the dataset states: each
 case's question (`inputs`, defaults left out) and the version, article and heading path of each
-section it expects. Renaming, reordering or commenting cases keeps it, and so does a new field with
-a default in the dataset's models; adding, removing or changing a question or an expected section
-changes it. Numbers measured on different datasets are not comparable (harder questions lower
+section it expects, in order, and whether it is an alternative (#501). Renaming, reordering or
+commenting cases keeps it, and so does a new field with a default in the dataset's models; adding,
+removing or changing a question or an expected section, or marking one as an alternative, changes
+it. Numbers measured on different datasets are not comparable (harder questions lower
 recall without anything getting worse), so:
 
 1. Change `dataset.yaml` (see [The dataset](#the-dataset)).
