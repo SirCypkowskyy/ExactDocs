@@ -103,6 +103,30 @@ agentic search and every configuration reranked by the LLM judge. They run only 
 - On `cross-page` questions, section recall@5 is about a third below recall@5 (33 to 34 points for
   BM25 and hybrid): a hit on one page of the answer is common, all of its pages much rarer.
 
+## Rank 1 at no more context (#575)
+
+Grounded Docs puts a section that answers first more often than ExactDocs (recall@1 71.5% with
+`bge-small-en-v1.5`, [Comparison](comparison.md)), with results about three times as long. The
+[retrieval grid](../evals.md#the-retrieval-grid) measured the variants that could close that gap,
+for BM25 and for hybrid search on `bge-small-en-v1.5`, each scored from its text and tested
+against its control (the grid's own search at `default`, which scores as the shipped BM25 does)
+and against the shipped default, BM25 at `default`:
+
+- **The heading path in the text**, in front of the indexed text (`+context-indexed`) or of the
+  embedded text (`+context-embedded`; ExactDocs' own vector index already embeds the title and the
+  heading path).
+- **A hit widened to its section**: its parent section with the subsections (`+parent`).
+- **The hits grouped by article**, as Grounded Docs groups them: one result per article, ranked by
+  its best hit, holding the article's hits in article order, with the chunk on either side of each
+  (`+article`) or the hits alone (`+article-hits`, the same ten chunks as the control).
+
+`packages/exactdocs/evals/results/retrieval-grid-rank1.json`, run on 25 November 2026 on 4 shared
+CPUs (Linux x86_64) with `just retrieval-grid --offline --cells ...` (the cells are in
+`evals/golden/matrix.yaml`, each naming its control).
+
+<!-- bench:retrieval-grid -->
+<!-- /bench -->
+
 <!-- bench:retrieval -->
 ## Every configuration
 
