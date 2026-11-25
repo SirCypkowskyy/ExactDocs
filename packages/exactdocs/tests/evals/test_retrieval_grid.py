@@ -195,12 +195,15 @@ async def test_cells_that_embed_the_same_texts_embed_them_once(tmp_path: Path) -
         HashEmbeddingModels(size=16).bind(None, name="local:m", dimensions=None, batch_size=4)
     )
     cached = CachedEmbeddings(inner=counted, folder=tmp_path)
-    texts = [f"text {i}" for i in range(CACHE_SLICE + 3)]
+    distinct = [f"text {i}" for i in range(CACHE_SLICE + 3)]
+    texts = [*distinct, *distinct[:10]]  # the same chunk in two versions
 
     first = await cached.embed_documents(texts)
     again = await CachedEmbeddings(inner=counted, folder=tmp_path).embed_documents(texts)
 
-    assert counted.texts == len(texts)  # the second run read every slice back
+    assert counted.texts == len(distinct)  # each once, and the second run read them back
+    assert first.vectors[-1] == first.vectors[9]
+    assert len(first.vectors) == len(texts)
     assert again.vectors == first.vectors
     assert again.input_tokens == first.input_tokens
     assert (await cached.embed_query("q")).vectors == (await counted.embed_query("q")).vectors

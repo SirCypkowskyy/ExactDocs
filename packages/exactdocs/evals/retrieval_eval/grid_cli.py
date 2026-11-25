@@ -147,8 +147,9 @@ class GridReport(_Model):
 class CachedEmbeddings:
     """Implements ``Embeddings``: keeps the vectors of every slice of texts on disk (#575).
 
-    Cells that embed the same texts (the same chunks, prefixed alike) embed them once, and a
-    cell interrupted while embedding takes up where it stopped. A slice is kept under the hash
+    A text that occurs more than once (the same chunk in several pinned versions) is embedded
+    once. Cells that embed the same texts (the same chunks, prefixed alike) embed them once, and
+    a cell interrupted while embedding takes up where it stopped. A slice is kept under the hash
     of the model and its texts, with the tokens it cost and the seconds it took; ``reused``
     adds up the seconds of the slices taken from the cache, so a cell's index cost still says
     what embedding took.
@@ -181,13 +182,15 @@ class CachedEmbeddings:
             texts: The texts.
 
         Returns:
-            One vector per text, in order, and the tokens every slice cost.
+            One vector per text, in order, and the tokens every slice cost (each distinct text
+            embedded once).
         """
+        unique = list(dict.fromkeys(texts))
         vectors: list[tuple[float, ...]] = []
         tokens = requests = 0
         self.folder.mkdir(parents=True, exist_ok=True)
-        for start in range(0, len(texts), CACHE_SLICE):
-            part = texts[start : start + CACHE_SLICE]
+        for start in range(0, len(unique), CACHE_SLICE):
+            part = unique[start : start + CACHE_SLICE]
             digest = hashlib.sha256("\0".join([self.inner.name, *part]).encode()).hexdigest()
             meta, data = self.folder / f"{digest[:32]}.json", self.folder / f"{digest[:32]}.bin"
             if meta.is_file() and data.is_file():
@@ -211,7 +214,10 @@ class CachedEmbeddings:
             vectors.extend(tuple(flat[i : i + size]) for i in range(0, len(flat), size))
             tokens += int(kept["tokens"])
             requests += int(kept["requests"])
-        return EmbeddedTexts(vectors=tuple(vectors), input_tokens=tokens, requests=requests)
+        of = dict(zip(unique, vectors, strict=True))
+        return EmbeddedTexts(
+            vectors=tuple(of[t] for t in texts), input_tokens=tokens, requests=requests
+        )
 
     async def embed_query(self, text: str) -> EmbeddedTexts:
         """Embed a question (never cached: the latency is measured).
