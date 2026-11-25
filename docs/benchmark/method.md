@@ -135,10 +135,13 @@ MkDocs-specific losses. The definitions are in
 ## Agent metrics and the judge
 
 The same agent model answers each case with each **documentation arm** (#495): `none` (no tools:
-it answers from what it knows of that version or says it does not know) and `exactdocs` (only the
-ExactDocs MCP tools); `context7` (#493) and `grounded-docs` (#492) are to follow. The arms get the
-same prompt, the same request limit and the same instructions apart from the sentence about the
-documentation tool.
+it answers from what it knows of that version or says it does not know), `exactdocs` (only the
+ExactDocs MCP tools), `context7` (only the official Context7 MCP server's tools, at a pinned
+release) and `grounded-docs` (only Grounded Docs' read-only tools, over its index of the same
+pinned versions). The arms get the same prompt, the same request limit and the same instructions
+apart from the sentence about the documentation tool, and each agent is offered its arm's tools
+and nothing else. No Context7 number is published until Upstash permits it
+([Terms of service](../evals.md#terms-of-service)).
 
 The judge is an LLM given the question, version, kind, reference answer, facts and the agent's
 answer (not the docs, not the arm: every arm's product and tool names are removed from the answer
@@ -148,7 +151,9 @@ the docs do not cover it, or that it does not know). Accuracy is the share `corr
 `refused` on `unanswerable` cases, where refusing is the right answer. The report also counts
 answers true only of another version, refusals on answerable cases, correct refusals on
 `unanswerable` ones, how often the agent read every part the case names in full (a section of
-each, or one of its alternatives), whether it read another version, and tool calls. A run the
+each, or one of its alternatives; for `grounded-docs`, a whole page read with `read_page`; not
+measured for `context7`, whose text comes from its own index), whether it read another version,
+and tool calls. A run the
 provider failed on (rate limit, server error, after the retries) is an `error`, left out of every
 rate and test; one where the agent gave no answer (the request limit) is a miss.
 
@@ -157,8 +162,9 @@ provider retries left out), input tokens, output tokens with the thinking, think
 their own (the provider's count where it reports one; otherwise estimated from the thinking text
 the model returns, as the thinking's share of each response's characters times its output tokens;
 *not returned* when there is neither) and USD (*unpriced* when the model has no price, never 0).
-Each arm is compared with `none` on the same cases: accuracy by McNemar's test (mid-p), wall time
-and tokens by a paired sign-flip permutation test, with the ratio of the means.
+Each arm is compared with `none` on the same cases, and `context7` and `grounded-docs` with
+`exactdocs` too: accuracy by McNemar's test (mid-p), wall time and tokens by a paired sign-flip
+permutation test, with the ratio of the means.
 
 **Judge agreement with hand labels: not measured yet.** The judge is checked by labelling at
 least 50 answers of a real-model run by hand and comparing (`just agent-bench sample`, then
