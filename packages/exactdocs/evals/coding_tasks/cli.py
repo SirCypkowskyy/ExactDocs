@@ -18,7 +18,7 @@ from datetime import date
 from pathlib import Path
 from typing import Final
 
-from agent_bench.arms import DEFAULT_ARMS, parse_arms
+from agent_bench.arms import ARMS, CONTEXT7, DEFAULT_ARMS, Arm, parse_arms
 from agent_bench.harness import RetrievalConfig
 from agent_bench.models import DEFAULT_RETRIES, thinking_setting
 from coding_tasks.agent import DEFAULT_MAX_REQUESTS
@@ -30,6 +30,7 @@ from coding_tasks.report import markdown as report_markdown
 from coding_tasks.run import load_rows, run_tasks
 from coding_tasks.sandbox import Limits, sandbox_named
 from coding_tasks.tasks import DEFAULT_CUTOFF, TASKS_DIR, CodingTask, load_tasks
+from retrieval_eval.context7 import API_KEY_VARIABLE
 from retrieval_eval.golden import CORPUS_FILE, Corpus, fetch, load_corpus
 from retrieval_eval.golden import default_cache_dir as golden_cache_dir
 
@@ -287,6 +288,25 @@ def _write(report: CheckReport, path: Path) -> None:
             out.write(text)
 
 
+def _arms(names: list[str]) -> list[Arm]:
+    """Read the arms asked for, as the agent benchmark does.
+
+    Args:
+        names: ``--arm`` values.
+
+    Returns:
+        The arms.
+
+    Raises:
+        ValueError: An unknown arm, or ``context7`` without ``CONTEXT7_API_KEY``.
+    """
+    arms = parse_arms(names)
+    if ARMS[CONTEXT7] in arms and not os.environ.get(API_KEY_VARIABLE, "").strip():
+        message = f"the context7 arm needs a Context7 API key in {API_KEY_VARIABLE}"
+        raise ValueError(message)
+    return arms
+
+
 def _run(args: argparse.Namespace) -> int:
     """Let agents complete the tasks, then write the report.
 
@@ -301,7 +321,7 @@ def _run(args: argparse.Namespace) -> int:
         sys.stderr.write("coding-tasks: give --agent-model, or --offline\n")
         return 2
     try:
-        arms = parse_arms(args.arm)
+        arms = _arms(args.arm)
         retrieval = [RetrievalConfig.parse(t) for t in args.retrieval or DEFAULT_RETRIEVAL]
         thinking_setting(args.thinking)
     except ValueError as error:
