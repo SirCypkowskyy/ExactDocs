@@ -308,7 +308,7 @@ Per agent model and arm:
 - refusals on answerable cases, and correct refusals on `unanswerable` cases;
 - how often the agent read every part of the answer in full (a section of each part, or one of
   its alternatives; for `grounded-docs`, a whole page; not measured for `context7`);
-- tool calls;
+- tool calls, and the calls that failed (*Tool errors*);
 - the cost per question: wall time, input tokens, output tokens with the thinking, thinking
   tokens on their own, USD.
 
