@@ -25,6 +25,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.usage import RequestUsage
 
+from agent_bench import cli as agent_cli
 from agent_bench.arms import (
     ARMS,
     CONTEXT7,
@@ -732,3 +733,25 @@ async def test_the_context7_arm_needs_its_api_key_and_a_known_grounded_docs_conf
     with pytest.raises(RuntimeError, match="CONTEXT7_API_KEY"):
         async with servers.tools(ARMS[CONTEXT7], None):
             pass
+
+
+async def test_the_report_names_the_commit_the_run_started_from(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    commits = iter(["the commit it started from", "a commit made while it ran"])
+    monkeypatch.setattr(agent_cli, "git", lambda *_args, **_kwargs: next(commits))
+    corpus, cases = golden()
+
+    report = await run_bench(
+        cases[:1],
+        corpus,
+        {},
+        agent_models=["offline:read"],
+        judge_model=OFFLINE_JUDGE,
+        arms=parse_arms(["none"]),
+        retrieval=[RetrievalConfig.parse("bm25:mode=bm25")],
+        work_dir=tmp_path,
+        tools=stand_in_tools,
+    )
+
+    assert report.meta.git_commit == "the commit it started from"

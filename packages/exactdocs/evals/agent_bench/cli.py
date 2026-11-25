@@ -358,6 +358,7 @@ async def run_bench(
         The report.
     """
     started_at = datetime.now(UTC).isoformat(timespec="seconds")
+    commit = git("rev-parse", "HEAD", cwd=Path(__file__).parent, check=False)  # the one it runs
     dataset = bench_dataset(cases, corpus)
     projects = [p for p in corpus.projects if p.id in {project for project, _ in cases}]
     servers = ArmServers(
@@ -419,7 +420,7 @@ async def run_bench(
     meta = RunMeta(
         started_at=started_at,
         exactdocs_version=importlib.metadata.version("exactdocs"),
-        git_commit=git("rev-parse", "HEAD", cwd=Path(__file__).parent, check=False),
+        git_commit=commit,
         agent_models=list(agent_models),
         judge_model=judge_model,
         arms=[arm.name for arm in arms],

@@ -148,9 +148,18 @@ def _commit(repo: Path, tag: str, files: dict[str, str], delete: tuple[str, ...]
     for path in delete:
         (repo / path).unlink()
     git("add", "-A", cwd=repo)
-    author = {"GIT_AUTHOR_NAME": "A", "GIT_AUTHOR_EMAIL": "a@example.com"}
-    committer = {"GIT_COMMITTER_NAME": "A", "GIT_COMMITTER_EMAIL": "a@example.com"}
-    git("commit", "-q", "--no-verify", "-m", tag, cwd=repo, **author, **committer)
+    git(
+        "commit",
+        "-q",
+        "--no-verify",
+        "-m",
+        tag,
+        cwd=repo,
+        GIT_AUTHOR_NAME="A",
+        GIT_AUTHOR_EMAIL="a@example.com",
+        GIT_COMMITTER_NAME="A",
+        GIT_COMMITTER_EMAIL="a@example.com",
+    )
     git("tag", tag, cwd=repo)
     return git("rev-parse", "HEAD", cwd=repo)
 
