@@ -258,6 +258,7 @@ from exactdocs.retrieval.models import (
     RepoGuidance,
     RerankLimits,
     RerankWith,
+    ResultGrouping,
     RetrievalMode,
     RoleBinding,
     SearchableVersion,
@@ -280,6 +281,7 @@ from exactdocs.retrieval.models import (
     VectorHit,
     VersionDrift,
     article_chunk_rows,
+    article_groups,
     as_float32,
     bind_role,
     caller_audience,
@@ -2042,6 +2044,8 @@ class SearchDocsUseCase:
             if hit.chunk_id in stored
         ]
         vanished = len(answer.hits) - len(results)
+        if query.group_by is ResultGrouping.ARTICLE:
+            results = _grouped(results, lambda r: r.article_path)
         return SearchDocsResult(
             library=version.library,
             version=version.version,
@@ -2057,6 +2061,38 @@ class SearchDocsUseCase:
             cache_hit=answer.cache_hit,
             results=results,
         )
+
+
+def _grouped[R: SearchResultOut](results: Sequence[R], article: Callable[[R], str]) -> list[R]:
+    """Order results by article group (``ResultGrouping.ARTICLE``), each told its group.
+
+    Args:
+        results: The results, best first.
+        article: The article of a result (with its library when several are searched).
+
+    Returns:
+        The same results, each article's together, best first, with ``group`` set.
+    """
+    order = article_groups([article(r) for r in results])
+    return [results[i].model_copy(update={"group": group}) for i, group in order]
+
+
+def _shown_across(
+    query: SearchAllQuery, results: Sequence[LibrarySearchResultOut]
+) -> list[LibrarySearchResultOut]:
+    """Keep the results of a search across libraries that are shown, grouped as asked.
+
+    Args:
+        query: The search (its path prefix, limit and grouping).
+        results: The ranked results, best first.
+
+    Returns:
+        Those under the prefix, at most ``limit``, grouped by library and article when asked.
+    """
+    shown = [r for r in results if inside(r.article_path, query.path_prefix)][: query.limit]
+    if query.group_by is ResultGrouping.ARTICLE:
+        return _grouped(shown, lambda r: f"{r.library}\n{r.article_path}")
+    return shown
 
 
 def _cross_library_embedding_scopes(caller: str | None) -> tuple[tuple[str, str], ...]:
@@ -2314,9 +2350,7 @@ class SearchAllLibrariesUseCase:
             libraries_omitted=omitted,
             libraries_without_vectors=list(near.without),
             libraries=_facets(counts, searched),
-            results=[r for r in results if inside(r.article_path, query.path_prefix)][
-                : query.limit
-            ],
+            results=_shown_across(query, results),
         )
 
     async def _bm25(

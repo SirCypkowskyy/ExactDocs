@@ -21,3 +21,8 @@ Feature: Searching one version over MCP
   Scenario: Results carry their location and the notice
     When an agent calls "search_docs" for "/fixture/docs-repo" version "v1.4.0" and "retry_policy"
     Then the search result has the notice and every result has a source link and a commit SHA
+
+  Scenario: Results come grouped by article
+    When an agent calls "search_docs" for "/fixture/docs-repo" version "v1.4.0" and "retry_policy max_retries backoff client"
+    Then the results come grouped by article, the article of the best result first
+    And each result names the rank of its article's group

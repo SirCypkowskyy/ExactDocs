@@ -33,7 +33,12 @@ from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.ingestion.models import ChunkingConfig, ParsedArticle, parse_article
 from exactdocs.retrieval.adapters.driven.local_models import LocalEmbeddingModels
 from exactdocs.retrieval.constants import LOCAL_EMBEDDING_BATCH
-from exactdocs.retrieval.models import EmbeddedTexts, ProviderKind, ProviderProfile
+from exactdocs.retrieval.models import (
+    EmbeddedTexts,
+    ProviderKind,
+    ProviderProfile,
+    ResultGrouping,
+)
 from exactdocs.retrieval.ports.driven import AgentReads, Embeddings
 from retrieval_eval.dataset import RetrievalDataset, fingerprint
 from retrieval_eval.golden import (
@@ -457,7 +462,7 @@ def _key(cell: Cell, golden: str, projects: Sequence[Project]) -> str:
     pinned = [(p.id, [(v.name, v.commit) for v in p.versions]) for p in projects]
     # what does not change the result is left out, and so are settings added since cells were
     # first kept while they hold their default, so a stored cell keeps its key
-    unset = {"neighbours"} if cell.neighbours is None else set()
+    unset = {name for name in ("neighbours", "group_by") if getattr(cell, name) is None}
     text = f"{cell.model_dump_json(exclude={'against', *unset})}|{golden}|{pinned}"
     return "sha256:" + hashlib.sha256(text.encode()).hexdigest()[:16]
 
@@ -573,9 +578,13 @@ async def run_grid(
                 local_reranker=local_reranker,
                 allow_providers=allow_providers,
                 build=build,
+                group_by=ResultGrouping(cell.group_by or ResultGrouping.ARTICLE),
             )
+            # a cell that sets the grouping is named apart from the app's own configuration
+            named = {"configuration": cell.name} if cell.group_by is not None else {}
             record = CellRecord(
-                key=key, result=ran.results[0].model_copy(update={"versus_default": None})
+                key=key,
+                result=ran.results[0].model_copy(update={"versus_default": None, **named}),
             )
         else:
             corpus = corpus or _read(projects, repos)

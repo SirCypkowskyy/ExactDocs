@@ -12,7 +12,7 @@ from dataclasses import dataclass
 
 from pydantic_evals import Dataset
 
-from exactdocs.retrieval.models import RerankWith
+from exactdocs.retrieval.models import RerankWith, ResultGrouping
 from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question, RetrievalDataset
 from retrieval_eval.evaluators import (
     Cost,
@@ -63,6 +63,7 @@ def golden_retriever(
     *,
     spent: Callable[[], Awaitable[tuple[int, float]]] | None = None,
     reads: RecordedReads | None = None,
+    group_by: ResultGrouping = ResultGrouping.ARTICLE,
 ) -> GoldenRetriever:
     """Build the retriever that asks each project's library in one mode.
 
@@ -72,6 +73,7 @@ def golden_retriever(
         mode: The retrieval mode.
         spent: Reads the instance's spend so far, for the cost per question.
         reads: The agentic explorer's reads, so each run's trace is checked.
+        group_by: How the searches group their results (by article, the default, #575).
 
     Returns:
         The retriever.
@@ -86,6 +88,7 @@ def golden_retriever(
                 commits={v.name: v.commit for v in project.versions},
                 spent=spent,
                 reads=reads,
+                group_by=group_by,
             )
             for project in corpus.projects
         }

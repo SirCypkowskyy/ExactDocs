@@ -43,6 +43,12 @@ A cell is one of two kinds:
 An app cell is a configuration of the retrieval benchmark (`bm25`, `hybrid:bge-base-en-v1.5`,
 `bm25+ce`, `hybrid:hosted`, ...). Hosted ones run only with `--allow-providers`.
 
+ExactDocs' search groups its results by article (#575), and an app cell measures it so. An app
+cell with `group_by: chunk` (and a `name` of its own, such as `bm25@default+by-chunk`) measures
+the search before it grouped them, one chunk per result: the control of `bm25@default` and
+`hybrid:bge-small-en-v1.5@default` (`against`). A cell kept from before #575 is not told apart by
+its key: run it again (`--fresh`, or delete its file in `<out>/cells/`).
+
 ### Eval-only cells
 
 The grid cuts, indexes and searches the pinned versions itself, in process, and scores the text it
@@ -122,8 +128,9 @@ The report is `<out>/retrieval-grid.json` and `.md` (default `reports/evals/grid
   shown under *Against each variant's control*.
 - Every cell also reports recall within 1,000, 2,000 and 4,000 tokens, under *Within a token
   budget*: whole results for every cell, and cut at the budget for the cells scored from text.
-- `just bench-pages` shows the recorded run of the rank-1 cells
-  (`results/retrieval-grid-rank1.json`, #575) on [Retrieval results](../benchmark/retrieval.md).
+- `just bench-pages` shows the recorded runs of the rank-1 cells
+  (`results/retrieval-grid-rank1.json`, #575) and of the app cells grouped by article and not
+  (`results/retrieval-grid-grouped.json`) on [Retrieval results](../benchmark/retrieval.md).
 
 !!! note "Wrong versions in text-scored cells"
     A text-scored cell searches only the version asked. A result the text scorer places only in

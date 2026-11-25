@@ -227,7 +227,13 @@ def format_search(result: SearchDocsResult) -> str:
     )
     if not result.coverage.complete:
         head += f" {MORE_MATCHES}"
-    return SECTION_SEPARATOR.join([head, *(format_result(r) for r in result.results)])
+    blocks, group = [head], None
+    for found in result.results:
+        if found.group is not None and found.group != group:  # grouped by article (#575)
+            group = found.group
+            blocks.append(f"## Article {group}: {_line(found.article_path)}")
+        blocks.append(format_result(found))
+    return SECTION_SEPARATOR.join(blocks)
 
 
 def _result_title(result: SearchResultOut) -> str:
@@ -413,6 +419,8 @@ def register_tools(
     ) -> SearchDocsResult:
         """Search one library version. Returns verbatim chunks with location and source link.
 
+        The results come grouped by article: the article that answers best first, with all of
+        its results, best first, then the next article (`group` is the article's rank).
         An empty result with `coverage.complete` true means this version has no match.
         It never falls back to another version; pass `ref` to pin one. `path_prefix` keeps the
         articles of one directory, as `list_articles` does. An empty optional argument counts as
@@ -429,7 +437,7 @@ def register_tools(
             mode: Retrieval mode; the default if empty.
 
         Returns:
-            The results of that version, best first.
+            The results of that version, grouped by article.
         """
         return await search_docs(
             SearchDocsQuery(
@@ -542,9 +550,10 @@ def register_tools(
         """Search every library at once when you do not know which one documents something.
 
         Only each library's default version is searched; each result names its library and
-        version, and `libraries` counts the matches per library (`path_prefix` aside). Narrow
-        with `library` (an ID or a name), or use `search_docs` with a `ref` for another version.
-        Chunk IDs work with `read_chunk`.
+        version, and `libraries` counts the matches per library (`path_prefix` aside). The
+        results come grouped by library and article, the best first (`group` is its rank).
+        Narrow with `library` (an ID or a name), or use `search_docs` with a `ref` for another
+        version. Chunk IDs work with `read_chunk`.
 
         Args:
             query: Identifier, error message or question.
@@ -555,7 +564,8 @@ def register_tools(
             path_prefix: Only articles inside this directory of their library.
 
         Returns:
-            The results across libraries, best first, with the matches per library.
+            The results across libraries, grouped by library and article, with the matches per
+            library.
         """
         return await search_all_libraries(
             SearchAllQuery(

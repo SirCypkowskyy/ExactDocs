@@ -112,6 +112,9 @@ class Cell(_Model):
     neighbours: int | None = None
     """Eval-only, ``expand: article``: the chunks taken on either side of each hit; None:
     ``ARTICLE_NEIGHBOURS``."""
+    group_by: Literal["article", "chunk"] | None = None
+    """An app cell only: how ExactDocs' search groups its results (#575); None: as it does by
+    default (by article). ``chunk`` measures the search before it grouped them."""
     against: str | None = None
     """The cell this one is a variant of (its control): the report also tests it against that
     cell, case by case (#575). It changes nothing the cell returns."""
@@ -133,6 +136,9 @@ class Cell(_Model):
         eval_only = (self.window, self.embedding, self.expand)
         if self.app is not None and (any(v is not None for v in eval_only) or self.prefixed):
             message = f"cell {self.name!r}: an app cell takes only app and chunking"
+            raise ValueError(message)
+        if self.group_by is not None and self.app is None:
+            message = f"cell {self.name!r}: group_by is an app cell's setting"
             raise ValueError(message)
         if self.search in {"dense", "hybrid"} and self.embedding is None:
             message = f"cell {self.name!r}: {self.search} needs an embedding model"

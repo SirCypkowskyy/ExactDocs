@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import operator
 from typing import Any
 
 from behave import then, when
@@ -147,6 +148,25 @@ def step_no_index(context: Context, target: str) -> None:
 def step_modes(context: Context, modes: str) -> None:
     assert context.mcp_result.is_error, context.mcp_result
     assert f"available modes: {modes}" in context.mcp_result.content[0].text
+
+
+@then("the results come grouped by article, the article of the best result first")
+def step_grouped(context: Context) -> None:
+    results = context.mcp_data["results"]
+    articles = [r["article_path"] for r in results]
+    order = list(dict.fromkeys(articles))
+    # each article's results together, in one run
+    assert [a for i, a in enumerate(articles) if i == 0 or a != articles[i - 1]] == order, articles
+    assert len(order) < len(results), articles  # an article answered more than once
+    best = max(results, key=operator.itemgetter("score"))
+    assert best["article_path"] == order[0], results
+
+
+@then("each result names the rank of its article's group")
+def step_group_rank(context: Context) -> None:
+    results = context.mcp_data["results"]
+    order = list(dict.fromkeys(r["article_path"] for r in results))
+    assert [r["group"] for r in results] == [order.index(r["article_path"]) + 1 for r in results]
 
 
 @then("the search result has the notice and every result has a source link and a commit SHA")

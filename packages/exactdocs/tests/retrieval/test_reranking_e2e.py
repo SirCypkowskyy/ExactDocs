@@ -11,12 +11,13 @@ from databases import SQL_BACKENDS
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.retrieval.dtos import SearchDocsQuery, SetLibraryRetrievalCommand
-from exactdocs.retrieval.models import FallbackReason
+from exactdocs.retrieval.models import FallbackReason, ResultGrouping
 from fake_llm import gateway
 from fixture_import import LIBRARY, import_fixture
 from fixture_repo import DocsRepo
 
 QUERY = "how do I retry failed calls"
+RANKED = ResultGrouping.CHUNK  # the reranked order itself, not grouped by article (#575)
 
 
 @pytest.mark.parametrize("backend", SQL_BACKENDS)
@@ -43,7 +44,9 @@ async def test_a_search_is_reranked_and_a_slow_reranker_keeps_the_order(
                 SetLibraryRetrievalCommand(library=LIBRARY, rerank_top_n=3)
             )
             reranked = await retrieval.search_docs(
-                SearchDocsQuery(library=LIBRARY, ref="v1.4.0", query=QUERY, limit=5)
+                SearchDocsQuery(
+                    library=LIBRARY, ref="v1.4.0", query=QUERY, limit=5, group_by=RANKED
+                )
             )
             await retrieval.set_library_retrieval(
                 SetLibraryRetrievalCommand(
@@ -51,7 +54,9 @@ async def test_a_search_is_reranked_and_a_slow_reranker_keeps_the_order(
                 )
             )
             kept = await retrieval.search_docs(
-                SearchDocsQuery(library=LIBRARY, ref="v1.4.0", query=QUERY, limit=5)
+                SearchDocsQuery(
+                    library=LIBRARY, ref="v1.4.0", query=QUERY, limit=5, group_by=RANKED
+                )
             )
 
     assert (reranked.reranked, reranked.coverage.reranked) == (True, 3)

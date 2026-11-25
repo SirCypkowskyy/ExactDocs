@@ -40,7 +40,7 @@ from exactdocs.bootstrap.settings import (
     Settings,
 )
 from exactdocs.retrieval.dtos import GetLibraryRetrievalQuery
-from exactdocs.retrieval.models import RerankWith, RetrievalMode
+from exactdocs.retrieval.models import RerankWith, ResultGrouping, RetrievalMode
 from exactdocs.retrieval.ports.driven import AgentReads
 from fixture_import import embed_fixture
 from fixture_repo import git
@@ -362,6 +362,9 @@ class _Run:
     """When a hit answers an expected section, at this chunking's depth."""
     indexes: dict[str, IndexCost]
     """The cost of embedding the corpus, by embedding model, once per chunking."""
+    group_by: ResultGrouping = ResultGrouping.ARTICLE
+    """How the searches group their results (#575): by article, as ExactDocs searches by
+    default."""
 
 
 async def _index(container: Container) -> IndexCost:
@@ -438,6 +441,7 @@ async def _run_config(config: BenchConfig, run: _Run) -> ConfigResult:
                 config.mode.value,
                 spent=spent,
                 reads=reads,
+                group_by=run.group_by,
             ),
             answers=answers,
         )
@@ -519,6 +523,7 @@ async def bench(
     allow_providers: bool = False,
     build: Builder = _build,
     only: Sequence[str] = ("*",),
+    group_by: ResultGrouping = ResultGrouping.ARTICLE,
 ) -> RetrievalBenchReport:
     """Run every configuration at every chunking configuration.
 
@@ -534,6 +539,7 @@ async def bench(
         allow_providers: Run the hosted configurations (by hand only).
         build: Builds a configuration's container.
         only: Which configurations run at which chunking (``picked``).
+        group_by: How the searches group their results (by article, the default, #575).
 
     Returns:
         The report.
@@ -564,6 +570,7 @@ async def bench(
                 build=build,
                 matches=held_match(held),
                 indexes={},
+                group_by=group_by,
             )
             for config in configs:
                 if not picked(only, config.name, chunking.name):

@@ -14,7 +14,7 @@ from pydantic_evals import Case
 
 from exactdocs.retrieval.models import RerankWith
 from retrieval_bench_stand_ins import HOSTED, stand_in_container, tiny_corpus
-from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question
+from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question, results_of
 from retrieval_eval.golden import fetch, load_corpus, load_golden
 from retrieval_eval.ingestion_cli import CONFIGURATIONS
 from retrieval_eval.retrieval_bench import (
@@ -234,6 +234,36 @@ def test_metrics_without_unanswerable_cases_leave_their_rates_out() -> None:
     assert metrics_of([]).questions == 0
 
 
+# ---------------------------------------------------------------- results grouped by article (#575)
+
+
+def _in(group: int, hit: Hit, tokens: int = 100) -> Hit:
+    return hit.model_copy(update={"group": group, "tokens": tokens})
+
+
+def test_hits_grouped_by_article_are_one_result_ranked_as_their_group() -> None:
+    d = _hit("d.md", "D")
+    hits = [_in(1, C), _in(1, d), _in(2, B), _in(2, A), _in(3, C)]
+
+    assert [len(r) for r in results_of(hits)] == [2, 2, 1]
+    assert [len(r) for r in results_of([C, d, B])] == [1, 1, 1]  # no group: a result each
+    row = row_of(_case(expected=[A, B]), Answer(hits=hits))
+    # A and B are both in the second group: one result, which answers one part (as a text does)
+    assert (row.rank, row.section_ranks) == (2, (2,))
+    assert (row.context_tokens, row.tokens_to_hit) == (500, 400)  # the whole first two groups
+    m = metrics_of([row])
+    assert (m.recall_at_1, m.recall_at_5, m.mrr) == (0, 1, 0.5)
+
+
+def test_a_part_found_in_two_groups_counts_once_at_the_first() -> None:
+    hits = [_in(1, A), _in(2, B), _in(2, C)]
+
+    row = row_of(_case(expected=[A, _alt(B), C]), Answer(hits=hits))
+
+    # parts: A (or B), C; the first group answers A, the second C
+    assert (row.rank, row.section_ranks, row.sections) == (1, (1, 2), 2)
+
+
 # ---------------------------------------------------------------- within a token budget (#575)
 
 
@@ -313,6 +343,17 @@ def test_the_summary_shows_recall_within_each_budget_with_its_test() -> None:
     assert "| `bm25` at `default` | **-100.0** [" in text
     old = _report(_result("bm25", Budget.NONE, rows=_named(60)))
     assert "## Within a token budget" not in markdown(old)
+
+
+def test_a_result_recorded_by_another_run_says_which() -> None:
+    other = {"exactdocs_commit": "abc", "platform": "Linux x86_64", "cpus": "4", "date": "today"}
+    result = _result("bm25", Budget.NONE).model_copy(update={"recorded_by": other})
+
+    text = markdown(_report(result))
+
+    assert "## Recorded by another run" in text
+    assert "- `bm25` at `default`: ExactDocs `abc`, Linux x86_64, 4 CPUs, today" in text
+    assert "## Recorded by another run" not in markdown(_report(_result("bm25", Budget.NONE)))
 
 
 # ---------------------------------------------------------------- results, recommendation

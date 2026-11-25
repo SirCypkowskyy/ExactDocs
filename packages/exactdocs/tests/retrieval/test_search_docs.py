@@ -20,10 +20,12 @@ from exactdocs.retrieval.errors import (
 from exactdocs.retrieval.models import (
     DocTarget,
     ManifestStatus,
+    ResultGrouping,
     RetrievalMode,
     SearchableVersion,
     SourceHost,
     TagMatch,
+    article_groups,
 )
 from exactdocs.retrieval.module import RetrievalModule
 
@@ -411,3 +413,38 @@ async def test_a_path_prefix_never_reads_another_version(retrieval: RetrievalMod
 def test_a_path_prefix_that_leaves_the_tree_is_refused(prefix: str) -> None:
     with pytest.raises(ValidationError):
         SearchDocsQuery(library=LIB, query="x", path_prefix=prefix)
+
+
+# ---------------------------------------------------------------- grouped by article (#575)
+
+
+async def test_results_are_grouped_by_article_the_best_article_first(
+    retrieval: RetrievalModule,
+) -> None:
+    query = "retry_policy max_retries token client"
+    ranked = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, query=query, limit=10, group_by=ResultGrouping.CHUNK)
+    )
+    grouped = await retrieval.search_docs(SearchDocsQuery(library=LIB, query=query, limit=10))
+
+    # the same results, the first one included; only their order changes
+    assert {r.chunk_id for r in grouped.results} == {r.chunk_id for r in ranked.results}
+    assert grouped.results[0].chunk_id == ranked.results[0].chunk_id
+    # every article's results together, in the order of its best result, each best first
+    articles = list(dict.fromkeys(r.article_path for r in ranked.results))
+    assert list(dict.fromkeys(r.article_path for r in grouped.results)) == articles
+    for article in articles:
+        own = [r.chunk_id for r in ranked.results if r.article_path == article]
+        assert [r.chunk_id for r in grouped.results if r.article_path == article] == own
+        assert {r.group for r in grouped.results if r.article_path == article} == {
+            articles.index(article) + 1
+        }
+    groups = [r.group or 0 for r in grouped.results]
+    assert groups == sorted(groups)
+    assert len(articles) < len(ranked.results)  # some article answered more than once
+    assert all(r.group is None for r in ranked.results)
+
+
+def test_article_groups_keep_each_results_place_in_its_group() -> None:
+    assert article_groups(["a", "b", "a", "c", "b"]) == [(0, 1), (2, 1), (1, 2), (4, 2), (3, 3)]
+    assert article_groups([]) == []

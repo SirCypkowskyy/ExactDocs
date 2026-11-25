@@ -1059,7 +1059,7 @@
       "read_only_hint": true,
       "title": "Search all libraries"
     },
-    "description": "Search every library at once when you do not know which one documents something.\n\nOnly each library's default version is searched; each result names its library and\nversion, and `libraries` counts the matches per library (`path_prefix` aside). Narrow\nwith `library` (an ID or a name), or use `search_docs` with a `ref` for another version.\nChunk IDs work with `read_chunk`.",
+    "description": "Search every library at once when you do not know which one documents something.\n\nOnly each library's default version is searched; each result names its library and\nversion, and `libraries` counts the matches per library (`path_prefix` aside). The\nresults come grouped by library and article, the best first (`group` is its rank).\nNarrow with `library` (an ID or a name), or use `search_docs` with a `ref` for another\nversion. Chunk IDs work with `read_chunk`.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1247,7 +1247,7 @@
           "type": "boolean"
         },
         "results": {
-          "description": "The results, best first, each naming its library and version.",
+          "description": "The results, best first or grouped by library and article (`group`), each naming its\nlibrary and version.",
           "items": {
             "additionalProperties": false,
             "description": "A result of a search across libraries: also names the library and version it came from.",
@@ -1286,6 +1286,18 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "group": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Grouped by article (`group_by` `article`): the 1-based rank of this result's article.\nAn article's results come together, best first, and its group takes the place of its best\nresult. Null when the results are not grouped."
               },
               "heading_path": {
                 "description": "The chunk's heading and those above it, outermost first; empty before the first heading.",
@@ -1462,7 +1474,7 @@
       "read_only_hint": true,
       "title": "Search a library version"
     },
-    "description": "Search one library version. Returns verbatim chunks with location and source link.\n\nAn empty result with `coverage.complete` true means this version has no match.\nIt never falls back to another version; pass `ref` to pin one. `path_prefix` keeps the\narticles of one directory, as `list_articles` does. An empty optional argument counts as\nnot given; a library name is resolved to its ID; a `limit` out of range is clamped.",
+    "description": "Search one library version. Returns verbatim chunks with location and source link.\n\nThe results come grouped by article: the article that answers best first, with all of\nits results, best first, then the next article (`group` is the article's rank).\nAn empty result with `coverage.complete` true means this version has no match.\nIt never falls back to another version; pass `ref` to pin one. `path_prefix` keeps the\narticles of one directory, as `list_articles` does. An empty optional argument counts as\nnot given; a library name is resolved to its ID; a `limit` out of range is clamped.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -1635,7 +1647,7 @@
           "type": "boolean"
         },
         "results": {
-          "description": "The results, best first; empty when nothing matched.",
+          "description": "The results, best first, or grouped by article (`group`); empty when nothing matched.",
           "items": {
             "additionalProperties": false,
             "description": "One verbatim result with where it lives and how to read around it.",
@@ -1662,6 +1674,18 @@
                   "type": "string"
                 },
                 "type": "array"
+              },
+              "group": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "Grouped by article (`group_by` `article`): the 1-based rank of this result's article.\nAn article's results come together, best first, and its group takes the place of its best\nresult. Null when the results are not grouped."
               },
               "heading_path": {
                 "description": "The chunk's heading and those above it, outermost first; empty before the first heading.",

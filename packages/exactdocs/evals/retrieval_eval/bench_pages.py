@@ -33,6 +33,8 @@ RESULTS: Final[Path] = Path(__file__).parents[1] / "results"
 PAGES: Final[Path] = Path(__file__).parents[4] / "docs" / "benchmark"
 GRID_RESULTS: Final[str] = "retrieval-grid-rank1.json"
 """The recorded run of the grid's rank-1 cells (#575), in ``RESULTS``."""
+GRID_GROUPED: Final[str] = "retrieval-grid-grouped.json"
+"""The recorded run of the grid's app cells grouped by article and not (#575), in ``RESULTS``."""
 BLOCK: Final[re.Pattern[str]] = re.compile(
     r"(<!-- bench:(?P<name>[a-z-]+) -->\n)(?:(?!<!-- bench:).)*?(^<!-- /bench -->)",
     re.DOTALL | re.MULTILINE,
@@ -208,12 +210,12 @@ def blocks(results: Path = RESULTS) -> dict[str, str]:
         if grounded.exists()
         else {}
     )
-    grid = results / GRID_RESULTS
-    rank_one = (
-        {"retrieval-grid": grid_block(GridReport.model_validate_json(grid.read_text("utf-8")))}
-        if grid.exists()
-        else {}
-    )
+    grids = {"retrieval-grid": GRID_RESULTS, "retrieval-grouping": GRID_GROUPED}
+    rank_one = {
+        name: grid_block(GridReport.model_validate_json((results / file).read_text("utf-8")))
+        for name, file in grids.items()
+        if (results / file).exists()
+    }
     return {
         "golden": golden_block(),
         "golden-review": review_block(load_review()),
