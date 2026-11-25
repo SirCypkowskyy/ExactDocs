@@ -5,7 +5,7 @@ description: Use when cutting an ExactDocs release or dev build, choosing the ne
 
 # Releasing
 
-Full policy: `docs/releasing.md`. Only do this when a human asked for a release.
+Full policy: `docs/releasing/` (start at `docs/releasing/index.md`). Only do this when a human asked for a release.
 
 ## Pick the version
 
@@ -40,7 +40,7 @@ unless started with `-f integration=true`, which only a maintainer does, never a
 
 ## Runners
 
-`RUNNER_MODE` (repository variable) decides where jobs run (docs/releasing.md, *CI/CD and
+`RUNNER_MODE` (repository variable) decides where jobs run (docs/releasing/runners.md, *CI/CD and
 runners*). `hybrid` (default, or unset): the release's eval, web, Python and arm64 image jobs on the
 self-hosted ARM64 runner `[self-hosted, linux, ARM64, exactdocs]`, its amd64 image jobs and the
 publishing jobs on `ubuntu-24.04`; CI and docs on `ubuntu-24.04`. `self-hosted`: everything on
@@ -57,5 +57,5 @@ increased"*, and that they flip it in *Settings → Secrets and variables → Ac
   Delete it (`git push origin :refs/tags/vX` and `git tag -d vX`) and tag the right commit.
   Never delete a tag whose packages already reached PyPI; PyPI versions are immutable. Bump instead.
 - **PyPI 403 / invalid-publisher**: the trusted publisher on PyPI or the `pypi` / `pypi-exactdocs` environment is
-  missing (see docs/releasing.md, one-time setup).
+  missing (see docs/releasing/release-workflow.md, one-time setup).
 - Re-run only failed jobs: `gh run rerun <id> --failed`.

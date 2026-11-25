@@ -4194,7 +4194,7 @@ class AgentRead:
 
     It says where the read was bound and where what it served came from; never its arguments or
     the text read. The eval suite checks every read of every agentic run against the version the
-    question asked for (docs/evals.md); with telemetry on, each read is also an event of the
+    question asked for (docs/evals/suite.md); with telemetry on, each read is also an event of the
     run's trace.
     """
 

@@ -15,7 +15,7 @@ telemetry off and the corpus folder as the one root it may read, and nothing els
 depth and page limits are raised only where a version's folder is deeper or larger than they
 allow, so that every article is offered. The vector configuration's embedding model is served by
 ``openai_embeddings`` (the model ExactDocs pulled) at ``OPENAI_API_BASE``. CI never runs this:
-the quick tests replay recorded responses. See docs/evals.md#grounded-docs.
+the quick tests replay recorded responses. See docs/evals/grounded-docs.md.
 """
 
 import argparse
@@ -1294,7 +1294,9 @@ def _parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="grounded-bench",
-        description="Grounded Docs on the golden set, next to ExactDocs (docs/evals.md).",
+        description=(
+            "Grounded Docs on the golden set, next to ExactDocs (docs/evals/grounded-docs.md)."
+        ),
     )
     parser.add_argument(
         "--cache-dir",

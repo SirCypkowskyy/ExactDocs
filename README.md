@@ -20,7 +20,7 @@
   <a href="https://github.com/SirCypkowskyy/ExactDocs/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/SirCypkowskyy/ExactDocs/actions/workflows/ci.yml/badge.svg?branch=develop"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-17171a"></a>
   <a href="https://www.python.org/"><img alt="Python 3.14" src="https://img.shields.io/badge/python-3.14-17171a?logo=python&logoColor=white"></a>
-  <a href="docs/deployment.md"><img alt="Docker image on ghcr.io" src="https://img.shields.io/badge/docker-ghcr.io%2Fsircypkowskyy%2Fexactdocs-17171a?logo=docker&logoColor=white"></a>
+  <a href="docs/deployment/index.md"><img alt="Docker image on ghcr.io" src="https://img.shields.io/badge/docker-ghcr.io%2Fsircypkowskyy%2Fexactdocs-17171a?logo=docker&logoColor=white"></a>
   <a href="https://sircypkowskyy.github.io/ExactDocs/"><img alt="Documentation" src="https://img.shields.io/badge/docs-sircypkowskyy.github.io%2FExactDocs-17171a"></a>
 </p>
 
@@ -146,7 +146,7 @@ Then ask your agent something. It finds the library with `resolve-library-id` an
 On `develop`, `exactdocs config --client claude --new-token` prints this snippet for Claude Code,
 Claude Desktop, Cursor, VS Code or Codex, with a token made for that client. A local agent that
 only reads can run `uvx exactdocs serve --stdio` instead, with no token and no port.
-[Getting started](docs/getting-started.md) covers the rest: the CLI, private repositories, the
+[Getting started](docs/getting-started/index.md) covers the rest: the CLI, private repositories, the
 sources file, webhooks, accounts and sign-in through an identity provider.
 
 ## Features
@@ -167,7 +167,7 @@ BM25 by default, with identifiers indexed whole and by their parts (`camelCase`,
 an agentic mode, where an LLM browses the version and picks the chunks, are optional. Each mode
 stays inside the version and its budgets, and falls back to a cheaper mode with a reason instead
 of failing. Articles are cut at their headings, never inside a code block or a table. See
-[Search and AI models](docs/search.md).
+[Search and AI models](docs/search/index.md).
 
 ### For the people who run it
 
@@ -183,7 +183,7 @@ of failing. Articles are cut at their headings, never inside a code block or a t
   traces and Prometheus metrics.
 - Search and vector indexes in ExactDocs' own database, or in Azure AI Search, Chroma, DuckDB,
   Elasticsearch, OpenSearch, LanceDB, libSQL, Milvus, MongoDB, Pinecone, Qdrant or Redis. See
-  [External index backends](docs/architecture.md#external-index-backends).
+  [External index backends](docs/architecture/index-backends.md).
 
 ## Benchmark
 
@@ -204,13 +204,13 @@ An import fetches only the pinned commit and only the selected files, splits eve
 headings and indexes it. A new version becomes visible in one step once it is complete, and a
 re-sync of a branch re-chunks only the files that changed. The backend is a Python modular
 monolith (FastAPI, FastMCP, pydantic-ai, DBOS for durable jobs) and the React UI is served by the
-same process. [Architecture](docs/architecture.md) and [Flows](docs/flows.md) explain it.
+same process. [Architecture](docs/architecture/index.md) and [Flows](docs/flows/index.md) explain it.
 
 The image comes in three variants: `:latest` (BM25, no model), `:latest-ai` (hosted and
 self-hosted model providers) and `:latest-local` (two small local models, for instances with no
-network). [Deployment](docs/deployment.md) covers a hardened container, reverse proxies, health
+network). [Deployment](docs/deployment/index.md) covers a hardened container, reverse proxies, health
 checks, upgrades, backups, PostgreSQL, Supabase and observability, and
-[Configuration](docs/configuration.md) lists every setting.
+[Configuration](docs/configuration/index.md) lists every setting.
 
 ## Roadmap
 
@@ -218,7 +218,7 @@ v0.2.0 (MVP-1) has the main loop for one admin with no external services: import
 URL, heading-based chunking, BM25 pinned to a version, the web UI and the MCP tools. `develop` adds
 everything this README lists beyond that. Later: `llms.txt` and website crawling, docs resolved
 from package registries and lockfiles, prebuilt index snapshots, and AsciiDoc and notebooks. The
-[user stories](docs/user-stories.md) and the [delivery plan](docs/plan.md) have the details.
+[user stories](docs/user-stories.md) and the [delivery plan](docs/plan/index.md) have the details.
 
 ## Development
 
@@ -241,8 +241,8 @@ just check        # everything CI runs
 | `docs/` | the documentation site (Zensical) |
 | `.agents/skills/` | how agents work on issues, test and release |
 
-Read [Architecture](docs/architecture.md) (modular monolith, ports and adapters) and
-[Branching and releases](docs/releasing.md) before contributing.
+Read [Architecture](docs/architecture/index.md) (modular monolith, ports and adapters) and
+[Branching and releases](docs/releasing/index.md) before contributing.
 
 ## Contributing
 

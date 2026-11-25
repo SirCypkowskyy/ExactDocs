@@ -68,7 +68,7 @@ export const messages = defineMessages(
       admin: "Admin",
       creator: "Creator",
     },
-    /** What each role that can be given adds (the backend's rules, docs/rest-api.md). */
+    /** What each role that can be given adds (the backend's rules, docs/rest-api/users-and-access.md). */
     roleHints: {
       viewer: "Finds, reads and searches it, in the UI and over MCP.",
       contributor: "Also imports versions, re-syncs it and tags articles.",

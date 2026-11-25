@@ -1,4 +1,4 @@
-# Golden-set cases for Zod (corpus.yaml: zod). Format and rules: docs/evals.md#the-golden-set.
+# Golden-set cases for Zod (corpus.yaml: zod). Format and rules: docs/evals/golden-set.md.
 # Check with `just golden-validate --projects zod`.
 # v3: everything is in README.md (no H1, so paths start at the H2). v4: MDX pages under
 # packages/docs/content/ have their title in front matter, so paths start at the H2 too.

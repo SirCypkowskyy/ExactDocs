@@ -80,7 +80,7 @@ def missing_sections(dataset: RetrievalDataset, docs_repo: DocsRepo) -> list[str
     """Cases asking for a version, or expecting a section, that the fixture does not have.
 
     Such a case would only count as a miss; the suite fails on it instead (an old dataset run on
-    a changed fixture, docs/evals.md).
+    a changed fixture, docs/evals/suite.md).
 
     Args:
         dataset: The cases.

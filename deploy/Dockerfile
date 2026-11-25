@@ -6,7 +6,7 @@
 #          pulled at their pinned revisions into /opt/exactdocs/models (read-only)
 # Build from the repository root:
 #   docker build -f deploy/Dockerfile --build-arg VERSION=0.1.0 [--target ai|local] .
-# Size budgets per variant: deploy/check_artifacts.py and docs/releasing.md.
+# Size budgets per variant: deploy/check_artifacts.py and docs/releasing/images.md.
 #
 # Layers go from "changes rarely" to "changes every commit", so a source-only edit rebuilds only
 # the last steps of each stage:
@@ -21,7 +21,7 @@
 #   docker run --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges ...
 # with /data (the volume) as the only writable path.
 #
-# Behind a corporate proxy (#538, docs/deployment.md): pass HTTPS_PROXY, HTTP_PROXY and NO_PROXY
+# Behind a corporate proxy (#538, docs/deployment/corporate-proxy.md): pass HTTPS_PROXY, HTTP_PROXY and NO_PROXY
 # at run time, and when the proxy re-signs TLS mount its CA and name it, e.g.
 #   docker run -e HTTPS_PROXY=... -v ./corp-ca.pem:/etc/exactdocs/ca.pem:ro \
 #     -e EXACTDOCS_CA_BUNDLE=/etc/exactdocs/ca.pem ...
@@ -197,12 +197,13 @@ FROM python:3.14-slim-trixie@sha256:f1b121a95d6295f7291a0fda8280f747efd657bd055e
 # `dpkg --audit` fixes here. (Names are those of trixie: dpkg only warns when one is not
 # installed, so after a Debian bump check the image size in the CI log.)
 # ssh refuses to run for a uid without a passwd entry, hence the exactdocs user (10001).
-# zlib1g comes with the base image, so the install above would leave it at the base's +b1, which
-# has HIGH CVE-2026-76844 and CVE-2026-85091 (#275). No python:3.14-slim-trixie build ships the
-# fixed +deb13u1 (trixie-security) yet: upgrade it here, and drop this once a new base digest has it.
+# zlib1g and libzstd1 come with the base image, so the install above would leave them at the
+# base's versions, which have HIGH CVE-2026-76844 and CVE-2026-85091 (zlib1g, #275) and
+# CVE-2026-124851 (libzstd1). No python:3.14-slim-trixie build ships the fixed +deb13u1
+# (trixie-security) yet: upgrade them here, and drop this once a new base digest has them.
 RUN --mount=type=bind,from=apt-lists,source=/var/lib/apt/lists,target=/var/lib/apt/lists,rw \
     apt-get install -y --no-install-recommends ca-certificates git openssh-client tini \
-    && apt-get install -y --no-install-recommends --only-upgrade zlib1g \
+    && apt-get install -y --no-install-recommends --only-upgrade zlib1g libzstd1 \
     && dpkg --purge --force-depends perl perl-modules-5.40 libperl5.40 liberror-perl \
     && rm -rf /usr/local/lib/python3.14/ensurepip /usr/local/lib/python3.14/site-packages/pip* \
       /usr/local/lib/python3.14/site-packages/setuptools* /usr/local/bin/pip* \

@@ -5,7 +5,7 @@ ingestion benchmark's import), every golden question is asked with BM25 in its p
 and each result is kept twice: as ExactDocs returns it (its chunk ID, read back with
 ``read_chunk``) and as text (the chunk's content). Both are scored, and the report records how
 often the text scorer takes the hit and miss decisions chunk-ID scoring takes, at every threshold
-of the sweep. It needs no model. See docs/evals.md#scoring-text-results.
+of the sweep. It needs no model. See docs/evals/text-scoring.md.
 """
 
 import argparse
@@ -197,7 +197,9 @@ def _parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="text-bench",
-        description="Calibrate the text scorer against chunk-ID scoring (docs/evals.md).",
+        description=(
+            "Calibrate the text scorer against chunk-ID scoring (docs/evals/text-scoring.md)."
+        ),
     )
     parser.add_argument(
         "--cache-dir",

@@ -1,4 +1,4 @@
-"""The golden-set review: ``just golden-review`` (docs/evals.md).
+"""The golden-set review: ``just golden-review`` (docs/evals/golden-set.md).
 
 As in ``run_retrieval_eval.py``, the test-support directory (the importer wiring) is put on the
 path before the CLI is imported.

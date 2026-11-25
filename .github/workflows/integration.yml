@@ -8,9 +8,9 @@ name: Integration
 #   - a release dry run with the input `integration` (release.yml calls it, with `release`).
 # The tests they run are marked: pytest's `integration` marker and behave's `@integration` tag,
 # both off by default and turned on by `--integration` / EXACTDOCS_INTEGRATION=1
-# (packages/exactdocs/tests/fixtures/integration.py, docs/releasing.md).
+# (packages/exactdocs/tests/fixtures/integration.py, docs/releasing/tests.md).
 #
-# Runners (docs/releasing.md "CI/CD and runners"), switched by the repository variable RUNNER_MODE:
+# Runners (docs/releasing/runners.md "CI/CD and runners"), switched by the repository variable RUNNER_MODE:
 #   hybrid (default, also when unset): every job on GitHub-hosted ubuntu-24.04 (amd64), except that
 #     the release (input `release`) runs the Python job on the self-hosted ARM64 runner, as it does
 #     its eval and builds.
@@ -372,7 +372,7 @@ jobs:
             CREATED=${{ steps.created.outputs.at }}
             DEBIAN_REFRESH=${{ steps.created.outputs.week }}
       # RUN-02: size budgets, no ML package and no model weights (budgets and reasoning:
-      # docs/releasing.md). The -ai and -local variants: job image-variants.
+      # docs/releasing/images.md). The -ai and -local variants: job image-variants.
       - name: Image size budget, no ML package and no model files
         run: python3 deploy/check_artifacts.py image exactdocs:ci base
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
@@ -385,7 +385,7 @@ jobs:
           docker rm "$cid" >/dev/null
           UV_DYNAMIC_VERSIONING_BYPASS=0.0.0.dev0 uv build --wheel --package exactdocs --out-dir "$RUNNER_TEMP/dist"
           python3 deploy/check_artifacts.py wheel "$RUNNER_TEMP"/dist/exactdocs-*.whl
-      # Fails on a fixable CRITICAL/HIGH finding; accepted ones are in .trivyignore (docs/releasing.md).
+      # Fails on a fixable CRITICAL/HIGH finding; accepted ones are in .trivyignore (docs/releasing/image-scan.md).
       - name: Trivy scan
         uses: ./.github/actions/trivy-gate
         with:
@@ -536,7 +536,7 @@ jobs:
             REVISION=${{ github.sha }}
             CREATED=${{ steps.created.outputs.at }}
             DEBIAN_REFRESH=${{ steps.created.outputs.week }}
-      # Budgets and reasoning: docs/releasing.md. -ai: no ML package but pydantic-ai, no model
+      # Budgets and reasoning: docs/releasing/images.md. -ai: no ML package but pydantic-ai, no model
       # file; -local: the default models at their pinned revisions, read-only. Neither: aiohttp.
       - name: Image size budgets, packages and models
         if: ${{ !cancelled() }}

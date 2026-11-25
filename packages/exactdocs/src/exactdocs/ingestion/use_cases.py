@@ -4742,7 +4742,7 @@ class CollectGarbageUseCase:
     Runs each domain's collector in order (the catalog first: retrieval keeps what the catalog
     still knows), then fails the job if any collector failed, after the others had their turn.
     Chunk IDs of collected manifests are not kept as tombstones yet: a stale ID older than the
-    grace period answers ``not_found`` instead of ``stale_chunk`` (see docs/plan.md, E7-03).
+    grace period answers ``not_found`` instead of ``stale_chunk`` (see docs/plan/e7-mcp.md, E7-03).
     """
 
     collectors: Sequence[Collector]
