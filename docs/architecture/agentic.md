@@ -88,7 +88,7 @@ loads `ai_explorer_sdk.py` at the first agentic search. That module runs a pydan
 - Bootstrap wires the OpenTelemetry adapter (an `exactdocs.agent.read` event on the read's span)
   when telemetry is on.
 - The eval suite wires its own recorder, which is where every agentic run is checked against the
-  version asked for ([Retrieval evals](../evals.md)).
+  version asked for ([Retrieval evals](../evals/index.md)).
 - The model is instrumented with `include_content=False` (the factory's, or wrapped there), so the
   agent run, its model requests and its tool calls get spans (the read calls nested in `run_code`)
   and `gen_ai.client.token.usage`, without content.

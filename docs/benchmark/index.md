@@ -25,4 +25,4 @@ questions as the last one.
 !!! info "Where the numbers come from"
     The tables on the result pages are generated from the recorded runs in
     [`packages/exactdocs/evals/results/`](https://github.com/SirCypkowskyy/ExactDocs/tree/develop/packages/exactdocs/evals/results).
-    The commands and the full reference are in [Retrieval evals](../evals.md).
+    The commands and the full reference are in [Retrieval evals](../evals/index.md).

@@ -16,7 +16,7 @@ By default every index lives in ExactDocs' own database (SQLite FTS5 and sqlite-
 full-text search, pg_search and pgvector). `EXACTDOCS_SEARCH_BACKEND` and `EXACTDOCS_VECTOR_BACKEND`
 move the search index or the vector index to an external backend (#352). Epic E14 built twelve
 backends on it, each with its options in
-[Configuration](../configuration.md#external-index-backends).
+[Configuration](../configuration/index-backends/index.md).
 
 ## The rules
 
@@ -160,7 +160,7 @@ Each adapter is a module in `retrieval/adapters/driven/`.
       pre-filtered).
     - Writes return once the index counts them. API key or Entra ID.
     - No emulator: CI runs it on an in-process fake of the REST API, a manual workflow on a real
-      service ([Configuration](../configuration.md#azure-ai-search)).
+      service ([Configuration](../configuration/index-backends/azure-search.md)).
 
 ??? info "`chroma`: `chroma_index.py`"
 
@@ -168,7 +168,7 @@ Each adapter is a module in `retrieval/adapters/driven/`.
     - Scalar metadata `manifest_id` / `library` / one `tag:<tag>` key per tag, filtered in Chroma
       before ranking.
     - The HTTP client (a server, Chroma Cloud) or the embedded persistent client, synchronous, in
-      worker threads ([Configuration](../configuration.md#chroma)).
+      worker threads ([Configuration](../configuration/index-backends/chroma.md)).
 
 ??? info "`duckdb`: `duckdb_index.py`"
 
@@ -178,19 +178,19 @@ Each adapter is a module in `retrieval/adapters/driven/`.
     - Vectors scanned exactly with `array_cosine_distance` (no `vss`: HNSW persistence is still
       experimental).
     - One process per file; a second is refused at open
-      ([Configuration](../configuration.md#duckdb)).
+      ([Configuration](../configuration/index-backends/duckdb.md)).
 
 ??? info "`elasticsearch` and `opensearch`: `elasticsearch_index.py`, `opensearch_index.py` over `elastic_index.py`"
 
     See [Elasticsearch and OpenSearch](#elasticsearch-and-opensearch) below and
-    [Configuration](../configuration.md#elasticsearch-and-opensearch).
+    [Configuration](../configuration/index-backends/elasticsearch.md).
 
 ??? info "`lancedb`: `lancedb_index.py`"
 
     - Embedded, a directory or an object-store URI.
     - A table for search and one per space, filtered on `manifest_id` before ranking.
     - Writers on a local directory take turns on a `flock`; an object store needs
-      `single_writer = true` ([Configuration](../configuration.md#lancedb)).
+      `single_writer = true` ([Configuration](../configuration/index-backends/lancedb.md)).
 
 ??? info "`libsql`: `libsql_index.py`"
 
@@ -198,7 +198,7 @@ Each adapter is a module in `retrieval/adapters/driven/`.
     - A table per space with an `F32_BLOB` column and a `libsql_vector_idx` index read by
       `vector_top_k`, filtered to the asked versions (an exact scan when they are too small a share
       of the space).
-    - A server over its HTTP API, or a local file ([Configuration](../configuration.md#libsql)).
+    - A server over its HTTP API, or a local file ([Configuration](../configuration/index-backends/libsql.md)).
 
 ??? info "`milvus`: `milvus_index.py`"
 
@@ -206,7 +206,7 @@ Each adapter is a module in `retrieval/adapters/driven/`.
     - Scalar fields `manifest_id` / `library` / `version_id` with inverted indexes and an array of
       tags, filtered in Milvus before ranking.
     - A server or Zilliz Cloud, or Milvus Lite on a local `.db` directory; the synchronous client, in
-      worker threads ([Configuration](../configuration.md#milvus)).
+      worker threads ([Configuration](../configuration/index-backends/milvus.md)).
 
 ??? info "`mongodb`: `mongodb_index.py`"
 
@@ -215,7 +215,7 @@ Each adapter is a module in `retrieval/adapters/driven/`.
     - An Atlas Search index (`$search`, BM25 on three weighted fields) and an Atlas Vector Search
       index (`$vectorSearch`, cosine), made when missing.
     - `manifest_id` / `library` / `version_id` / `chunk_id` / `tags` as `token` and `filter` fields.
-    - Writes return once the indexes return them ([Configuration](../configuration.md#mongodb)).
+    - Writes return once the indexes return them ([Configuration](../configuration/index-backends/mongodb.md)).
 
 ??? info "`pinecone`: `pinecone_index.py`"
 
@@ -223,19 +223,19 @@ Each adapter is a module in `retrieval/adapters/driven/`.
     - Metadata filters on space, manifest and tags in every query.
     - Vector IDs `<manifest>#<space>#<chunk>`, so a version is deleted by listing its ID prefix
       (serverless indexes cannot delete by filter).
-    - The SDK's HTTP client, no gRPC or protobuf ([Configuration](../configuration.md#pinecone)).
+    - The SDK's HTTP client, no gRPC or protobuf ([Configuration](../configuration/index-backends/pinecone.md)).
 
 ??? info "`qdrant`: `qdrant_index.py`"
 
     A collection per space, payload-indexed `manifest_id` / `library` / `tags`
-    ([Configuration](../configuration.md#qdrant)).
+    ([Configuration](../configuration/index-backends/qdrant.md)).
 
 ??? info "`redis`: `redis_index.py`"
 
     - Redis 8's Query Engine, a hash per chunk and version.
     - Indexes made with `FT.CREATE` (`<prefix>:search`, `<prefix>:space<id>`).
     - `manifest_id` / `library` / `version_id` / `tags` as `TAG` fields
-      ([Configuration](../configuration.md#redis)).
+      ([Configuration](../configuration/index-backends/redis.md)).
 
 ## Adding a backend
 
@@ -269,4 +269,4 @@ Elasticsearch and OpenSearch (#354) answer the same REST API for everything Exac
   decides;
 - it imports neither client.
 
-Options, analysis and sizing: [Configuration](../configuration.md#elasticsearch-and-opensearch).
+Options, analysis and sizing: [Configuration](../configuration/index-backends/elasticsearch.md).

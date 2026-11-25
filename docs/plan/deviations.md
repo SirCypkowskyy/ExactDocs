@@ -23,4 +23,4 @@
 | `exactdocs login` / `add` in MVP-1 | The CLI has `serve`, `admin create` and `admin reset-password`<br/>The REST client commands are MVP-2 | The UI and the REST API cover every action (CLI-01) |
 | Setup page, tokens and library management in the UI | Built (#46 to #53) | As planned |
 
-[^budgets]: See [Size and model-free budgets](../releasing.md#size-and-model-free-budgets).
+[^budgets]: See [Size and model-free budgets](../releasing/images.md#size-and-model-free-budgets).

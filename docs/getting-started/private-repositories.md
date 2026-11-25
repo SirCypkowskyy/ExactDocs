@@ -74,7 +74,7 @@ Send the credential next to the URL in `POST /api/v1/repositories/check`,
     volume holds both and defeats the encryption.
 
     - Use `exactdocs backup`, which leaves `secret.key` out unless asked (see
-      [Backup and restore](../deployment.md#backup-and-restore)), or keep `EXACTDOCS_SECRET_KEY`
+      [Backup and restore](../deployment/backup.md)), or keep `EXACTDOCS_SECRET_KEY`
       outside the volume.
     - A key file that others could read is made private again but logged as exposed: rotate it.
     - A symlink, or a file owned by another user, is refused.

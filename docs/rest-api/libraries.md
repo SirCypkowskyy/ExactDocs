@@ -269,7 +269,7 @@ The logo is the default version's:
 - A library imported before logos existed gets one at the next import of its default version
   (`versions/reimport`, a re-sync of a branch that moved, or a paths edit).
 
-Where the importer looks and what it keeps: [Architecture](../architecture.md), *Project logos*.
+Where the importer looks and what it keeps: [Architecture](../architecture/import.md#project-logos-504), *Project logos*.
 
 ## Sizes on the lists
 
@@ -330,6 +330,15 @@ stay comparable.
 [^atomic]: Enforced atomically, so two simultaneous requests queue one import.
 
 A tag and a branch at the same commit stay two versions.
+
+<figure class="xd-shot" markdown>
+
+![The Add a version form in a library's settings, with a branch or tag picker above the table of imported versions](../assets/screenshots/add-version-light.webp#only-light){ loading=lazy }
+![The Add a version form in a library's settings, with a branch or tag picker above the table of imported versions](../assets/screenshots/add-version-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>Adding a version from a library's settings in the web UI.</figcaption>
+
+</figure>
 
 ## Removing
 

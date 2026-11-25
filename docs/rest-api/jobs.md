@@ -63,6 +63,15 @@ An `auto` job never names a person. Jobs queued before this release keep the ori
 stored with (a scheduled branch sync was `manual` then). Filter with `origin=auto` or
 `origin=manual` on `GET /jobs` and `GET /libraries/{owner}/{repo}/jobs`.
 
+<figure class="xd-shot" markdown>
+
+![The Jobs page listing import and embed jobs, each with its library, version, state, progress and how long it took](../assets/screenshots/jobs-light.webp#only-light){ loading=lazy }
+![The Jobs page listing import and embed jobs, each with its library, version, state, progress and how long it took](../assets/screenshots/jobs-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>The <strong>Jobs</strong> page: state, progress, origin and duration of each job.</figcaption>
+
+</figure>
+
 ## Failures
 
 A failed job has its `error` (for people), its `error_code` (stable, for scripts) and its

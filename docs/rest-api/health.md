@@ -52,4 +52,4 @@ Both probes keep their budget while a database statement is still running.
 
 !!! note "`Host` check"
     Only exact `GET`/`HEAD` requests on these paths skip the `Host` check
-    ([Deployment](../deployment.md#health-checks)).
+    ([Deployment](../deployment/health-checks.md)).

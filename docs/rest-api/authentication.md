@@ -213,6 +213,15 @@ allowed sign-in. Access ends on:
     The three token routes need the session cookie, not a token, so a stolen token cannot create
     a successor.
 
+<figure class="xd-shot" markdown>
+
+![The account page with one API token and a ready-to-paste MCP client config that uses a token placeholder](../assets/screenshots/account-tokens-light.webp#only-light){ loading=lazy }
+![The account page with one API token and a ready-to-paste MCP client config that uses a token placeholder](../assets/screenshots/account-tokens-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>The <strong>API tokens</strong> tab of the account page, with the MCP client config below.</figcaption>
+
+</figure>
+
 ### Library scope
 
 API token creation and password login accept optional `library_ids`:
@@ -240,3 +249,12 @@ API token creation and password login accept optional `library_ids`:
     - Revoke them before starting an older server binary as well: older code can ignore the
       column and otherwise treat those credentials as unrestricted.
     - Unrestricted legacy tokens are kept by the downgrade.
+
+<figure class="xd-shot" markdown>
+
+![The New API token dialog with a name, an expiry and a choice of which libraries the token can read](../assets/screenshots/new-token-light.webp#only-light){ loading=lazy }
+![The New API token dialog with a name, an expiry and a choice of which libraries the token can read](../assets/screenshots/new-token-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>A new token gets a name, an expiry and the libraries it may read.</figcaption>
+
+</figure>

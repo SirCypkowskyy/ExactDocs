@@ -225,7 +225,7 @@ whole check, a retaken slot's job check included.
 !!! warning "Upgrades that change `STEPS_VERSION`"
 
     A release that changes `STEPS_VERSION` still needs every process stopped before the upgrade
-    ([Deployment](../deployment.md#upgrading)): an older process would keep running jobs the new
+    ([Deployment](../deployment/upgrading.md)): an older process would keep running jobs the new
     build cannot resume.
 
 ### Scheduled ticks

@@ -20,7 +20,7 @@ If people sign in through an identity provider, also set `EXACTDOCS_PUBLIC_URL` 
 they use, such as `https://docs.example.com` (no path). The redirect URI that ExactDocs sends to
 the provider is built from it, never from the request's `Host` header, so it stays right behind
 any proxy. The server refuses to start with a provider configured and no public URL (see
-[Sign in through an identity provider](../getting-started.md#sign-in-through-an-identity-provider)).
+[Sign in through an identity provider](../getting-started/accounts.md#sign-in-through-an-identity-provider)).
 
 If the proxy is not listed in `EXACTDOCS_FORWARDED_ALLOW_IPS`, every client looks like the proxy,
 and 5 failed sign-ins from anyone throttle everyone.

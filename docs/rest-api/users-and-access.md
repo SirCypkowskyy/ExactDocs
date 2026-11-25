@@ -86,6 +86,15 @@ Lists every account's API tokens for an operator to tidy up.
 - `sort` by the token fields or `owner`.
 - `cursor` or `offset` like every [list](pagination.md).
 
+<figure class="xd-shot" markdown>
+
+![The admin list of every account's API tokens, showing owner, token prefix, expiry and last use](../assets/screenshots/users-tokens-light.webp#only-light){ loading=lazy }
+![The admin list of every account's API tokens, showing owner, token prefix, expiry and last use](../assets/screenshots/users-tokens-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>The admin's list of every account's tokens in the web UI.</figcaption>
+
+</figure>
+
 ### `POST /users`
 
 Body `{"username", "password", "role"?}`; role `user` (default) or `admin`. Answers 201 with the

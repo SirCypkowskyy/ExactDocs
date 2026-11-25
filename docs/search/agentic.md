@@ -102,7 +102,7 @@ any LLM search: to the instance, the caller and each library it reads, and once 
 `llm_searches_per_minute`. A run that stops answers with no text and the chunks it had read, with
 the `fallback_reason`s of the table above (a rate limit gives `llm_rate_limited`). A library with AI off
 is never read. `POST /api/v1/answer/stream` also streams how many tool calls the run has made out of
-its limit. See the [REST API](../rest-api.md).
+its limit. See the [REST API](../rest-api/search.md#agentic-answer).
 
 ## Repo guidance
 

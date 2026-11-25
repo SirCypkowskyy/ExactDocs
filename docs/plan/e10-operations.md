@@ -54,7 +54,7 @@ Scenario: The release artifacts contain no models
 
 **Criteria of success**
 
-- [ ] CI check: no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt` in wheel or image; size budgets reported and enforced: wheel ≤ 5 MB (without `[ai]`), image ≤ 375 MB uncompressed (300 MB first planned; the floor is the `python:3.14-slim` base, git/ssh and the 167 MB virtualenv, and dropping 57 MB of `.pyc` would slow every start of a read-only container; see docs/releasing.md)
+- [ ] CI check: no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt` in wheel or image; size budgets reported and enforced: wheel ≤ 5 MB (without `[ai]`), image ≤ 375 MB uncompressed (300 MB first planned; the floor is the `python:3.14-slim` base, git/ssh and the 167 MB virtualenv, and dropping 57 MB of `.pyc` would slow every start of a read-only container; see docs/releasing/images.md)
 - [ ] test: after app start, `sys.modules` has no `torch`, `transformers`, `sentence_transformers`, `pydantic_ai`
 - [ ] dependency review: Chonkie dropped in #27 (needs HF Hub/network); `ML_PACKAGES` in `deploy/check_artifacts.py` lists what must stay out of the default install
 
@@ -126,7 +126,7 @@ Scenario: The whole loop in a real browser
 - [ ] caching: `VERSION` below the dependency layers; dependency layer built only from `uv.lock` (`uv export --frozen`); only `packages/*/src` + metadata copied (no tests); pnpm pinned and installed before any `COPY`, `pnpm fetch` then `install --offline`; source-only changes show dependency layers `CACHED`
 - [ ] hardening: base images pinned by digest (Dependabot), runtime with only `git`, `openssh-client`, `ca-certificates`, `tini` (PID 1), no pip/setuptools, no setuid bits, read-only app files, only `/data` and `/tmp` writable; amd64 apt layer built under QEMU for that stage only
 - [ ] CI: hadolint, Trivy/Grype gate on fixable CRITICAL/HIGH, smoke test with `--read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges` incl. a `file://` import; size budget kept
-- [ ] docs: hardened compose example in README; scan gate in `docs/releasing.md`
+- [ ] docs: hardened compose example in README; scan gate in `docs/releasing/image-scan.md`
 
 ## E10 · MVP-2
 
@@ -151,7 +151,7 @@ Scenario: Re-indexing while serving
 
 - [ ] CI upgrade test: data dir from the previous release tag → current release
 - [ ] index format version stored; `exactdocs reindex` (local) rebuilds and swaps
-- [ ] release notes template has a "requires reindex" section (`docs/releasing.md`)
+- [ ] release notes template has a "requires reindex" section (`docs/releasing/release-notes.md`)
 
 ### E10-09 · docs: project docs describe MVP-1 as built, with all diagrams in Mermaid
 
@@ -159,7 +159,7 @@ Scenario: Re-indexing while serving
 |---|---|---|---|---|---|---|
 | MVP-2 | `type: docs`<br/>`status: triage` | docs | - (documentation) | MVP-1 complete | L | [#123](https://github.com/SirCypkowskyy/ExactDocs/issues/123) |
 
-**Context.** The ASCII diagrams in README, `docs/architecture.md` and `web/README.md` are hard to maintain and cannot show flows; the docs must describe the system as built.
+**Context.** The ASCII diagrams in README, `docs/architecture/index.md` and `web/README.md` are hard to maintain and cannot show flows; the docs must describe the system as built.
 
 - [ ] Mermaid enabled in `zensical.toml` (superfences custom fence) and validated in CI (`deploy/mermaid-check`: every diagram is parsed with the `mermaid` package, and ASCII art fails the build)
 - [ ] every ASCII diagram replaced by Mermaid (README *How it works*, architecture domains and bridges, web slices)

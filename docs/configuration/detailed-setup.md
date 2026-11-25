@@ -47,7 +47,7 @@ how-to: [Behind a reverse proxy](../deployment/reverse-proxy.md),
 - Optionally limit who may create libraries with `[auth.library_creation]`.
 
 Reference: [Sign-in and access](sign-in.md); a complete example is in
-[Getting started](../getting-started.md#sign-in-through-an-identity-provider).
+[Getting started](../getting-started/accounts.md#sign-in-through-an-identity-provider).
 
 ## 5. Models
 

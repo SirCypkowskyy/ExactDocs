@@ -47,7 +47,7 @@ The throttle covers the web UI's sign-in and `exactdocs login` alike.
       in with the old password is held to the username's count again.
 - Behind a reverse proxy, list the proxy in `EXACTDOCS_FORWARDED_ALLOW_IPS` so that the
   throttle counts the client's address rather than the proxy's
-  ([Deployment](../deployment.md#behind-a-reverse-proxy)).
+  ([Deployment](../deployment/reverse-proxy.md)).
 
 Where the counts live depends on the database:
 
@@ -89,7 +89,7 @@ exactdocs user reset-password bob              # new password; his sessions end,
 - Like `admin create`, these open the database directly (in Docker,
   `docker exec -it exactdocs exactdocs user create bob`).
 - An admin can do the same on the **Users** page of the web UI (`/users`; the API is
-  `/api/v1/users`, see [REST API](../rest-api.md)), which other accounts neither see nor reach
+  `/api/v1/users`, see [REST API](../rest-api/users-and-access.md#users)), which other accounts neither see nor reach
   (403).
 
 Rules:
@@ -107,6 +107,24 @@ Rules:
       also clears the username's sign-in throttle, as `admin reset-password` does.
 - The Users page also lists the accounts made by a first sign-in through an identity provider,
   with their provider and groups.
+
+<figure class="xd-shot" markdown>
+
+![The Users page listing four accounts with their role, how they sign in, status and number of tokens](../assets/screenshots/users-light.webp#only-light){ loading=lazy }
+![The Users page listing four accounts with their role, how they sign in, status and number of tokens](../assets/screenshots/users-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>The <strong>Users</strong> page: role, sign-in method, status and tokens of each account.</figcaption>
+
+</figure>
+
+<figure class="xd-shot" markdown>
+
+![The New user dialog with fields for username, password, repeated password and role](../assets/screenshots/new-user-light.webp#only-light){ loading=lazy }
+![The New user dialog with fields for username, password, repeated password and role](../assets/screenshots/new-user-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>Creating a local account from the <strong>Users</strong> page.</figcaption>
+
+</figure>
 
 ## Sign in through an identity provider
 
@@ -135,8 +153,8 @@ admin_groups = ["exactdocs-admins"] # role admin while in one of them, else user
   redirect URI. The client can be confidential (with a secret) or public (without one).
 - The sign-in page then shows a **Sign in with Corp SSO** button next to the password form.
 - You can configure several providers at once.
-- [Configuration](../configuration.md#sign-in-providers) lists every field, and
-  [Deployment](../deployment.md#behind-a-reverse-proxy) explains the public URL behind a proxy.
+- [Configuration](../configuration/sign-in.md#sign-in-providers) lists every field, and
+  [Deployment](../deployment/reverse-proxy.md) explains the public URL behind a proxy.
 
 ### The flow
 
@@ -155,7 +173,7 @@ The flow is the authorization code flow with PKCE (`S256`), `state` and `nonce`.
     - carry times that are valid within 60 s of leeway
 - A new signing key is fetched when a token first names it, at most once a minute.
 
-[REST API](../rest-api.md) and [Architecture](../architecture.md#external-sign-in-oidc) describe
+[REST API](../rest-api/authentication.md#external-sign-in) and [Architecture](../architecture/identity.md#external-sign-in-oidc) describe
 the sign-in routes and the stored data.
 
 ### Accounts
@@ -184,7 +202,7 @@ the sign-in routes and the stored data.
 ### Revalidation
 
 ExactDocs asks for `offline_access` and keeps the refresh token, encrypted with the
-[secret key](../configuration.md#the-secret-key). Every `revalidate_minutes` (60 by default) it asks
+[secret key](../configuration/security.md#the-secret-key). Every `revalidate_minutes` (60 by default) it asks
 the provider again:
 
 | Answer | What happens |
@@ -218,9 +236,9 @@ the provider again:
 Two more kinds of provider sit next to `oidc`:
 
 - `oauth2`, for a provider without OpenID Connect
-  ([OAuth2-only sign-in](../configuration.md#oauth2-only-sign-in))
+  ([OAuth2-only sign-in](../configuration/sign-in.md#oauth2-only-sign-in))
 - `github`, for GitHub or GitHub Enterprise with organization and team checks
-  ([GitHub and GitHub Enterprise sign-in](../configuration.md#github-and-github-enterprise-sign-in))
+  ([GitHub and GitHub Enterprise sign-in](../configuration/sign-in.md#github-and-github-enterprise-sign-in))
 
 Those pages list their fields.
 
@@ -255,9 +273,18 @@ Audit:
 Who sees what:
 
 - Every signed-in account may add libraries unless an operator limits that to chosen users or groups
-  ([Who may create libraries](../configuration.md#who-may-create-libraries)).
+  ([Who may create libraries](../configuration/sign-in.md#who-may-create-libraries)).
 - API tokens and MCP clients act as their user, so an agent sees exactly the libraries its user may
   view.
 - A token can also be narrowed to chosen libraries: `--library` on `exactdocs token create`, or
-  `library_ids` in the [REST API](../rest-api.md).
-- [Architecture](../architecture.md#library-roles) explains how the roles are checked.
+  `library_ids` in the [REST API](../rest-api/authentication.md#library-scope).
+- [Architecture](../architecture/identity.md#library-roles) explains how the roles are checked.
+
+<figure class="xd-shot" markdown>
+
+![The sharing page of a library, listing its creator and a viewer, with buttons to share it and hand it over](../assets/screenshots/library-sharing-light.webp#only-light){ loading=lazy }
+![The sharing page of a library, listing its creator and a viewer, with buttons to share it and hand it over](../assets/screenshots/library-sharing-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>A library's sharing page: who can see it, and the buttons to share it or hand it over.</figcaption>
+
+</figure>

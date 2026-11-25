@@ -72,7 +72,7 @@ flowchart TD
     can -- no --> next["The next mode answers,<br/>with fallback_reason: mode_unavailable"]
 ```
 
-A mode becomes a default only once the [eval suite](../evals.md) shows that it beats BM25. None has
+A mode becomes a default only once the [eval suite](../evals/index.md) shows that it beats BM25. None has
 yet, so BM25 is the default: set `EXACTDOCS_AI__MODE=hybrid`, or a library's mode, to use hybrid
 search. A library's mode is set with `PUT /api/v1/libraries/{owner}/{repo}/retrieval`, and setting
 one whose model is not configured is refused.
@@ -90,4 +90,13 @@ has embedded is ranked by distance in that one space, so the distances compare a
 `hybrid` fuses that ranking with the BM25 one, as within a version. Each result carries its
 `bm25_rank` and `vector_rank`. A library with AI off, or not embedded yet, is left out of the
 vector ranking and named in `libraries_without_vectors`; when none can be, BM25 answers with the
-`fallback_reason`. [Flows](../flows.md) has more diagrams of the retrieval paths.
+`fallback_reason`. [Flows](../flows/retrieval-modes.md) has more diagrams of the retrieval paths.
+
+<figure class="xd-shot" markdown>
+
+![The versions table of a library and, below it, the retrieval mode and embedding model the library uses](../assets/screenshots/library-versions-light.webp#only-light){ loading=lazy }
+![The versions table of a library and, below it, the retrieval mode and embedding model the library uses](../assets/screenshots/library-versions-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>A library's versions, and the retrieval mode and embedding model it uses.</figcaption>
+
+</figure>

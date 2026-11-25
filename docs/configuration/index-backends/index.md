@@ -7,7 +7,7 @@
     - After switching, or after the backend lost data, run `exactdocs index rebuild`.
 
 `EXACTDOCS_SEARCH_BACKEND` and `EXACTDOCS_VECTOR_BACKEND` move an index out of the database (see
-[External index backends](../../architecture.md#external-index-backends)). Each backend is configured
+[External index backends](../../architecture/index-backends.md)). Each backend is configured
 under `[index_backends.<name>]` in the TOML file, or `EXACTDOCS_INDEX_BACKENDS__<NAME>__<OPTION>`;
 keys and tokens only from the environment or a `*_file` option. After switching, or after the
 backend lost data, run `exactdocs index rebuild` ([Deployment](../../deployment/upgrading.md#external-index-backends)).

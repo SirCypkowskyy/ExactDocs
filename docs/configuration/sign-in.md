@@ -11,7 +11,7 @@
 ## Sign-in providers
 
 People can sign in through OpenID Connect providers as well as with a password;
-[Getting started](../getting-started.md#sign-in-through-an-identity-provider) shows a complete
+[Getting started](../getting-started/accounts.md#sign-in-through-an-identity-provider) shows a complete
 example and what happens at sign-in. Each provider is a `[auth.providers.<name>]` table in the
 TOML file, or `EXACTDOCS_AUTH__PROVIDERS__<NAME>__<FIELD>` in the environment, where lists are
 JSON (`EXACTDOCS_AUTH__PROVIDERS__CORP__ALLOWED_GROUPS='["docs-readers"]'`). The name is
@@ -147,7 +147,7 @@ linked from Account settings, and unlinked again (after a confirmation); a linke
 signs the account in, and its groups and role at the provider are not used. An identity that is
 already linked to another account is refused. Linking needs a signed-in session: the
 provider's callback must come back to the same browser session that started it. See
-[REST API](../rest-api.md) (*Linked sign-in providers*).
+[REST API](../rest-api/account.md#linked-sign-in-providers) (*Linked sign-in providers*).
 
 Two settings apply to all providers:
 
@@ -155,6 +155,15 @@ Two settings apply to all providers:
 |---|---|---|
 | `EXACTDOCS_AUTH__REVALIDATE_POLL_SECONDS` | `300` | How often the server looks for accounts whose groups are due a check |
 | `EXACTDOCS_MCP_OAUTH_PROVIDER` | unset | The name of one provider that web MCP hosts (Claude, ChatGPT) sign in through with OAuth.<br/>It needs a client secret.<br/>See [MCP](../mcp.md#oauth-for-web-hosts) |
+
+<figure class="xd-shot" markdown>
+
+![The Sign-in tab of the account page, with the password section and the list of linked sign-in providers](../assets/screenshots/account-sign-in-light.webp#only-light){ loading=lazy }
+![The Sign-in tab of the account page, with the password section and the list of linked sign-in providers](../assets/screenshots/account-sign-in-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>The <strong>Sign-in</strong> tab of the account page lists the linked providers.</figcaption>
+
+</figure>
 
 ## Cloudflare Access
 

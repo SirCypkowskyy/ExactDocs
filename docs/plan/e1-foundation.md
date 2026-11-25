@@ -103,7 +103,7 @@ what guarantees readers never see half a version.
 - [ ] driving ports `StoreManifest`, `ActivateManifest` (one transaction flips the version's active manifest and commit SHA), `ListArticles` (path prefix, `limit` + `cursor`), `GetArticle` (version + path), `DiscardPendingManifests`, `CollectGarbage`
 - [ ] a failure during activation leaves the previous manifest active (test)
 - [ ] REST: `GET /api/v1/libraries/{owner}/{repo}/articles?ref=<ref>&path_prefix=...` (tree) and `GET .../article?ref=<ref>&path=<path>` (one article); no `ref` means the default version
-- [ ] architecture test for bridge direction: bridges in `bootstrap/bridges.py` go only retrieval → catalog and ingestion → catalog / retrieval, with no cycles (see [Architecture](../architecture.md#bridges-are-one-way))
+- [ ] architecture test for bridge direction: bridges in `bootstrap/bridges.py` go only retrieval → catalog and ingestion → catalog / retrieval, with no cycles (see [Architecture](../architecture/domains.md#bridges-are-one-way))
 - [ ] unit + adapter contract tests (memory, SQLite)
 
 **Notes.** The catalog knows nothing about chunks and holds no foreign keys to other domains;
@@ -174,7 +174,7 @@ must not leave a library stuck "importing" forever. Users need to see how far a 
 - [ ] a recovery hook per job kind: on start, each `running` job's hook runs (no-op by default), then the job is re-queued; the import's hook (pending-manifest discard) is registered by E3-05a
 - [ ] REST: `GET /api/v1/jobs/{id}`, `GET /api/v1/libraries/{owner}/{repo}/jobs`
 - [ ] unit tests with the kernel clock; integration test for restart recovery
-- [ ] docs: `docs/architecture.md` lists the `ingestion` domain
+- [ ] docs: `docs/architecture/domains.md` lists the `ingestion` domain
 
 **Notes.** DBOS replaces the worker behind the same port in MVP-2 (E3-11). The worker is a
 driving adapter (`ingestion/adapters/driving/worker.py`).
@@ -225,4 +225,4 @@ into the container), E10-03b and RET-09 (E11-02).
 - [ ] private by default: non-API modules, functions, classes and constants are `_private`; public APIs re-exported via `__init__.py`
 - [ ] every function and method, private ones included, has a Google-style docstring with `Args:` and `Returns:` (and `Raises:`) whenever it has them; ruff `convention = "google"`, DOC201/DOC501 re-enabled
 - [ ] every dataclass is `frozen=True, slots=True, kw_only=True` unless marked `# conventions: allow-... -- <reason>`; every dataclass and pydantic field has an attribute docstring; pydantic models use `use_attribute_docstrings=True`
-- [ ] enforced by an AST checker in `tests/architecture/test_conventions.py` with good/bad fixtures per rule; existing code brought into compliance; rules documented in `docs/architecture.md`
+- [ ] enforced by an AST checker in `tests/architecture/test_conventions.py` with good/bad fixtures per rule; existing code brought into compliance; rules documented in `docs/architecture/conventions.md`

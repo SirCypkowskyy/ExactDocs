@@ -9,7 +9,7 @@
       is an error, never a fallback to another one.
 
 How the main paths through ExactDocs work. The structure behind them is in
-[Architecture](../architecture/index.md); the endpoints are in the [REST API](../rest-api.md).
+[Architecture](../architecture/index.md); the endpoints are in the [REST API](../rest-api/index.md).
 Planned stages are drawn dashed and labelled *planned*.
 
 | Page | What it draws |

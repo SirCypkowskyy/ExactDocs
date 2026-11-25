@@ -8,7 +8,7 @@
     - **Status:** the epic ([#8](https://github.com/SirCypkowskyy/ExactDocs/issues/8)) is closed; GitHub holds the current issue bodies.
 
 All UI issues: features in `web/src/features/<feature>/` (vertical slices, see
-[Architecture](../architecture.md#web-client-vertical-slices)), data only through the generated
+[Architecture](../architecture/web-client.md)), data only through the generated
 `/api/v1` client (E6-01), vitest + Testing Library tests per feature, fallow and Biome boundary
 rules green. Each Gherkin scenario maps to a vitest test against mocked API responses (built from
 the generated OpenAPI types, so UI work can start before the endpoints exist) and is checked once

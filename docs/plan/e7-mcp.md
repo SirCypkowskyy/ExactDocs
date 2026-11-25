@@ -43,7 +43,7 @@ Scenario: ExactDocs tools carry the notice in structured content
 
 - [ ] `list_libraries(limit?, cursor?)` (default limit 20): ID, title, description, source URL, tags, `refs` (ref, kind, commit SHA, default flag; at most 50 per library, plus `version_count`)
 - [ ] `list_articles(library, ref?, path_prefix?, tags?, tags_match?, limit?, cursor?)` (`ref` like `search_docs`; blank means the default version): path, title, tags, size; tags filter as TAG-03 (catalog `TagFilter`, E4-03)
-- [ ] each domain's result DTO carries a `notice` field whose text is the kernel `NOTICE` constant (a reviewed kernel addition, see [Architecture](../architecture.md#bridges-are-one-way)); no shared MCP helper module (the context7 two-block `ToolResult` lives in retrieval's MCP adapter, E7-05)
+- [ ] each domain's result DTO carries a `notice` field whose text is the kernel `NOTICE` constant (a reviewed kernel addition, see [Architecture](../architecture/domains.md#the-notice-constant)); no shared MCP helper module (the context7 two-block `ToolResult` lives in retrieval's MCP adapter, E7-05)
 - [ ] all tools annotated read-only; `mask_error_details=True` kept; `DomainError`s pass as tool errors (existing middleware) — test both paths
 - [ ] `FASTMCP_CHECK_FOR_UPDATES=off` set in code; stdio banner off — test
 - [ ] tool schemas snapshot-tested; behave `mcp_browse.feature` (MCP steps via FastMCP `Client`)

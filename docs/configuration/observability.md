@@ -23,7 +23,7 @@
 ExactDocs counts reads, searches and agent answers per UTC day, account, API token, library and
 operation (#510): counts only, never a query, a path or any text. Operators read them at
 `GET /api/v1/stats/usage`, everyone their own at `GET /api/v1/account/usage`, and the leaderboards
-at `GET /api/v1/stats/leaderboard` (see [REST API](../rest-api.md)). Per-person usage is monitoring
+at `GET /api/v1/stats/leaderboard` (see [REST API](../rest-api/usage.md)). Per-person usage is monitoring
 data under the GDPR, hence the opt-in for people and the bounded retention. The `[usage]` table
 of the TOML file takes the same settings.
 
@@ -31,3 +31,12 @@ of the TOML file takes the same settings.
 |---|---|---|
 | `EXACTDOCS_USAGE__PEOPLE_LEADERBOARD` | `false` | Turn the people leaderboard on.<br/>Even then it ranks, and operators' usage reports name, only people who opted in (the `leaderboard_opt_in` interface preference, off by default); everyone else counts in totals only.<br/>Off, nobody is shown by name to anyone, operators included.<br/>The libraries leaderboard is always on |
 | `EXACTDOCS_USAGE__RETENTION_MONTHS` | `13` | How many months of daily counts are kept (1 to 120).<br/>Every night the days before it are deleted: 13 keeps a year and the month before it |
+
+<figure class="xd-shot" markdown>
+
+![The leaderboard ranking libraries by searches this month, with the note that people are not ranked on this instance](../assets/screenshots/leaderboard-light.webp#only-light){ loading=lazy }
+![The leaderboard ranking libraries by searches this month, with the note that people are not ranked on this instance](../assets/screenshots/leaderboard-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>The leaderboard by searches this month. This instance does not rank people.</figcaption>
+
+</figure>

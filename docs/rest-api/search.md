@@ -66,7 +66,7 @@ optional; an omitted one takes its default.
 - 422 `provider_unsupported` for one this installation cannot call (an extra or SDK is missing).
 - 422 `invalid_model` when not written `<profile>:<model>`.
 - `llm_thinking` and `judge_thinking` set how much the role's model thinks before it answers, its
-  own or the instance's ([Thinking level](../search.md#thinking-level)). 422
+  own or the instance's ([Thinking level](../search/thinking.md)). 422
   `thinking_unsupported` names the role and the model when the model is known to take no thinking
   setting.
 

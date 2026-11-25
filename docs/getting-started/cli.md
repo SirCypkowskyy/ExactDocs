@@ -48,7 +48,7 @@ Where the CLI finds the server and token, in this order:
 - Proxy variables (`HTTPS_PROXY`, `NO_PROXY` and the like, or their `EXACTDOCS_` overrides) and a
   CA bundle are honoured for remote servers and ignored for loopback. The proxy sees where you
   connect but not your HTTPS traffic
-  ([Outbound connections](../configuration.md#outbound-connections)).
+  ([Outbound connections](../configuration/outbound.md)).
 
 ## Manage libraries and tokens
 
@@ -125,7 +125,7 @@ They differ from `ctx7` in a few ways:
 - The query may be given as several words.
 - A library lists its default version, articles and chunks, with no stars or trust score.
 - There is no `ctx7 search` command yet. To search every library at once, use the web UI's search,
-  the `search_all_docs` MCP tool or `GET /api/v1/search` ([REST API](../rest-api.md)).
+  the `search_all_docs` MCP tool or `GET /api/v1/search` ([REST API](../rest-api/search.md#search-across-libraries)).
 
 ## Exit codes
 

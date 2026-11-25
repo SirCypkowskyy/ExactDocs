@@ -119,7 +119,7 @@ The `llm` and `judge` roles also have:
 | `thinking_configured` | set in the environment or the TOML file, so read-only here |
 | `thinking_unsupported` | why its model cannot take the level, which its calls then leave out |
 
-See [Thinking level](../search.md#thinking-level).
+See [Thinking level](../search/thinking.md).
 
 ### `PUT /ai/roles/{role}`
 

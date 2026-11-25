@@ -30,14 +30,14 @@ This record fixes, for embeddings, rerankers and LLMs on top of BM25:
 Each issue of the milestone points here instead of deciding these again.
 
 - The short form is in the [Decisions](../user-stories.md#decisions) table.
-- The architecture of what is built today is in [Architecture](../architecture.md).
+- The architecture of what is built today is in [Architecture](../architecture/index.md).
 
 ## Context
 
 - ExactDocs is a BM25 search server by default and must stay one:
     - a 384 MB image within a 400 MB budget
     - a model-free wheel and image, checked by CI (RUN-02, [Size and model-free
-      budgets](../releasing.md#size-and-model-free-budgets))
+      budgets](../releasing/images.md#size-and-model-free-budgets))
     - no outbound connection but git
 - The owner decided:
     - **Databases:** local SQLite with vector search inside SQLite, PostgreSQL with pgvector, and
@@ -269,7 +269,7 @@ Measured on 2026-11-07 (Python 3.14, x86_64, site-packages with bytecode, which 
     - CI (arm64, PR #285) measured **387.1**, **520.4** and **866.5 MB** (amd64: 353.0, 492.0 and
       847.9 MB).
     - So the budgets stay as set: 7.1 % of headroom for `-ai`, and 8.8 % for `-local`, kept on
-      purpose as room for a default-model update. `docs/releasing.md`, *Size and model-free
+      purpose as room for a default-model update. `docs/releasing/images.md`, *Size and model-free
       budgets*, has the reasoning.
 - The `-local` models are baked in at build time, not pulled at first start: the image must work
   with `--network none`.
@@ -589,7 +589,7 @@ Library names, user identities and tokens are never sent.
 
 - pydantic-ai's own OpenTelemetry instrumentation, `InstrumentationSettings(include_content=False)`,
   on the global providers that `bootstrap/otel_sdk.py` sets up (never Logfire, see
-  [Telemetry](../architecture.md#telemetry)). Spans for model and embedding calls nest under the
+  [Telemetry](../architecture/telemetry.md)). Spans for model and embedding calls nest under the
   existing `retrieval.<search>` spans, with new stages `embed_query`, `hyde`, `rerank`, `judge` and
   `agent`; agent tool calls nest inside `run_code`.
 - **No prompt text, ever.** `include_content=False` is the first guard; `ScrubbingExporter` also
@@ -627,7 +627,7 @@ Library names, user identities and tokens are never sent.
     - A mode becomes a default only when it beats BM25 recall@5 by at least 5 points with
       wrong-version rate 0.
     - Agentic runs are also checked from their traces (#99).
-- How to run it, the dataset and the tiers as built: [Retrieval evals](../evals.md).
+- How to run it, the dataset and the tiers as built: [Retrieval evals](../evals/index.md).
 
 ## Where the code lives
 

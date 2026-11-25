@@ -236,7 +236,7 @@ Then `migrate()` brings an older schema to head.
 - A change of the table's columns stays an Alembic revision that rebuilds it on start (as
   `a91c4e7b3d02` did).
 
-See *Upgrades* in [Releasing](../releasing.md).
+See *Upgrades* in [Releasing](../releasing/upgrades.md).
 
 ## Adding a table, adapters and tests
 
@@ -271,7 +271,7 @@ or Turso) with no change to any adapter.
 - CI's integration job runs the persistence contract tests' SQLite cases on a `sqld` server, and
   the libSQL database's own server tests, several processes migrating and writing it at once among
   them (`EXACTDOCS_TEST_LIBSQL_DATABASE_URL` with `--integration`, its own step;
-  [Fast and integration tests](../releasing.md#fast-and-integration-tests)).
+  [Fast and integration tests](../releasing/tests.md)).
 
-See *ExactDocs' own database on libSQL* in [Configuration](../configuration.md) for what an
+See *ExactDocs' own database on libSQL* in [Configuration](../configuration/advanced.md#exactdocs-own-database-on-libsql) for what an
 operator sees.

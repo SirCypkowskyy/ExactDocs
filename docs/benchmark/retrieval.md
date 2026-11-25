@@ -21,7 +21,7 @@ the default each budget gets is on [Recommended defaults](defaults.md).
 | Recorded | 24 November 2026, for #503 and #501 |
 | Golden set | with its alternatives marked (`sha256:a00997851150e3b0`) |
 | Machine | one self-hosted runner VM (Linux aarch64, 4 CPUs), with no provider |
-| Duration | 3 h 22 min ([the command and the timings](../evals.md#the-recorded-run)) |
+| Duration | 3 h 22 min ([the command and the timings](../evals/retrieval-runs.md#the-recorded-run)) |
 
 A full local matrix would take far longer, so it ran a subset:
 
@@ -52,7 +52,7 @@ latencies are that runner's.
     reranked by the LLM judge. They run only from the manual *Retrieval eval (real providers)*
     workflow (`.github/workflows/eval-providers.yml`) with the `benchmark` input ticked, or
     locally with `--allow-providers`
-    ([Running the hosted part](../evals.md#running-the-hosted-part)). They are listed under
+    ([Running the hosted part](../evals/retrieval-runs.md#running-the-hosted-part)). They are listed under
     "Not run" below.
 
 <!-- bench:retrieval-run -->
@@ -86,7 +86,7 @@ latencies are that runner's.
       `default` is not significant on any metric (recall@5 +1.5 points, p 0.42; recall@1 p 0.24;
       MRR p 0.13).
     - Its chunks are about twice as long: 7,065 estimated tokens in a question's ten results
-      against 3,464 ([text calibration](../evals.md#calibration)).
+      against 3,464 ([text calibration](../evals/text-scoring.md#calibration)).
     - `h6`, where every heading starts a chunk, is below them: 85.8%, with MRR and nDCG@10
       significantly worse than at `default`.
     - The shipped default stays `default` (#381); a non-significant lead does not change it.

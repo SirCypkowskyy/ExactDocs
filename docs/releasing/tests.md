@@ -102,7 +102,7 @@ CI's pinned images are in `.github/workflows/integration.yml`.
 | `EXACTDOCS_TEST_LIBSQL_URL`, `_AUTH_TOKEN` | `deploy/libsql-test-server.sh` (the index backend) |
 | `EXACTDOCS_TEST_LIBSQL_DATABASE_URL`, `_AUTH_TOKEN` | another, empty libSQL server (ExactDocs' own database; the SQLite cases move there) |
 | `EXACTDOCS_TEST_MILVUS_URL` | `deploy/milvus-test-server.sh` |
-| `EXACTDOCS_TEST_QDRANT_URL` (`_API_KEY`)<br/>`_ELASTICSEARCH_URL`, `_OPENSEARCH_URL`<br/>`_CHROMA_URL`, `_REDIS_URL`<br/>`_MONGODB_URL`, `_PINECONE_URL` | the server of that name ([Configuration](../configuration.md)) |
+| `EXACTDOCS_TEST_QDRANT_URL` (`_API_KEY`)<br/>`_ELASTICSEARCH_URL`, `_OPENSEARCH_URL`<br/>`_CHROMA_URL`, `_REDIS_URL`<br/>`_MONGODB_URL`, `_PINECONE_URL` | the server of that name ([Configuration](../configuration/index.md)) |
 | `EXACTDOCS_TEST_AZURE_SEARCH_URL` | a real Azure AI Search service (the manual `azure-search.yml`) |
 | `EXACTDOCS_TEST_MODELS_DIR` | the default local models, pulled by `exactdocs models pull` (the release's eval job) |
 

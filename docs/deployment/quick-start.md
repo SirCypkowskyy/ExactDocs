@@ -47,7 +47,7 @@ volumes:
     `uvx --from 'exactdocs[ai]' exactdocs serve` or `uvx --from 'exactdocs[ai,local]' exactdocs serve`
     (see [Image variants](index.md#image-variants)).
 
-Then open <http://localhost:3000>. [Getting started](../getting-started.md) creates the first admin
+Then open <http://localhost:3000>. [Getting started](../getting-started/index.md) creates the first admin
 and adds the first library. For production, put the server
 [behind a reverse proxy](reverse-proxy.md) and add
 [health checks](health-checks.md) and [backups](backup.md).

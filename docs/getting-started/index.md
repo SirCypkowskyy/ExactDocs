@@ -49,7 +49,7 @@ neither `git` nor a port (see [stdio](../mcp.md#without-a-network-port-stdio)).
 
 !!! tip "Image variants"
     The image comes in three variants. All of them run plain BM25 search until you configure a
-    model; [Deployment](../deployment.md#image-variants) explains which one to pick.
+    model; [Deployment](../deployment/index.md#image-variants) explains which one to pick.
 
 ## Create the first admin
 
@@ -82,6 +82,15 @@ A fresh instance does nothing but offer its setup: until the first admin account
 - For scripts, `--password-stdin` reads the password from stdin.
 - Passwords are stored as argon2id hashes, and at most 4 are checked at once.
 
+<figure class="xd-shot" markdown>
+
+![The Interface tab of the account page with choices for language, theme, text size, font and contrast](../assets/screenshots/account-interface-light.webp#only-light){ loading=lazy }
+![The Interface tab of the account page with choices for language, theme, text size, font and contrast](../assets/screenshots/account-interface-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>The <strong>Interface</strong> tab of the account page: language, theme, text size, font and contrast.</figcaption>
+
+</figure>
+
 ## Add your first library
 
 In the web UI, choose **Add library** and give:
@@ -108,7 +117,7 @@ and only the files that changed are chunked again.
     - Its title and description win over the README's.
     - Its rules come first in every `query-docs` answer.
 
-    The [REST API](../rest-api.md) page has the details.
+    The [REST API](../rest-api/libraries.md#context7json) page has the details.
 
     The import also looks for the project's logo:
 
@@ -118,6 +127,15 @@ and only the files that changed are chunked again.
     ExactDocs keeps a bounded copy (an SVG cleaned of scripts and external references) and serves
     it itself, so showing a library loads nothing from the git host. A library without one has no
     logo, and a logo never fails an import.
+
+<figure class="xd-shot" markdown>
+
+![The Add a library page asking for a repository address, with the steps check repository, choose version, choose files and import](../assets/screenshots/add-library-light.webp#only-light){ loading=lazy }
+![The Add a library page asking for a repository address, with the steps check repository, choose version, choose files and import](../assets/screenshots/add-library-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>The <strong>Add a library</strong> page starts with the repository address.</figcaption>
+
+</figure>
 
 ## From `docker run` to a searchable library, over REST
 

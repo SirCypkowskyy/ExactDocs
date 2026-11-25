@@ -7,6 +7,15 @@
     - `EXACTDOCS_METRICS=true` serves Prometheus metrics at `/metrics`.
     - uvicorn's access log still holds full URLs: filter it in your log pipeline.
 
+<figure class="xd-shot" markdown>
+
+![The operator overview with counters for libraries, jobs, AI spend and reads, and charts of reads and AI spend per day](../assets/screenshots/overview-light.webp#only-light){ loading=lazy }
+![The operator overview with counters for libraries, jobs, AI spend and reads, and charts of reads and AI spend per day](../assets/screenshots/overview-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>The operator overview: counters and daily charts for the whole instance.</figcaption>
+
+</figure>
+
 ## What leaves the server
 
 ExactDocs makes no outbound connections you did not configure: only your git hosts, your model

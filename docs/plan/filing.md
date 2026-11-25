@@ -127,7 +127,7 @@ implicitly includes "`just check` passes" and "architecture tests green".
 
 !!! note "Architecture ground rules used by every issue"
     Work goes through each domain's standard modules (`models`, `dtos`, `ports/driving`,
-    `ports/driven`, `use_cases`, `module`, `adapters/...`; see [Architecture](../architecture.md)).
+    `ports/driven`, `use_cases`, `module`, `adapters/...`; see [Architecture](../architecture/domains.md#inside-a-domain-the-fixed-module-set)).
     The plan adds two domains next to `catalog` and `retrieval`, matching the form's *Area* values:
 
     | Domain | Owns |

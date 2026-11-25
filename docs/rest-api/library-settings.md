@@ -30,6 +30,15 @@
     - or a field error
 - 404 for an unknown library.
 
+<figure class="xd-shot" markdown>
+
+![A library's settings page with its title, description and the paths it imports from the repository](../assets/screenshots/library-settings-light.webp#only-light){ loading=lazy }
+![A library's settings page with its title, description and the paths it imports from the repository](../assets/screenshots/library-settings-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>The same settings in the web UI: title, description and the paths to import.</figcaption>
+
+</figure>
+
 ## Chunking
 
 `chunking` is `{"split_level": 1-6, "min_chars": 0, "max_chars": 4000, "chunker": "markdown"}`

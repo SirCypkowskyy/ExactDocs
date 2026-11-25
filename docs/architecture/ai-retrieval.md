@@ -117,7 +117,7 @@ cheaper one did.
        `retrieval_library_settings`), else the instance's (`EXACTDOCS_AI__MODE`), else the best of
        `DEFAULT_MODE_ORDER`.
 - `DEFAULT_MODE_ORDER` lists a mode only once the eval suite marks it `eligible_as_default`
-  ([Retrieval evals](../evals.md#gates)). Only `bm25` is listed yet, so an operator, a library or a
+  ([Retrieval evals](../evals/gates.md#gates)). Only `bm25` is listed yet, so an operator, a library or a
   call chooses `hybrid`.
 - Removing a library drops its mode too (`ForgetLibrary`, called by the removal bridge after the
   catalog).

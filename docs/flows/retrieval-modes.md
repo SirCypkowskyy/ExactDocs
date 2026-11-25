@@ -11,7 +11,7 @@
 
 Every mode is built: BM25, `vector`, `hybrid` (BM25 and vectors fused with reciprocal rank fusion,
 #92), `hybrid_hyde` (#94) and `agentic` (#98), and so is reranking (#93).
-[Search and AI models](../search.md) describes each.
+[Search and AI models](../search/index.md) describes each.
 
 ## Which mode answers
 
@@ -23,7 +23,7 @@ Which mode answers is decided per call (RET-06):
 4. else the best default the configured model roles allow.
 
 A mode becomes a default only once the eval suite shows it beats BM25
-([Retrieval evals](../evals.md#gates)). `hybrid` is not one yet, so it runs when an operator, a
+([Retrieval evals](../evals/gates.md#gates)). `hybrid` is not one yet, so it runs when an operator, a
 library or a call chooses it.
 
 ## When a mode is available

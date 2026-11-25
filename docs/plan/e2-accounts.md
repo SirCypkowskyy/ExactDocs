@@ -38,7 +38,7 @@ Scenario: Creating the admin from the command line
 - [ ] `POST /api/v1/setup` works only while no account exists (then `409`); every other `/api/v1` route answers `403 setup_required` until then (`GET /api/v1/session`, `/api/health`, `openapi.json` and SPA assets excepted)
 - [ ] `exactdocs admin create` (local command: opens the database directly, prompts for the password)
 - [ ] unit tests (identity use cases), behave `setup.feature`, integration test for the guard
-- [ ] docs: README *Quick start* matches the flow; `docs/architecture.md` lists the `identity` domain; remove `auth_mode` from `settings.py` and `EXACTDOCS_AUTH_MODE`/OIDC from the README and compose example (OIDC returns with E12-03)
+- [ ] docs: README *Quick start* matches the flow; `docs/architecture/domains.md` lists the `identity` domain; remove `auth_mode` from `settings.py` and `EXACTDOCS_AUTH_MODE`/OIDC from the README and compose example (OIDC returns with E12-03)
 
 **Notes.** One admin only (Decisions *Users and tenancy*); the `role` column keeps room for more
 local users (ACL-06, E12-13) and roles (Next). The setup page itself is E8-01.

@@ -212,7 +212,7 @@ is in it:
   person whose identity no account has linked. A linked identity acts as its account, with the
   account's own role and groups.
 - GitHub `base_url`/`api_url` support GitHub.com, Enterprise Server and `*.ghe.com`, as in
-  [GitHub setup](configuration.md#github-and-github-enterprise-sign-in).
+  [GitHub setup](configuration/sign-in.md#github-and-github-enterprise-sign-in).
 - GitHub OAuth Apps accept one callback URL. Use a separate OAuth App/provider for MCP with
   `/auth/callback` as its callback, and choose that provider with `EXACTDOCS_MCP_OAUTH_PROVIDER`.
 
@@ -226,8 +226,8 @@ is in it:
 
 ### Behind Cloudflare Access
 
-When ExactDocs runs [behind Cloudflare Access](deployment.md#behind-cloudflare-access) with
-[`[auth.cloudflare_access]`](configuration.md#cloudflare-access) configured, an MCP client needs
+When ExactDocs runs [behind Cloudflare Access](deployment/reverse-proxy.md#behind-cloudflare-access) with
+[`[auth.cloudflare_access]`](configuration/sign-in.md#cloudflare-access) configured, an MCP client needs
 no ExactDocs token. It sends only the Access service-token headers:
 
 1. Access checks them and adds its signed token to the request.
@@ -347,7 +347,7 @@ Every response says which version answered.
 
 Without `mode`, the library's mode is used, else the instance's, else the best one configured.
 Asking for a mode that is not available is an error, `mode_unavailable`, which names the missing
-model role and lists the modes that are available (see [Search and AI models](search.md)).
+model role and lists the modes that are available (see [Search and AI models](search/index.md)).
 
 **`search_all_docs` results** each name their library and version, and `libraries` counts the
 matches per library. At most 500 libraries are searched; `libraries_omitted` says how many were

@@ -38,8 +38,8 @@ It holds **110 feature issues** plus **12 epic tracking issues**:
       The checkboxes are not ticked retroactively: GitHub is the source of truth.
     - Where the build deviated, the merged PR says why. The [as-built deviations](deviations.md)
       table collects the ones that matter.
-    - For how the system works now, read [Architecture](../architecture.md) and
-      [Flows](../flows.md).
+    - For how the system works now, read [Architecture](../architecture/index.md) and
+      [Flows](../flows/index.md).
 
 !!! abstract "How to read this plan"
     - **Milestones** say *when*: what must be demonstrably true to close them.
