@@ -661,7 +661,7 @@ def test_a_run_is_the_providers_the_clis_or_the_agents() -> None:
     ("said", "providers"),
     [
         ("API Error: 429 rate_limit_error", True),
-        ("We’re currently experiencing high demand, which may cause temporary errors.", True),
+        ("We\u2019re currently experiencing high demand, which may cause temporary errors.", True),
         ("stream disconnected before completion: Internal Server Error", True),
         ("you have reached your session usage limit", True),
         ("error_max_turns: Reached maximum number of turns (40)", False),
