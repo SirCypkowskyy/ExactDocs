@@ -917,10 +917,11 @@ the app's `bm25@default` does, so a gap between an eval-only variant and the def
 the variant, not from the grid's search.
 
 Embedding the corpus is what an embedding cell spends its time on, and several cells embed the
-same texts (the same chunks, prefixed alike). The grid keeps every slice of 256 embedded texts in
-`<out>/embeddings/`, under a hash of the model and the texts: a cell whose texts were embedded
-before reads them back, and a cell interrupted while embedding takes up where it stopped. A
-cell's index cost still counts the seconds embedding its texts took the first time.
+same texts (the same chunks, prefixed alike). The grid embeds each distinct text once (a chunk
+that is the same in several pinned versions is one text) and keeps every slice of 256 embedded
+texts in `<out>/embeddings/`, under a hash of the model and the texts: a cell whose texts were
+embedded before reads them back, and a cell interrupted while embedding takes up where it
+stopped. A cell's index cost still counts the seconds embedding its texts took the first time.
 
 ### The baselines
 
