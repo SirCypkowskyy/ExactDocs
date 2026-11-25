@@ -31,7 +31,7 @@ PROVIDER_FAILURE: Final[re.Pattern[str]] = re.compile(
     r"service unavailable|internal server error|bad gateway|gateway time-?out|"
     r"ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|socket hang up|fetch failed|"
     r"connection (?:reset|refused|closed|error)|stream disconnected|"
-    r"usage limit|session limit|high demand",
+    r"usage limit|session limit|high demand|API Error|API key",
     re.IGNORECASE,
 )
 """What a CLI's error says when the model provider failed (rate limited, a server error, a lost

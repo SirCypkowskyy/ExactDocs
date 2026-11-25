@@ -4,10 +4,11 @@ Everything here runs in the default suite, with no container, no CLI install and
 
 - each harness's transcript parser on recorded transcripts (``tests/fixtures/harness_transcripts``):
   OpenCode's and Codex's were captured from real runs of the pinned CLIs (Ollama Cloud,
-  ``gpt-oss:120b``), their local paths replaced; Claude Code's and Gemini CLI's are built from their
-  documented stream-JSON formats as the pinned releases write them (Claude Code 2.1.330's ``init``
-  and ``result`` messages, Gemini CLI 0.70.0's ``StreamJsonFormatter``), since no run of either was
-  possible without their providers' keys;
+  ``gpt-oss:120b``), their local paths replaced; Claude Code's and Gemini CLI's model runs are
+  built from their documented stream-JSON formats as the pinned releases write them (Claude Code
+  2.1.330's ``init`` and ``result`` messages, Gemini CLI 0.70.0's ``StreamJsonFormatter``), since
+  no model run of either was possible without their providers' keys; both were also started in
+  their containers with an invalid key, and those real transcripts are kept (``*-invalid-key``);
 - each harness's configuration (web tools off, only the arm's MCP server, the key passed by name);
 - the gate (tunnels only to allowed hosts, forwards, ``NO_PROXY``);
 - whole runs with a stand-in CLI (Claude Code's adapter, its CLI replaced by
@@ -106,8 +107,7 @@ def test_claude_code_stream_json_gives_calls_mcp_calls_tokens_and_cost() -> None
     assert "WebSearch" not in t.tools_offered
     assert "mcp__exactdocs__search_docs" in t.tools_offered
     assert (t.input_tokens, t.cached_input_tokens, t.output_tokens) == (93_286, 77_248, 487)
-    assert t.thinking_tokens is None
-    assert t.thinking == "not reported"
+    assert (t.thinking_tokens, t.thinking) == (96, "reported")  # output_tokens_details
     assert t.thinking_chars > 0
     assert (t.usd, t.usd_source) == (0.08437, "reported")
     assert t.turns == 6
@@ -128,6 +128,31 @@ def test_claude_code_rate_limit_is_the_providers_and_max_turns_the_agents() -> N
     assert turns.error.startswith("error_max_turns")
     assert not turns.provider_failure
     assert turns.usd == pytest.approx(0.0451)
+    assert turns.thinking == "not reported"
+
+
+def test_claude_code_captured_in_its_container_with_a_refused_key() -> None:
+    # Claude Code 2.1.330 itself, in its container behind the gate, an invalid key: its MCP
+    # server connected through the gate, its web tools off, the API's 401 never the agent's.
+    t = _transcript("claude-code", "claude-code-invalid-key", "anthropic:claude-sonnet-4-5")
+
+    assert {"mcp__exactdocs__search_docs", "Bash", "Write"} <= set(t.tools_offered)
+    assert not {"WebSearch", "WebFetch"} & set(t.tools_offered)
+    assert t.cli_version == "2.1.330"
+    assert t.provider_failure
+    assert t.error is not None
+    assert "401" in t.error
+    assert t.unparsed == 0
+
+
+def test_gemini_cli_captured_in_its_container_with_a_refused_key() -> None:
+    t = _transcript("gemini-cli", "gemini-cli-invalid-key", "google:gemini-2.5-pro")
+
+    assert t.model == "gemini-2.5-pro"
+    assert t.provider_failure
+    assert t.error is not None
+    assert "API key not valid" in t.error
+    assert t.unparsed == 0
 
 
 def test_gemini_cli_stream_json_derives_the_thinking_from_its_totals() -> None:

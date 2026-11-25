@@ -12,8 +12,10 @@ The stream-JSON transcript is one event per line: ``system`` (``init``: the tool
 servers and their status, the model, the version), ``assistant`` (one content block per event:
 ``text``, ``thinking``, ``tool_use``; the message's usage repeats on each block of a message),
 ``user`` (the ``tool_result`` of each call) and the final ``result`` (the answer, the duration,
-the turns, ``total_cost_usd``, the usage over the run). Claude Code counts the thinking in the
-output tokens and does not report it on its own.
+the turns, ``total_cost_usd``, the usage over the run, and for an API error its
+``api_error_status``). The output tokens include the thinking; 2.1.330 also reports the thinking
+on its own (``usage.output_tokens_details.thinking_tokens``), taken as not reported when it is 0
+next to thinking text.
 """
 
 import json
@@ -283,21 +285,28 @@ class ClaudeCode:
         if result.get("is_error") or result.get("subtype") != "success":
             details = result.get("errors") or [result.get("result") or result.get("subtype")]
             error = f"{result.get('subtype')}: " + "; ".join(str(d) for d in details)
-        answer = str(result.get("result") or "") if error is None else ""
+            if status := result.get("api_error_status"):
+                error += f" (API error status {status})"
+        # The API's error (a rate limit, an overload, a refused key) is never the agent's.
+        api_error = result.get("api_error_status") is not None
+        thought = (usage.get("output_tokens_details") or {}).get("thinking_tokens")
+        reported = isinstance(thought, int) and (thought > 0 or not fields["thinking_chars"])
         duration = result.get("duration_ms")
         return Transcript(
-            answer=answer,
+            answer=str(result.get("result") or "") if error is None else "",
             calls=calls,
             turns=number(result.get("num_turns")) or turns,
             input_tokens=input_tokens,
             cached_input_tokens=cached,
             output_tokens=output_tokens,
+            thinking_tokens=number(thought) if reported else None,
+            thinking="reported" if reported else "not reported",
             usd=money,
             usd_source=source,
             reported_seconds=round(duration / 1000, 3)
             if isinstance(duration, int | float)
             else None,
             error=error,
-            provider_failure=error is not None and provider_failed(error),
+            provider_failure=error is not None and (api_error or provider_failed(error)),
             **fields,
         )

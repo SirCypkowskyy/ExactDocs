@@ -132,7 +132,7 @@ def step_parsed(context: Context) -> None:
         assert row.input_tokens == STAND_IN_INPUT
         assert row.output_tokens == STAND_IN_OUTPUT
         assert row.thinking_tokens is None
-        assert row.thinking_source == "not reported"  # Claude Code counts it in the output only
+        assert row.thinking_source == "not reported"  # the stand-in reports none
 
 
 @then("the workspace is evaluated with the coding-task evaluators")

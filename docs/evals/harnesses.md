@@ -36,7 +36,13 @@ parses what it printed. `just harness-bench list` prints this table.
   `~/.cache/exactdocs/harnesses/<harness>/<version>` with the registry's integrity hash checked
   (`grounded_docs_cli.npm_install`), and mounted read-only into each run's container.
 - Every CLI can turn its web tools off, so no arm has the web. The report still counts any
-  built-in web call (`web_calls`) and every host the gate refused.
+  built-in web call (`web_calls`) and every host the gate refused, so a web tool that stayed on
+  would show, and the gate would refuse its hosts anyway.
+    - Gemini CLI 0.70.0 warns that `tools.exclude` is deprecated, to be replaced by its Policy
+      Engine in 1.0; a later pin has to move the exclusion there.
+    - Claude Code's `init` message lists the tools it offered: the report keeps them
+      (`tools_offered`), and in the CLI's own start in its container `WebSearch` and `WebFetch` were
+      not among them.
 - The arm's MCP server is the only one each CLI loads. A tool the server lists that the arm must
   not get (Grounded Docs' `fetch_url`) is turned off by name in each CLI's configuration.
 - Permissions and each CLI's own sandbox are off (`bypassPermissions`, Codex's
@@ -130,7 +136,7 @@ Each CLI's output is parsed into the same `Transcript` (`harness_bench/transcrip
 | MCP calls | `mcp__<server>__<tool>` | `mcp_tool_call` with `server`, `tool` | `mcp_<server>_<tool>` | `<server>_<tool>` |
 | input tokens (cached included) | `result.usage`: input + cache creation + cache read | sum of `turn.completed` `input_tokens` | `stats.input_tokens` (the prompt) | sum of steps' input + cache read + cache write |
 | output tokens with thinking | `result.usage.output_tokens` | sum of `output_tokens` | `output_tokens` + the derived thinking | sum of steps' output + reasoning |
-| thinking on its own | *not reported* (Claude Code counts it in the output) | `reasoning_output_tokens` where reported | *derived*: `total_tokens - input_tokens - output_tokens` | `tokens.reasoning` where reported |
+| thinking on its own | `usage.output_tokens_details.thinking_tokens` | `reasoning_output_tokens` where reported | *derived*: `total_tokens - input_tokens - output_tokens` | `tokens.reasoning` where reported |
 | USD | `total_cost_usd` (Claude Code's own) | the bundled price list | the bundled price list | its `cost` when not 0, else the price list |
 | model requests | `num_turns` | not reported | not reported | steps |
 
@@ -214,10 +220,14 @@ with no container, no CLI install and no provider:
 - every parser on recorded transcripts (`tests/fixtures/harness_transcripts/`):
     - OpenCode's and Codex's were captured from real runs of the pinned CLIs in their containers
       (Ollama Cloud, `gpt-oss:120b`), local paths replaced;
-    - Claude Code's and Gemini CLI's are built from the pinned releases' documented stream-JSON
-      formats (Claude Code 2.1.330's `init`, `assistant`, `user` and `result` messages; Gemini CLI
-      0.70.0's `StreamJsonFormatter`), because no run of either was possible without their
-      providers' keys;
+    - Claude Code's and Gemini CLI's model runs are built from the pinned releases' documented
+      stream-JSON formats (Claude Code 2.1.330's `init`, `assistant`, `user` and `result`
+      messages; Gemini CLI 0.70.0's `StreamJsonFormatter`), because no model run of either was
+      possible without their providers' keys;
+    - both CLIs were also started for real in their containers with an invalid key, and those
+      transcripts are kept: Claude Code's `init` lists the arm's MCP tools (its server connected
+      through the gate) and no web tool, and each ends with the API's refusal, which is never the
+      agent's failure;
     - each with the provider's failure (a 429) and the agent's (the turn limit);
 - every harness's configuration: web tools off, only the arm's MCP server, the key by name;
 - the gate: tunnels only to allowed hosts, forwards, `NO_PROXY`, an upstream proxy;

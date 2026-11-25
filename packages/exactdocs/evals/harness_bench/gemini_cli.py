@@ -4,7 +4,8 @@
   ``--allowed-mcp-server-names``), its tools named ``mcp_<server>_<tool>``; a tool the arm must
   not get is in the server's ``excludeTools``.
 - ``google_web_search`` and ``web_fetch`` are excluded (``tools.exclude``): Gemini CLI lets both be
-  turned off. Usage statistics, telemetry and updates are off.
+  turned off. 0.70.0 warns that ``tools.exclude`` is deprecated (its Policy Engine replaces it in
+  1.0). Usage statistics, telemetry and updates are off.
 - Every tool runs without asking (``--approval-mode yolo``), the workspace trusted
   (``--skip-trust``): the run is sandboxed by its container.
 - ``model.maxSessionTurns`` limits the turns. Gemini CLI takes no thinking setting on its command
