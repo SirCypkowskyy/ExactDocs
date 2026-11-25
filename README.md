@@ -49,9 +49,9 @@ It runs on your laptop or your own server, so private docs stay on your network.
 library IDs match context7's, so an agent already set up for context7 only needs a new URL.
 
 > [!NOTE]
-> The newest release is **v0.2.0** ([PyPI](https://pypi.org/project/exactdocs/), ghcr.io). This
-> README describes the `develop` branch. AI retrieval, PostgreSQL, user accounts and sign-in,
-> library sharing, webhooks, the sources file and the newer CLI commands ship in the next release.
+> The newest release is **v0.6.0** ([PyPI](https://pypi.org/project/exactdocs/), ghcr.io,
+> [release notes](https://github.com/SirCypkowskyy/ExactDocs/releases/tag/v0.6.0)). This README
+> describes the `develop` branch, which can be ahead of the release.
 
 ## Why ExactDocs
 
@@ -214,9 +214,9 @@ checks, upgrades, backups, PostgreSQL, Supabase and observability, and
 
 ## Roadmap
 
-v0.2.0 (MVP-1) has the main loop for one admin with no external services: import from any git
-URL, heading-based chunking, BM25 pinned to a version, the web UI and the MCP tools. `develop` adds
-everything this README lists beyond that. Later: `llms.txt` and website crawling, docs resolved
+v0.6.0, the first public release, has everything this README describes: version-pinned import and
+search, hybrid, vector and agentic retrieval, PostgreSQL, user accounts with sign-in and library
+roles, webhooks, the sources file and the CLI. Later: `llms.txt` and website crawling, docs resolved
 from package registries and lockfiles, prebuilt index snapshots, and AsciiDoc and notebooks. The
 [user stories](docs/user-stories.md) and the [delivery plan](docs/plan/index.md) have the details.
 

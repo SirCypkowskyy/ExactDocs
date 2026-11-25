@@ -6,6 +6,14 @@ gone through this proxy (``.test`` names resolve nowhere). Every request is reco
 ``CONNECT host:port`` or ``GET http://host/path``. With ``credentials`` the proxy answers 407
 unless the request carries them (``Proxy-Authorization: Basic``); a host it has no route for is
 refused with 403, as a corporate proxy's policy would.
+
+Plain HTTP keeps the client's connection open from one request to the next, as a real proxy does
+(#589): each request goes to its host on a connection of its own, and the proxy reads the next
+one from the client. It closes that connection only after saying so (``Connection: close``): after
+a refusal, or an answer no other can follow on it (no length in its head, HTTP/1.0, or the client
+asked to close). A client that reuses its connections (httpx, curl) then never sends a request
+into a connection the proxy is closing, which failed as "Server disconnected without sending a
+response".
 """
 
 import base64
@@ -22,13 +30,17 @@ import pytest
 from exactdocs_kernel import OUTBOUND_VARIABLES
 
 HEAD_LIMIT = 64 * 1024
-"""Longest request head the proxy reads."""
+"""Longest head (or chunk size line) the proxy reads."""
 DENIED = (
     b"HTTP/1.1 407 Proxy Authentication Required\r\n"
     b'Proxy-Authenticate: Basic realm="test"\r\n'
     b"Content-Length: 0\r\nConnection: close\r\n\r\n"
 )
 """The answer to a request without the proxy's credentials."""
+FORBIDDEN = b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+"""The answer for a host the proxy has no route to."""
+HOP_BY_HOP = frozenset({"connection", "keep-alive", "proxy-authorization", "proxy-connection"})
+"""Headers about one connection, which the proxy does not pass on."""
 
 
 @dataclass(slots=True)
@@ -86,6 +98,42 @@ def _pipe(source: socket.socket, sink: socket.socket) -> None:
         sink.shutdown(socket.SHUT_WR)
 
 
+@dataclass(slots=True)
+class _Stream:
+    """One side of a connection, read head by head: what was read past one is kept for the next."""
+
+    sock: socket.socket
+    buffer: bytes = b""
+
+    def _more(self) -> bool:
+        with contextlib.suppress(OSError):
+            if chunk := self.sock.recv(65536):
+                self.buffer += chunk
+                return True
+        return False
+
+    def until(self, mark: bytes) -> bytes | None:
+        """Read up to the end of ``mark``; ``None`` if the peer closed or sent too much first."""
+        while mark not in self.buffer:
+            if len(self.buffer) >= HEAD_LIMIT or not self._more():
+                return None
+        found, _, self.buffer = self.buffer.partition(mark)
+        return found + mark
+
+    def exactly(self, size: int) -> bytes | None:
+        """Read ``size`` bytes; ``None`` if the peer closed first."""
+        while len(self.buffer) < size:
+            if not self._more():
+                return None
+        found, self.buffer = self.buffer[:size], self.buffer[size:]
+        return found
+
+    def take(self) -> bytes:
+        """Everything read and not used yet."""
+        found, self.buffer = self.buffer, b""
+        return found
+
+
 @dataclass(frozen=True, slots=True)
 class _Request:
     """The head of one request a client sent the proxy."""
@@ -94,33 +142,121 @@ class _Request:
     target: str
     version: str
     headers: list[tuple[str, str]]
-    rest: bytes
-    """What the client sent after the head (a body, or a TLS hello)."""
 
     def header(self, name: str) -> str | None:
         return next((v.strip() for k, v in self.headers if k.lower() == name), None)
 
 
-def _read_head(client: socket.socket) -> _Request | None:
-    head = b""
-    while b"\r\n\r\n" not in head and len(head) < HEAD_LIMIT:
-        chunk = client.recv(65536)
-        if not chunk:
-            return None
-        head += chunk
-    head, _, rest = head.partition(b"\r\n\r\n")
-    lines = head.decode("latin-1").split("\r\n")
+def _read_head(client: _Stream) -> _Request | None:
+    head = client.until(b"\r\n\r\n")
+    if head is None:
+        return None
+    lines = head.removesuffix(b"\r\n\r\n").decode("latin-1").split("\r\n")
     method, target, version = lines[0].split(" ", 2)
     headers = [(k, v) for k, _, v in (line.partition(":") for line in lines[1:] if ":" in line)]
-    return _Request(method, target, version, headers, rest)
+    return _Request(method, target, version, headers)
+
+
+def _body(client: _Stream, request: _Request) -> bytes | None:
+    """Read a request's body as its head delimits it: ``Content-Length``, chunked, or none.
+
+    Returns:
+        The body as the client sent it; ``None`` if the client closed before its end.
+    """
+    if (request.header("transfer-encoding") or "").lower() != "chunked":
+        return client.exactly(int(request.header("content-length") or 0))
+    body = b""
+    while (line := client.until(b"\r\n")) is not None:
+        body += line
+        if not (size := int(line.split(b";")[0], 16)):  # the last chunk, then trailers
+            while (line := client.until(b"\r\n")) not in {None, b"\r\n"}:
+                body += line
+            return None if line is None else body + line
+        if (chunk := client.exactly(size + 2)) is None:
+            return None
+        body += chunk
+    return None
 
 
 def _forwarded(request: _Request, origin: str) -> bytes:
-    """The request as the origin server gets it: origin-form, no proxy headers, then closed."""
-    dropped = {"proxy-authorization", "proxy-connection", "connection"}
-    kept = [f"{k}:{v}" for k, v in request.headers if k.lower() not in dropped]
+    """The request's head as the origin server gets it: origin-form, no proxy headers, closed."""
+    kept = [f"{k}:{v}" for k, v in request.headers if k.lower() not in HOP_BY_HOP]
     head = "\r\n".join([f"{request.method} {origin} {request.version}", *kept])
-    return f"{head}\r\nConnection: close\r\n\r\n".encode("latin-1") + request.rest
+    return f"{head}\r\nConnection: close\r\n\r\n".encode("latin-1")
+
+
+def _answer(upstream: socket.socket, client: socket.socket, request: _Request) -> bool:
+    """Pass the origin's answer on to the client.
+
+    The origin closes after it (``_forwarded`` asks it to), so all it sends is the answer. The
+    client's connection stays open when the answer's head delimits it (HTTP/1.1 with
+    ``Content-Length``, chunked, or no body) and the client did not ask to close; otherwise the
+    head the client gets says ``Connection: close``.
+
+    Returns:
+        Whether the client's connection stays open for another request.
+    """
+    origin = _Stream(upstream)
+    head = origin.until(b"\r\n\r\n")
+    if head is None:
+        return False  # it closed without an answer: so does the proxy
+    status, *lines = head.removesuffix(b"\r\n\r\n").decode("latin-1").split("\r\n")
+    version, code, *_ = status.split(" ", 2)
+    headers = [(k, v.strip()) for k, _, v in (line.partition(":") for line in lines if ":" in line)]
+    named = {k.lower(): v.lower() for k, v in headers}
+    delimited = (
+        request.method == "HEAD"
+        or code in {"204", "304"}
+        or "content-length" in named
+        or named.get("transfer-encoding") == "chunked"
+    )
+    keep = (
+        delimited
+        and version == request.version == "HTTP/1.1"
+        and (request.header("connection") or "").lower() != "close"
+    )
+    kept = [f"{k}: {v}" for k, v in headers if k.lower() not in HOP_BY_HOP]
+    closing = [] if keep else ["Connection: close"]
+    client.sendall("\r\n".join([status, *kept, *closing, "", ""]).encode("latin-1") + origin.take())
+    with contextlib.suppress(OSError):
+        while chunk := upstream.recv(65536):
+            client.sendall(chunk)
+    return keep
+
+
+def _forward(proxy: ForwardProxy, client: _Stream, request: _Request) -> bool:
+    """Send one plain HTTP request to its host, on a connection of its own, and pass the answer on.
+
+    Returns:
+        Whether the client's connection stays open for another request.
+    """
+    parts = urlsplit(request.target)
+    address = proxy.routes.get(f"{parts.hostname}:{parts.port or 80}".lower())
+    if address is None:
+        client.sock.sendall(FORBIDDEN)
+        return False
+    body = _body(client, request)
+    if body is None:
+        return False
+    origin = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
+    with socket.create_connection(address, timeout=30) as upstream:
+        upstream.sendall(_forwarded(request, origin) + body)
+        return _answer(upstream, client.sock, request)
+
+
+def _tunnel(proxy: ForwardProxy, client: _Stream, request: _Request) -> None:
+    """Open a CONNECT tunnel to the host and copy bytes both ways until they close."""
+    address = proxy.routes.get(request.target.lower())
+    if address is None:
+        client.sock.sendall(FORBIDDEN)
+        return
+    with socket.create_connection(address, timeout=30) as upstream:
+        client.sock.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+        upstream.sendall(client.take())  # a TLS hello sent with the head
+        back = threading.Thread(target=_pipe, args=(upstream, client.sock), daemon=True)
+        back.start()
+        _pipe(client.sock, upstream)
+        back.join(timeout=60)
 
 
 def _handler(proxy: ForwardProxy) -> type[socketserver.BaseRequestHandler]:
@@ -132,34 +268,19 @@ def _handler(proxy: ForwardProxy) -> type[socketserver.BaseRequestHandler]:
 
     class Handler(socketserver.BaseRequestHandler):
         def handle(self) -> None:
-            client: socket.socket = self.request
-            request = _read_head(client)
-            if request is None:
-                return
-            proxy.seen.append(f"{request.method} {request.target}")
-            asked = proxy.credentials is not None  # read now: a test may change it
-            if asked and request.header("proxy-authorization") != wanted:
-                client.sendall(DENIED)
-                return
-            if request.method == "CONNECT":
-                authority, first = request.target.lower(), request.rest
-            else:
-                parts = urlsplit(request.target)
-                authority = f"{parts.hostname}:{parts.port or 80}".lower()
-                origin = (parts.path or "/") + (f"?{parts.query}" if parts.query else "")
-                first = _forwarded(request, origin)
-            address = proxy.routes.get(authority)
-            if address is None:
-                client.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
-                return
-            with socket.create_connection(address, timeout=30) as upstream:
+            self.request.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # kept open
+            client = _Stream(self.request)
+            while (request := _read_head(client)) is not None:
+                proxy.seen.append(f"{request.method} {request.target}")
+                asked = proxy.credentials is not None  # read now: a test may change it
+                if asked and request.header("proxy-authorization") != wanted:
+                    client.sock.sendall(DENIED)
+                    return
                 if request.method == "CONNECT":
-                    client.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
-                upstream.sendall(first)
-                back = threading.Thread(target=_pipe, args=(upstream, client), daemon=True)
-                back.start()
-                _pipe(client, upstream)
-                back.join(timeout=60)
+                    _tunnel(proxy, client, request)
+                    return
+                if not _forward(proxy, client, request):
+                    return
 
     return Handler
 
