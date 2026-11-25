@@ -127,7 +127,7 @@ function Facets({ data, q, library }: { data: GlobalResults; q: string; library?
           <Button
             variant="ghost"
             size="sm"
-            className="px-1 font-normal text-muted-foreground can-hover:hover:text-foreground lg:h-9"
+            className="px-1 font-normal text-muted-foreground can-hover:hover:text-foreground lg:min-h-9"
           >
             {t.facets.more(rest.length)}
             <ChevronDown aria-hidden="true" />

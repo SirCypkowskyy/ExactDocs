@@ -1,5 +1,5 @@
 import { Pin } from "lucide-react";
-import { PHONE_QUERY, useMediaQuery } from "@/shared/lib/use-media-query";
+import { usePhoneLayout } from "@/shared/lib/use-media-query";
 import {
   Count,
   LibraryCell,
@@ -41,7 +41,7 @@ function DefaultVersion({ library, t }: { library: Library; t: ListMessages["row
 
 /** The default version's articles: a figure under the header, "120 articles" on a phone card. */
 function Articles({ value, t }: { value: number; t: ListMessages["row"] }) {
-  const phone = useMediaQuery(PHONE_QUERY);
+  const phone = usePhoneLayout();
   if (phone) return <span className="num">{t.articles(value)}</span>;
   return <Count value={value} muted={value === 0} />;
 }

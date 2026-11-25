@@ -126,6 +126,7 @@ function TopLibraries({ usage }: { usage: UseQueryResult<UsageStats> }) {
                         <Link
                           to="/libraries/$owner/$repo"
                           params={{ owner, repo }}
+                          title={id}
                           className="min-w-0 truncate rounded-sm font-mono text-mono underline-offset-4 outline-none focus-visible:ring-2 focus-visible:ring-ring can-hover:hover:underline"
                         >
                           {id}
