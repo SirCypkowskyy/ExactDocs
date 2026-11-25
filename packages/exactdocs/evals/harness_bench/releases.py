@@ -30,15 +30,29 @@ HARNESSES: Final[dict[str, Harness]] = {
 RIPGREP_VERSION: Final[str] = "14.1.1"
 """The ripgrep release every run's container gets: OpenCode's and Gemini CLI's search tools run
 ``rg``, and OpenCode would otherwise try to download it, which the gate refuses."""
-RIPGREP_URL: Final[str] = (
-    "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/"
-    "ripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz"
-)
-"""Its static (musl) Linux x86-64 build."""
-RIPGREP_SHA256: Final[str] = "4cf9f2741e6c465ffdb7c26f38056a59e2a2544b51f7cc128ef28337eeae4d8e"
-"""The build's SHA-256 (the release's ``.sha256``): a download with another hash is refused."""
-X86_64: Final[frozenset[str]] = frozenset({"x86_64", "amd64"})
-"""The machines the pinned ripgrep build runs on."""
+RIPGREP_BUILDS: Final[dict[str, tuple[str, str]]] = {
+    machine: (
+        f"https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-{build}"
+        ".tar.gz",
+        sha256,
+    )
+    for machines, build, sha256 in (
+        (
+            ("x86_64", "amd64"),
+            "x86_64-unknown-linux-musl",
+            "4cf9f2741e6c465ffdb7c26f38056a59e2a2544b51f7cc128ef28337eeae4d8e",
+        ),
+        (
+            ("aarch64", "arm64"),
+            "aarch64-unknown-linux-gnu",
+            "c827481c4ff4ea10c9dc7a4022c8de5db34a5737cb74484d62eb94a95841ab2f",
+        ),
+    )
+    for machine in machines
+}
+"""Its Linux builds by machine (``platform.machine()``, lower case): the URL and the SHA-256 the
+release publishes; a download with another hash is refused. The x86-64 build is static; the
+ARM64 one needs glibc, which the containers' Debian image has."""
 
 
 def harnesses_home() -> Path:
@@ -102,12 +116,13 @@ def install_ripgrep(home: Path, *, offline: bool = False) -> Path | None:
         offline: Download nothing; use what is there.
 
     Returns:
-        The folder holding ``rg``; ``None`` off Linux x86-64, where no pinned build runs.
+        The folder holding ``rg``; ``None`` off Linux or on a machine with no pinned build.
 
     Raises:
         RuntimeError: The download failed, or its hash is not the pinned one.
     """
-    if sys.platform != "linux" or platform.machine().lower() not in X86_64:
+    build = RIPGREP_BUILDS.get(platform.machine().lower())
+    if sys.platform != "linux" or build is None:
         return None
     folder = home / "ripgrep" / RIPGREP_VERSION
     if (folder / "rg").exists():
@@ -115,13 +130,14 @@ def install_ripgrep(home: Path, *, offline: bool = False) -> Path | None:
     if offline:
         message = f"ripgrep {RIPGREP_VERSION} is not in {folder} (--offline)"
         raise RuntimeError(message)
+    url, sha256 = build
     try:
-        response = httpx.get(RIPGREP_URL, follow_redirects=True, timeout=120)
+        response = httpx.get(url, follow_redirects=True, timeout=120)
         data = response.raise_for_status().content
     except httpx.HTTPError as error:
         message = f"ripgrep {RIPGREP_VERSION} could not be downloaded: {error}"
         raise RuntimeError(message) from error
-    if hashlib.sha256(data).hexdigest() != RIPGREP_SHA256:
+    if hashlib.sha256(data).hexdigest() != sha256:
         message = f"ripgrep {RIPGREP_VERSION}: the download's hash is not the pinned one"
         raise RuntimeError(message)
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
