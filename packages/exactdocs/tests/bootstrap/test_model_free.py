@@ -187,12 +187,18 @@ def test_the_dependency_tree_has_no_ml_package() -> None:
     assert check_artifacts.default_ml_packages(tomllib.loads(lock.read_text())) == set()
 
 
-def _wheel(tmp_path: Path, requires: str, web: bool = True) -> Path:
+def _wheel(
+    tmp_path: Path, requires: str, web: bool = True, notices: bool = True, licensed: bool = True
+) -> Path:
     path = tmp_path / "exactdocs-0-py3-none-any.whl"
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("exactdocs-0.dist-info/METADATA", f"Name: exactdocs\n{requires}\n")
+        if licensed:
+            z.writestr("exactdocs-0.dist-info/licenses/LICENSE", "Apache License")
         if web:
             z.writestr("exactdocs/_web/index.html", "<html>")
+            if notices:
+                z.writestr("exactdocs/_web/THIRD_PARTY_NOTICES.txt", "MIT License")
     return path
 
 
@@ -208,6 +214,14 @@ def test_a_wheel_with_a_default_ml_dependency_fails(tmp_path: Path) -> None:
 
 def test_a_wheel_without_the_bundled_ui_fails(tmp_path: Path) -> None:
     assert check_artifacts.wheel(_wheel(tmp_path, "", web=False)) == 1
+
+
+def test_a_wheel_whose_ui_has_no_third_party_notices_fails(tmp_path: Path) -> None:
+    assert check_artifacts.wheel(_wheel(tmp_path, "", notices=False)) == 1
+
+
+def test_a_wheel_without_the_license_fails(tmp_path: Path) -> None:
+    assert check_artifacts.wheel(_wheel(tmp_path, "", licensed=False)) == 1
 
 
 def test_chonkie_is_not_banned() -> None:

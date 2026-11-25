@@ -4,6 +4,10 @@ dynamic = ["version", "dependencies"]
 description = "Self-hosted, version-accurate documentation for AI coding agents (MCP server)."
 readme = "README.md"
 license = "Apache-2.0"
+# A copy of the repository's LICENSE (PEP 639 allows no path outside the package), so the wheel
+# and the sdist carry it; packages/exactdocs/tests/ci/test_licenses.py keeps
+# the copies equal.
+license-files = ["LICENSE"]
 requires-python = ">=3.14"
 authors = [{ name = "Cyprian Gburek" }]
 keywords = ["mcp", "documentation", "rag", "ai-agents", "fastmcp"]

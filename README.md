@@ -251,4 +251,6 @@ and see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-Apache-2.0. Imported documentation stays under the license of its original repository.
+Apache-2.0. Imported documentation stays under the license of its original repository. The web
+UI bundles third-party code and fonts under their own licences, listed in `THIRD_PARTY_NOTICES.txt`
+next to it (`exactdocs/_web/` in the wheel and the image; see [web/README.md](web/README.md)).

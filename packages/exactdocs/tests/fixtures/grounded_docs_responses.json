@@ -1,0 +1,16 @@
+{
+  "grounded_docs": "3.4.1",
+  "responses": {
+    "full-text": {
+      "install demo package pip": "\n------------------------------------------------------------\nResult 1: file:///corpus/demo/v1/docs/guide.md\n\n# Guide\nIntro.\n## Install\nRun pip to install the demo package.\n```sh\npip install demo\n```\n## Configure\nSet the timeout option in the settings file.\n",
+      "kubernetes operator crd": "No results found for 'kubernetes operator crd' in demo. Try to use a different or more general query."
+    },
+    "bge-small-en-v1.5": {
+      "install demo package pip": "\n------------------------------------------------------------\nResult 1: file:///corpus/demo/v1/docs/guide.md\n\n# Guide\nIntro.\n## Install\nRun pip to install the demo package.\n```sh\npip install demo\n```\n## Configure\nSet the timeout option in the settings file.\n",
+      "kubernetes operator crd": "\n------------------------------------------------------------\nResult 1: file:///corpus/demo/v1/docs/guide.md\n\n# Guide\nIntro.\n## Install\nRun pip to install the demo package.\n```sh\npip install demo\n```\n## Configure\nSet the timeout option in the settings file.\n"
+    },
+    "multi": {
+      "connection pool timeout": "\n------------------------------------------------------------\nResult 1: file:///corpus/multi/1.0.0/docs/timeouts.md\n\n# Timeouts\nEvery request has a connect timeout and a read timeout. A pool timeout applies while the request waits for a connection from the pool.\n\n------------------------------------------------------------\nResult 2: file:///corpus/multi/1.0.0/docs/pool.md\n\n# Connection pool\nThe client keeps a pool of connections. Each connection in the pool is reused for later requests, and the pool timeout says how long a request waits for a free connection before it fails.\n## Size\nThe pool holds ten connections by default.\n\n------------------------------------------------------------\nResult 3: file:///corpus/multi/1.0.0/docs/retries.md\n\n# Retries\nA request that fails with a timeout is retried twice, with a back-off between attempts. A connection is returned to the pool after each attempt.\n"
+    }
+  }
+}

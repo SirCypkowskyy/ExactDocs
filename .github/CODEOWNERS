@@ -1,0 +1,10 @@
+# Changes here need the maintainer's review: the workflows and the release, the deployment and
+# its images (deploy/mermaid-check/ included), and the lockfiles that pin what CI, the wheels and
+# the images install.
+# (https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners)
+
+/.github/                       @SirCypkowskyy
+/deploy/                        @SirCypkowskyy
+/uv.lock                        @SirCypkowskyy
+/web/pnpm-lock.yaml             @SirCypkowskyy
+/e2e/pnpm-lock.yaml             @SirCypkowskyy

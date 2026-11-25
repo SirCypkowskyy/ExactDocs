@@ -115,6 +115,10 @@ retrieval-bench *args:
 text-bench *args:
     uv run python packages/exactdocs/evals/run_text_bench.py {{ args }}
 
+# Grounded Docs (never in CI): a pinned docs-mcp-server indexes the golden corpus, answers the golden set, scored next to ExactDocs' BM25 (docs/evals.md); needs Node.js 22
+grounded-bench *args:
+    uv run python packages/exactdocs/evals/run_grounded_bench.py {{ args }}
+
 # Agent benchmark (never in CI): an agent with only the ExactDocs MCP tools answers the golden set (docs/evals.md); `just agent-bench run --offline`
 agent-bench *args:
     uv run python packages/exactdocs/evals/run_agent_bench.py {{ args }}
