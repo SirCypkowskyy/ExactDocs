@@ -18,7 +18,7 @@ from datetime import date
 from pathlib import Path
 from typing import Final
 
-from agent_bench.arms import DEFAULT_ARMS, parse_arms
+from agent_bench.arms import ARMS, CONTEXT7, DEFAULT_ARMS, parse_arms
 from agent_bench.harness import RetrievalConfig
 from agent_bench.models import DEFAULT_RETRIES, thinking_setting
 from coding_tasks.agent import DEFAULT_MAX_REQUESTS
@@ -30,6 +30,7 @@ from coding_tasks.report import markdown as report_markdown
 from coding_tasks.run import load_rows, run_tasks
 from coding_tasks.sandbox import Limits, sandbox_named
 from coding_tasks.tasks import DEFAULT_CUTOFF, TASKS_DIR, CodingTask, load_tasks
+from retrieval_eval.context7 import API_KEY_VARIABLE
 from retrieval_eval.golden import CORPUS_FILE, Corpus, fetch, load_corpus
 from retrieval_eval.golden import default_cache_dir as golden_cache_dir
 
@@ -294,7 +295,8 @@ def _run(args: argparse.Namespace) -> int:
         args: The parsed ``run`` arguments.
 
     Returns:
-        2 for a usage error, 1 when an install or a fetch failed, else 0 (no gate).
+        2 for a usage error (``context7`` without ``CONTEXT7_API_KEY`` too), 1 when an install or a
+        fetch failed, else 0 (no gate).
     """
     agent_models = list(OFFLINE_AGENTS) if args.offline else args.agent_model
     if not agent_models:
@@ -307,6 +309,11 @@ def _run(args: argparse.Namespace) -> int:
     except ValueError as error:
         sys.stderr.write(f"coding-tasks: {error}\n")
         return 2
+    if ARMS[CONTEXT7] in arms and not os.environ.get(API_KEY_VARIABLE, "").strip():
+        sys.stderr.write(
+            f"coding-tasks: the context7 arm needs a Context7 API key in {API_KEY_VARIABLE}\n"
+        )
+        return 2
     loaded = _load(args)
     if loaded is None:
         return 2
@@ -314,7 +321,7 @@ def _run(args: argparse.Namespace) -> int:
     tasks = per_project(tasks, args.limit)
     try:
         prepared = asyncio.run(prepare_all(tasks, args.cache_dir))
-        wanted = {t.spec.project for t in tasks} if any(a.retrieval for a in arms) else set()
+        wanted = {t.spec.project for t in tasks} if any(a.configured for a in arms) else set()
         repos = {p.id: fetch(p, args.golden_cache) for p in corpus.projects if p.id in wanted}
     except RuntimeError as error:
         sys.stderr.write(f"coding-tasks: {error}\n")

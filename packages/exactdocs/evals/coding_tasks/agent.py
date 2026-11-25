@@ -1,7 +1,7 @@
 """An agent completes a coding task with the workspace tools and one documentation arm.
 
 The arms are the agent benchmark's (``agent_bench.arms``): ``none`` has no documentation tool,
-``exactdocs`` has ExactDocs as shipped (``agent_bench.harness.ArmServers``), and the arms
+``exactdocs`` has ExactDocs as shipped (``agent_bench.servers.ArmServers``), and the arms
 #492/#493 add come the same way. Every arm also gets the workspace tools (``workspace``). The
 agent is told what a coding agent knows from the project (the library and the version it pins)
 and the task; the instructions differ between arms only in the sentence about the documentation

@@ -157,8 +157,8 @@ A run the provider failed is not graded, counted in *Errors*, and asked again by
 ## The agent
 
 The agent is the agent benchmark's (#495): a pydantic-ai agent with one documentation arm
-(`none`, `exactdocs`; `context7` and `grounded-docs` once their toolsets are built) and the
-workspace tools:
+(`none`, `exactdocs`, `context7` or `grounded-docs`, each with only its own tools, as there) and
+the workspace tools:
 
 | Tool | What it does |
 |---|---|
