@@ -1,10 +1,12 @@
-"""The agent benchmark's documentation arms (#495): none and exactdocs, cost per arm, a blind judge.
+"""The agent benchmark's documentation arms (#495): none, exactdocs, context7 and grounded-docs.
 
-Every test here runs in the default pytest run with scripted models (pydantic-ai ``FunctionModel``)
-and the stand-in documentation tools of ``agent_bench_stand_ins``: no provider, no ExactDocs
-server.
+Cost per arm, a blind judge, each arm with only its own tools and every arm compared with ``none``
+and ``exactdocs``. Every test here runs in the default pytest run with scripted models (pydantic-ai
+``FunctionModel``) and the stand-in documentation servers of ``agent_bench_stand_ins``: no
+provider, no ExactDocs, Context7 or Grounded Docs server.
 """
 
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -23,13 +25,26 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.usage import RequestUsage
 
-from agent_bench.arms import ARMS, EXACTDOCS, NONE, REDACTED, blind, parse_arms
-from agent_bench.cli import load_rows, run_bench, selected_cases
+from agent_bench import cli as agent_cli
+from agent_bench.arms import (
+    ARMS,
+    CONTEXT7,
+    CONTEXT7_TOOLS,
+    EXACTDOCS,
+    GROUNDED_DOCS,
+    GROUNDED_DOCS_TOOLS,
+    NONE,
+    REDACTED,
+    blind,
+    parse_arms,
+)
+from agent_bench.cli import load_rows, main, run_bench, selected_cases, setups_of
 from agent_bench.harness import (
     AgentRun,
     BenchInfo,
     Recorder,
     RetrievalConfig,
+    Section,
     asker,
     bench_dataset,
     failure_of,
@@ -43,7 +58,19 @@ from agent_bench.redact import REDACTED as SECRET
 from agent_bench.redact import recorded_settings, safe_url, scrub
 from agent_bench.report import QuestionResult, against_arms, markdown, results_of, summarize
 from agent_bench.retries import RETRIES, RetryLog, on_request, on_response
-from agent_bench_stand_ins import FlakyProvider, golden, stand_in_tools
+from agent_bench.servers import (
+    ArmServers,
+    context7_environment,
+    grounded_docs_config,
+    page_read,
+)
+from agent_bench_stand_ins import (
+    GROUNDED_CORPUS,
+    LIBRARY,
+    FlakyProvider,
+    golden,
+    stand_in_tools,
+)
 from retrieval_eval.dataset import Question
 from retrieval_eval.golden import load_cases
 
@@ -65,14 +92,38 @@ def test_the_arms_have_the_same_instructions_apart_from_the_tool() -> None:
         assert text.endswith(tail)
 
 
-def test_the_arms_asked_are_read_in_order_and_unbuilt_ones_are_refused() -> None:
+def test_the_arms_asked_are_read_in_order_and_unknown_ones_are_refused() -> None:
     assert [a.name for a in parse_arms([])] == ["none", "exactdocs"]
     assert [a.name for a in parse_arms(["exactdocs", "none"])] == ["none", "exactdocs"]
     assert [a.name for a in parse_arms(["exactdocs,none,exactdocs"])] == ["none", "exactdocs"]
+    assert [a.name for a in parse_arms(["grounded-docs,context7", "none"])] == [
+        "none",
+        "context7",
+        "grounded-docs",
+    ]
     with pytest.raises(ValueError, match="unknown arm 'web'"):
         parse_arms(["web"])
-    with pytest.raises(ValueError, match=r"context7 arm is not built yet \(#493\)"):
-        parse_arms(["context7"])
+
+
+def test_an_arm_with_configurations_runs_once_per_configuration() -> None:
+    arms = parse_arms(["none,exactdocs,context7,grounded-docs"])
+    bm25, hybrid = RetrievalConfig.parse("bm25:mode=bm25"), RetrievalConfig.parse("hybrid")
+    full, vector = grounded_docs_config("full-text"), grounded_docs_config("bge-small-en-v1.5")
+
+    setups = setups_of(arms, {EXACTDOCS: [bm25, hybrid], GROUNDED_DOCS: [full, vector]})
+
+    assert [(s.arm.name, s.retrieval) for s in setups] == [
+        ("none", ""),
+        ("exactdocs", "bm25"),
+        ("exactdocs", "hybrid"),
+        ("context7", ""),
+        ("grounded-docs", "full-text"),
+        ("grounded-docs", "bge-small-en-v1.5"),
+    ]
+    with pytest.raises(ValueError, match="grounded-docs arm needs a configuration"):
+        setups_of(arms, {EXACTDOCS: [bm25]})
+    with pytest.raises(ValueError, match="unknown Grounded Docs configuration 'vectors'"):
+        grounded_docs_config("vectors")
 
 
 # ------------------------------------------------------------------------------ blind judge
@@ -89,6 +140,14 @@ def test_the_judge_reads_the_answer_without_any_arm_s_product_or_tool_names() ->
     assert blinded.count(REDACTED) == 7
     assert "use uv add" in blinded
     assert "query-docs-like" in blinded  # a whole word only
+    others = (
+        "Upstash's context7-mcp and resolve-library-id; read_page, list_pages and find_version "
+        "of docs-mcp-server at file:///home/me/grounded-docs/corpus/x.md say: use uv add."
+    )
+    assert blind(others) == (
+        f"{REDACTED}'s {REDACTED} and {REDACTED}; {REDACTED}, {REDACTED} and {REDACTED} "
+        f"of {REDACTED} at file:///home/me/{REDACTED}/corpus/x.md say: use uv add."
+    )
 
     info = BenchInfo(
         kind="how-to", project="demo", title="Demo", library="/acme/demo", reference="r"
@@ -520,3 +579,179 @@ def test_a_stratified_sample_takes_each_kind_of_each_project() -> None:
     assert picked == selected_cases(cases, per_stratum=3, seed=495)
     assert picked != selected_cases(cases, per_stratum=3, seed=1)
     assert len(selected_cases(cases, per_stratum=3, projects=["zod"], limit=5)) == 5
+
+
+# --------------------------------------------------------------- context7 and grounded-docs
+
+
+def _scripted_agent(offered: dict[str, set[frozenset[str]]]) -> FunctionModel:
+    by_instructions = {arm.instructions: name for name, arm in ARMS.items()}
+
+    def agent(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        del messages
+        names = frozenset(t.name for t in info.function_tools)
+        offered[by_instructions[info.instructions or ""]].add(names)
+        return ModelResponse(parts=[TextPart("I do not know.")])
+
+    return FunctionModel(agent, model_name="scripted")
+
+
+async def test_each_arm_offers_the_agent_only_its_own_tools(tmp_path: Path) -> None:
+    corpus, cases = golden()
+    offered: dict[str, set[frozenset[str]]] = defaultdict(set)
+    agent = _scripted_agent(offered)
+
+    await run_bench(
+        cases[:1],
+        corpus,
+        {},
+        agent_models=["scripted"],
+        judge_model=OFFLINE_JUDGE,
+        arms=parse_arms(["none,exactdocs,context7,grounded-docs"]),
+        retrieval=[RetrievalConfig.parse("bm25:mode=bm25")],
+        work_dir=tmp_path,
+        tools=stand_in_tools,
+        models=lambda name: offline_judge() if name == OFFLINE_JUDGE else agent,
+    )
+
+    assert offered == {
+        NONE: {frozenset()},
+        EXACTDOCS: {frozenset({"list_libraries", "search_docs", "read_chunk"})},  # all it lists
+        CONTEXT7: {frozenset(CONTEXT7_TOOLS)},
+        GROUNDED_DOCS: {frozenset(GROUNDED_DOCS_TOOLS)},  # its server lists fetch_url, scrape_docs
+    }
+
+
+async def test_the_four_arms_answer_and_each_is_compared_with_none_and_exactdocs(
+    tmp_path: Path,
+) -> None:
+    corpus, cases = golden()
+    report = await run_bench(
+        cases,
+        corpus,
+        {},
+        agent_models=OFFLINE_AGENTS,
+        judge_model=OFFLINE_JUDGE,
+        arms=parse_arms(["none,exactdocs,context7,grounded-docs"]),
+        retrieval=[RetrievalConfig.parse("bm25:mode=bm25")],
+        work_dir=tmp_path,
+        concurrency=4,
+        tools=stand_in_tools,
+    )
+
+    setups = [("none", ""), ("exactdocs", "bm25"), ("context7", ""), ("grounded-docs", "full-text")]
+    assert [(c.agent_model, c.arm, c.retrieval) for c in report.cells] == [
+        (model, arm, retrieval) for model in OFFLINE_AGENTS for arm, retrieval in setups
+    ]
+    assert report.meta.arms == ["none", "exactdocs", "context7", "grounded-docs"]
+    assert set(report.meta.agent_instructions) == set(report.meta.arms)
+    assert report.meta.retrieval == {"bm25": {"EXACTDOCS_AI__MODE": "bm25"}}  # ExactDocs' only
+    assert (report.meta.servers, report.meta.resumed) == ({}, 0)  # stand-ins
+    for row in report.questions:
+        names = [c.name for c in row.tool_calls]
+        if row.arm == CONTEXT7:
+            assert names == ["resolve-library-id", "query-docs"], row
+            assert row.chunks_read == []
+            assert row.grounded is None  # its text cannot be traced to the pinned sections
+        elif row.arm == GROUNDED_DOCS:
+            assert names[:2] == ["list_libraries", "search_docs"], row
+            reads = row.agent_model != "offline:search" and row.kind != "unanswerable"
+            assert names[2:] == (["read_page"] if reads else []), row
+            unanswerable = row.kind == "unanswerable"
+            assert row.grounded is (None if unanswerable else reads), row
+            assert all(chunk.endswith(f"@{row.version}") for chunk in row.chunks_read)
+    cells = {(c.agent_model, c.arm): c for c in report.cells}
+    for model in OFFLINE_AGENTS:
+        for arm in (CONTEXT7, GROUNDED_DOCS):
+            cell = cells[model, arm]
+            assert cell.accuracy == 1, cell  # both answers, and "not covered" for the third
+            assert [(v.against, v.against_retrieval, v.cases) for v in cell.versus] == [
+                ("none", "", 3),
+                ("exactdocs", "bm25", 3),
+            ]
+            assert all(v.accuracy is not None and v.seconds is not None for v in cell.versus)
+        assert [v.against for v in cells[model, EXACTDOCS].versus] == ["none"]
+        assert cells[model, NONE].versus == []
+        assert cells[model, CONTEXT7].grounded_share is None
+    assert cells["offline:read", GROUNDED_DOCS].grounded_share == 1
+    assert cells["offline:search", GROUNDED_DOCS].grounded_share == 0  # search results only
+
+    text = markdown(report)
+    assert "| `offline:read` | grounded-docs (full-text) |" in text
+    assert "| `offline:read` | context7 |" in text
+    assert "n/a (its own index)" in text
+    assert "## Documentation servers" not in text
+    servers = {"grounded-docs (full-text)": {"server": "stand-in", "tools": "list_libraries"}}
+    shown = report.model_copy(update={"meta": report.meta.model_copy(update={"servers": servers})})
+    line = "- **grounded-docs (full-text)**: server: stand-in; tools: list_libraries"
+    assert line in markdown(shown)
+
+
+def test_a_grounded_docs_page_counts_as_read_only_when_one_answer_holds_it_whole() -> None:
+    corpus, libraries = Path("/data/grounded-docs/corpus"), {"demo": LIBRARY}
+    url = (corpus / "demo" / "v1" / "docs" / "guide.md").as_uri()
+    whole = f"> Source: {url}\n\n# Guide\n\nInstall it."
+
+    assert page_read(whole, {"pathOrUrl": "/docs/guide.md"}, corpus, libraries) == Section(
+        library=LIBRARY, version="v1", article="docs/guide.md", whole_article=True
+    )
+    part = f"{whole}\n\n> Showing chunks 1-3 of 7. To continue, call read_page with startChunk: 3."
+    assert page_read(part, {}, corpus, libraries) is None
+    assert page_read(whole, {"startChunk": 3}, corpus, libraries) is None  # a page's last part
+    assert page_read(whole.replace("/demo/", "/other/"), {}, corpus, libraries) is None
+    outside = whole.replace(corpus.as_uri(), "file:///elsewhere")
+    assert page_read(outside, {}, corpus, libraries) is None
+    assert page_read("No page matches /docs/x.md.", {}, corpus, libraries) is None
+    assert GROUNDED_CORPUS.is_absolute()
+
+
+def test_the_context7_server_gets_its_key_and_none_of_the_agents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OLLAMA_API_KEY", "agent-key-123456")
+    monkeypatch.setenv("CONTEXT7_API_KEY", "ctx7sk-from-the-environment")
+
+    env = context7_environment("ctx7sk-given")
+
+    assert "OLLAMA_API_KEY" not in env
+    assert env["CONTEXT7_API_KEY"] == "ctx7sk-given"
+    assert env["OTEL_SDK_DISABLED"] == "true"
+    assert "PATH" in env
+
+
+async def test_the_context7_arm_needs_its_api_key_and_a_known_grounded_docs_configuration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.delenv("CONTEXT7_API_KEY", raising=False)
+    report = str(tmp_path / "agent-bench.json")
+
+    assert main(["run", "--offline", "--arm", "none,context7", "--report", report]) == 2
+    assert "CONTEXT7_API_KEY" in capsys.readouterr().err
+    assert main(["run", "--offline", "--arm", "grounded-docs", "--grounded-docs", "x"]) == 2
+    assert "unknown Grounded Docs configuration 'x'" in capsys.readouterr().err
+    servers = ArmServers(projects=[], repos={}, work_dir=tmp_path)
+    with pytest.raises(RuntimeError, match="CONTEXT7_API_KEY"):
+        async with servers.tools(ARMS[CONTEXT7], None):
+            pass
+
+
+async def test_the_report_names_the_commit_the_run_started_from(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    commits = iter(["the commit it started from", "a commit made while it ran"])
+    monkeypatch.setattr(agent_cli, "git", lambda *_args, **_kwargs: next(commits))
+    corpus, cases = golden()
+
+    report = await run_bench(
+        cases[:1],
+        corpus,
+        {},
+        agent_models=["offline:read"],
+        judge_model=OFFLINE_JUDGE,
+        arms=parse_arms(["none"]),
+        retrieval=[RetrievalConfig.parse("bm25:mode=bm25")],
+        work_dir=tmp_path,
+        tools=stand_in_tools,
+    )
+
+    assert report.meta.git_commit == "the commit it started from"

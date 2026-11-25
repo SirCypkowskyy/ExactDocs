@@ -218,6 +218,6 @@ Pull request CI runs the quick tests (`tests/evals/test_grounded_docs.py`,
   on three synthetic pages, with the corpus path replaced by `file:///corpus`.
 
 The data directories stay in `<home>/stores/` after a run, for the agent benchmark's Grounded Docs
-arm (#495) to search. `--resume` reuses them and asks the questions again. That is how a scorer
+arm (#495) to search ([Setting up the arms](agent-bench.md#setting-up-the-arms)). `--resume` reuses them and asks the questions again. That is how a scorer
 change is applied without indexing again: about three minutes on 4 CPUs for both configurations,
 the ExactDocs baseline included.

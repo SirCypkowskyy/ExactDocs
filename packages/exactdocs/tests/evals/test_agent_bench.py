@@ -544,10 +544,9 @@ def test_the_cli_exports_a_sample_and_reads_the_labels_back(
         (["run", "--offline", "--projects", "nope"], "no case matches"),
         (["run", "--offline", "--arm", "web"], "unknown arm 'web'"),
         (
-            ["run", "--offline", "--arm", "none,context7"],
-            "the context7 arm is not built yet (#493)",
+            ["run", "--offline", "--arm", "grounded-docs", "--grounded-docs", "vectors"],
+            "unknown Grounded Docs configuration 'vectors'",
         ),
-        (["run", "--offline", "--arm", "grounded-docs"], "not built yet (#492)"),
         (["run", "--offline", "--thinking", "loud"], "thinking 'loud' is not on, off or one of"),
     ],
 )
