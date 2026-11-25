@@ -150,6 +150,7 @@ from exactdocs_kernel import (
     encode_sort_cursor,
     page_offset,
     parse_sort,
+    respelled_note,
     section_link,
     sorted_page,
 )
@@ -177,8 +178,63 @@ async def _find_version(
         raise LibraryNotFoundError(str(library_id))
     version = library.find_version(ref) if ref else library.default_version()
     if version is None:
-        raise VersionNotFoundError(str(library.id), None if ref is None else str(ref))
+        raise _no_version(library, ref)
     return library, version
+
+
+async def _read_version(
+    repository: LibraryRepository, library_id: LibraryId, ref: VersionRef | None
+) -> tuple[Library, Version, list[str]]:
+    """Find the version a reader's ref names, forgiving a leading ``v`` (#605).
+
+    As ``_find_version``, else the one version ``ref`` names but for a leading ``v`` or ``V``,
+    with a note saying so. Only reader-facing use cases call it; lookups of a stored ref (the
+    active manifest, renames, removal, pinning) stay exact.
+
+    Args:
+        repository: Where the library is read.
+        library_id: The library.
+        ref: The ref, or a short commit SHA; None for the default version.
+
+    Returns:
+        The library, the version and the notes on how the ref was read (none when as given).
+
+    Raises:
+        LibraryNotFoundError: The library is not in the catalog.
+        VersionNotFoundError: The ref names no version, or the library has none; it names the
+            library's versions.
+    """
+    library = await repository.get(library_id)
+    if library is None:
+        raise LibraryNotFoundError(str(library_id))
+    if ref is None:
+        version = library.default_version()
+    else:
+        version = library.find_version(ref)
+        if version is None and (other := library.respelled_version(ref)) is not None:
+            return library, other, [respelled_note(ref.value, other.ref.value)]
+    if version is None:
+        raise _no_version(library, ref)
+    return library, version, []
+
+
+def _no_version(library: Library, ref: VersionRef | None) -> VersionNotFoundError:
+    """Build the error of a ref that names no version, naming the versions the library has.
+
+    Args:
+        library: The library.
+        ref: The ref asked for; None for the default version.
+
+    Returns:
+        The error.
+    """
+    default = library.default_version()
+    return VersionNotFoundError(
+        str(library.id),
+        None if ref is None else str(ref),
+        versions=[str(v.ref) for v in library.newest_first()],
+        default=None if default is None else str(default.ref),
+    )
 
 
 async def _require(access: AccessPolicy, library: str, needed: Access) -> None:
@@ -706,8 +762,8 @@ class ResolveVersionUseCase:
         """
         await _require(self.access, ParsedId.parse(query.id).library.value, Access.READ)
         target = ParsedId.parse(query.id)
-        library, version = await _find_version(self.repository, target.library, target.ref)
-        return ResolvedVersion.from_library(library, version)
+        library, version, notes = await _read_version(self.repository, target.library, target.ref)
+        return ResolvedVersion.from_library(library, version, notes=notes)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1230,7 +1286,9 @@ class ListArticlesUseCase:
         """
         await _require(self.access, query.library, Access.READ)
         ref = VersionRef(query.ref) if query.ref else None
-        library, version = await _find_version(self.repository, LibraryId(query.library), ref)
+        library, version, notes = await _read_version(
+            self.repository, LibraryId(query.library), ref
+        )
         manifest = await self.manifests.get_active(library.id, version.ref)
         if manifest is None:
             raise ArticleNotFoundError(str(library.id), str(version.ref), None)
@@ -1272,6 +1330,7 @@ class ListArticlesUseCase:
                 else None
             ),
             total=await self.entries.count(manifest.id, prefix=prefix, tags=tags, text=query.q),
+            notes=notes,
         )
 
 
@@ -1508,7 +1567,9 @@ class GetArticleUseCase:
         """
         await _require(self.access, query.library, Access.READ)
         ref = VersionRef(query.ref) if query.ref else None
-        library, version = await _find_version(self.repository, LibraryId(query.library), ref)
+        library, version, notes = await _read_version(
+            self.repository, LibraryId(query.library), ref
+        )
         stored = await self.manifests.get_article(library.id, version.ref, query.path)
         if stored is None:
             raise ArticleNotFoundError(
@@ -1521,7 +1582,7 @@ class GetArticleUseCase:
             library.host.value, library.source_url, stored.commit_sha, stored.entry.path
         )
         info = ArticleInfo.from_stored(str(library.id), str(version.ref), stored, link)
-        return Article.with_content(info, stored.content)
+        return Article.with_content(info, stored.content, notes=notes)
 
     async def _close(self, library: Library, version: Version, path: str) -> list[str]:
         """Paths of this version an agent may have meant (only looked up on a miss).
@@ -1567,7 +1628,7 @@ class GetAssetUseCase:
         """
         await _require(self.access, query.library, Access.READ)
         ref = VersionRef(query.ref) if query.ref else None
-        library, version = await _find_version(self.repository, LibraryId(query.library), ref)
+        library, version, _ = await _read_version(self.repository, LibraryId(query.library), ref)
         known = bool(query.known_blob_shas)
         image = await self.manifests.get_image(
             library.id, version.ref, query.path, with_data=not known
@@ -1646,7 +1707,9 @@ class ListTagsUseCase:
         """
         await _require(self.access, query.library, Access.READ)
         ref = VersionRef(query.ref) if query.ref else None
-        library, version = await _find_version(self.repository, LibraryId(query.library), ref)
+        library, version, notes = await _read_version(
+            self.repository, LibraryId(query.library), ref
+        )
         manifest = await self.manifests.get_active(library.id, version.ref)
         if manifest is None:
             raise ArticleNotFoundError(str(library.id), str(version.ref), None)
@@ -1658,6 +1721,7 @@ class ListTagsUseCase:
             commit_sha=manifest.commit_sha,
             tags=[TagCount(tag=tag, count=count) for tag, count in counted[:MAX_TAG_FACETS]],
             truncated=len(counted) > MAX_TAG_FACETS,
+            notes=notes,
         )
 
 
