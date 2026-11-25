@@ -1,6 +1,6 @@
 """Constants of ``exactdocs.retrieval``: every fixed value its modules share.
 
-Each is ``Final`` and documented; see *Python conventions* in docs/architecture.md.
+Each is ``Final`` and documented; see docs/architecture/conventions.md.
 """
 
 import re

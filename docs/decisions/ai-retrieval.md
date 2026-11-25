@@ -11,7 +11,7 @@ This record fixes how ExactDocs adds embeddings, rerankers and LLMs on top of BM
 vectors live, how operators configure them, what they cost and what leaves the instance. Each
 issue of the milestone points here instead of deciding these again. The short form is in the
 [Decisions](../user-stories.md#decisions) table; the architecture of what is built today is in
-[Architecture](../architecture.md).
+[Architecture](../architecture/index.md).
 
 ## Context
 
@@ -447,7 +447,7 @@ setting `trusted` is admin-only; `notes` and `off` are too, for now.
 
 - pydantic-ai's own OpenTelemetry instrumentation, `InstrumentationSettings(include_content=False)`,
   on the global providers that `bootstrap/otel_sdk.py` sets up (never Logfire, see
-  [Telemetry](../architecture.md#telemetry)). Spans for model and embedding calls nest under the
+  [Telemetry](../architecture/telemetry.md)). Spans for model and embedding calls nest under the
   existing `retrieval.<search>` spans, with new stages `embed_query`, `hyde`, `rerank`, `judge` and
   `agent`; agent tool calls nest inside `run_code`.
 - **No prompt text, ever.** `include_content=False` is the first guard; `ScrubbingExporter` also

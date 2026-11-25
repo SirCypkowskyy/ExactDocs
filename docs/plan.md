@@ -21,7 +21,7 @@ It holds **110 feature issues** plus **12 epic tracking issues**: 103 filed on 2
     The 46 MVP-1 issues are merged and released. The acceptance checklists below are the *plans*
     the issues were written from (the checkboxes are not ticked retroactively: GitHub is the source of truth); where the build deviated, the merged PR says why, and the
     [as-built deviations](#deviations-from-the-plan) table collects the ones that matter. For how
-    the system works now read [Architecture](architecture.md) and [Flows](flows.md).
+    the system works now read [Architecture](architecture/index.md) and [Flows](flows/index.md).
 
 !!! abstract "How to read this plan"
     - **Milestones** say *when* (what must be demonstrably true to close them).
@@ -154,7 +154,7 @@ implicitly includes "`just check` passes" and "architecture tests green".
 
 !!! note "Architecture ground rules used by every issue"
     Work goes through each domain's standard modules (`models`, `dtos`, `ports/driving`,
-    `ports/driven`, `use_cases`, `module`, `adapters/...`; see [Architecture](architecture.md)).
+    `ports/driven`, `use_cases`, `module`, `adapters/...`; see [Architecture](architecture/domains.md#inside-a-domain-the-fixed-module-set)).
     The plan adds two domains next to `catalog` and `retrieval`, matching the form's *Area* values:
 
     | Domain | Owns |
@@ -370,7 +370,7 @@ what guarantees readers never see half a version.
 - [ ] driving ports `StoreManifest`, `ActivateManifest` (one transaction flips the version's active manifest and commit SHA), `ListArticles` (path prefix, `limit` + `cursor`), `GetArticle` (version + path), `DiscardPendingManifests`, `CollectGarbage`
 - [ ] a failure during activation leaves the previous manifest active (test)
 - [ ] REST: `GET /api/v1/libraries/{owner}/{repo}/articles?ref=<ref>&path_prefix=...` (tree) and `GET .../article?ref=<ref>&path=<path>` (one article); no `ref` means the default version
-- [ ] architecture test for bridge direction: bridges in `bootstrap/bridges.py` go only retrieval → catalog and ingestion → catalog / retrieval, with no cycles (see [Architecture](architecture.md#bridges-are-one-way))
+- [ ] architecture test for bridge direction: bridges in `bootstrap/bridges.py` go only retrieval → catalog and ingestion → catalog / retrieval, with no cycles (see [Architecture](architecture/domains.md#bridges-are-one-way))
 - [ ] unit + adapter contract tests (memory, SQLite)
 
 **Notes.** The catalog knows nothing about chunks and holds no foreign keys to other domains;
@@ -1381,7 +1381,7 @@ Scenario: ExactDocs tools carry the notice in structured content
 
 - [ ] `list_libraries(limit?, cursor?)` (default limit 20): ID, title, description, source URL, tags, `refs` (ref, kind, commit SHA, default flag; at most 50 per library, plus `version_count`)
 - [ ] `list_articles(library, ref?, path_prefix?, tags?, tags_match?, limit?, cursor?)` (`ref` like `search_docs`; blank means the default version): path, title, tags, size; tags filter as TAG-03 (catalog `TagFilter`, E4-03)
-- [ ] each domain's result DTO carries a `notice` field whose text is the kernel `NOTICE` constant (a reviewed kernel addition, see [Architecture](architecture.md#bridges-are-one-way)); no shared MCP helper module (the context7 two-block `ToolResult` lives in retrieval's MCP adapter, E7-05)
+- [ ] each domain's result DTO carries a `notice` field whose text is the kernel `NOTICE` constant (a reviewed kernel addition, see [Architecture](architecture/domains.md#the-notice-constant)); no shared MCP helper module (the context7 two-block `ToolResult` lives in retrieval's MCP adapter, E7-05)
 - [ ] all tools annotated read-only; `mask_error_details=True` kept; `DomainError`s pass as tool errors (existing middleware) — test both paths
 - [ ] `FASTMCP_CHECK_FOR_UPDATES=off` set in code; stdio banner off — test
 - [ ] tool schemas snapshot-tested; behave `mcp_browse.feature` (MCP steps via FastMCP `Client`)
@@ -1605,7 +1605,7 @@ Scenario: A working snippet for Claude Code
 ## E8 Web UI
 
 All UI issues: features in `web/src/features/<feature>/` (vertical slices, see
-[Architecture](architecture.md#web-client-vertical-slices)), data only through the generated
+[Architecture](architecture/web-client.md)), data only through the generated
 `/api/v1` client (E6-01), vitest + Testing Library tests per feature, fallow and Biome boundary
 rules green. Each Gherkin scenario maps to a vitest test against mocked API responses (built from
 the generated OpenAPI types, so UI work can start before the endpoints exist) and is checked once

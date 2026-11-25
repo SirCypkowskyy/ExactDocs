@@ -1,6 +1,6 @@
 """Architecture rules of the modular monolith, enforced with ArchUnitPython.
 
-See docs/architecture.md for the reasoning behind every rule.
+See docs/architecture/ for the reasoning behind every rule.
 """
 
 from pathlib import Path

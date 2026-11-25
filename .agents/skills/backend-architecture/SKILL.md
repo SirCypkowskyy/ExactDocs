@@ -5,7 +5,7 @@ description: Use when adding or changing Python code in ExactDocs - a new domain
 
 # Backend architecture (modular monolith + hexagonal)
 
-Full reasoning: `docs/architecture.md`. Reference implementation: `packages/exactdocs/src/exactdocs/catalog/`.
+Full reasoning: `docs/architecture/` (start at `docs/architecture/domains.md`). Reference implementation: `packages/exactdocs/src/exactdocs/catalog/`.
 
 ## Non-negotiables
 
@@ -67,7 +67,7 @@ automatically.
 
 ## Persist something (SQLite)
 
-See *Persistence* in `docs/architecture.md`: tables prefixed with the domain, an Alembic revision
+See `docs/architecture/persistence.md`: tables prefixed with the domain, an Alembic revision
 in `bootstrap/migrations/versions` (`just migration "..."`), a `sqlite.py` driven adapter that
 takes the `AsyncEngine`, and a case in the adapter contract test next to the memory adapter.
 

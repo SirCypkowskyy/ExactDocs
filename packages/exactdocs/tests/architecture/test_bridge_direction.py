@@ -1,4 +1,4 @@
-"""Bridges in `bootstrap/bridges.py` point one way: see docs/architecture.md, *Bridges are one-way*.
+"""Bridges in `bootstrap/bridges.py` point one way: see docs/architecture/domains.md.
 
 A bridge class implements the consumer's driven port (it imports the consumer's `models` or
 `ports.driven`) by calling the provider's driving port (it imports the provider's `ports.driving`

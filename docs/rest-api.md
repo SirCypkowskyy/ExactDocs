@@ -501,7 +501,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   replaces the library's, or removes it when the version has none; importing any other version
   changes nothing. A library imported before logos existed gets one at the next import of its
   default version (`versions/reimport`, a re-sync of a branch that moved, or a paths edit).
-  Where the importer looks and what it keeps: [Architecture](architecture.md), *Project logos*.
+  Where the importer looks and what it keeps: [Project logos](architecture/import.md#project-logos-504).
 - **Adding a library**: `POST /libraries` (`{"url", "library_id"?, "ref"?, "include_paths"?,
   "exclude_paths"?}`) validates everything first, then stores the library with its selection and
   queues an `import` job; it answers 201 with `library_id`, `ref`, `ref_kind` (`tag`, `branch`

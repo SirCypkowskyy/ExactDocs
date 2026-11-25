@@ -500,7 +500,7 @@ advertises (never `none` or `HS*`), and carry the configured issuer, the client 
 `azp` when it is present or `aud` names several audiences), the attempt's `nonce`, and times that
 are valid within 60 s of leeway. A new signing key is fetched when a token first names it, at most
 once a minute. The issuer must be HTTPS. [REST API](rest-api.md) and
-[Architecture](architecture.md#external-sign-in-oidc) describe the sign-in routes and the stored
+[Architecture](architecture/identity.md#external-sign-in-oidc) describe the sign-in routes and the stored
 data.
 
 **Accounts.** The first allowed sign-in creates an account with the role `user`, or `admin` through
@@ -578,5 +578,5 @@ Every signed-in account may add libraries unless an operator limits that to chos
 ([Who may create libraries](configuration.md#who-may-create-libraries)). API tokens and MCP clients
 act as their user, so an agent sees exactly the libraries its user may view. A token can also be
 narrowed to chosen libraries: `--library` on `exactdocs token create`, or `library_ids` in the
-[REST API](rest-api.md). [Architecture](architecture.md#library-roles) explains how the roles are
+[REST API](rest-api.md). [Architecture](architecture/identity.md#library-roles) explains how the roles are
 checked.

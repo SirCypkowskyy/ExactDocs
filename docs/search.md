@@ -69,7 +69,7 @@ has embedded is ranked by distance in that one space, so the distances compare a
 `hybrid` fuses that ranking with the BM25 one, as within a version. Each result carries its
 `bm25_rank` and `vector_rank`. A library with AI off, or not embedded yet, is left out of the
 vector ranking and named in `libraries_without_vectors`; when none can be, BM25 answers with the
-`fallback_reason`. [Flows](flows.md) has more diagrams of the retrieval paths.
+`fallback_reason`. [Flows](flows/retrieval-modes.md) has more diagrams of the retrieval paths.
 
 ## Chunks and tags
 
