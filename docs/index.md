@@ -108,8 +108,8 @@ trace collector you configure. Accounts, OpenID Connect and library roles decide
 
 <figure class="xd-shot" markdown>
 
-![The ExactDocs reader showing the Resilience article of Acme Payments v1.4.0: the version picker with commit 3fb0656, the file tree, the rendered article with a Python code block and a table, and the article's headings on the right.](assets/screenshots/reader-light.webp#only-light){ loading=lazy }
-![The ExactDocs reader showing the Resilience article of Acme Payments v1.4.0: the version picker with commit 3fb0656, the file tree, the rendered article with a Python code block and a table, and the article's headings on the right.](assets/screenshots/reader-dark.webp#only-dark){ loading=lazy }
+![The ExactDocs reader showing the Caching article of astral-sh/uv 0.13.9: the version picker with commit 6b2d39d, the file tree, the rendered article and its headings on the right.](assets/screenshots/reader-light.webp#only-light){ loading=lazy }
+![The ExactDocs reader showing the Caching article of astral-sh/uv 0.13.9: the version picker with commit 6b2d39d, the file tree, the rendered article and its headings on the right.](assets/screenshots/reader-dark.webp#only-dark){ loading=lazy }
 
 <figcaption>The reader: one article of one version, with its commit, its place in the file tree
 and its headings.</figcaption>
@@ -118,8 +118,8 @@ and its headings.</figcaption>
 
 <figure class="xd-shot" markdown>
 
-![The libraries page: Acme Payments, default version v1.4.0 at commit 3fb0656, 3 versions and 15 articles, and Acme Store, v2.1.0 at 7bd0779, 1 version and 5 articles, each with its project mark, when it was last imported and whether it syncs.](assets/screenshots/libraries-light.webp#only-light){ loading=lazy }
-![The libraries page: Acme Payments, default version v1.4.0 at commit 3fb0656, 3 versions and 15 articles, and Acme Store, v2.1.0 at 7bd0779, 1 version and 5 articles, each with its project mark, when it was last imported and whether it syncs.](assets/screenshots/libraries-dark.webp#only-dark){ loading=lazy }
+![The libraries page with 34 libraries, among them Ruff, ty and uv from astral-sh and several Azure docs, each with its project mark, default version and commit, number of versions and articles, when it was last imported and whether it syncs.](assets/screenshots/libraries-light.webp#only-light){ loading=lazy }
+![The libraries page with 34 libraries, among them Ruff, ty and uv from astral-sh and several Azure docs, each with its project mark, default version and commit, number of versions and articles, when it was last imported and whether it syncs.](assets/screenshots/libraries-dark.webp#only-dark){ loading=lazy }
 
 <figcaption>Each library with its default version and commit, and how many versions and articles it has.</figcaption>
 
@@ -127,8 +127,8 @@ and its headings.</figcaption>
 
 <figure class="xd-shot" markdown>
 
-![The Acme Payments library at its default version, v1.4.0, with the version picker open: v1.4.0 at commit 3fb0656, v1.3.0 at db8b674 and the next branch at 30b96c1.](assets/screenshots/library-light.webp#only-light){ loading=lazy }
-![The Acme Payments library at its default version, v1.4.0, with the version picker open: v1.4.0 at commit 3fb0656, v1.3.0 at db8b674 and the next branch at 30b96c1.](assets/screenshots/library-dark.webp#only-dark){ loading=lazy }
+![The uv library at its default version, 0.13.9, with the version picker open at commit 6b2d39d.](assets/screenshots/library-light.webp#only-light){ loading=lazy }
+![The uv library at its default version, 0.13.9, with the version picker open at commit 6b2d39d.](assets/screenshots/library-dark.webp#only-dark){ loading=lazy }
 
 <figcaption>A library and its versions, each a tag, branch or commit pinned to its SHA.</figcaption>
 
@@ -136,8 +136,8 @@ and its headings.</figcaption>
 
 <figure class="xd-shot" markdown>
 
-![Search results for retry across every library: 7 results in 2 libraries, grouped by library and version, each with its heading path, its file and the matching text highlighted.](assets/screenshots/search-light.webp#only-light){ loading=lazy }
-![Search results for retry across every library: 7 results in 2 libraries, grouped by library and version, each with its heading path, its file and the matching text highlighted.](assets/screenshots/search-dark.webp#only-dark){ loading=lazy }
+![Search results for cache across every library: the top 20 of 4,438 results, the libraries with their counts on the left, and the results grouped by library and version, each with its heading path, its file and the matching text highlighted.](assets/screenshots/search-light.webp#only-light){ loading=lazy }
+![Search results for cache across every library: the top 20 of 4,438 results, the libraries with their counts on the left, and the results grouped by library and version, each with its heading path, its file and the matching text highlighted.](assets/screenshots/search-dark.webp#only-dark){ loading=lazy }
 
 <figcaption>One search across the default version of every library, grouped by library.</figcaption>
 
@@ -145,8 +145,8 @@ and its headings.</figcaption>
 
 <figure class="xd-shot" markdown>
 
-![The search playground with the query how do I retry failed calls, ranked by hybrid search and by BM25 side by side.](assets/screenshots/playground-light.webp#only-light){ loading=lazy }
-![The search playground with the query how do I retry failed calls, ranked by hybrid search and by BM25 side by side.](assets/screenshots/playground-dark.webp#only-dark){ loading=lazy }
+![The search playground with the query how do I clear the cache on /astral-sh/uv, ranked by hybrid search and by BM25 side by side.](assets/screenshots/playground-light.webp#only-light){ loading=lazy }
+![The search playground with the query how do I clear the cache on /astral-sh/uv, ranked by hybrid search and by BM25 side by side.](assets/screenshots/playground-dark.webp#only-dark){ loading=lazy }
 
 <figcaption>The search playground ranks one query in two retrieval modes side by side, with each
 result's BM25 and vector rank.</figcaption>
