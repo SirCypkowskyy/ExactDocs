@@ -140,6 +140,9 @@ The command exits with 1 when a request failed or a version's coverage is unknow
 - Never in pull request CI, which runs the quick tests (`tests/evals/test_context7_bench.py`,
   `context7_bench.feature`) against a stand-in that answers in the API's documented shape
   (`tests/fixtures/context7_stand_in.py`).
+- The agent benchmark's `context7` arm (#495) reaches Context7 through its official MCP server
+  instead ([Setting up the arms](agent-bench.md#setting-up-the-arms)); the same terms apply, and
+  `just bench-pages` refuses to publish an agent run that has that arm.
 
 ## Terms of service
 

@@ -352,7 +352,7 @@ export function ExtraVersions({
                 {x.retry && (
                   <Button
                     variant="ghost"
-                    className="-ml-3 h-11 md:h-8"
+                    className="-ml-3 min-h-11 md:min-h-8"
                     aria-label={t.retry(x.tag)}
                     onClick={(e) => {
                       // The button goes away with the retry; keep the keyboard on this tag's row.

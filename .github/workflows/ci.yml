@@ -16,6 +16,9 @@ name: CI
 #   self-hosted (when the GitHub-hosted minutes ran out): every job on the self-hosted ARM64
 #     runner [self-hosted, linux, ARM64, exactdocs], with fewer shards (pytest two instead of six,
 #     behave one instead of three): there are two runners.
+#   A pull request from a fork always runs on GitHub-hosted runners, whatever RUNNER_MODE says: a
+#   fork's code never reaches the self-hosted machines through these jobs. (A fork can still edit
+#   runs-on in its own copy, so approval for outside contributors stays on in the settings.)
 on:
   pull_request:
   push:
@@ -40,7 +43,7 @@ env:
 jobs:
   lint:
     name: Lint (ruff, ty, hadolint)
-    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ (vars.RUNNER_MODE == 'self-hosted' && !github.event.pull_request.head.repo.fork) && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -68,13 +71,13 @@ jobs:
   # its coverage data; the `python` job combines them.
   pytest:
     name: pytest (${{ matrix.group }}/${{ strategy.job-total }})
-    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ (vars.RUNNER_MODE == 'self-hosted' && !github.event.pull_request.head.repo.fork) && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     # About 6 minutes each of six on GitHub-hosted runners; the margin is for two in self-hosted mode.
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        group: ${{ fromJSON(vars.RUNNER_MODE == 'self-hosted' && '[1, 2]' || '[1, 2, 3, 4, 5, 6]') }}
+        group: ${{ fromJSON((vars.RUNNER_MODE == 'self-hosted' && !github.event.pull_request.head.repo.fork) && '[1, 2]' || '[1, 2, 3, 4, 5, 6]') }}
     # Every service variable names a port where nothing listens: a test that needs a service but
     # lacks the `integration` marker fails here, at once, instead of passing by skipping.
     env:
@@ -122,13 +125,13 @@ jobs:
   # .behave_durations; refresh them with `just bdd-durations`).
   behave:
     name: behave (${{ matrix.group }}/${{ strategy.job-total }})
-    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ (vars.RUNNER_MODE == 'self-hosted' && !github.event.pull_request.head.repo.fork) && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     # About 7 minutes each of three on GitHub-hosted runners; one does them all in self-hosted mode.
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        group: ${{ fromJSON(vars.RUNNER_MODE == 'self-hosted' && '[1]' || '[1, 2, 3]') }}
+        group: ${{ fromJSON((vars.RUNNER_MODE == 'self-hosted' && !github.event.pull_request.head.repo.fork) && '[1]' || '[1, 2, 3]') }}
     env:
       EXACTDOCS_TEST_POSTGRES_URL: postgresql://exactdocs:unused@127.0.0.1:9/exactdocs
       EXACTDOCS_TEST_PG_SEARCH: "1"
@@ -170,7 +173,7 @@ jobs:
     name: Python (ruff, ty, pytest, behave)
     needs: [lint, pytest, behave]
     if: ${{ !cancelled() }}
-    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ (vars.RUNNER_MODE == 'self-hosted' && !github.event.pull_request.head.repo.fork) && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 10
     steps:
       # The sources the coverage report names.
@@ -212,7 +215,7 @@ jobs:
 
   web:
     name: Web (biome, fallow, react-doctor, vitest, build)
-    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ (vars.RUNNER_MODE == 'self-hosted' && !github.event.pull_request.head.repo.fork) && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 20
     defaults:
       run:

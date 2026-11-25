@@ -63,7 +63,7 @@ another version fails the suite.
 - It holds only `bm25` today.
 - For `hybrid`, only a real embedding model's run counts (#245), never the term-hash stand-in's,
   whose report says `not judged (offline embedding)`.
-- The same holds for `hybrid_hyde`. The release runs it only on a stand-in LLM
+- The same holds for `hybrid_hyde`. The eval runs it only on a stand-in LLM
   ([Tiers](suite.md#provider)), so it needs a run with a real LLM and embedding model before it
   can become a default.
 

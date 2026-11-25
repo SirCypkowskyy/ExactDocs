@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Final, get_args
 
+from agent_bench.arms import CONTEXT7, GROUNDED_DOCS
 from agent_bench.report import BenchReport
 from agent_bench.report import markdown as agent_markdown
 from retrieval_eval.dataset import GoldenKind
@@ -151,20 +152,36 @@ def agent_blocks(report: BenchReport) -> dict[str, str]:
 
     Returns:
         The Markdown of the blocks ``agent-run`` and ``agent``.
+
+    Raises:
+        ValueError: The run has a ``context7`` arm: no Context7 number is published until Upstash
+            permits it (docs/evals/context7.md#terms-of-service).
     """
     meta = report.meta
+    if CONTEXT7 in meta.arms:
+        message = "agent.json has a context7 arm: Context7's terms forbid publishing it"
+        raise ValueError(message)
     served = ", ".join(f"{name} at `{url}`" for name, url in meta.providers.items())
     agents = ", ".join(f"`{m}`" for m in meta.agent_models)
     arms = ", ".join(f"`{a}`" for a in meta.arms)
     retrieval = ", ".join(f"`{name}`" for name in meta.retrieval) or "none"
+    grounded = sorted({c.retrieval for c in report.cells if c.arm == GROUNDED_DOCS})
+    others = "".join(f"; of `grounded-docs`: `{name}`" for name in grounded)
+    resumed = (
+        f" {meta.resumed} of the answers were kept from an earlier run of the same command "
+        "(`--resume`), at its commit and time."
+        if meta.resumed
+        else ""
+    )
     run = [
         (
             f"- Started {meta.started_at}; ExactDocs `{meta.exactdocs_version}` at "
-            f"`{meta.git_commit[:12]}`."
+            f"`{meta.git_commit[:12]}`.{resumed}"
         ),
         f"- Agents: {agents}; judge `{meta.judge_model}`"
         + (f"; served by {served}." if served else "."),
-        f"- Arms: {arms}; retrieval configurations of `exactdocs`: {retrieval}.",
+        f"- Arms: {arms}; configurations of `exactdocs`: {retrieval}{others}.",
+        *(f"- `{name}`: {about.get('server', '?')}." for name, about in meta.servers.items()),
         (
             f"- Cases: {meta.cases} ({meta.selection}); at most {meta.max_requests} model "
             f"requests per question; thinking: {meta.thinking}; {meta.concurrency} questions at "

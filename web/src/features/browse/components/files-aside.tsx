@@ -45,7 +45,9 @@ function FilesToggle({
       className={cn(trigger, "justify-start font-medium lg:hidden")}
     >
       <FolderTree aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
-      <span className="truncate">{label}</span>
+      <span title={label} className="truncate">
+        {label}
+      </span>
       <ChevronRight
         aria-hidden="true"
         className={cn(
@@ -98,7 +100,8 @@ export function FilesAside({
 
   return (
     <aside aria-label={t.files} className="flex min-w-0 flex-col gap-3 lg:sticky lg:top-17">
-      <div className="grid grid-cols-2 gap-2 lg:block">
+      {/* Two side by side while both fit 10rem; one above the other at a large text size (#576). */}
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-2 lg:block">
         <VersionPicker
           owner={owner}
           repo={repo}
