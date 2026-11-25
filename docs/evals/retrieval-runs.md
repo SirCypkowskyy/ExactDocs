@@ -9,7 +9,8 @@
       `h2`'s lead is not significant (p 0.42), so the shipped default stays `default`.
     - Hybrid on bge-small reaches 91.0%, under the 5-point margin and not significant, so BM25
       stays the default for the local budget too.
-    - The release runs BM25 at `default` with `--check`. The local and hosted parts never run in CI.
+    - The manual *Eval* workflow runs BM25 at `default` with `--check`. The local and hosted parts
+      never run in CI.
 
 ## Reproducing a result
 
@@ -176,8 +177,9 @@ numbers are never results.
 
 ## When it runs
 
-- **On releases**: the *Retrieval eval* job runs BM25 at the `default` chunking through the
-  benchmark (step *Retrieval benchmark*, about a minute) with `--check`. It fails on a wrong
+- **By hand, before a release that touches retrieval or chunking**: the manual *Eval* workflow
+  (`eval.yml`) runs BM25 at the `default` chunking through the benchmark (step *Retrieval
+  benchmark*, about a minute) with `--check`. It fails on a wrong
   version, an error, or recall@5 or nDCG@10 more than 2 points below the recorded run (the same
   golden set and projects are required).
 - **Never in CI**: the local and hosted parts. Refresh the recorded run by hand when ranking,

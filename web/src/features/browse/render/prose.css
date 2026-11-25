@@ -360,7 +360,7 @@
     padding-block: 0;
   }
 }
-@media (min-width: 640px) {
+@container app (width >= 40rem) {
   .doc-code pre {
     padding-inline: 1.25rem;
   }

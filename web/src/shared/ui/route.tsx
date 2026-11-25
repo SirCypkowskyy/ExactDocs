@@ -86,7 +86,9 @@ export function VersionStation({
           isDefault && "bg-route",
         )}
       />
-      <span className="truncate font-mono text-mono font-medium">{version}</span>
+      <span title={version} className="truncate font-mono text-mono font-medium">
+        {version}
+      </span>
     </span>
   );
 }
@@ -121,7 +123,12 @@ export function RouteStrip({
     <div className={cn("flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1", className)}>
       <span className="inline-flex min-w-0 items-center gap-2">
         <LibraryBullet id={libraryId} size="sm" />
-        <span className="min-w-0 truncate text-body font-medium">{label}</span>
+        <span
+          title={typeof label === "string" ? label : undefined}
+          className="min-w-0 truncate text-body font-medium"
+        >
+          {label}
+        </span>
       </span>
       {stops.map((stop) => (
         <Fragment key={stop.key}>

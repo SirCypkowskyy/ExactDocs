@@ -127,9 +127,13 @@ grounded-bench *args:
 context7-bench *args:
     uv run python packages/exactdocs/evals/run_context7_bench.py {{ args }}
 
-# Agent benchmark (never in CI): an agent with only the ExactDocs MCP tools answers the golden set (docs/evals/agent-bench.md); `just agent-bench run --offline`
+# Agent benchmark (never in CI): an agent with no docs, or with only the MCP tools of ExactDocs, Context7 or Grounded Docs, answers the golden set (docs/evals/agent-bench.md); `just agent-bench run --offline`
 agent-bench *args:
     uv run python packages/exactdocs/evals/run_agent_bench.py {{ args }}
+
+# Version-pinned coding tasks (docs/evals/coding-tasks.md): `list`, `prepare`, `check` (CI: every reference passes, every other-version solution fails; no model), `run` (agents, never in CI)
+coding-tasks *args:
+    uv run python packages/exactdocs/evals/run_coding_tasks.py {{ args }}
 
 # Benchmark pages (docs/benchmark/): refill their tables from evals/results/*.json and the golden set; `--check` fails when one is out of date
 bench-pages *args:

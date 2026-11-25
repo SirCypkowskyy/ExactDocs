@@ -1,0 +1,20 @@
+title: Read the declared fields of a model
+project: pydantic
+version: v2.14.3
+environment: pydantic-2.14.3
+other_version: v2.5.3
+other_environment: pydantic-2.5.3
+api_since:
+  version: 2.11.0
+  released: '2025-03-27'
+files:
+- app/profile.py
+prompt: |
+  Implement `Profile.changed_fields(other)` in `app/profile.py`: the names of the
+  fields whose values differ between `self` and `other`, in the order the fields are
+  declared. It must keep working when fields are added to `Profile` or to a subclass,
+  so read the declared fields from Pydantic instead of listing them by hand.
+notes: |
+  Pydantic 2.0-2.10 code reads `self.model_fields`; since 2.11 reading it from an
+  instance is deprecated (a warning, an error here): read it from the class,
+  `type(self).model_fields`.

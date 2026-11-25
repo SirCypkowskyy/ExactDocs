@@ -211,10 +211,13 @@ The same agent model answers each case with each **documentation arm** (#495):
 |---|---|
 | `none` | no tools: it answers from what it knows of that version or says it does not know |
 | `exactdocs` | only the ExactDocs MCP tools |
-| `context7` (#493), `grounded-docs` (#492) | to follow |
+| `context7` | only the official Context7 MCP server's tools, at a pinned release |
+| `grounded-docs` | only Grounded Docs' read-only tools, over its index of the same pinned versions |
 
 The arms get the same prompt, the same request limit and the same instructions apart from the
-sentence about the documentation tool.
+sentence about the documentation tool, and each agent is offered its arm's tools and nothing
+else. No Context7 number is published until Upstash permits it
+([Terms of service](../evals/context7.md#terms-of-service)).
 
 The judge is an LLM given the question, version, kind, reference answer, facts and the agent's
 answer. It does not see the docs or the arm: every arm's product and tool names are removed from
@@ -233,7 +236,8 @@ right answer. The report also counts:
 - answers true only of another version;
 - refusals on answerable cases, and correct refusals on `unanswerable` ones;
 - how often the agent read every part the case names in full (a section of each, or one of its
-  alternatives);
+  alternatives; for `grounded-docs`, a whole page read with `read_page`; not measured for
+  `context7`, whose text comes from its own index);
 - whether it read another version;
 - tool calls.
 
@@ -250,8 +254,9 @@ Cost per question, each as mean with a 95% interval, p50 and p95:
   times its output tokens), and *not returned* when there is neither;
 - USD (*unpriced* when the model has no price, never 0).
 
-Each arm is compared with `none` on the same cases: accuracy by McNemar's test (mid-p), wall time
-and tokens by a paired sign-flip permutation test, with the ratio of the means.
+Each arm is compared with `none` on the same cases, and `context7` and `grounded-docs` with
+`exactdocs` too: accuracy by McNemar's test (mid-p), wall time and tokens by a paired sign-flip
+permutation test, with the ratio of the means.
 
 !!! warning "Judge agreement with hand labels: not measured yet"
     The judge is checked by labelling at least 50 answers of a real-model run by hand and
@@ -289,8 +294,8 @@ budgets; between chunkings of one budget the best one wins outright.
 |---|---|---|
 | quick tests of all three benchmarks and the text scorer | every pull request (`uv run pytest`, `uv run behave`) | stand-ins only, tiny local corpora |
 | `just golden-validate` rules | every pull request (pytest) | none |
-| ingestion benchmark `--check` | every release, *Retrieval eval* job | none |
-| retrieval benchmark, BM25 at `default`, `--check` | every release, *Retrieval eval* job | none |
+| ingestion benchmark `--check` | by hand: the manual *Eval* workflow (`eval.yml`) | none |
+| retrieval benchmark, BM25 at `default`, `--check` | by hand: the manual *Eval* workflow (`eval.yml`) | none |
 | retrieval benchmark with local models | by hand (`just retrieval-bench --offline`) | local, pulled with `exactdocs models pull` |
 | retrieval benchmark, hosted configurations | by hand: the manual *Retrieval eval (real providers)* workflow (`eval-providers.yml`),<br/>with the `benchmark` input ticked | hosted |
 | text scorer calibration | by hand (`just text-bench --offline`), when the matcher or the chunker changes | none |
@@ -317,6 +322,19 @@ EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
 
 The second is the recorded retrieval run ([The recorded run](../evals/retrieval-runs.md#the-recorded-run)): 3 h
 17 min on a 4-CPU runner, most of it embedding the corpus and the cross-encoder.
+
+## Coding tasks
+
+The coding tasks (#496) check code, not prose: an agent with the workspace tools and one
+documentation arm completes a request in a small project that pins one library version, and the
+task passes only when its hidden tests pass in a sandbox with exactly that version installed. The
+report gives the **pass rate** (overall, per project, and over the tasks pinning a version
+released after the model's training cutoff), the share of tasks whose changed code uses an API the
+pinned version does not have (**forbidden-API rate**), and the **files changed** per task, each
+with its 95% interval as above; each arm's pass rate is tested against `none`'s on the same tasks
+by McNemar's test (mid-p). Most tasks come as version pairs, the same request pinned at two
+versions where the right code differs. The task format, the sandbox and the commands are in
+[Version-pinned coding tasks](../evals/coding-tasks.md).
 
 ## Refreshing these pages
 

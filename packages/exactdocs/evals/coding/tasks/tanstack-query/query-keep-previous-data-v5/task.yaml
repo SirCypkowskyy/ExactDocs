@@ -1,0 +1,20 @@
+title: Keep showing the previous results while new ones load
+project: tanstack-query
+version: v5.90.3
+environment: query-core-5.90.3
+pair: query-keep-previous-data
+other_version: v4.36.1
+other_from: query-keep-previous-data-v4
+api_since:
+  version: 5.0.0
+  released: '2023-10-17'
+files:
+- src/search.ts
+prompt: |
+  The project uses `@tanstack/query-core` (TanStack Query's framework-agnostic core). Change `searchOptions(search, term)` in `src/search.ts` so
+  that when an observer switches to a new term, its result keeps the previous term's
+  results as its data (flagged as previous or placeholder data) until the new results
+  arrive, instead of having no data meanwhile.
+notes: |
+  TanStack Query 4 has the option `keepPreviousData: true` (and `isPreviousData`); v5
+  removed it for `placeholderData: keepPreviousData`, a helper v4 does not export.

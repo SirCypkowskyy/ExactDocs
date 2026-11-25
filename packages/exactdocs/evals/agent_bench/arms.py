@@ -5,9 +5,9 @@ sentence that names its documentation tool; ``none`` has no tool and is told to 
 it knows or to say it does not know. The judge never learns the arm: every answer has the names of
 every arm's product and tools removed before it is graded (``blind``).
 
-``context7`` (#493) and ``grounded-docs`` (#492) are declared here so that their names are hidden
-from the judge today and the command line knows them; their toolsets are not built yet
-(``Arm.planned``).
+Each arm with a tool gets only that tool's MCP tools (``Arm.tools``): ExactDocs as shipped, the
+official Context7 MCP server (#493) and Grounded Docs' MCP server over its own index of the pinned
+versions (#492). ``agent_bench.servers`` starts them.
 """
 
 import re
@@ -53,10 +53,15 @@ class Arm:
     """The documentation tool the instructions name; ``None`` for no tool."""
     hidden: tuple[str, ...]
     """Product and tool names removed from every answer before the judge reads it."""
-    retrieval: bool = False
-    """It runs once per retrieval configuration (ExactDocs' own settings)."""
-    planned: str | None = None
-    """The issue that builds its toolset, while it is not built; ``None`` once it runs."""
+    configured: bool = False
+    """It runs once per configuration of its server: ExactDocs' retrieval settings
+    (``--retrieval``), Grounded Docs' index (``--grounded-docs``)."""
+    tools: tuple[str, ...] | None = None
+    """The MCP tools the agent gets, by name; ``None``: every tool its server lists."""
+    traced: bool = True
+    """What the agent reads in full can be traced to the golden set's sections at a version
+    (*Read the answer*, *Read another version*). Not for a service that answers from its own index
+    of sources the run does not know."""
 
     @property
     def instructions(self) -> str:
@@ -83,6 +88,28 @@ EXACTDOCS_TOOLS: Final[tuple[str, ...]] = (
     "view_search",
 )
 """ExactDocs' MCP tools (tests/bootstrap/snapshots/mcp_tools.json)."""
+CONTEXT7_TOOLS: Final[tuple[str, ...]] = ("query-docs", "resolve-library-id")
+"""The tools the official Context7 MCP server lists (without its research preview): all of them
+are the ``context7`` arm's."""
+GROUNDED_DOCS_TOOLS: Final[tuple[str, ...]] = (
+    "find_version",
+    "list_libraries",
+    "list_pages",
+    "read_page",
+    "search_docs",
+)
+"""The ``grounded-docs`` arm's tools: what Grounded Docs lists in its read-only mode, without
+``fetch_url``, which reads any web page and so would give this arm alone the web."""
+GROUNDED_DOCS_OTHER_TOOLS: Final[tuple[str, ...]] = (
+    "cancel_job",
+    "fetch_url",
+    "get_job_info",
+    "list_jobs",
+    "refresh_version",
+    "remove_docs",
+    "scrape_docs",
+)
+"""Grounded Docs' other tools (indexing and the web), never the agent's; hidden all the same."""
 ARMS: Final[dict[str, Arm]] = {
     arm.name: arm
     for arm in (
@@ -91,7 +118,7 @@ ARMS: Final[dict[str, Arm]] = {
             name=EXACTDOCS,
             tool="ExactDocs",
             hidden=("ExactDocs", "Exact Docs", *EXACTDOCS_TOOLS),
-            retrieval=True,
+            configured=True,
         ),
         Arm(
             name=CONTEXT7,
@@ -99,11 +126,13 @@ ARMS: Final[dict[str, Arm]] = {
             hidden=(
                 "Context7",
                 "Context 7",
-                "resolve-library-id",
+                "context7-mcp",
+                "Upstash",
                 "get-library-docs",
-                "query-docs",
+                *CONTEXT7_TOOLS,
             ),
-            planned="#493",
+            tools=CONTEXT7_TOOLS,
+            traced=False,
         ),
         Arm(
             name=GROUNDED_DOCS,
@@ -112,13 +141,11 @@ ARMS: Final[dict[str, Arm]] = {
                 "Grounded Docs",
                 "grounded-docs",
                 "docs-mcp-server",
-                "search_docs",
-                "list_libraries",
-                "find_version",
-                "fetch_url",
-                "scrape_docs",
+                *GROUNDED_DOCS_TOOLS,
+                *GROUNDED_DOCS_OTHER_TOOLS,
             ),
-            planned="#492",
+            configured=True,
+            tools=GROUNDED_DOCS_TOOLS,
         ),
     )
 }
@@ -139,17 +166,12 @@ def parse_arms(names: list[str]) -> list[Arm]:
         The arms, in ``ARMS`` order, without repeats; ``DEFAULT_ARMS`` when none is given.
 
     Raises:
-        ValueError: An unknown arm, or one whose toolset is not built yet.
+        ValueError: An unknown arm.
     """
     asked = {n.strip() for name in names for n in name.split(",") if n.strip()} or set(DEFAULT_ARMS)
-    for name in sorted(asked):
-        arm = ARMS.get(name)
-        if arm is None:
-            message = f"unknown arm {name!r}; the arms are {', '.join(ARMS)}"
-            raise ValueError(message)
-        if arm.planned:
-            message = f"the {name} arm is not built yet ({arm.planned})"
-            raise ValueError(message)
+    if unknown := sorted(asked - set(ARMS)):
+        message = f"unknown arm {unknown[0]!r}; the arms are {', '.join(ARMS)}"
+        raise ValueError(message)
     return [arm for name, arm in ARMS.items() if name in asked]
 
 

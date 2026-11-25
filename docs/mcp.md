@@ -356,6 +356,17 @@ left out.
 **In `article_outline`**, a heading merged into another heading's chunk points to that chunk, and a
 path the version lacks is `not_found`.
 
+**Text blocks and structured content** carry the same things. Some clients give the model a tool's
+structured content instead of its text blocks (pydantic-ai does whenever every block is text), and
+such a model gets the notice first and the text byte for byte too:
+
+| Tools | Text blocks | Structured content |
+|---|---|---|
+| `list_libraries`, `list_articles`, `search_docs`, `search_all_docs`, `article_outline` | the structured content as JSON | the data, `notice` first |
+| `read_article`, `read_chunk` | the notice, then the article or chunk verbatim | `notice`, the same text as `content`, and the metadata |
+| `resolve-library-id`, `query-docs` | the notice, then context7's text | none, as in context7 |
+| `view_article`, `view_search` | the notice, then the text fallback | `notice`, then the UI (see [MCP Apps](#mcp-apps)) |
+
 ### MCP Apps
 
 Hosts that support [MCP Apps](https://gofastmcp.com/apps/overview), such as Claude and ChatGPT,
@@ -371,16 +382,19 @@ The details:
 - `view_article`'s UI renders the article from its Markdown, headings and code blocks included.
   Its text block names the article's library, version, commit, path, tags and source, and the
   article follows verbatim, as `read_article` gives it.
-- `view_search`'s cards each hold the result's heading path, article, tags, source link and
-  verbatim text. Its text results each have their article, source link, chunk ID and text.
+- `view_search`'s cards each hold the result's heading path, article, chunk ID, tags, source link
+  and verbatim text, under a line saying when the limit cut the results. Its text results each
+  have their article, source link, chunk ID and text.
 - `view_search` searches like `search_docs` in the default retrieval mode, and never falls back to
   another version.
 - Both tools are read-only, take the same token scopes and library roles as `read_article` and
   `search_docs`, and show the untrusted-content notice at the top of the UI.
 - They do not replace `read_article` and `search_docs`, which are unchanged: an agent reading docs
   for itself should keep using those.
-- The structured content of both is the UI, not data: use `read_article` and `search_docs` for
-  that.
+- The structured content of both is the notice (`notice`, first), then the UI (Prefab's `$prefab`,
+  `view` and `state`). Hosts with MCP Apps render the UI and ignore `notice`. A client that gives
+  its model the structured content gets the UI: every value of the text fallback is in its
+  `state`, but shaped for the renderer, so use `read_article` and `search_docs` for data.
 
 The UI is drawn by one resource, `ui://exactdocs/renderer.html` (`text/html;profile=mcp-app`):
 

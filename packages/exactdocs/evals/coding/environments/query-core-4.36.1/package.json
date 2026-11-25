@@ -1,0 +1,11 @@
+{
+  "name": "coding-task",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@tanstack/query-core": "4.36.1"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

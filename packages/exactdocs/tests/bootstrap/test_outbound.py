@@ -13,6 +13,7 @@ import threading
 import types
 from collections.abc import AsyncIterator, Iterator, Mapping
 from dataclasses import dataclass
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Any
@@ -39,7 +40,7 @@ from exactdocs.ingestion.errors import RepositoryUnreachableError
 from exactdocs.ingestion.models import RepositoryUrl
 from exactdocs.retrieval.models import ModelRole, ProviderKind, ProviderProfile
 from exactdocs_kernel import OutboundNetwork, resolve_outbound
-from fake_hub import fake_hub
+from fake_hub import FakeHub, answer, fake_hub
 from fake_llm import FakeGateway, gateway
 from fixture_repo import REPO_PATH, DocsRepo, _handler
 from forward_proxy import ForwardProxy, clear_outbound, forward_proxy
@@ -396,16 +397,27 @@ async def test_a_provider_behind_a_re_signing_proxy_is_trusted_through_the_ca_bu
 
 
 @pytest.fixture
-def hub_behind_proxy(monkeypatch: pytest.MonkeyPatch) -> Iterator[ForwardProxy]:
+def stand_in_hub() -> Iterator[FakeHub]:
+    with fake_hub() as hub:
+        yield hub
+
+
+@pytest.fixture
+def hub_behind_proxy(
+    stand_in_hub: FakeHub, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Iterator[ForwardProxy]:
     """The stand-in Hub as ``hub.example.test``, behind a proxy that asks for credentials.
 
-    The Hub's client factory and endpoint are process-wide: put back at teardown.
+    The Hub's client factory, endpoint and settings are process-wide: put back at teardown. Its
+    telemetry starts on, and its registry of AI agent harnesses unknown (#589): not loaded in this
+    process, no copy in the test's own ``HF_HOME``, whatever the machine's holds.
 
     Yields:
         The proxy.
     """
     huggingface_hub = pytest.importorskip("huggingface_hub")
     http = pytest.importorskip("huggingface_hub.utils._http")
+    agents = pytest.importorskip("huggingface_hub.utils._detect_agent")
     constants = huggingface_hub.constants
     monkeypatch.setattr(constants, "ENDPOINT", "http://hub.example.test")
     monkeypatch.setattr(
@@ -414,12 +426,13 @@ def hub_behind_proxy(monkeypatch: pytest.MonkeyPatch) -> Iterator[ForwardProxy]:
         "http://hub.example.test/{repo_id}/resolve/{revision}/{filename}",
     )
     monkeypatch.setattr(constants, "HF_HUB_DISABLE_XET", constants.HF_HUB_DISABLE_XET)
-    with (
-        fake_hub() as hub,
-        forward_proxy(
-            {"hub.example.test:80": _address(hub.url)}, credentials=f"ada:{SECRET}"
-        ) as proxy,
-    ):
+    monkeypatch.setattr(constants, "HF_HUB_DISABLE_TELEMETRY", False)
+    harnesses = tmp_path / "hf-home" / Path(constants.AGENT_HARNESSES_PATH).name
+    monkeypatch.setattr(constants, "AGENT_HARNESSES_PATH", str(harnesses))
+    monkeypatch.setattr(agents, "_registry", None)
+    with forward_proxy(
+        {"hub.example.test:80": _address(stand_in_hub.url)}, credentials=f"ada:{SECRET}"
+    ) as proxy:
         yield proxy
     huggingface_hub.set_client_factory(http.default_client_factory)  # also closes the session
 
@@ -437,6 +450,32 @@ def test_a_model_pull_goes_through_the_proxy(
 
     assert outcome.ok, outcome.message
     assert hub_behind_proxy.hosts() == {"hub.example.test:80"}
+
+
+@pytest.mark.parametrize("cached", [False, True], ids=["no-cached-registry", "cached-registry"])
+def test_a_model_pull_asks_the_hub_for_the_model_and_nothing_else(
+    cached: bool, stand_in_hub: FakeHub, hub_behind_proxy: ForwardProxy, tmp_path: Path
+) -> None:
+    """#589: whatever ``HF_HOME`` holds, the pull sends only the requests the download needs.
+
+    With its telemetry on, huggingface_hub fetches its registry of AI agent harnesses from the Hub
+    before the first request, unless ``HF_HOME`` has a copy of the day.
+    """
+    pytest.importorskip("fastembed")
+    harnesses = Path(pytest.importorskip("huggingface_hub.constants").AGENT_HARNESSES_PATH)
+    if cached:
+        harnesses.parent.mkdir(parents=True)
+        harnesses.write_text(json.dumps({"standardEnvVars": [], "harnesses": {}}), "utf-8")
+    network = resolve_outbound({"HTTP_PROXY": hub_behind_proxy.url_with(f"ada:{SECRET}")})
+
+    [outcome] = pull([EMBEDDING], tmp_path / "models", download=hub_downloader(network))
+
+    assert outcome.ok, outcome.message
+    asked = [path for _, path, _ in stand_in_hub.seen]
+    assert asked
+    assert [path for path in asked if answer(path)[0] != HTTPStatus.OK] == []  # the model's only
+    assert len(hub_behind_proxy.seen) == len(asked)  # each one through the proxy
+    assert harnesses.exists() == cached
 
 
 def test_a_pull_the_proxy_refuses_names_the_proxy_and_the_hub(

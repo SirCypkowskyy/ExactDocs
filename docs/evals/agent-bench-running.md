@@ -5,6 +5,9 @@
       provider. It proves the plumbing, not quality.
     - Real runs take pydantic-ai model names for the agents and the judge, and `--resume` after a
       provider failure. Use a judge from another vendor than the agents where you can.
+    - `context7` and `grounded-docs` need Node.js 22 and the npm registry for their first install;
+      `context7` needs `CONTEXT7_API_KEY`. An arm is added to a recorded run with `--resume`: only
+      its questions are asked.
     - The manual *Agent benchmark (real providers)* workflow runs the same command.
     - The judge is checked against people: at least 50 answers labelled by hand, blind like the
       judge.
@@ -18,6 +21,8 @@ OLLAMA_BASE_URL=https://ollama.com/v1 OLLAMA_API_KEY=... just agent-bench run \
   --arm none,exactdocs --retrieval bm25:mode=bm25 --thinking medium \
   --per-stratum 3 --concurrency 3            # 90 cases: 3 per kind and project
 just agent-bench run ... --resume            # ask again what failed on the provider's side
+just agent-bench run ... --arm none,exactdocs,grounded-docs --resume   # add an arm to a run
+CONTEXT7_API_KEY=... just agent-bench run ... --arm none,exactdocs,context7
 just agent-bench run --help
 ```
 
@@ -37,7 +42,10 @@ just agent-bench run --help
 
 | Option | What it does |
 |---|---|
-| `--arm` | picks the arms (repeat or comma-separate; default `none,exactdocs`) |
+| `--arm` | picks the arms: `none`, `exactdocs`, `context7`, `grounded-docs` (repeat or comma-separate; default `none,exactdocs`; [below](#arms)) |
+| `--grounded-docs NAME` | names a Grounded Docs configuration of the `grounded-docs` arm (repeat for several; default `full-text`; also `bge-small-en-v1.5`) |
+| `--grounded-docs-home` | where Grounded Docs and its indexes are kept (`just grounded-bench`'s `--home`, `~/.cache/exactdocs/grounded-docs` by default) |
+| `--models-dir` | where the embedding model of a Grounded Docs configuration with one is |
 | `--thinking on\|off\|minimal\|low\|medium\|high\|xhigh\|max` | sets the agents' thinking ([below](#thinking)) |
 | `--retrieval name[:key=value,...]` | names one configuration of the `exactdocs` arm (repeat for several; [below](#retrieval-configurations)) |
 | `--projects`, `--kinds`, `--limit N` | pick the cases (`--limit`: cases per project) |
@@ -46,6 +54,16 @@ just agent-bench run --help
 | `--work-dir` | keeps the data directories and each server's log (`server-<configuration>.log`) |
 | `--resume` | continues from `<report>.rows.jsonl` |
 | `--offline` | uses the stand-ins ([below](#stand-ins)) |
+
+#### Arms
+
+- `context7` and `grounded-docs` need Node.js 22, and the npm registry for their first install
+  (into `~/.cache/exactdocs/`).
+- `context7` needs `CONTEXT7_API_KEY`; the run refuses the arm without it (exit 2). No Context7
+  number is published until Upstash permits it ([Terms of service](context7.md#terms-of-service)).
+- Adding an arm to a recorded run is `--resume` with the arms it had and the new one: only the new
+  arm's questions are asked, and its cells are compared with the others' on the same cases.
+  `meta.resumed` counts the answers kept from the earlier run.
 
 #### Thinking
 
@@ -89,10 +107,10 @@ uploaded as the artifact `agent-bench`.
 |---|---|
 | `agent_models` | comma-separated |
 | `judge_model` | |
-| `arms` | default `none,exactdocs` |
+| `arms` | `none`, `exactdocs`, `context7`, `grounded-docs`; default `none,exactdocs` |
 | `thinking` | |
 | `retrieval` | configurations separated by spaces |
-| `args` | e.g. `--per-stratum 3` |
+| `args` | e.g. `--per-stratum 3`, `--grounded-docs bge-small-en-v1.5` |
 
 Keys:
 
@@ -100,7 +118,11 @@ Keys:
   `AGENT_BENCH_ANTHROPIC_API_KEY`, `AGENT_BENCH_GOOGLE_API_KEY`, `AGENT_BENCH_OLLAMA_API_KEY`, and
   the variables `AGENT_BENCH_OPENAI_BASE_URL` (for an OpenAI-compatible gateway) and
   `AGENT_BENCH_OLLAMA_BASE_URL`;
-- for the server's models: the `eval` profile of the retrieval workflow (`EVAL_PROVIDER_*`).
+- for the server's models: the `eval` profile of the retrieval workflow (`EVAL_PROVIDER_*`);
+- for the `context7` arm: the repository secret `CONTEXT7_API_KEY`.
+
+It sets up Node.js 22 for the `context7` and `grounded-docs` arms, and keeps Grounded Docs and its
+indexes in the runner's temporary folder (built on each run, a few minutes for `full-text`).
 
 ## Judge agreement
 
@@ -157,12 +179,22 @@ not worth labelling.
 - the report and its paired comparisons;
 - the checkpoint and `--resume`, and agreement.
 
-Both arms run end to end there with the stand-in models and the stand-in documentation tools of
-`tests/fixtures/agent_bench_stand_ins.py` (an in-process MCP server), as do the scenarios of
-`features/agent_bench.feature`.
+All four arms run end to end there with the stand-in models and the stand-in documentation
+servers of `tests/fixtures/agent_bench_stand_ins.py`, as do the scenarios of
+`features/agent_bench.feature`:
+
+- in-process MCP servers in the shape of ExactDocs', Context7's and Grounded Docs';
+- the last one also lists `fetch_url` and `scrape_docs`, which the agent must never be offered.
 
 The end-to-end test, marked `eval` (`uv run pytest -m eval`):
 
 1. imports a two-version corpus built in a temporary repository;
 2. starts `exactdocs serve --stdio` on it under two configurations;
 3. runs every stand-in agent with both arms, and the stand-in judge, through it.
+
+`tests/evals/test_agent_arm_servers.py` runs the stand-in agents through the real servers. It is
+marked `integration` and `eval`, needs Node.js 22 and the npm registry, and never runs in CI:
+
+- the official Context7 MCP server, pointed at a stand-in of Context7's REST API on loopback:
+  nothing reaches Context7, and the test checks the key arrives as `Bearer` and is in no report;
+- Grounded Docs, indexing a two-version corpus into a temporary home.

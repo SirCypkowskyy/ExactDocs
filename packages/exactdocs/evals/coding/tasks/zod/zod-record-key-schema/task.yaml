@@ -1,0 +1,24 @@
+title: An object with arbitrary keys and validated values
+project: zod
+version: v4.0.17
+environment: zod-4.0.17
+other_version: v3.23.8
+other_environment: zod-3.23.8
+api_since:
+  version: 4.0.0
+  released: '2025-07-09'
+files:
+- src/rates.ts
+prompt: |
+  In `src/rates.ts`, export `Rates`, a schema for an object whose keys are any currency
+  names and whose values are positive numbers, and `parseRates(input: unknown)`, which
+  validates the input with it and throws on an invalid one.
+forbidden:
+- api: z.record(valueSchema) with one argument
+  pattern: z\.record\(\s*z\.\w+\((?:[^(),]|\([^()]*\))*\)(?:\.\w+\((?:[^(),]|\([^()]*\))*\))*\s*\)
+  reason: Zod 4.0 requires the key schema, `z.record(z.string(), valueSchema)`; 4.0.17 rejects every input
+    of a one-argument record (4.6.7 accepts it again)
+notes: |
+  Zod 3's `z.record(valueSchema)` takes the value schema alone; Zod 4.0 requires both
+  the key and the value schemas: in 4.0.17 the one-argument form takes the value schema
+  for the key schema and rejects every input.

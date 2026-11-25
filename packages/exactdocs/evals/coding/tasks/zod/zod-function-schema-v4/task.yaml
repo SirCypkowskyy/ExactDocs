@@ -1,0 +1,20 @@
+title: Validate a function's arguments and result with a function schema
+project: zod
+version: v4.0.17
+environment: zod-4.0.17
+pair: zod-function-schema
+other_version: v3.23.8
+other_from: zod-function-schema-v3
+api_since:
+  version: 4.0.0
+  released: '2025-07-09'
+files:
+- src/pricing.ts
+prompt: |
+  Export `total` from `src/pricing.ts`: `computeTotal` wrapped with a Zod function schema
+  so that its arguments are validated (`unitPrice` a non-negative integer, `quantity` a
+  positive integer, `discount` a number from 0 to 1) and so is its result (a
+  non-negative integer). Calling it with invalid arguments throws Zod's validation error.
+notes: |
+  Zod 3 builds a function schema with `z.function().args(...).returns(...)`; Zod 4 with
+  `z.function({ input: [...], output })`, and `.args()` / `.returns()` are gone.

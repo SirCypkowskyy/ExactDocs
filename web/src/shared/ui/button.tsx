@@ -15,9 +15,10 @@ import { Tooltip } from "./tooltip";
  *   confirmation dialog);
  * - band: the square icon controls in the band (muted ink on the frame, press 0.94).
  * 44px on touch screens, 36px (sm: 32px) where there is a fine pointer. Press scales to 0.97.
+ * A label that doesn't fit the width it is given wraps; the button never shrinks for its row.
  */
 const buttonVariants = cva(
-  "inline-flex cursor-pointer items-center justify-center gap-2 rounded-md text-body font-medium whitespace-nowrap outline-none select-none transition-[background-color,border-color,color,transform] duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 aria-disabled:cursor-progress aria-disabled:active:scale-100 [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex cursor-pointer items-center justify-center max-w-full shrink-0 gap-2 rounded-md text-center text-body font-medium outline-none select-none transition-[background-color,border-color,color,transform] duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 aria-disabled:cursor-progress aria-disabled:active:scale-100 [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
@@ -33,8 +34,9 @@ const buttonVariants = cva(
         band: "relative shrink-0 text-band-muted focus-visible:ring-offset-band active:scale-[0.94] disabled:opacity-40 data-[state=open]:bg-band-hover data-[state=open]:text-band-foreground can-hover:hover:bg-band-hover can-hover:hover:text-band-foreground [&_svg]:size-[1.125rem]",
       },
       size: {
-        default: "h-11 px-4 fine:h-9",
-        sm: "h-11 px-3 fine:h-8",
+        // At least 44/36 px, taller when a long label wraps in a narrow box (#576).
+        default: "h-fit min-h-11 px-4 py-1.5 fine:min-h-9",
+        sm: "h-fit min-h-11 px-3 py-1 fine:min-h-8",
         icon: "size-11 fine:size-9",
         "icon-sm": "size-11 fine:size-8",
       },

@@ -13,7 +13,7 @@ import json
 import os
 import sys
 import tempfile
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,17 +25,17 @@ from pydantic_ai.models import Model
 from pydantic_evals import Case, Dataset
 
 from agent_bench.agreement import LABELLING_HEADER, SAMPLE_SIZE, agreement, sample
-from agent_bench.arms import ARMS, DEFAULT_ARMS, EXACTDOCS, Arm, parse_arms
+from agent_bench.arms import ARMS, CONTEXT7, DEFAULT_ARMS, EXACTDOCS, GROUNDED_DOCS, Arm, parse_arms
 from agent_bench.harness import (
     PROMPT,
     AgentRun,
-    ArmServers,
     ArmTools,
     BenchInfo,
     Recorder,
     RetrievalConfig,
     asker,
     bench_dataset,
+    only_its_tools,
 )
 from agent_bench.judge import ERROR, AnswerJudge, judge_agent
 from agent_bench.models import (
@@ -59,7 +59,10 @@ from agent_bench.report import (
     results_of,
     summarize,
 )
+from agent_bench.servers import DEFAULT_GROUNDED_DOCS, ArmServers, grounded_docs_config
 from fixture_repo import git
+from retrieval_eval import grounded_docs
+from retrieval_eval.context7 import API_KEY_VARIABLE
 from retrieval_eval.dataset import Question
 from retrieval_eval.golden import (
     CASES_DIR,
@@ -72,6 +75,7 @@ from retrieval_eval.golden import (
     load_corpus,
 )
 from retrieval_eval.golden_review import draw_sample
+from retrieval_eval.grounded_docs_cli import home_dir
 from retrieval_eval.stats import DEFAULT as DEFAULT_STATS
 
 REPORT: Final[Path] = Path("reports/evals/agent-bench.json")
@@ -94,12 +98,12 @@ type JobKey = tuple[str, str, str, str]
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Setup:
-    """One arm under one retrieval configuration (none for an arm that takes none)."""
+    """One arm under one configuration of its server (none for an arm that takes none)."""
 
     arm: Arm
     """The arm."""
     config: RetrievalConfig | None
-    """Its retrieval configuration."""
+    """Its configuration: ExactDocs' retrieval settings, or a Grounded Docs index by name."""
 
     @property
     def retrieval(self) -> str:
@@ -111,21 +115,32 @@ class Setup:
         return self.config.name if self.config else ""
 
 
-def setups_of(arms: Sequence[Arm], retrieval: Sequence[RetrievalConfig]) -> list[Setup]:
-    """Pair each arm with its retrieval configurations.
+def setups_of(
+    arms: Sequence[Arm], configurations: Mapping[str, Sequence[RetrievalConfig]]
+) -> list[Setup]:
+    """Pair each arm with its configurations.
 
     Args:
         arms: The arms.
-        retrieval: The retrieval configurations, for an arm that takes them.
+        configurations: The configurations of each arm that takes them (``Arm.configured``), by
+            arm name.
 
     Returns:
         One setup per arm and configuration, in order.
+
+    Raises:
+        ValueError: An arm that takes configurations is given none.
     """
-    return [
-        Setup(arm=arm, config=config)
-        for arm in arms
-        for config in (retrieval if arm.retrieval else [None])
-    ]
+    setups = []
+    for arm in arms:
+        configs: Sequence[RetrievalConfig | None] = [None]
+        if arm.configured:
+            configs = configurations.get(arm.name, ())
+            if not configs:
+                message = f"the {arm.name} arm needs a configuration"
+                raise ValueError(message)
+        setups.extend(Setup(arm=arm, config=config) for config in configs)
+    return setups
 
 
 def selected_cases(
@@ -297,12 +312,19 @@ async def run_bench(
     models: Callable[[str], Model | str] | None = None,
     checkpoint: Path | None = None,
     done: dict[JobKey, QuestionResult] | None = None,
+    grounded: Sequence[RetrievalConfig] = (),
+    grounded_home: Path | None = None,
+    models_dir: Path | None = None,
 ) -> BenchReport:
     """Ask every case of every agent model with every arm, and judge the answers.
 
-    For the ``exactdocs`` arm, the corpus is imported once per embedding model and ExactDocs is
-    started as shipped, ``exactdocs serve --stdio``, per retrieval configuration; ``none`` has no
-    tools. The questions are interleaved (each case with every model and arm, then the next case)
+    Each arm's server runs as shipped (``servers.ArmServers``): for ``exactdocs``, the corpus is
+    imported once per embedding model and ``exactdocs serve --stdio`` started per retrieval
+    configuration; ``context7`` starts the official Context7 MCP server; ``grounded-docs`` indexes
+    the corpus into Grounded Docs per configuration (once: the index is kept) and starts its
+    server; ``none`` has no tools. Each agent gets only its arm's tools (``Arm.tools``), the same
+    instructions apart from the tool's name and the same request limit. The questions are
+    interleaved (each case with every model and arm, then the next case)
     so that a provider's slow hour weighs on every arm alike, and asked ``concurrency`` at a time.
     Each finished question is appended to ``checkpoint``; questions in ``done`` that did not fail
     on the provider's side are not asked again.
@@ -326,15 +348,33 @@ async def run_bench(
         models: Resolves a model name; ``models.chat_model`` with ``max_retries`` by default.
         checkpoint: Where each finished question is appended (JSON lines).
         done: Questions answered by an earlier run of the same command (``--resume``).
+        grounded: The Grounded Docs configurations of the ``grounded-docs`` arm
+            (``servers.grounded_docs_config``); ``full-text`` when empty.
+        grounded_home: Where Grounded Docs and its indexes are kept (``grounded_docs_cli``'s
+            home by default).
+        models_dir: Where the embedding model of a Grounded Docs configuration with one is.
 
     Returns:
         The report.
     """
     started_at = datetime.now(UTC).isoformat(timespec="seconds")
+    commit = git("rev-parse", "HEAD", cwd=Path(__file__).parent, check=False)  # the one it runs
     dataset = bench_dataset(cases, corpus)
     projects = [p for p in corpus.projects if p.id in {project for project, _ in cases}]
-    servers = ArmServers(projects=projects, repos=repos, work_dir=work_dir)
-    setups = setups_of(arms, retrieval)
+    servers = ArmServers(
+        projects=projects,
+        repos=repos,
+        work_dir=work_dir,
+        grounded_home=grounded_home or home_dir(),
+        models_dir=models_dir,
+    )
+    setups = setups_of(
+        arms,
+        {
+            EXACTDOCS: retrieval,
+            GROUNDED_DOCS: grounded or [grounded_docs_config(DEFAULT_GROUNDED_DOCS)],
+        },
+    )
     resolve = models or functools.partial(chat_model, max_retries=max_retries)
     asking = Asking(
         judge=AnswerJudge(judge=judge_agent(resolve(judge_model))),
@@ -353,7 +393,7 @@ async def run_bench(
                         resolve(name),
                         deps_type=Recorder,
                         instructions=setup.arm.instructions,
-                        toolsets=list(toolsets),
+                        toolsets=only_its_tools(setup.arm, toolsets),
                     ),
                     name,
                     {p.id: p.title for p in projects},
@@ -380,13 +420,17 @@ async def run_bench(
     meta = RunMeta(
         started_at=started_at,
         exactdocs_version=importlib.metadata.version("exactdocs"),
-        git_commit=git("rev-parse", "HEAD", cwd=Path(__file__).parent, check=False),
+        git_commit=commit,
         agent_models=list(agent_models),
         judge_model=judge_model,
         arms=[arm.name for arm in arms],
         retrieval={
-            s.config.name: recorded_settings(s.config.env) for s in setups if s.config is not None
+            s.config.name: recorded_settings(s.config.env)
+            for s in setups
+            if s.config is not None and s.arm.name == EXACTDOCS
         },
+        servers=servers.described,
+        resumed=len(jobs) - asking.todo,
         max_requests=max_requests,
         concurrency=concurrency,
         cases=len(dataset.cases),
@@ -435,7 +479,8 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-bench",
         description="An agent answers the golden set with each documentation arm: no docs, "
-        "ExactDocs' MCP tools (docs/evals/agent-bench.md).",
+        "or only the MCP tools of ExactDocs, Context7 or Grounded Docs "
+        "(docs/evals/agent-bench.md).",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="run the benchmark and write the report")
@@ -460,6 +505,27 @@ def _parser() -> argparse.ArgumentParser:
         default=[],
         help="name[:key=value,...] of EXACTDOCS_AI__ settings for the exactdocs arm, repeat for "
         f"several (default: {' and '.join(DEFAULT_RETRIEVAL)})",
+    )
+    run.add_argument(
+        "--grounded-docs",
+        action="append",
+        default=[],
+        help="Grounded Docs configuration of the grounded-docs arm, repeat for several "
+        f"(default: {DEFAULT_GROUNDED_DOCS}; known: "
+        f"{', '.join(c.name for c in grounded_docs.CONFIGURATIONS)})",
+    )
+    run.add_argument(
+        "--grounded-docs-home",
+        type=Path,
+        default=home_dir(),
+        help="where Grounded Docs and its indexes are kept, as for `just grounded-bench` "
+        "(default: %(default)s)",
+    )
+    run.add_argument(
+        "--models-dir",
+        type=Path,
+        help="where `exactdocs models pull` put a Grounded Docs configuration's embedding model "
+        "(default: ExactDocs' models directory)",
     )
     run.add_argument(
         "--thinking",
@@ -512,32 +578,51 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run(args: argparse.Namespace) -> int:
-    """Run the benchmark, write the reports and print the Markdown.
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Asked:
+    """What a ``run`` command asks for, checked."""
+
+    agent_models: list[str]
+    """The agent models."""
+    judge_model: str
+    """The judge's model."""
+    arms: list[Arm]
+    """The arms."""
+    retrieval: list[RetrievalConfig]
+    """The ``exactdocs`` arm's configurations."""
+    grounded: list[RetrievalConfig]
+    """The ``grounded-docs`` arm's configurations."""
+    corpus: Corpus
+    """The corpus manifest."""
+    cases: list[tuple[str, GoldenCase]]
+    """The cases to ask."""
+
+
+def _asked(args: argparse.Namespace) -> _Asked | str:
+    """Check a ``run`` command's arguments.
 
     Args:
         args: The parsed ``run`` arguments.
 
     Returns:
-        The exit code: 2 for a usage error, else 0 (the benchmark has no gate).
+        What it asks for, or what is wrong with it.
     """
     agent_models = list(OFFLINE_AGENTS) if args.offline else args.agent_model
     judge_model = OFFLINE_JUDGE if args.offline else args.judge_model
     if not agent_models or not judge_model:
-        sys.stderr.write("agent-bench: give --agent-model and --judge-model, or --offline\n")
-        return 2
+        return "give --agent-model and --judge-model, or --offline"
     try:
         arms = parse_arms(args.arm)
         retrieval = [RetrievalConfig.parse(t) for t in args.retrieval or DEFAULT_RETRIEVAL]
+        grounded = [grounded_docs_config(n) for n in args.grounded_docs or [DEFAULT_GROUNDED_DOCS]]
         thinking_setting(args.thinking)
     except ValueError as error:
-        sys.stderr.write(f"agent-bench: {error}\n")
-        return 2
-    corpus = load_corpus(args.corpus)
+        return str(error)
+    if ARMS[CONTEXT7] in arms and not os.environ.get(API_KEY_VARIABLE, "").strip():
+        return f"the context7 arm needs a Context7 API key in {API_KEY_VARIABLE}"
     loaded, problems = load_cases(args.cases)
     if problems:
-        sys.stderr.write("".join(f"agent-bench: {p}\n" for p in problems))
-        return 2
+        return "\n".join(problems)
     cases = selected_cases(
         loaded,
         projects=[p for p in args.projects.split(",") if p],
@@ -547,40 +632,72 @@ def _run(args: argparse.Namespace) -> int:
         seed=args.seed,
     )
     if not cases:
-        sys.stderr.write("agent-bench: no case matches\n")
+        return "no case matches"
+    return _Asked(
+        agent_models=agent_models,
+        judge_model=judge_model,
+        arms=arms,
+        retrieval=retrieval,
+        grounded=grounded,
+        corpus=load_corpus(args.corpus),
+        cases=cases,
+    )
+
+
+def _run(args: argparse.Namespace) -> int:
+    """Run the benchmark, write the reports and print the Markdown.
+
+    Args:
+        args: The parsed ``run`` arguments.
+
+    Returns:
+        The exit code: 2 for a usage error (``context7`` without ``CONTEXT7_API_KEY`` too), 1 when
+        the corpus cannot be fetched or an arm's server cannot be installed or started, else 0
+        (the benchmark has no gate).
+    """
+    asked = _asked(args)
+    if isinstance(asked, str):
+        sys.stderr.write("".join(f"agent-bench: {line}\n" for line in asked.splitlines()))
         return 2
-    asked = {project for project, _ in cases}
+    projects = {project for project, _ in asked.cases}
+    work_dir = args.work_dir or Path(tempfile.mkdtemp(prefix="exactdocs-agent-bench-"))
+    checkpoint = args.report.with_suffix(ROWS_SUFFIX)
     try:
-        repos = {p.id: fetch(p, args.cache_dir) for p in corpus.projects if p.id in asked}
+        repos = {p.id: fetch(p, args.cache_dir) for p in asked.corpus.projects if p.id in projects}
     except RuntimeError as error:
         sys.stderr.write(f"agent-bench: {error}\n")
         return 1
-    work_dir = args.work_dir or Path(tempfile.mkdtemp(prefix="exactdocs-agent-bench-"))
     work_dir.mkdir(parents=True, exist_ok=True)
     args.report.parent.mkdir(parents=True, exist_ok=True)
-    checkpoint = args.report.with_suffix(ROWS_SUFFIX)
     done = load_rows(checkpoint) if args.resume else {}
     if not args.resume:
         checkpoint.write_text("", encoding="utf-8")
-    report = asyncio.run(
-        run_bench(
-            cases,
-            corpus,
-            repos,
-            agent_models=agent_models,
-            judge_model=judge_model,
-            arms=arms,
-            retrieval=retrieval,
-            work_dir=work_dir,
-            max_requests=args.max_requests,
-            concurrency=args.concurrency,
-            thinking=args.thinking,
-            max_retries=args.max_retries,
-            selection=selection_of(args),
-            checkpoint=checkpoint,
-            done=done,
+    try:
+        report = asyncio.run(
+            run_bench(
+                asked.cases,
+                asked.corpus,
+                repos,
+                agent_models=asked.agent_models,
+                judge_model=asked.judge_model,
+                arms=asked.arms,
+                retrieval=asked.retrieval,
+                work_dir=work_dir,
+                max_requests=args.max_requests,
+                concurrency=args.concurrency,
+                thinking=args.thinking,
+                max_retries=args.max_retries,
+                selection=selection_of(args),
+                checkpoint=checkpoint,
+                done=done,
+                grounded=asked.grounded,
+                grounded_home=args.grounded_docs_home,
+                models_dir=args.models_dir,
+            )
         )
-    )
+    except RuntimeError as error:  # a server that cannot be installed or started
+        sys.stderr.write(f"agent-bench: {error}\n")
+        return 1
     _write(report, args.report)
     sys.stdout.write(f"\nreport: {args.report}; work dir: {work_dir}\n")
     return 0

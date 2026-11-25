@@ -126,7 +126,8 @@ async def test_an_article_arrives_exactly_as_stored_with_its_metadata_beside_it(
     assert (
         data["source_url"] == f"https://github.com/acme/payments/blob/{'b' * 40}/guide/install.md"
     )
-    assert "content" not in data
+    # The same text, for clients that give their model the structured content (#587).
+    assert data["content"] == BODY
 
 
 async def test_a_blank_ref_means_the_default_version(container: Container) -> None:

@@ -1,0 +1,11 @@
+{
+  "name": "coding-task",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}
