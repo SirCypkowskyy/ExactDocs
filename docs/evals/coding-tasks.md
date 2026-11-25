@@ -12,6 +12,8 @@
       every solution written for the other version fails (`just coding-tasks check`).
     - Agents run the tasks with the workspace tools and a documentation arm of the
       [agent benchmark](agent-bench.md) (`just coding-tasks run`), never in CI.
+    - Coding-agent CLIs (Claude Code, Codex, Gemini CLI, OpenCode) run the same tasks, graded the
+      same way, in the [harness benchmark](harnesses.md).
 
 It lives in
 [`packages/exactdocs/evals/coding_tasks/`](https://github.com/SirCypkowskyy/ExactDocs/tree/develop/packages/exactdocs/evals/coding_tasks)
