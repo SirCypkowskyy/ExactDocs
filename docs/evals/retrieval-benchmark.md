@@ -34,6 +34,14 @@ Hits are matched by the headings their chunk holds (`golden_run.held_match`, see
 [Matching a hit across chunking depths](ingestion.md#matching-a-hit-across-chunking-depths)), so a
 coarser or finer chunking is not penalised for cutting at another depth or merging sections.
 
+**Grouped results** (#575). `search_docs` groups its results by article: an article's results
+come together, best first, under its group's rank (`group`). The benchmark asks as the MCP tool
+does, so it scores each group as one result (`dataset.results_of`): a case's rank is the rank of
+the first group holding a hit that answers it, a group answers at most one part of a case (as a
+text result does), and a group's tokens are those of all its chunks. `bench(group_by=...)` and
+the grid's app cells with `group_by: chunk` measure the search before it grouped them, one chunk
+per result.
+
 It writes `retrieval.json` and `retrieval.md` to `reports/evals/` (or `--out`), prints the summary
 and appends it to `$GITHUB_STEP_SUMMARY`. It exits with 1 when a configuration:
 

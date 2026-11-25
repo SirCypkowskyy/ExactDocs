@@ -12,9 +12,18 @@ defaults:
   local: bm25@default
 
 cells:
-  # ExactDocs itself, and the gaps of the #347 run
+  # ExactDocs itself, and the gaps of the #347 run. Its search groups the results by article
+  # (#575); `group_by: chunk` is the search before it did, each app cell's control.
   - app: bm25
+    against: bm25@default+by-chunk
   - app: hybrid:bge-small-en-v1.5
+    against: hybrid:bge-small-en-v1.5@default+by-chunk
+  - name: bm25@default+by-chunk
+    app: bm25
+    group_by: chunk
+  - name: hybrid:bge-small-en-v1.5@default+by-chunk
+    app: hybrid:bge-small-en-v1.5
+    group_by: chunk
   - app: hybrid:bge-base-en-v1.5
   - app: bm25+ce
   - app: hybrid:bge-small-en-v1.5+ce

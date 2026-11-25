@@ -337,13 +337,22 @@ version is pinned as the default:
 
 Every response says which version answered.
 
-**`search_docs` results** carry:
+**`search_docs` results** come grouped by article (#575). The article of the best result comes
+first, with all of its results, best first; then the next article. Each result's `group` is its
+article's rank. The results are the same as in plain rank order; only the order changes, so the
+first result is still the best one. On the golden set this puts a section that answers in the
+first article 12 points more often ([Retrieval results](benchmark/retrieval.md)). Each result
+carries:
 
-- their location and their neighbours (`prev_chunk_id`, `next_chunk_id`);
+- its location and its neighbours (`prev_chunk_id`, `next_chunk_id`);
+- `group`;
 - `coverage`;
 - the retrieval mode that answered (`retrieval_mode`, `reranked`) and, when a cheaper mode
   answered, `fallback_reason`;
 - for `agentic` results, also `justification` and `explored_path`.
+
+The REST search (`GET /api/v1/libraries/{owner}/{repo}/search`, `GET /api/v1/search`) keeps its
+results in rank order, `group` null, unless it is asked for `group_by=article`.
 
 Without `mode`, the library's mode is used, else the instance's, else the best one configured.
 Asking for a mode that is not available is an error, `mode_unavailable`, which names the missing
@@ -355,8 +364,9 @@ chunks and keeps those inside the directory, so with a narrow prefix in a large 
 `coverage.complete` can be false while fewer results than `limit` came back: more matches may
 exist further down.
 
-**`search_all_docs` results** each name their library and version, and `libraries` counts the
-matches per library, `path_prefix` aside. At most 500 libraries are searched; `libraries_omitted`
+**`search_all_docs` results** each name their library and version, and come grouped by library
+and article as `search_docs` results do; `libraries` counts the matches per library,
+`path_prefix` aside. At most 500 libraries are searched; `libraries_omitted`
 says how many were left out.
 
 **In `article_outline`**, a heading merged into another heading's chunk points to that chunk, and a

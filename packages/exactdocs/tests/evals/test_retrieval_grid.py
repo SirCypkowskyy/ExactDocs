@@ -271,6 +271,10 @@ def test_a_cell_is_either_an_app_configuration_or_an_eval_only_search() -> None:
     ):
         with pytest.raises(ValidationError):
             Cell.model_validate(bad)
+    # an app cell may measure ExactDocs' search before it grouped its results (#575)
+    assert Cell(name="b", app="bm25", group_by="chunk").group_by == "chunk"
+    with pytest.raises(ValidationError, match="group_by"):
+        _cell(group_by="chunk")
     with pytest.raises(ValidationError, match="twice"):
         Grid.model_validate({"defaults": {}, "cells": [{"app": "bm25"}, {"app": "bm25"}]})
     with pytest.raises(ValidationError, match="name no cell"):

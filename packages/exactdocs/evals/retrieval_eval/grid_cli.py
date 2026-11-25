@@ -580,8 +580,11 @@ async def run_grid(
                 build=build,
                 group_by=ResultGrouping(cell.group_by or ResultGrouping.ARTICLE),
             )
+            # a cell that sets the grouping is named apart from the app's own configuration
+            named = {"configuration": cell.name} if cell.group_by is not None else {}
             record = CellRecord(
-                key=key, result=ran.results[0].model_copy(update={"versus_default": None})
+                key=key,
+                result=ran.results[0].model_copy(update={"versus_default": None, **named}),
             )
         else:
             corpus = corpus or _read(projects, repos)

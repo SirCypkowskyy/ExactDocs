@@ -43,6 +43,12 @@ A cell is one of two kinds:
 An app cell is a configuration of the retrieval benchmark (`bm25`, `hybrid:bge-base-en-v1.5`,
 `bm25+ce`, `hybrid:hosted`, ...). Hosted ones run only with `--allow-providers`.
 
+ExactDocs' search groups its results by article (#575), and an app cell measures it so. An app
+cell with `group_by: chunk` (and a `name` of its own, such as `bm25@default+by-chunk`) measures
+the search before it grouped them, one chunk per result: the control of `bm25@default` and
+`hybrid:bge-small-en-v1.5@default` (`against`). A cell kept from before #575 is not told apart by
+its key: run it again (`--fresh`, or delete its file in `<out>/cells/`).
+
 ### Eval-only cells
 
 The grid cuts, indexes and searches the pinned versions itself, in process, and scores the text it
