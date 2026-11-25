@@ -1,5 +1,4 @@
 import { useNavigate } from "@tanstack/react-router";
-import type { ColumnDef } from "@tanstack/react-table";
 import {
   ArrowRight,
   ArrowRightLeft,
@@ -21,6 +20,7 @@ import { cn } from "@/shared/lib/utils";
 import { Badge, type BadgeTone } from "@/shared/ui/badge";
 import { LibraryCell, Person, RelativeTime } from "@/shared/ui/data-table/cells";
 import { DataTable } from "@/shared/ui/data-table/data-table";
+import type { ColumnDef } from "@/shared/ui/data-table/features";
 import { DataTablePagination } from "@/shared/ui/data-table/pagination";
 import type { RowAction } from "@/shared/ui/data-table/row-actions";
 import { SearchFilter } from "@/shared/ui/data-table/search-filter";

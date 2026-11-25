@@ -1,3 +1,4 @@
+import type { RowData } from "@tanstack/react-table";
 import { ChevronDown, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 import { formatNumber, useLanguage, useMessages } from "@/shared/lib/i18n";
@@ -35,7 +36,7 @@ const blockedLook =
   "aria-disabled:cursor-not-allowed aria-disabled:bg-transparent aria-disabled:opacity-40";
 const numberLook = "num w-auto min-w-11 px-2 fine:min-w-8";
 
-export function DataTablePagination<T>({ model }: { model: DataTableModel<T> }) {
+export function DataTablePagination<T extends RowData>({ model }: { model: DataTableModel<T> }) {
   const t = useMessages(messages).dataTable;
   const language = useLanguage();
   const id = useId();

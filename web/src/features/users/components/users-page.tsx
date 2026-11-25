@@ -1,6 +1,5 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
-import type { ColumnDef } from "@tanstack/react-table";
 import {
   Ban,
   CircleCheck,
@@ -24,6 +23,7 @@ import { Button } from "@/shared/ui/button";
 import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { Chips, Count, Person, RelativeTime } from "@/shared/ui/data-table/cells";
 import { DataTable } from "@/shared/ui/data-table/data-table";
+import type { ColumnDef } from "@/shared/ui/data-table/features";
 import { DataTablePagination } from "@/shared/ui/data-table/pagination";
 import { type RowAction, restoreRowFocus } from "@/shared/ui/data-table/row-actions";
 import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";

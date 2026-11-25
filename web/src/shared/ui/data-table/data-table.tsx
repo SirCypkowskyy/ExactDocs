@@ -1,4 +1,4 @@
-import { type Cell, flexRender, type Row } from "@tanstack/react-table";
+import { flexRender, type RowData } from "@tanstack/react-table";
 import type { LucideIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { useMessages } from "@/shared/lib/i18n";
@@ -16,6 +16,7 @@ import {
   TableRowHeader,
 } from "../table";
 import { columnLabel, SortHeader } from "./columns";
+import type { Cell, Row } from "./features";
 import { type RowActions, RowActionsMenu, RowContextMenu } from "./row-actions";
 import { SkeletonRows, TableEmpty, TableError, TableNoMatch } from "./states";
 import type { DataTableModel } from "./use-data-table";
@@ -31,7 +32,7 @@ import type { DataTableModel } from "./use-data-table";
  * in (`row-in`). `aria-rowcount` and `aria-rowindex` place the page within the whole list.
  */
 
-interface DataTableProps<T> {
+interface DataTableProps<T extends RowData> {
   model: DataTableModel<T>;
   /** The table's accessible name (usually the page title). */
   label: string;
@@ -67,19 +68,19 @@ function useFreshRows(viewKey: string, ids: readonly string[], busy: boolean): R
   return seen.fresh;
 }
 
-function cellClass<T>(cell: Cell<T, unknown>) {
+function cellClass<T extends RowData>(cell: Cell<T>) {
   const meta = cell.column.columnDef.meta;
   // Figures at the end of a row line up (the cell kinds in ./cells mark theirs `.num` too).
   return cn(meta?.align === "end" && "num text-right", meta?.className);
 }
 
 type TableStates = Pick<
-  DataTableProps<unknown>,
+  DataTableProps<RowData>,
   "empty" | "noMatch" | "errorMessage" | "retryLabel"
 >;
 
 /** The frame's message instead of rows: the list failed, is empty, or nothing matches. */
-function stateOf<T>(
+function stateOf<T extends RowData>(
   model: DataTableModel<T>,
   { empty, noMatch, errorMessage, retryLabel }: TableStates,
 ): ReactNode {
@@ -105,7 +106,13 @@ function stateOf<T>(
   );
 }
 
-export function DataTable<T>({ model, label, rowActions, rowLabel, ...states }: DataTableProps<T>) {
+export function DataTable<T extends RowData>({
+  model,
+  label,
+  rowActions,
+  rowLabel,
+  ...states
+}: DataTableProps<T>) {
   const phone = useMediaQuery(PHONE_QUERY);
   const fresh = useFreshRows(
     model.viewKey,
@@ -127,7 +134,7 @@ export function DataTable<T>({ model, label, rowActions, rowLabel, ...states }: 
   );
 }
 
-interface RowsProps<T> {
+interface RowsProps<T extends RowData> {
   model: DataTableModel<T>;
   label: string;
   /** The table has row actions (a column for the kebab). */
@@ -138,7 +145,7 @@ interface RowsProps<T> {
 }
 
 /** The column that names a row: its `priority: 1` column (a phone card's title), else the first. */
-function titleColumn<T>(model: DataTableModel<T>): string | undefined {
+function titleColumn<T extends RowData>(model: DataTableModel<T>): string | undefined {
   const visible = model.table.getVisibleLeafColumns();
   return visible.find((c) => c.columnDef.meta?.priority === 1)?.id ?? visible[0]?.id;
 }
@@ -148,7 +155,14 @@ function titleColumn<T>(model: DataTableModel<T>): string | undefined {
  * title column's cells are row headers (`<th scope="row">`), so a screen reader names the row as
  * it moves along it.
  */
-function DesktopRows<T>({ model, label, actions, actionsOf, nameOf, fresh }: RowsProps<T>) {
+function DesktopRows<T extends RowData>({
+  model,
+  label,
+  actions,
+  actionsOf,
+  nameOf,
+  fresh,
+}: RowsProps<T>) {
   const t = useMessages(messages).dataTable;
   const { table, status, rows } = model;
   const title = titleColumn(model);
@@ -235,7 +249,7 @@ function DesktopRows<T>({ model, label, actions, actionsOf, nameOf, fresh }: Row
 }
 
 /** Below `md`: cards once the rows are here, two-line placeholders until then. */
-function PhoneRows<T>(props: RowsProps<T>) {
+function PhoneRows<T extends RowData>(props: RowsProps<T>) {
   if (props.model.status === "ready") return <Cards {...props} />;
   return (
     <ul
@@ -254,7 +268,7 @@ function PhoneRows<T>(props: RowsProps<T>) {
 }
 
 /** Below `md`: each row a card, its title cell first, its meta cells under it, the kebab on the right. */
-function Cards<T>({ model, label, actionsOf, nameOf, fresh }: RowsProps<T>) {
+function Cards<T extends RowData>({ model, label, actionsOf, nameOf, fresh }: RowsProps<T>) {
   const visible = model.table.getVisibleLeafColumns();
   const title = titleColumn(model);
   const meta = visible

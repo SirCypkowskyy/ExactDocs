@@ -1,3 +1,4 @@
+import type { RowData } from "@tanstack/react-table";
 import { CalendarRange, Check } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 import { useMessages } from "@/shared/lib/i18n";
@@ -17,7 +18,7 @@ import { parseRange, rangeParam } from "../model/access-log";
  */
 
 /** The "Custom dates" button and its form: two days, both included, in this browser's zone. */
-export function CustomDates<T>({ model }: { model: DataTableModel<T> }) {
+export function CustomDates<T extends RowData>({ model }: { model: DataTableModel<T> }) {
   const id = useId();
   const t = useMessages(messages).list;
   const [picked] = model.selected("when");

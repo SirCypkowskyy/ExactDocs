@@ -1,3 +1,4 @@
+import type { RowData } from "@tanstack/react-table";
 import { X } from "lucide-react";
 import { type ReactNode, useId } from "react";
 import { useMessages } from "@/shared/lib/i18n";
@@ -15,7 +16,7 @@ import type { DataTableModel } from "./use-data-table";
  * the global filter (`q`), one button per faceted filter, the Columns menu at the end, and under
  * them the active filters as `Tag` chips (with a remove button) and Clear all.
  */
-export function DataTableToolbar<T>({
+export function DataTableToolbar<T extends RowData>({
   model,
   search,
   children,
@@ -75,7 +76,7 @@ interface Chip {
 }
 
 /** One chip per picked value and per narrowing parameter; Clear all once there is any filter. */
-export function ActiveFilters<T>({ model }: { model: DataTableModel<T> }) {
+export function ActiveFilters<T extends RowData>({ model }: { model: DataTableModel<T> }) {
   const t = useMessages(messages).dataTable;
   const chips: Chip[] = [];
   for (const filter of model.filters) {
