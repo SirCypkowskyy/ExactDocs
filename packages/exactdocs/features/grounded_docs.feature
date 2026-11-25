@@ -18,3 +18,9 @@ Feature: The retrieval benchmark measures Grounded Docs on the golden set
     Given Grounded Docs leaves out an article a case expects
     When each golden-set question is sent to its search for that library and version
     Then the report names the article and the case
+
+  Scenario: Compared at the same amount of context
+    Given Grounded Docs at a pinned release has indexed every golden-corpus version from the same checkouts ExactDocs imports
+    When each golden-set question is sent to its search for that library and version
+    Then the report gives recall within the first 1,000, 2,000 and 4,000 tokens of the text returned, for Grounded Docs and for ExactDocs
+    And each budget is read whole and cut at the budget, with a paired test against ExactDocs

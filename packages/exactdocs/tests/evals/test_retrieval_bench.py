@@ -18,6 +18,7 @@ from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question
 from retrieval_eval.golden import fetch, load_corpus, load_golden
 from retrieval_eval.ingestion_cli import CONFIGURATIONS
 from retrieval_eval.retrieval_bench import (
+    CUT_BUDGETS,
     BenchMetrics,
     Budget,
     ConfigResult,
@@ -32,6 +33,7 @@ from retrieval_eval.retrieval_bench import (
     recommend,
     row_of,
     run_problems,
+    sized,
 )
 from retrieval_eval.retrieval_bench_cli import HOSTED as HOSTED_EMBEDDING
 from retrieval_eval.retrieval_bench_cli import bench, main, matrix, picked
@@ -176,21 +178,26 @@ def _row(
     wrong: bool = False,
     ms: float = 10.0,
     usd: float = 0.0,
+    sizes: list[int] | None = None,
 ) -> Row:
+    found = rank if answerable and rank and rank <= 10 else None
+    context, to_hit = sized(found, sizes)
     return Row(
         case=case,
         kind=kind,
         project=project,
         answerable=answerable,
         rank=rank if answerable else None,
-        ndcg=1 / math.log2(rank + 1) if answerable and rank and rank <= 10 else 0.0,
+        ndcg=1 / math.log2(found + 1) if found else 0.0,
         sections=1 if answerable else 0,
-        section_ranks=(rank,) if answerable and rank and rank <= 10 else (),
+        section_ranks=(found,) if found else (),
         wrong_version=wrong,
         empty=empty,
         search_ms=ms,
         tokens=3,
         usd=usd,
+        context_tokens=context,
+        tokens_to_hit=to_hit,
     )
 
 
@@ -225,6 +232,87 @@ def test_metrics_without_unanswerable_cases_leave_their_rates_out() -> None:
 
     assert (m.unanswerable, m.unanswerable_clean_rate, m.no_answer_rate) == (0, None, None)
     assert metrics_of([]).questions == 0
+
+
+# ---------------------------------------------------------------- within a token budget (#575)
+
+
+def test_a_row_keeps_the_context_returned_and_how_much_comes_up_to_the_first_hit() -> None:
+    sized_hits = [h.model_copy(update={"tokens": n}) for h, n in ((C, 700), (B, 500), (A, 300))]
+
+    row = row_of(_case(), Answer(hits=sized_hits))
+
+    assert (row.rank, row.context_tokens, row.tokens_to_hit) == (3, 1500, 1500)
+    missed = row_of(_case(), Answer(hits=sized_hits[:2]))
+    assert (missed.context_tokens, missed.tokens_to_hit) == (1200, None)
+    # a retriever that did not read the hits back leaves the context unknown, not 0
+    unread = row_of(_case(), Answer(hits=[C, A]))
+    assert (unread.context_tokens, unread.tokens_to_hit) == (None, None)
+    assert row_of(_case(), Answer(hits=[])).context_tokens == 0
+
+
+def test_recall_within_a_budget_counts_the_first_hit_read_whole_and_in_order() -> None:
+    rows = [
+        _row(case="a", rank=1, sizes=[900, 100]),  # ends at 900: within 1k
+        _row(case="b", rank=2, sizes=[900, 900]),  # ends at 1,800: within 2k
+        _row(case="c", rank=1, sizes=[1001]),  # one result just over 1k: within 2k
+        _row(case="d", rank=3, sizes=[1500, 1500, 1000]),  # ends at 4,000: within 4k
+        _row(case="e", rank=None, sizes=[200] * 10),  # no hit in the top 10
+        _row(case="u", answerable=False, sizes=[50]),  # not answerable: context only
+    ]
+
+    m = metrics_of(rows)
+
+    assert (m.recall_at_1k_tokens, m.recall_at_2k_tokens, m.recall_at_4k_tokens) == (
+        0.2,
+        0.6,
+        0.8,
+    )
+    assert m.context_tokens_per_question == round((1000 + 1800 + 1001 + 4000 + 2000 + 50) / 6, 1)
+    assert m.tokens_to_first_hit == pytest.approx((900 + 1800 + 1001 + 4000) / 4, abs=0.1)
+    assert {"recall_at_2k_tokens", "context_tokens_per_question"} <= set(m.intervals)
+
+
+def test_rows_recorded_without_their_context_leave_the_budgets_out() -> None:
+    old = [_row(case=f"c{i}", rank=1) for i in range(20)]
+    new = [_row(case=f"c{i}", rank=1 if i < 15 else None, sizes=[400] * 10) for i in range(20)]
+
+    m = metrics_of(old)
+    assert (m.recall_at_1k_tokens, m.context_tokens_per_question, m.tokens_to_first_hit) == (
+        None,
+        None,
+        None,
+    )
+    assert "recall_at_1k_tokens" not in m.intervals
+    assert metrics_of([*old[:10], *new[10:]]).recall_at_1k_tokens is None  # mixed: unknown
+    # tested only when both kept every case's context
+    mixed = paired_tests(_result("a", Budget.NONE, rows=old), _result("b", Budget.NONE, rows=new))
+    assert "recall_at_1k_tokens" not in mixed
+    assert "recall_at_5" in mixed
+    both = paired_tests(_result("a", Budget.NONE, rows=new), _result("b", Budget.NONE, rows=new))
+    assert {"recall_at_1k_tokens", "recall_at_2k_tokens", "recall_at_4k_tokens"} <= set(both)
+
+
+def test_the_summary_shows_recall_within_each_budget_with_its_test() -> None:
+    small = [_row(case=f"c{i:03}", rank=1, sizes=[300] * 10) for i in range(40)]
+    big = [_row(case=f"c{i:03}", rank=1, sizes=[1500] * 10) for i in range(40)]
+    results = [
+        _result("bm25", Budget.NONE, rows=small),
+        _result("bm25", Budget.NONE, rows=big, chunking="h2"),
+    ]
+    picks = recommend(results)
+    report = _report(*against_defaults(results, picks)).model_copy(
+        update={"statistics": StatsMethod(), "recommendations": picks}
+    )
+
+    text = markdown(report)
+
+    assert "## Within a token budget" in text
+    assert "| `bm25` | `default` | 3,000 [3,000, 3,000] | 300 [300, 300] | 100.0% [" in text
+    assert "| `bm25` | `h2` | 15,000 [15,000, 15,000] | 1,500 [1,500, 1,500] | 0.0% [" in text
+    assert "| `bm25` at `default` | **-100.0** [" in text
+    old = _report(_result("bm25", Budget.NONE, rows=_named(60)))
+    assert "## Within a token budget" not in markdown(old)
 
 
 # ---------------------------------------------------------------- results, recommendation
@@ -315,8 +403,12 @@ def test_a_dearer_configuration_under_the_margin_keeps_the_cheaper_one() -> None
 
 
 def test_every_rate_and_mean_comes_with_an_interval() -> None:
-    rows = [_row(case=f"c{i}", rank=1 + i % 12, kind=("a", "b")[i % 2]) for i in range(60)]
-    rows += [_row(case=f"u{i}", answerable=False, empty=i % 2 == 0) for i in range(10)]
+    sizes = [150 * (1 + i % 5) for i in range(10)]
+    rows = [
+        _row(case=f"c{i}", rank=1 + i % 12, kind=("a", "b")[i % 2], sizes=sizes[i % 3 :])
+        for i in range(60)
+    ]
+    rows += [_row(case=f"u{i}", answerable=False, empty=i % 2 == 0, sizes=[]) for i in range(10)]
 
     result = _result("bm25", Budget.NONE, rows=rows).with_breakdowns(rows)
 
@@ -328,7 +420,8 @@ def test_every_rate_and_mean_comes_with_an_interval() -> None:
     # every rate and mean: each float metric but the latency percentiles
     fields = BenchMetrics.model_fields.items()
     means = {name for name, f in fields if f.annotation in {float, float | None}}
-    assert set(m.intervals) == means - {"latency_p50_ms", "latency_p95_ms"}
+    # scored by chunk ID: no text to cut at a budget
+    assert set(m.intervals) == means - {"latency_p50_ms", "latency_p95_ms", *CUT_BUDGETS}
     assert {"recall_at_5", "mrr", "ndcg_at_10", "no_answer_rate"} <= set(m.intervals)
     assert (m.intervals["wrong_version_rate"].low, m.intervals["wrong_version_rate"].high) == (0, 0)
     # a kind's interval, on half the cases, is wider than the whole set's

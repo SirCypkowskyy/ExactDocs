@@ -20,11 +20,21 @@ from typing import Any, Final, Self
 from markdown_it import MarkdownIt
 from pydantic import BaseModel, ConfigDict
 
+from exactdocs.retrieval.constants import CHARS_PER_TOKEN
 from retrieval_eval.dataset import Answer, Hit, parts_of
 from retrieval_eval.evaluators import SectionMatch, wrong_version_hits
 from retrieval_eval.golden import GoldenCase
 from retrieval_eval.ingestion import tokens
-from retrieval_eval.retrieval_bench import NDCG_AT, BenchMetrics, Row, metrics_of, row_of
+from retrieval_eval.retrieval_bench import (
+    CUT_BUDGETS,
+    NDCG_AT,
+    TOKEN_BUDGETS,
+    BenchMetrics,
+    Row,
+    metrics_of,
+    row_of,
+    sized,
+)
 from retrieval_eval.suite import percentile
 from retrieval_eval.text_match import (
     MATCH_THRESHOLD,
@@ -235,6 +245,44 @@ def _ndcg(expected: int, ranks: Sequence[int]) -> float:
     return dcg / ideal if ideal else 0.0
 
 
+def cut_answers(
+    expected: Sequence[Hit],
+    texts: Sequence[str],
+    budget: int,
+    index: SectionIndex,
+    matches: Sequence[TextMatch] | None = None,
+) -> bool:
+    """Tell whether the text returned, cut at a token budget, answers a case (#575).
+
+    The results are read in order, up to the top 10: one that ends within the budget answers as
+    it does whole; the one the budget cuts answers when the part of it within the budget does
+    (the scorer's own rule: it holds the section, or lies in it); the rest are not read.
+
+    Args:
+        expected: The sections the case lists.
+        texts: The results' texts, best first.
+        budget: The estimated tokens read (``CHARS_PER_TOKEN`` characters each).
+        index: The sections of every pinned version of the case's project.
+        matches: Each whole result's match, when already made.
+
+    Returns:
+        True when a section the case lists is answered within the budget.
+    """
+    used = 0
+    for rank, text in enumerate(texts[:NDCG_AT]):
+        size = tokens(text)
+        if used + size <= budget:
+            found = matches[rank] if matches is not None else index.match(text)
+        else:
+            found = index.match(text[: (budget - used) * CHARS_PER_TOKEN])
+        if any(found.answers(e.version, e.article, e.heading_path) for e in expected):
+            return True
+        used += size
+        if used >= budget:
+            return False
+    return False
+
+
 def text_row(case: GoldenCase, answer: TextAnswer, index: SectionIndex) -> TextRow:
     """Score one case from the text a tool returned.
 
@@ -254,6 +302,11 @@ def text_row(case: GoldenCase, answer: TextAnswer, index: SectionIndex) -> TextR
     ranks = _section_ranks(expected, matches)
     parts = len(parts_of(expected))
     sizes = [tokens(text) for text in answer.texts]
+    context, to_hit = sized(rank, sizes)
+    cut = {
+        name: bool(expected) and cut_answers(expected, answer.texts, budget, index, matches)
+        for name, budget in CUT_BUDGETS.items()
+    }
     return TextRow(
         case=case.name or "",
         row=Row(
@@ -270,12 +323,15 @@ def text_row(case: GoldenCase, answer: TextAnswer, index: SectionIndex) -> TextR
             search_ms=answer.search_ms or 0.0,
             tokens=answer.tokens,
             usd=answer.usd,
+            context_tokens=context,
+            tokens_to_hit=to_hit,
+            cut_hits=cut,
         ),
         results=len(answer.texts),
         neutral=verdicts.count(Verdict.NEUTRAL),
         unmatched=verdicts.count(Verdict.UNMATCHED),
-        context_tokens=sum(sizes),
-        tokens_to_hit=sum(sizes[:rank]) if rank else None,
+        context_tokens=context or 0,
+        tokens_to_hit=to_hit,
         facts=len(facts),
         facts_found=facts_found(facts, "\n\n".join(answer.texts)),
     )
@@ -802,6 +858,18 @@ def results_table(results: Sequence[TextResult]) -> list[str]:
     return lines
 
 
+def budget_cells(m: BenchMetrics) -> str:
+    """Recall within each token budget, as table cells (#575).
+
+    Args:
+        m: The metrics.
+
+    Returns:
+        One cell per budget of ``TOKEN_BUDGETS``, joined with ``|``; ``-`` when not kept.
+    """
+    return " | ".join(_pct(getattr(m, name)) for name in TOKEN_BUDGETS)
+
+
 def markdown(report: TextScorerReport) -> str:
     """Render the calibration as a Markdown summary.
 
@@ -850,9 +918,11 @@ def markdown(report: TextScorerReport) -> str:
             "",
             (
                 "| chunking | scored by | recall@1 | recall@5 | recall@10 | section recall@5 "
-                "| MRR | nDCG@10 | wrong version | no answer |"
+                "| MRR | nDCG@10 | wrong version | no answer | "
+                + " | ".join(f"within {b:,} tokens" for b in TOKEN_BUDGETS.values())
+                + " |"
             ),
-            "|---|---|---|---|---|---|---|---|---|---|",
+            "|---|---|---|---|---|---|---|---|---|---|" + "---|" * len(TOKEN_BUDGETS),
         ]
     )
     for c in report.calibrations:
@@ -861,7 +931,7 @@ def markdown(report: TextScorerReport) -> str:
                 f"| `{c.chunking}` | {name} | {_pct(m.recall_at_1)} | {_pct(m.recall_at_5)} "
                 f"| {_pct(m.recall_at_10)} | {_pct(m.section_recall_at_5)} | {m.mrr:.3f} "
                 f"| {m.ndcg_at_10:.3f} | {_pct(m.wrong_version_rate)} "
-                f"| {_pct(m.no_answer_rate)} |"
+                f"| {_pct(m.no_answer_rate)} | {budget_cells(m)} |"
             )
     lines.extend(
         [

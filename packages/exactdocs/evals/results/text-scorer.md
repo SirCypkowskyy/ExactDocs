@@ -1,6 +1,6 @@
 # Text scorer calibration
 
-ExactDocs' BM25 results for the golden set's 321 cases (`sha256:a00997851150e3b0`) on starlette, pydantic, tanstack-query, zod, electron, scored by chunk ID and from their text alone: 5-word shingles, threshold 0.8, facts at 0.75 of their words. A decision is where an expected section is in the top 10 (its rank), or that it is not; the criterion is 98.0% agreement at `default`. ExactDocs `8e789e67177adf9514418b566473dca937ca638d`. Definitions: docs/evals/text-scoring.md.
+ExactDocs' BM25 results for the golden set's 321 cases (`sha256:a00997851150e3b0`) on starlette, pydantic, tanstack-query, zod, electron, scored by chunk ID and from their text alone: 5-word shingles, threshold 0.8, facts at 0.75 of their words. A decision is where an expected section is in the top 10 (its rank), or that it is not; the criterion is 98.0% agreement at `default`. ExactDocs `835928163d67231d453dc81791bf0e120727f8fc`. Definitions: docs/evals/text-scoring.md.
 
 ## Agreement with chunk-ID scoring
 
@@ -24,16 +24,16 @@ ExactDocs' BM25 results for the golden set's 321 cases (`sha256:a00997851150e3b0
 
 ## Both scorings side by side
 
-| chunking | scored by | recall@1 | recall@5 | recall@10 | section recall@5 | MRR | nDCG@10 | wrong version | no answer |
-|---|---|---|---|---|---|---|---|---|---|
-| `default` | chunk ID | 58.8% | 87.6% | 93.6% | 76.6% | 0.711 | 0.714 | 0.0% | 0.0% |
-| `default` | text | 58.8% | 87.6% | 93.6% | 76.6% | 0.711 | 0.714 | 0.0% | 0.0% |
-| `h6` | chunk ID | 56.9% | 85.8% | 92.1% | 75.3% | 0.689 | 0.692 | 0.0% | 0.0% |
-| `h6` | text | 56.9% | 85.8% | 92.1% | 75.3% | 0.689 | 0.692 | 0.0% | 0.0% |
-| `h2` | chunk ID | 61.8% | 89.1% | 94.0% | 77.4% | 0.737 | 0.724 | 0.0% | 0.0% |
-| `h2` | text | 61.8% | 89.1% | 94.0% | 77.4% | 0.737 | 0.724 | 0.0% | 0.0% |
-| `merge-400` | chunk ID | 59.6% | 87.6% | 93.3% | 77.3% | 0.715 | 0.720 | 0.0% | 0.0% |
-| `merge-400` | text | 59.6% | 87.6% | 93.3% | 77.3% | 0.715 | 0.719 | 0.0% | 0.0% |
+| chunking | scored by | recall@1 | recall@5 | recall@10 | section recall@5 | MRR | nDCG@10 | wrong version | no answer | within 1,000 tokens | within 2,000 tokens | within 4,000 tokens |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `default` | chunk ID | 58.8% | 87.6% | 93.6% | 76.6% | 0.711 | 0.714 | 0.0% | 0.0% | 78.3% | 88.8% | 93.6% |
+| `default` | text | 58.8% | 87.6% | 93.6% | 76.6% | 0.711 | 0.714 | 0.0% | 0.0% | 78.3% | 88.8% | 93.6% |
+| `h6` | chunk ID | 56.9% | 85.8% | 92.1% | 75.3% | 0.689 | 0.692 | 0.0% | 0.0% | 77.9% | 89.1% | 92.1% |
+| `h6` | text | 56.9% | 85.8% | 92.1% | 75.3% | 0.689 | 0.692 | 0.0% | 0.0% | 77.9% | 89.1% | 92.1% |
+| `h2` | chunk ID | 61.8% | 89.1% | 94.0% | 77.4% | 0.737 | 0.724 | 0.0% | 0.0% | 49.1% | 76.8% | 89.1% |
+| `h2` | text | 61.8% | 89.1% | 94.0% | 77.4% | 0.737 | 0.724 | 0.0% | 0.0% | 49.1% | 76.8% | 89.1% |
+| `merge-400` | chunk ID | 59.6% | 87.6% | 93.3% | 77.3% | 0.715 | 0.720 | 0.0% | 0.0% | 77.9% | 88.0% | 93.3% |
+| `merge-400` | text | 59.6% | 87.6% | 93.3% | 77.3% | 0.715 | 0.719 | 0.0% | 0.0% | 77.9% | 88.0% | 93.3% |
 
 ## What only the text tells
 

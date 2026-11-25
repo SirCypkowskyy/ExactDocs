@@ -167,7 +167,10 @@ How the vector configuration reaches the model:
 
 `grounded-docs.json` (`schema_version` 1, in `reports/evals/` or `--out`). `grounded-docs.md` is
 the summary, and `just bench-pages` fills [Comparison with other tools](../benchmark/comparison.md)
-from the recorded run.
+from the recorded run. Since #575 the summary also compares every result within 1,000, 2,000 and
+4,000 tokens of the text it returned, read whole and cut at the budget
+([Within a token budget](retrieval-benchmark.md#within-a-token-budget)), with the paired tests of
+each Grounded Docs configuration against ExactDocs on both.
 
 ??? info "Fields of `grounded-docs.json`"
     - `golden`, `cases`, `projects`, `corpus` (every pinned version's commit), `date` (when the
