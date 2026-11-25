@@ -415,7 +415,7 @@ class AiSettings(BaseModel):
     without their own: `bm25`, `vector`, `hybrid`, `hybrid_hyde` or `agentic`. Unset (or
     `auto`): the best default mode the configured models allow: BM25 until the eval suite makes
     another mode a
-    default (docs/evals.md). A mode whose model is not configured falls back to
+    default (docs/evals/gates.md). A mode whose model is not configured falls back to
     the best one, and the results say so (`fallback_reason` `mode_unavailable`).
     """
 

@@ -1,4 +1,4 @@
-# Groups the generated notes of a GitHub Release (docs/releasing.md, "Release notes template").
+# Groups the generated notes of a GitHub Release (docs/releasing/release-notes.md).
 changelog:
   categories:
     - title: Requires reindex

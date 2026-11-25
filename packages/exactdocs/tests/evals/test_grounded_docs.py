@@ -2,7 +2,7 @@
 
 The run's tests use ``grounded_docs_stand_in``: Grounded Docs 3.4.1's real ``search_docs``
 responses, recorded on the retrieval benchmark's tiny corpus, replayed. Nothing here starts Node.js
-or reaches the network; the real run is ``just grounded-bench`` (docs/evals.md#grounded-docs).
+or reaches the network; the real run is ``just grounded-bench`` (docs/evals/grounded-docs.md).
 """
 
 import contextlib
@@ -41,6 +41,7 @@ from retrieval_eval.grounded_docs import (
 )
 from retrieval_eval.grounded_docs_cli import (
     REQUEST_TIMEOUT_MS,
+    _clean_environment,
     install,
     limits,
     main,
@@ -489,3 +490,19 @@ def test_the_install_needs_node(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
     with pytest.raises(RuntimeError, match=r"Node\.js 22"):
         install(tmp_path, offline=True)
+
+
+def test_a_command_inherits_no_provider_variable_nor_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OLLAMA_API_KEY", "an-agent-s-key-123456")  # the agent benchmark's (#495)
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://gateway.example.com/v1")
+    monkeypatch.setenv("DOCS_MCP_READ_ONLY", "false")
+
+    env = _clean_environment({"OPENAI_API_KEY": "local", "DOCS_MCP_READ_ONLY": "true"})
+
+    assert "OLLAMA_API_KEY" not in env
+    assert "OPENAI_BASE_URL" not in env
+    assert (env["OPENAI_API_KEY"], env["DOCS_MCP_READ_ONLY"]) == ("local", "true")
+    assert env["PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"] == "1"
+    assert "PATH" in env

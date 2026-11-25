@@ -1,4 +1,6 @@
-"""Grounded Docs on the golden set, next to ExactDocs: ``just grounded-bench`` (docs/evals.md).
+"""Grounded Docs on the golden set, next to ExactDocs: ``just grounded-bench``.
+
+See docs/evals/grounded-docs.md.
 
 As in ``run_retrieval_eval.py``, the test-support directory (the importer wiring) is put on the
 path before the CLI is imported.

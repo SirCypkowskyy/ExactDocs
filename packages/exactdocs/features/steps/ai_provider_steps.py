@@ -211,7 +211,8 @@ def step_every_role(context: Context, name: str) -> None:
     _serve(
         context,
         {
-            "mode": "hybrid",  # not a default (docs/evals.md): chosen, so AI is used with AI on
+            # not a default (docs/evals/gates.md): chosen, so AI is used with AI on
+            "mode": "hybrid",
             "providers": {name: {"kind": "openai-compatible", "base_url": corp.v1}},
             **{role: {"model": f"{name}:m"} for role in roles},
         },

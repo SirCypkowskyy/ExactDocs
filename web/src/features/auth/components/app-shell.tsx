@@ -405,7 +405,7 @@ export function AppShell({
       >
         {t.nav.skipToContent}
       </a>
-      <header className="sticky top-0 z-40 flex h-14 flex-none items-center gap-1 bg-frame px-3 md:gap-3 md:px-4">
+      <header className="sticky top-0 z-40 flex min-h-14 flex-none flex-wrap items-center gap-1 bg-frame px-3 md:gap-3 md:px-4">
         <MobileNav entries={entries} groups={visible} />
         <Link
           to="/"
@@ -416,7 +416,7 @@ export function AppShell({
         </Link>
         <span aria-hidden="true" className="mx-1 hidden h-5 w-px bg-border md:block" />
         <DesktopNav entries={entries} groups={visible} />
-        <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1 md:gap-2">
+        <div className="ml-auto flex min-w-0 flex-auto flex-wrap items-center justify-end gap-1 md:gap-2">
           {search && (
             <>
               <div className="hidden w-full max-w-xs min-w-0 xl:block">{search}</div>

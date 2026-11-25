@@ -1,6 +1,6 @@
 # Ingestion benchmark
 
-The golden corpus (starlette, pydantic, tanstack-query, zod, electron; every pinned version) imported with each chunking configuration; BM25 over the golden set's 321 cases (`sha256:a00997851150e3b0`). Tokens are estimated at 4 characters; a small chunk is under 50 tokens. Definitions: docs/evals.md#the-ingestion-benchmark.
+The golden corpus (starlette, pydantic, tanstack-query, zod, electron; every pinned version) imported with each chunking configuration; BM25 over the golden set's 321 cases (`sha256:a00997851150e3b0`). Tokens are estimated at 4 characters; a small chunk is under 50 tokens. Definitions: docs/evals/ingestion.md.
 
 | configuration | coverage | held | cut fence / table / list | lost chars | tokens p50 / p95 / max | small | multi-top | empty / wrong path | headings missed / extra | BM25 recall@5 (exact) | MRR |
 |---|---|---|---|---|---|---|---|---|---|---|---|

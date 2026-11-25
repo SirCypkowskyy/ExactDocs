@@ -1,5 +1,5 @@
 {
-  "note": "Written by `just eval --write-baseline`; the release gates on it (docs/evals.md).",
+  "note": "Written by `just eval --write-baseline`; the release gates on it (docs/evals/gates.md).",
   "dataset": "sha256:03514e2b8196f7e0",
   "modes": {
     "bm25": {

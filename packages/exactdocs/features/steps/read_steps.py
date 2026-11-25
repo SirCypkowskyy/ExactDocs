@@ -1,6 +1,7 @@
 """Steps for reading articles and chunks verbatim, over MCP and REST."""
 
 import asyncio
+import json
 from http import HTTPStatus
 from typing import Any
 from urllib.parse import quote
@@ -9,6 +10,17 @@ from behave import given, then, when
 from behave.runner import Context
 from fastmcp import Client
 from fastmcp.client.client import CallToolResult
+from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPToolset
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.mcp import build_mcp
@@ -61,12 +73,69 @@ def step_structured(context: Context) -> None:
     assert data["commit_sha"] == commit, data
     assert data["source_url"] == f"{REPOSITORY}/blob/{commit}/{quote(context.read_path)}", data
     assert (data["ref"], data["path"]) == (context.read_ref, context.read_path), data
-    assert "content" not in data, "the text is the text block, not repeated"
 
 
-@then("the structured content carries the untrusted-content notice")
+@then("the structured content carries the untrusted-content notice and the same Markdown")
 def step_notice(context: Context) -> None:
-    assert context.mcp_result.structured_content["notice"] == NOTICE
+    result = context.mcp_result
+    data = result.structured_content
+    assert next(iter(data)) == "notice", data
+    assert data["notice"] == NOTICE
+    # For clients that give their model the structured content instead of the text (#587).
+    assert data["content"] == result.content[1].text
+
+
+@when('an agent on pydantic-ai reads "{path}" of "{target}"')
+def step_agent_reads(context: Context, path: str, target: str) -> None:
+    """Run a pydantic-ai agent whose scripted model calls ``read_article``, as the benchmark's do.
+
+    pydantic-ai hands its model the structured content of a result whose blocks are all text.
+    """
+    library, ref = _split(target)
+    context.read_path, context.read_ref = path, ref
+    arguments = {"library": library, "ref": ref, "path": path}
+    returned: list[ToolReturnPart] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        del info
+        returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        if not returns:
+            return ModelResponse(parts=[ToolCallPart(tool_name="read_article", args=arguments)])
+        returned.extend(returns)
+        return ModelResponse(parts=[TextPart(content="read")])
+
+    async def go() -> None:
+        container = Container.build(context.settings)
+        async with container.running(jobs=False):
+            agent = Agent(FunctionModel(model), toolsets=[MCPToolset(build_mcp(container))])
+            await agent.run(f"Read {path} of {target}.")
+
+    asyncio.run(go())
+    (context.tool_return,) = returned
+    # What a provider is sent for the tool's answer.
+    context.model_read = json.loads(context.tool_return.model_response_str())
+
+
+@then("its model reads the untrusted-content notice first")
+def step_model_notice(context: Context) -> None:
+    read = context.model_read
+    assert isinstance(read, dict), read
+    assert next(iter(read)) == "notice", list(read)
+    assert read["notice"] == NOTICE
+
+
+@then("its model reads the Markdown, identical to the imported file")
+def step_model_markdown(context: Context) -> None:
+    _, files = read_version(context, context.read_ref)
+    expected = parse_article(context.read_path, dict(files)[context.read_path]).body
+    got = context.model_read.get("content")
+    assert got == expected, f"the model got {got!r:.200}"
 
 
 @then('the tool error lists "{path}" as a close match')

@@ -1,6 +1,6 @@
 """``just golden-validate`` / ``just golden-import``: fetch the corpus, check the cases, import it.
 
-See docs/evals.md#the-golden-set.
+See docs/evals/golden-set.md.
 """
 
 import argparse
@@ -179,7 +179,8 @@ def _parser() -> argparse.ArgumentParser:
         The parser.
     """
     parser = argparse.ArgumentParser(
-        prog="golden", description="The golden set over pinned upstream docs (docs/evals.md)."
+        prog="golden",
+        description="The golden set over pinned upstream docs (docs/evals/golden-set.md).",
     )
     parser.add_argument("command", choices=["fetch", "validate", "import"])
     parser.add_argument(

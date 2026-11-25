@@ -6,7 +6,7 @@
 #          pulled at their pinned revisions into /opt/exactdocs/models (read-only)
 # Build from the repository root:
 #   docker build -f deploy/Dockerfile --build-arg VERSION=0.1.0 [--target ai|local] .
-# Size budgets per variant: deploy/check_artifacts.py and docs/releasing.md.
+# Size budgets per variant: deploy/check_artifacts.py and docs/releasing/images.md.
 #
 # Layers go from "changes rarely" to "changes every commit", so a source-only edit rebuilds only
 # the last steps of each stage:
@@ -21,7 +21,7 @@
 #   docker run --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges ...
 # with /data (the volume) as the only writable path.
 #
-# Behind a corporate proxy (#538, docs/deployment.md): pass HTTPS_PROXY, HTTP_PROXY and NO_PROXY
+# Behind a corporate proxy (#538, docs/deployment/corporate-proxy.md): pass HTTPS_PROXY, HTTP_PROXY and NO_PROXY
 # at run time, and when the proxy re-signs TLS mount its CA and name it, e.g.
 #   docker run -e HTTPS_PROXY=... -v ./corp-ca.pem:/etc/exactdocs/ca.pem:ro \
 #     -e EXACTDOCS_CA_BUNDLE=/etc/exactdocs/ca.pem ...

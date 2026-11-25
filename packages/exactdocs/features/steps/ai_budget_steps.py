@@ -196,8 +196,8 @@ def step_rate_fallback(context: Context, reason: str) -> None:
 def _embedding_ai(endpoint: FakeGateway) -> dict[str, Any]:
     """Configure an embedding model with a price and a monthly embedding budget, and choose hybrid.
 
-    Hybrid is no default (docs/evals.md): the instance chooses it, so a search shows it waits for
-    embedding.
+    Hybrid is no default (docs/evals/gates.md): the instance chooses it, so a search shows it
+    waits for embedding.
 
     Args:
         endpoint: The fake gateway.

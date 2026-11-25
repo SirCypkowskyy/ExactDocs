@@ -448,8 +448,8 @@ describe("sign-in through an identity provider", () => {
     expect(own).toHaveAttribute("src", "/api/v1/auth/corp/icon?v=2");
     expect(own).toHaveAttribute("alt", "");
     expect(links[5]?.querySelector("svg")).toHaveClass("lucide-key-round");
-    // Full width, 44 px on touch: the outline SocialButton.
-    for (const link of links) expect(link).toHaveClass("w-full", "h-11");
+    // Full width, at least 44 px on touch (taller when a long name wraps): the outline SocialButton.
+    for (const link of links) expect(link).toHaveClass("w-full", "min-h-11");
   });
 
   it("shows no provider section when none is configured", () => {

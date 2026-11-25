@@ -34,6 +34,24 @@
 @custom-variant motion-reduce (&:where(:root[data-reduce-motion] *));
 
 /*
+ * Breakpoints follow the text size (#576). The text size is the root font size, but `rem` in a
+ * media query is the browser's default size, so at 150% the desktop layout stayed on at 1280 px
+ * with 1.5 times the text and the columns ran out of room. A container query on <body> reads
+ * `rem` from the root instead, so 150% on a 1280 px window lays out like 853 px, as zoom would.
+ * At 100% the breakpoints are where they were. JS that needs the same answer: usePhoneLayout().
+ */
+@custom-variant sm (@container app (width >= 40rem));
+@custom-variant md (@container app (width >= 48rem));
+@custom-variant lg (@container app (width >= 64rem));
+@custom-variant xl (@container app (width >= 80rem));
+@custom-variant 2xl (@container app (width >= 96rem));
+@custom-variant max-2xl (@container app (width < 96rem));
+@custom-variant max-xl (@container app (width < 80rem));
+@custom-variant max-lg (@container app (width < 64rem));
+@custom-variant max-md (@container app (width < 48rem));
+@custom-variant max-sm (@container app (width < 40rem));
+
+/*
  * ExactDocs design tokens. web/DESIGN.md explains each one and when to use it; components use
  * these names only (Tailwind classes generated from @theme below), never raw colours.
  *
@@ -403,6 +421,8 @@
   }
   body {
     @apply bg-frame font-sans text-foreground antialiased;
+    /* The container the breakpoint variants above query. */
+    container: app / inline-size;
   }
   ::selection {
     background: color-mix(in oklab, var(--lamp) 55%, transparent);

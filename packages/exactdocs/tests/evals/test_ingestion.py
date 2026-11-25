@@ -439,7 +439,7 @@ Run it.
 # not a heading
 {FENCE}
 
-## Use {{#use}}
+## Use [#use]
 
 Use it.
 """

@@ -1,4 +1,4 @@
-"""The retrieval benchmark: ``just retrieval-bench`` (docs/evals.md#the-retrieval-benchmark).
+"""The retrieval benchmark: ``just retrieval-bench`` (docs/evals/retrieval-benchmark.md).
 
 As in ``run_golden.py``, the test-support directory (the importer wiring) is put on the path
 before the CLI is imported.
