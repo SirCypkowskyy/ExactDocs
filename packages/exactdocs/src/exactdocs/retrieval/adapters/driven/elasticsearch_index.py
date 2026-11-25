@@ -10,7 +10,7 @@ custom CA (``ca_certs``). Imported only when ``EXACTDOCS_SEARCH_BACKEND`` or
 """
 
 from collections.abc import Collection, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from elastic_transport import HttpxAsyncHttpNode
@@ -32,6 +32,7 @@ from exactdocs.retrieval.constants import (
     ELASTICSEARCH_SECRETS,
 )
 from exactdocs.retrieval.errors import IndexBackendUnavailableError
+from exactdocs_kernel import OutboundNetwork
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -115,7 +116,10 @@ def _connect(options: ElasticOptions) -> _Client:
     Returns:
         The engine.
     """
-    auth: dict[str, Any] = {} if options.ca_certs is None else {"ca_certs": options.ca_certs}
+    # The CA bundle (#538) unless the table names its own. The proxy: elastic-transport's
+    # httpx node reads the standard variables, which the server sets from the outbound settings.
+    ca_certs = options.ca_certs or options.network.ca_bundle
+    auth: dict[str, Any] = {} if ca_certs is None else {"ca_certs": ca_certs}
     if options.api_key is not None:
         key_id, colon, key = options.api_key.partition(":")
         auth["api_key"] = (key_id, key) if colon else options.api_key
@@ -155,27 +159,35 @@ def _options(options: Mapping[str, object]) -> ElasticOptions:
     return checked
 
 
-def search_backend(options: Mapping[str, object]) -> ElasticSearchBackend:
+def search_backend(
+    options: Mapping[str, object], *, network: OutboundNetwork | None = None
+) -> ElasticSearchBackend:
     """Build the search backend from its ``[index_backends.elasticsearch]`` options.
 
     Args:
         options: The options (``url`` at least).
+        network: The outbound proxy, NO_PROXY and CA bundle (#538); none: direct, the
+            system's trust.
 
     Returns:
         The backend; it connects when opened.
     """
-    checked = _options(options)
+    checked = replace(_options(options), network=network or OutboundNetwork())
     return make_search_backend(ELASTICSEARCH_BACKEND, ELASTICSEARCH_BACKEND, checked, _connect)
 
 
-def vector_backend(options: Mapping[str, object]) -> ElasticVectorBackend:
+def vector_backend(
+    options: Mapping[str, object], *, network: OutboundNetwork | None = None
+) -> ElasticVectorBackend:
     """Build the vector backend from its ``[index_backends.elasticsearch]`` options.
 
     Args:
         options: The options (``url`` at least).
+        network: The outbound proxy, NO_PROXY and CA bundle (#538); none: direct, the
+            system's trust.
 
     Returns:
         The backend; it connects when opened.
     """
-    checked = _options(options)
+    checked = replace(_options(options), network=network or OutboundNetwork())
     return make_vector_backend(ELASTICSEARCH_BACKEND, ELASTICSEARCH_BACKEND, checked, _connect)

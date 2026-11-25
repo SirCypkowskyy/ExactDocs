@@ -70,6 +70,7 @@ from exactdocs.retrieval.models import (
     VectorMetric,
     identifier_tokens,
 )
+from exactdocs_kernel import OutboundNetwork
 
 type Connect = Callable[[], Redis]
 """Makes a new client; called by each ``open()`` (a client is bound to the event loop it ran in)."""
@@ -1134,11 +1135,14 @@ class _Settings:
     """The ``vector_algorithm`` option."""
 
 
-def _settings(options: Mapping[str, object]) -> _Settings:
+def _settings(options: Mapping[str, object], network: OutboundNetwork | None) -> _Settings:
     """Check the ``[index_backends.redis]`` options.
 
     Args:
         options: The options.
+        network: The outbound settings (#538): their CA bundle checks a TLS server's certificate
+            when the options name no CA file. An HTTP proxy does not carry this protocol: the
+            server is reached directly.
 
     Returns:
         What the backends are built from.
@@ -1162,6 +1166,8 @@ def _settings(options: Mapping[str, object]) -> _Settings:
         raise ValueError(message)
     tls = url.scheme == "rediss"
     files = _tls_files(options, tls=tls)
+    if tls and files["tls_ca_file"] is None:
+        files["tls_ca_file"] = (network or OutboundNetwork()).ca_bundle
     timeout = _timeout(options)
     username = str(options.get("username") or "").strip() or None
     password = _password(options)
@@ -1195,7 +1201,9 @@ def _settings(options: Mapping[str, object]) -> _Settings:
     )
 
 
-def search_backend(options: Mapping[str, object]) -> RedisSearchBackend:
+def search_backend(
+    options: Mapping[str, object], *, network: OutboundNetwork | None = None
+) -> RedisSearchBackend:
     """Build the Redis search backend from its ``[index_backends.redis]`` options.
 
     Options: ``url`` (required: ``redis://host[:port]``, ``rediss://`` for TLS), ``prefix`` (of
@@ -1206,17 +1214,22 @@ def search_backend(options: Mapping[str, object]) -> RedisSearchBackend:
 
     Args:
         options: The options.
+        network: The outbound settings (#538): their CA bundle checks a TLS server's certificate
+            when the options name no CA file. An HTTP proxy does not carry this protocol: the
+            server is reached directly.
 
     Returns:
         The backend, not connected yet.
     """
-    settings = _settings(options)
+    settings = _settings(options, network)
     return RedisSearchBackend(
         connect=settings.connect, prefix=settings.prefix, timeout_ms=settings.timeout_ms
     )
 
 
-def vector_backend(options: Mapping[str, object]) -> RedisVectorBackend:
+def vector_backend(
+    options: Mapping[str, object], *, network: OutboundNetwork | None = None
+) -> RedisVectorBackend:
     """Build the Redis vector backend from its ``[index_backends.redis]`` options.
 
     Options as ``search_backend``'s, and ``hybrid`` (native hybrid search with ``FT.HYBRID``,
@@ -1225,11 +1238,14 @@ def vector_backend(options: Mapping[str, object]) -> RedisVectorBackend:
 
     Args:
         options: The options.
+        network: The outbound settings (#538): their CA bundle checks a TLS server's certificate
+            when the options name no CA file. An HTTP proxy does not carry this protocol: the
+            server is reached directly.
 
     Returns:
         The backend, not connected yet; with ``NativeHybrid`` when ``hybrid`` is on.
     """
-    settings = _settings(options)
+    settings = _settings(options, network)
     kind = RedisHybridVectorBackend if settings.hybrid else RedisVectorBackend
     return kind(
         connect=settings.connect,

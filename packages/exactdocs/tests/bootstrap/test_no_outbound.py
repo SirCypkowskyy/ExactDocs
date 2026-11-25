@@ -20,6 +20,11 @@ What is *observed* and what is only *pinned*:
   URL is the fixture server, ``GIT_ALLOW_PROTOCOL`` is the restricted set, no proxy variable.
 - git follows an HTTP redirect on its first request (``http.followRedirects=initial``) and honours
   proxy variables when they are set; the test clears the latter. See ``git_cli.py``.
+- With a proxy configured (#538), nothing bypasses it: ``test_with_a_proxy_configured_...`` runs
+  the loop again with ``HTTP(S)_PROXY`` naming a loopback forward proxy and the repository under a
+  ``.test`` name only that proxy knows. The import succeeds only through it, the guard sees no
+  other connection, git is told that proxy and nothing else, and in the network namespace the
+  kernel checks it too.
 - ``localhost`` and ``::ffff:127.0.0.1`` are refused on purpose (fail closed): use 127.0.0.1.
 - Dependency audit: fastmcp, mcp, FastAPI and DBOS only emit OpenTelemetry spans through
   ``opentelemetry-api``, which exports nothing until an SDK is set up; neither they nor uvicorn or
@@ -50,6 +55,7 @@ from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 import httpx2
@@ -79,6 +85,7 @@ from exactdocs.ingestion.models import Job, JobId, RefKind, RepositoryUrl
 from exactdocs.ingestion.use_cases import ImportVersionUseCase
 from exactdocs_kernel import SystemClock
 from fixture_repo import DocsRepo, git
+from forward_proxy import ForwardProxy, forward_proxy
 from otlp_collector import Collector, collecting, shut_telemetry_down
 
 LIBRARY = "/fixture/docs-repo"
@@ -92,7 +99,10 @@ TELEMETRY_RUN = "EXACTDOCS_TELEMETRY_RUN"  # set for the re-run with telemetry o
 IN_NAMESPACE_TESTS = (
     "test_the_whole_loop_touches_nothing_but_loopback_and_the_fixture_git_server",
     "test_a_redirect_to_another_host_leads_nowhere",
+    "test_with_a_proxy_configured_nothing_bypasses_it",
 )
+BEHIND_PROXY = "git.example.test"
+"""The fixture repository's name behind the proxy: ``.test`` resolves nowhere (RFC 6761)."""
 
 
 @pytest.fixture(autouse=True)
@@ -512,7 +522,11 @@ async def test_with_telemetry_on_nothing_but_the_collector_is_contacted(
 
 
 async def run_the_loop(
-    container: Container, docs_repo: DocsRepo, commit: str, app: FastAPI
+    container: Container,
+    docs_repo: DocsRepo,
+    commit: str,
+    app: FastAPI,
+    source_url: str | None = None,
 ) -> None:
     """Import over git, then search over REST and MCP (``search_docs`` and ``query-docs``)."""
     assert docs_repo.http_url.startswith("http://127.0.0.1:")
@@ -520,7 +534,7 @@ async def run_the_loop(
         CreateLibraryCommand(
             id=LIBRARY,
             title="Docs",
-            source_url=docs_repo.http_url,
+            source_url=source_url or docs_repo.http_url,
             host=HostKind.GIT,
             default_branch="main",
             include_paths=["docs/"],
@@ -615,6 +629,47 @@ def assert_git_was_only_told_about(url: str, spawned: list[Spawn]) -> None:
     assert any(url in spawn.config for spawn in spawned), "git was never pointed at the fixture"
 
 
+@pytest.fixture
+def proxy_in_front(docs_repo: DocsRepo, monkeypatch: pytest.MonkeyPatch) -> Iterator[ForwardProxy]:
+    """A forward proxy on loopback, named by the proxy variables, that alone knows the repository.
+
+    Started before the guard and the app, as an operator's proxy would be.
+
+    Yields:
+        The proxy.
+    """
+    served_at = urlsplit(docs_repo.http_url)
+    route = {f"{BEHIND_PROXY}:80": (served_at.hostname or "", served_at.port or 80)}
+    with forward_proxy(route) as proxy:
+        monkeypatch.setenv("HTTP_PROXY", proxy.url)
+        monkeypatch.setenv("HTTPS_PROXY", proxy.url)
+        yield proxy
+
+
+async def test_with_a_proxy_configured_nothing_bypasses_it(
+    proxy_in_front: ForwardProxy,
+    container: Container,
+    docs_repo: DocsRepo,
+    commit: str,
+    attempts: list[str],
+    spawned: list[Spawn],
+    app: FastAPI,
+) -> None:
+    behind = docs_repo.http_url.replace(urlsplit(docs_repo.http_url).netloc, BEHIND_PROXY)
+
+    await run_the_loop(container, docs_repo, commit, app, source_url=behind)
+
+    assert attempts == []  # nothing in Python went anywhere but loopback (the proxy included)
+    assert proxy_in_front.hosts() == {f"{BEHIND_PROXY}:80"}  # the import went through it
+    gits = [spawn for spawn in spawned if Path(spawn.argv[0]).name == "git"]
+    assert gits
+    for spawn in gits:  # git was told this proxy, and no other way out
+        assert spawn.env["http_proxy"] == spawn.env["HTTP_PROXY"] == proxy_in_front.url
+        assert "127.0.0.1" in spawn.env["no_proxy"].split(",")
+        urls = set(re.findall(r"[a-z+]+://[^\s\"]+", spawn.config))
+        assert urls <= {behind}, urls
+
+
 # --------------------------------------------- the kernel's view: a network namespace
 
 
@@ -678,7 +733,7 @@ def test_in_a_network_namespace_git_has_no_way_out() -> None:
         timeout=300,
     )  # fmt: skip
     assert run.returncode == 0, run.stdout[-3000:] + run.stderr[-1000:]
-    assert "2 passed" in run.stdout, run.stdout[-1000:]
+    assert "3 passed" in run.stdout, run.stdout[-1000:]
 
 
 @pytest.mark.skipif(

@@ -31,10 +31,12 @@ from exactdocs.bootstrap.constants import (
     DEFAULT_PORTS,
     FRIENDLY,
     MAX_TOKEN_NAME_LENGTH,
+    PROXY_FAILURE_MARKERS,
     TIMEOUT_SECONDS,
     TOKEN_VARIABLE,
     URL_VARIABLE,
 )
+from exactdocs.bootstrap.outbound import from_environment, routed_transport
 
 
 class ClientError(Exception):
@@ -357,18 +359,27 @@ class ApiClient:
             url: The server URL (normalized here).
             token: The API token to send as a bearer token, if any.
             transport: An HTTP transport to use instead of the network (tests).
+
+        Raises:
+            ClientError: A proxy or the CA bundle of the outbound settings is unusable.
         """
         self.url = normalize_url(url)
         headers = {"Authorization": f"Bearer {token}"} if token else {}
+        if transport is None:
+            # The outbound settings (#538): HTTP(S)_PROXY, NO_PROXY and the CA bundle, or their
+            # EXACTDOCS_ overrides. Loopback never goes through a proxy: a proxy must not see a
+            # plain-http password or token.
+            try:
+                transport = routed_transport(from_environment())
+            except ValueError as error:
+                raise ClientError(str(error)) from None
         self._http = httpx2.AsyncClient(
             base_url=self.url,
             headers=headers,
             transport=transport,
             timeout=TIMEOUT_SECONDS,
             follow_redirects=False,
-            # Proxy variables are honoured for remote servers, but never for loopback: a proxy
-            # must not see a plain-http password or token.
-            trust_env=not is_loopback_url(self.url),
+            trust_env=False,
         )
 
     async def __aenter__(self) -> Self:
@@ -424,7 +435,12 @@ class ApiClient:
             message = f"{self.url} did not answer within {waits:g} seconds"
             raise ClientTimeoutError(message) from None
         except httpx2.TransportError as exc:
-            message = f"cannot reach {self.url} ({exc.__class__.__name__}); is the server running?"
+            if any(marker in str(exc) for marker in PROXY_FAILURE_MARKERS):
+                message = f"cannot reach {self.url}: {exc}"  # names the proxy and the host
+            else:
+                message = (
+                    f"cannot reach {self.url} ({exc.__class__.__name__}); is the server running?"
+                )
             raise ClientError(message) from None
         if response.is_redirect:
             message = f"{self.url} redirected the request; use the URL it redirects to"

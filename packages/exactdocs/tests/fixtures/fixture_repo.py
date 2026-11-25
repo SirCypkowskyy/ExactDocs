@@ -238,6 +238,18 @@ def _handler(  # ruff: ignore[complex-structure]
     return GitHandler
 
 
+def git_http_handler(root: Path) -> type[http.server.BaseHTTPRequestHandler]:
+    """The smart HTTP handler of the repositories under ``root``, no credentials asked (#538).
+
+    Args:
+        root: The folder holding ``<owner>/<name>`` repositories.
+
+    Returns:
+        The handler class.
+    """
+    return _handler(root)
+
+
 @dataclass(slots=True)
 class GitServer:
     """A smart HTTP server for one copy of the repository; set ``token`` to rotate it."""

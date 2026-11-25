@@ -23,6 +23,7 @@ from exactdocs.bootstrap.constants import (
     V1_PREFIX,
 )
 from exactdocs.bootstrap.database import StartupError
+from exactdocs.bootstrap.outbound import routed_transport
 from exactdocs.bootstrap.settings import Settings, SignInProviderSettings
 from exactdocs.identity.adapters.driven.cloudflare_access import CloudflareAccessVerifier
 from exactdocs.identity.adapters.driven.github import GithubProvider, github_api_url
@@ -39,7 +40,7 @@ from exactdocs.identity.models import (
 )
 from exactdocs.identity.ports.driven import SignInProvider
 from exactdocs.identity.ports.driving import RevalidateExternalAccounts
-from exactdocs_kernel import Clock
+from exactdocs_kernel import Clock, OutboundNetwork
 
 logger = logging.getLogger(__name__)
 
@@ -54,19 +55,29 @@ class SignInStandIns:
     """Carries the calls to the identity providers (an in-process fake issuer)."""
 
 
-def sign_in_client(transport: httpx2.AsyncBaseTransport | None = None) -> httpx2.AsyncClient:
+def sign_in_client(
+    transport: httpx2.AsyncBaseTransport | None = None,
+    network: OutboundNetwork | None = None,
+) -> httpx2.AsyncClient:
     """Return the HTTP client every identity provider is called through.
 
-    The environment's proxy variables are honoured (an IdP is often reached through the
-    corporate proxy); redirects are never followed.
+    It follows the outbound settings (#538): an IdP is often reached through the corporate
+    proxy, an internal one directly through ``NO_PROXY``, and a company CA may sign either.
+    Discovery, the token, user-info and JWKS calls all go through it; redirects are never
+    followed, and a failure on the way through the proxy names the proxy and the host.
 
     Args:
         transport: Replaces the network (tests: an in-process fake issuer).
+        network: The outbound settings; direct, with the system's trust, when None.
 
     Returns:
         The client; the caller closes it.
     """
-    return httpx2.AsyncClient(timeout=OIDC_TIMEOUT, transport=transport, follow_redirects=False)
+    if transport is None:
+        transport = routed_transport(network or OutboundNetwork())
+    return httpx2.AsyncClient(
+        timeout=OIDC_TIMEOUT, transport=transport, follow_redirects=False, trust_env=False
+    )
 
 
 def sign_in_providers(

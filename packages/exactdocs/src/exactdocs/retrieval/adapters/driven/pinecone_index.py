@@ -22,7 +22,7 @@ import math
 from collections import Counter
 from collections.abc import Collection, Generator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote, unquote
@@ -30,6 +30,7 @@ from urllib.parse import quote, unquote
 from pinecone import AsyncIndex, AsyncPinecone, PineconeError
 
 from exactdocs.retrieval.constants import (
+    PINECONE_API_URL,
     PINECONE_BACKEND,
     PINECONE_DELETE_BATCH,
     PINECONE_FALSE,
@@ -64,6 +65,7 @@ from exactdocs.retrieval.models import (
     TextQuery,
     identifier_tokens,
 )
+from exactdocs_kernel import OutboundNetwork
 
 type _Filter = dict[str, Any]
 type _Sparse = dict[str, list[int] | list[float]]
@@ -87,6 +89,8 @@ class PineconeOptions:
     """The dense half's weight in a hybrid query, 0 to 1."""
     timeout: float
     """Seconds one request may take."""
+    network: OutboundNetwork = field(default_factory=OutboundNetwork)
+    """The outbound proxy, NO_PROXY and CA bundle (#538)."""
 
 
 def _vector_id(manifest_id: str, space_id: EmbeddingSpaceId, chunk_id: str) -> str:
@@ -289,7 +293,16 @@ class PineconeVectorBackend:
         """
         options = self.options
         with _answering(self.name):
-            self._client = AsyncPinecone(api_key=options.api_key, timeout=options.timeout)
+            network = options.network
+            # One proxy for the client: the index's host decides (the API's when only the
+            # index's name is given and its host is looked up there).
+            where = options.host or PINECONE_API_URL
+            self._client = AsyncPinecone(
+                api_key=options.api_key,
+                timeout=options.timeout,
+                proxy_url=network.proxy_for(where),
+                ssl_ca_certs=network.ca_bundle,
+            )
             self._index = (
                 await self._client.index(host=options.host)
                 if options.host
@@ -801,16 +814,20 @@ def pinecone_options(options: Mapping[str, object]) -> PineconeOptions:
     )
 
 
-def vector_backend(options: Mapping[str, object]) -> PineconeVectorBackend:
+def vector_backend(
+    options: Mapping[str, object], *, network: OutboundNetwork | None = None
+) -> PineconeVectorBackend:
     """Build the vector backend from its ``[index_backends.pinecone]`` options (no request yet).
 
     Args:
         options: The options (see ``pinecone_options``).
+        network: The outbound proxy, NO_PROXY and CA bundle (#538): the SDK's ``proxy_url`` and
+            ``ssl_ca_certs``; none: direct, the system's trust.
 
     Returns:
         The backend; one that answers hybrid searches itself when ``hybrid`` is set.
     """
-    checked = pinecone_options(options)
+    checked = replace(pinecone_options(options), network=network or OutboundNetwork())
     if checked.hybrid:
         return PineconeHybridVectorBackend(options=checked)
     return PineconeVectorBackend(options=checked)

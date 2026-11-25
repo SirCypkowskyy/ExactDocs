@@ -133,6 +133,13 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
 
 There are four roles: `embedding`, `reranker`, `llm` and `judge`. The `judge` defaults to the `llm`.
 
+A profile's `proxy` carries its calls (and its Entra ID sign-in) and wins over everything else. A
+profile without one connects directly, whatever `HTTPS_PROXY` says, unless
+`EXACTDOCS_AI__USE_INSTANCE_PROXY=true`: then it goes through the instance's outbound proxy
+unless `NO_PROXY` lists its endpoint. The instance's CA bundle (`EXACTDOCS_CA_BUNDLE`, or
+`SSL_CERT_FILE`) is trusted by every profile. See
+[Behind a corporate proxy](deployment.md#behind-a-corporate-proxy).
+
 ### Thinking level
 
 Current chat models think before they answer, and their thinking tokens are billed as output.
@@ -231,8 +238,9 @@ reaches another host:
   the calls to `login.microsoftonline.com`, but never those to managed identity's local endpoint.
   Entra ID never uses the Azure CLI, PowerShell, VS Code or any developer sign-in; for local
   development, use a client secret (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`).
-- Google's token refresh uses the environment's proxy variables, because google-auth reads them
-  itself.
+- Google's token refresh uses the standard proxy variables, because google-auth reads them
+  itself; the server sets them from its outbound settings at start
+  ([Behind a corporate proxy](deployment.md#behind-a-corporate-proxy)).
 
 ### Managing profiles
 

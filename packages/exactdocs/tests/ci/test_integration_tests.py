@@ -47,6 +47,7 @@ SERVICES = {
     "EXACTDOCS_TEST_PINECONE_URL": f"http://{NOWHERE}",
     "EXACTDOCS_TEST_AZURE_SEARCH_URL": f"http://{NOWHERE}",
     "EXACTDOCS_TEST_MODELS_DIR": "/nonexistent/models",
+    "EXACTDOCS_TEST_PROXY_IMAGE": "nonexistent/squid:none",
 }
 """Every variable an integration test reads its service from, set as an integration run sets
 them: the default must leave those tests out all the same."""

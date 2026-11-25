@@ -82,6 +82,7 @@ from exactdocs.retrieval.models import (
     fuse_across_manifests,
     identifier_tokens,
 )
+from exactdocs_kernel import OutboundNetwork
 
 logger = logging.getLogger(__name__)
 
@@ -168,6 +169,9 @@ class ElasticOptions:
     """The fewest HNSW candidates a kNN search considers."""
     refresh: str = "wait_for"
     """How a write waits until it is searchable (``ELASTIC_REFRESH``)."""
+    network: OutboundNetwork = field(default_factory=OutboundNetwork, repr=False)
+    """The outbound proxy, NO_PROXY and CA bundle (#538); the bundle is the default
+    ``ca_certs``."""
 
 
 def parse_options(

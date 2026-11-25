@@ -14,10 +14,10 @@ Python 3.14 deprecates, and the extra stays free of aiohttp.
 
 import asyncio
 from collections.abc import Collection, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
-from opensearchpy import OpenSearch, TransportError
+from opensearchpy import OpenSearch, RequestsHttpConnection, TransportError
 
 from exactdocs.retrieval.adapters.driven.elastic_index import (
     Answer,
@@ -35,6 +35,7 @@ from exactdocs.retrieval.constants import (
     OPENSEARCH_SECRETS,
 )
 from exactdocs.retrieval.errors import IndexBackendUnavailableError
+from exactdocs_kernel import OutboundNetwork
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -126,9 +127,17 @@ def _connect(options: ElasticOptions) -> _Client:
         auth["headers"] = {"authorization": f"Bearer {options.token}"}
     elif options.username is not None:
         auth["http_auth"] = (options.username, options.password or "")
+    # opensearch-py's urllib3 connection reads no proxy variable: through a proxy (#538), the
+    # requests connection carries it, with that proxy given explicitly.
+    proxy = options.network.proxy_for(options.urls[0])
+    if proxy is not None:
+        auth |= {
+            "connection_class": RequestsHttpConnection,
+            "proxies": {"http": proxy, "https": proxy},
+        }
     client = OpenSearch(
         hosts=list(options.urls),
-        ca_certs=options.ca_certs,
+        ca_certs=options.ca_certs or options.network.ca_bundle,
         verify_certs=options.verify_certs,
         ssl_show_warn=options.verify_certs,
         timeout=options.request_timeout,
@@ -158,27 +167,35 @@ def _options(options: Mapping[str, object]) -> ElasticOptions:
     return checked
 
 
-def search_backend(options: Mapping[str, object]) -> ElasticSearchBackend:
+def search_backend(
+    options: Mapping[str, object], *, network: OutboundNetwork | None = None
+) -> ElasticSearchBackend:
     """Build the search backend from its ``[index_backends.opensearch]`` options.
 
     Args:
         options: The options (``url`` at least).
+        network: The outbound proxy, NO_PROXY and CA bundle (#538); none: direct, the
+            system's trust.
 
     Returns:
         The backend; it connects when opened.
     """
-    checked = _options(options)
+    checked = replace(_options(options), network=network or OutboundNetwork())
     return make_search_backend(OPENSEARCH_BACKEND, OPENSEARCH_BACKEND, checked, _connect)
 
 
-def vector_backend(options: Mapping[str, object]) -> ElasticVectorBackend:
+def vector_backend(
+    options: Mapping[str, object], *, network: OutboundNetwork | None = None
+) -> ElasticVectorBackend:
     """Build the vector backend from its ``[index_backends.opensearch]`` options.
 
     Args:
         options: The options (``url`` at least).
+        network: The outbound proxy, NO_PROXY and CA bundle (#538); none: direct, the
+            system's trust.
 
     Returns:
         The backend; it connects when opened.
     """
-    checked = _options(options)
+    checked = replace(_options(options), network=network or OutboundNetwork())
     return make_vector_backend(OPENSEARCH_BACKEND, OPENSEARCH_BACKEND, checked, _connect)

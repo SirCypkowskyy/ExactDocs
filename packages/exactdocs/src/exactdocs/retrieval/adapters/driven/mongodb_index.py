@@ -103,6 +103,7 @@ from exactdocs.retrieval.models import (
     fuse_across_manifests,
     identifier_tokens,
 )
+from exactdocs_kernel import OutboundNetwork
 
 logger = logging.getLogger(__name__)
 
@@ -1324,11 +1325,30 @@ class _Settings:
     """``vector_search = "exact"``."""
 
 
-def _settings(options: Mapping[str, object]) -> _Settings:
+def _uses_tls(url: str) -> bool:
+    """Whether a connection string asks for TLS (``mongodb+srv://`` does by default).
+
+    Args:
+        url: The connection string.
+
+    Returns:
+        True for ``mongodb+srv://`` without ``tls=false``, or ``tls=true`` / ``ssl=true``.
+    """
+    query = {k.lower(): v.lower() for k, v in parse_qsl(urlsplit(url).query)}
+    asked = query.get("tls", query.get("ssl"))
+    if asked is not None:
+        return asked == "true"
+    return url.lower().startswith("mongodb+srv://")
+
+
+def _settings(options: Mapping[str, object], network: OutboundNetwork | None) -> _Settings:
     """Check the ``[index_backends.mongodb]`` options.
 
     Args:
         options: The options.
+        network: The outbound settings (#538): their CA bundle checks a TLS server's certificate
+            when the options name no CA file. An HTTP proxy does not carry this protocol: the
+            server is reached directly.
 
     Returns:
         What the backends are built from.
@@ -1357,6 +1377,9 @@ def _settings(options: Mapping[str, object]) -> _Settings:
     if password:
         credentials["password"] = password
     hidden = tuple(s for s in (password, in_url) if s)
+    ca_bundle = (network or OutboundNetwork()).ca_bundle
+    if ca_bundle is not None and _uses_tls(url) and "tlscafile=" not in url.lower():
+        credentials["tlsCAFile"] = ca_bundle
 
     def connect() -> AsyncMongoClient[Document]:
         """Make a client of the configured server.
@@ -1384,7 +1407,9 @@ def _settings(options: Mapping[str, object]) -> _Settings:
     )
 
 
-def search_backend(options: Mapping[str, object]) -> MongoSearchBackend:
+def search_backend(
+    options: Mapping[str, object], *, network: OutboundNetwork | None = None
+) -> MongoSearchBackend:
     """Build the MongoDB search backend from its ``[index_backends.mongodb]`` options.
 
     Options: ``url`` (a ``mongodb://`` or ``mongodb+srv://`` connection string without a
@@ -1396,11 +1421,14 @@ def search_backend(options: Mapping[str, object]) -> MongoSearchBackend:
 
     Args:
         options: The options.
+        network: The outbound settings (#538): their CA bundle checks a TLS server's certificate
+            when the options name no CA file. An HTTP proxy does not carry this protocol: the
+            server is reached directly.
 
     Returns:
         The backend, not connected yet.
     """
-    settings = _settings(options)
+    settings = _settings(options, network)
     return MongoSearchBackend(
         connect=settings.connect,
         database=settings.database,
@@ -1410,7 +1438,9 @@ def search_backend(options: Mapping[str, object]) -> MongoSearchBackend:
     )
 
 
-def vector_backend(options: Mapping[str, object]) -> MongoVectorBackend:
+def vector_backend(
+    options: Mapping[str, object], *, network: OutboundNetwork | None = None
+) -> MongoVectorBackend:
     """Build the MongoDB vector backend from its ``[index_backends.mongodb]`` options.
 
     Options as ``search_backend``'s, and ``hybrid`` (native hybrid search, on: a space's
@@ -1419,11 +1449,14 @@ def vector_backend(options: Mapping[str, object]) -> MongoVectorBackend:
 
     Args:
         options: The options.
+        network: The outbound settings (#538): their CA bundle checks a TLS server's certificate
+            when the options name no CA file. An HTTP proxy does not carry this protocol: the
+            server is reached directly.
 
     Returns:
         The backend, not connected yet; with ``NativeHybrid`` when ``hybrid`` is on.
     """
-    settings = _settings(options)
+    settings = _settings(options, network)
     kind = MongoHybridVectorBackend if settings.hybrid else MongoVectorBackend
     return kind(
         connect=settings.connect,

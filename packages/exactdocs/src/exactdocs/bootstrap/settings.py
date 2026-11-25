@@ -1,6 +1,7 @@
 import os
 import re
 import tomllib
+from collections.abc import Mapping
 from datetime import timedelta
 from pathlib import Path
 from typing import Annotated, Any, Literal, Self
@@ -47,6 +48,7 @@ from exactdocs.bootstrap.constants import (
     SETTINGS_FILE_VARIABLE,
     SIGN_IN_PRESETS,
 )
+from exactdocs.bootstrap.outbound import resolve as resolve_outbound_settings
 from exactdocs.identity.adapters.driven.oidc import secure_url
 from exactdocs.identity.constants import (
     LOCAL_SIGN_IN,
@@ -96,6 +98,7 @@ from exactdocs.retrieval.models import (
     ThinkingLevel,
 )
 from exactdocs.usage.constants import DEFAULT_RETENTION_MONTHS, MAX_RETENTION_MONTHS
+from exactdocs_kernel import OutboundNetwork
 
 
 class ProviderSettings(BaseModel):
@@ -443,6 +446,12 @@ class AiSettings(BaseModel):
     """The agentic answer cache (`EXACTDOCS_AI__AGENTIC_CACHE__THRESHOLD`, `__TTL`, `__ENABLED`)."""
     prices: dict[str, PriceSettings] = Field(default_factory=dict)
     """Prices by `<profile>:<model>`, overriding the bundled list (`[ai.prices."corp:m"]`)."""
+    use_instance_proxy: bool = False
+    """`EXACTDOCS_AI__USE_INSTANCE_PROXY`: a profile without a `proxy` of its own calls its
+    provider (and Entra ID) through the instance's outbound proxy (`HTTPS_PROXY`, `NO_PROXY` or
+    `EXACTDOCS_HTTPS_PROXY`...) instead of directly. Off by default: a profile's traffic goes
+    where its own settings say, and a proxy set in the environment for git does not reroute it.
+    A profile's own `proxy` always wins; the CA bundle applies either way."""
 
     @field_validator("mode", mode="before")
     @classmethod
@@ -1128,6 +1137,22 @@ class Settings(BaseSettings):
     """
     forwarded_allow_ips: str = "127.0.0.1,::1"
     """Proxies whose X-Forwarded-* headers uvicorn trusts (comma-separated IPs or `*`)."""
+    http_proxy: SecretStr | None = None
+    """The forward proxy of ExactDocs' outbound `http://` connections, in place of `HTTP_PROXY`
+    (`http://user:password@host:port` when it needs credentials). Unset: `http_proxy`, then
+    `HTTP_PROXY`, then `ALL_PROXY`."""
+    https_proxy: SecretStr | None = None
+    """The forward proxy of ExactDocs' outbound `https://` connections (git, model downloads,
+    index backends, sign-in providers; AI providers with `ai.use_instance_proxy`), in place of
+    `HTTPS_PROXY`. Unset: `https_proxy`, then `HTTPS_PROXY`, then `ALL_PROXY`."""
+    no_proxy: str | None = None
+    """The hosts reached without the proxy, in place of `NO_PROXY`: host names (and every name
+    under them), IP addresses, CIDR ranges, `*` for all; `host:port` for one port. Loopback and
+    link-local addresses never go through a proxy."""
+    ca_bundle: Path | None = None
+    """A PEM file of the CA certificates every outbound TLS connection trusts instead of the
+    system's, git included: the company CA of a proxy that re-signs TLS. Unset: `SSL_CERT_FILE`,
+    then `REQUESTS_CA_BUNDLE`, then `CURL_CA_BUNDLE`."""
     public_url: str | None = None
     """The URL people reach the server at (`https://docs.example.com`), without a path. Required
     once a sign-in provider is configured: the redirect URI registered at the provider is
@@ -1427,6 +1452,24 @@ class Settings(BaseSettings):
     def trusted_hosts(self) -> list[str]:
         """Host names the app answers to: localhost plus the configured ones."""
         return [*LOCAL_HOSTS, *self.allowed_hosts]
+
+    def outbound(self, environ: Mapping[str, str] = os.environ) -> OutboundNetwork:
+        """Resolve the outbound proxy, ``NO_PROXY`` and CA bundle every client uses (#538).
+
+        Args:
+            environ: The process environment: the standard variables these settings replace.
+
+        Returns:
+            The settings (``outbound.resolve`` raises ``ValueError`` for an unusable proxy or CA
+            bundle; the container turns it into a ``StartupError``).
+        """
+        return resolve_outbound_settings(
+            environ,
+            http_proxy=None if self.http_proxy is None else self.http_proxy.get_secret_value(),
+            https_proxy=None if self.https_proxy is None else self.https_proxy.get_secret_value(),
+            no_proxy=self.no_proxy,
+            ca_bundle=None if self.ca_bundle is None else str(self.ca_bundle),
+        )
 
 
 def read_config_file(path: Path) -> dict[str, Any]:

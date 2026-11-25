@@ -11,7 +11,7 @@ import re
 import sys
 import threading
 from collections.abc import Callable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -118,9 +118,14 @@ class FakeEntra:
     providers: int = 0
     tokens: int = 0
 
-    def provider(self, profile: ProviderProfile) -> Callable[[], str]:
+    proxies: list[str | None] = field(default_factory=list)
+
+    def provider(
+        self, profile: ProviderProfile, *, instance_proxy: str | None = None
+    ) -> Callable[[], str]:
         del profile
         self.providers += 1
+        self.proxies.append(instance_proxy)
 
         def token() -> str:
             self.tokens += 1

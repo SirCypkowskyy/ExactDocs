@@ -41,7 +41,7 @@ from exactdocs.identity.constants import (
 )
 from exactdocs.identity.errors import AccessAssertionRefusedError, ProviderUnavailableError
 from exactdocs.identity.models import AccessClaims
-from exactdocs_kernel import Clock
+from exactdocs_kernel import Clock, redact_url
 
 logger = logging.getLogger(__name__)
 
@@ -187,9 +187,10 @@ class CloudflareAccessVerifier:
                 status, content = response.status_code, await _read_capped(response)
         except httpx2.HTTPError as error:
             logger.warning(
-                "Cloudflare Access %s cannot be reached (%s)",
+                "Cloudflare Access %s cannot be reached (%s: %s)",
                 self.team_domain,
                 type(error).__name__,
+                redact_url(str(error)),
             )
             raise ProviderUnavailableError from None
         if status not in _SUCCESS or content is None:

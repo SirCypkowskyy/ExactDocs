@@ -129,6 +129,7 @@ from exactdocs.retrieval.models import (
     as_float32,
     identifier_tokens,
 )
+from exactdocs_kernel import OutboundNetwork
 
 type Document = dict[str, Any]
 type Credential = AzureKeyCredential | AsyncTokenCredential
@@ -778,6 +779,8 @@ class _Connection:
     """The Entra ID audience, for a sovereign cloud; ``None``: the public cloud."""
     hidden: tuple[str, ...] = field(default=(), repr=False)
     """The secrets (the API key) no message ever repeats; never in the ``repr``."""
+    proxy: str | None = field(default=None, repr=False)
+    """The outbound proxy the service is reached through (#538); ``None``: directly."""
 
 
 @dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- holds its clients
@@ -830,6 +833,9 @@ class _Service:
             The shared transport, the retries, and the audience when one is set.
         """
         options: Document = {"transport": self._transport, "retry_total": AZURE_SEARCH_RETRIES}
+        if self.connection.proxy is not None:
+            # Keyed by the service's origin: nothing else this pipeline reaches uses it.
+            options["proxies"] = {_origin(self.connection.endpoint): self.connection.proxy}
         if self.connection.audience:
             options["audience"] = self.connection.audience
         return options
@@ -1965,10 +1971,24 @@ def _credential(
     return make
 
 
+def _origin(url: str) -> str:
+    """The ``scheme://host[:port]`` of a URL, the key of a per-host proxy in ``requests``.
+
+    Args:
+        url: The URL.
+
+    Returns:
+        Its origin.
+    """
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}"
+
+
 def _connection(
     options: Mapping[str, object],
     transport: Transport | None,
     credential: TokenCredential | None,
+    network: OutboundNetwork | None = None,
 ) -> _Connection:
     """Check the ``[index_backends.azure_search]`` options.
 
@@ -1976,6 +1996,8 @@ def _connection(
         options: The options.
         transport: Makes the HTTP transport instead of azure-core's requests one (tests).
         credential: A sync Entra ID credential instead of the one ``auth`` names (tests).
+        network: The outbound proxy, NO_PROXY and CA bundle (#538); none: direct, the system's
+            trust. The transport reads no proxy variable itself.
 
     Returns:
         What the backends are built from.
@@ -2002,14 +2024,18 @@ def _connection(
         raise ValueError(message)
     key = _api_key(options)
     timeout = _seconds(options, "timeout", AZURE_SEARCH_DEFAULT_TIMEOUT_SECONDS)
+    network = network or OutboundNetwork()
+    trust: Document = {} if network.ca_bundle is None else {"connection_verify": network.ca_bundle}
 
     def requests_transport() -> AsyncHttpTransport:
         """Make azure-core's requests transport (requests run in threads; no aiohttp).
 
         Returns:
-            The transport.
+            The transport: no proxy variable read, the CA bundle trusted when one is set.
         """
-        return AsyncioRequestsTransport(connection_timeout=timeout, read_timeout=timeout)
+        return AsyncioRequestsTransport(
+            connection_timeout=timeout, read_timeout=timeout, use_env_settings=False, **trust
+        )
 
     return _Connection(
         endpoint=endpoint,
@@ -2021,6 +2047,7 @@ def _connection(
         ),
         audience=audience,
         hidden=(key,) if key else (),
+        proxy=network.proxy_for(endpoint),
     )
 
 
@@ -2076,6 +2103,7 @@ def search_backend(
     *,
     transport: Transport | None = None,
     credential: TokenCredential | None = None,
+    network: OutboundNetwork | None = None,
 ) -> AzureSearchBackend:
     """Build the Azure AI Search search backend from its ``[index_backends.azure_search]`` options.
 
@@ -2090,6 +2118,8 @@ def search_backend(
         options: The options.
         transport: Makes the HTTP transport instead of azure-core's requests one (tests).
         credential: A sync Entra ID credential instead of the one ``auth`` names (tests).
+        network: The outbound proxy, NO_PROXY and CA bundle (#538). Entra ID's own calls
+            follow the standard variables, which the server sets from the same settings.
 
     Returns:
         The backend, not connected yet.
@@ -2097,7 +2127,7 @@ def search_backend(
     _semantic(options, hybrid=_switch(options, "hybrid", default=True))
     _vector_search(options)
     return AzureSearchBackend(
-        service=_Service(connection=_connection(options, transport, credential))
+        service=_Service(connection=_connection(options, transport, credential, network))
     )
 
 
@@ -2106,6 +2136,7 @@ def vector_backend(
     *,
     transport: Transport | None = None,
     credential: TokenCredential | None = None,
+    network: OutboundNetwork | None = None,
 ) -> AzureVectorBackend | AzureHybridVectorBackend | AzureSemanticVectorBackend:
     """Build the Azure AI Search vector backend from its ``[index_backends.azure_search]`` options.
 
@@ -2119,6 +2150,8 @@ def vector_backend(
         options: The options.
         transport: Makes the HTTP transport instead of azure-core's requests one (tests).
         credential: A sync Entra ID credential instead of the one ``auth`` names (tests).
+        network: The outbound proxy, NO_PROXY and CA bundle (#538). Entra ID's own calls
+            follow the standard variables, which the server sets from the same settings.
 
     Returns:
         The backend, not connected yet; with ``NativeHybrid`` when ``hybrid`` is on, and
@@ -2127,7 +2160,7 @@ def vector_backend(
     hybrid = _switch(options, "hybrid", default=True)
     semantic = _semantic(options, hybrid=hybrid)
     vectors = AzureVectorBackend(
-        service=_Service(connection=_connection(options, transport, credential)),
+        service=_Service(connection=_connection(options, transport, credential, network)),
         words=hybrid,
         exact=_vector_search(options),
         semantic=semantic,
