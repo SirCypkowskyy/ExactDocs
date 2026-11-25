@@ -102,8 +102,8 @@ Updating must never mean importing everything again (RUN-04). Two mechanisms kee
   the index's *columns* is an Alembic revision that rebuilds the table on start instead, because
   the search queries name them.
 
-**CI upgrade test** (integration job *uvx*, `deploy/upgrade_check.py`; a PR labelled
-`run integration` and every release run it, see [Fast and integration tests](#fast-and-integration-tests)):
+**CI upgrade test** (integration job *uvx*, `deploy/upgrade_check.py`; it runs when the integration
+jobs are started by hand, see [Fast and integration tests](#fast-and-integration-tests)):
 the newest stable release from PyPI
 starts on an empty data directory and imports the fixture docs repository at two tags; then this
 build starts on the same directory and must migrate it to its head revision and serve the same
@@ -163,9 +163,9 @@ libraries. Operators who want AI retrieval should not have to build their own im
 comes in three variants, the build targets of one `deploy/Dockerfile` (#246; decision record
 [*Image variants*](decisions/ai-retrieval.md#image-variants)). CI enforces each budget
 (`deploy/check_artifacts.py`, the integration jobs *Docker image* and *Docker image variants*,
-which run on a PR labelled `run integration` and in every release, and the release's *Scan image*
-jobs; the sizes land in the job summary). Since #468 the CI jobs run on GitHub-hosted
-`ubuntu-24.04` (amd64), where the images come out smaller than on arm64 (353.0 MB against 387.1 MB
+which run when started by hand, and the release's *Scan image* jobs; the sizes land in the job
+summary). Since #468 the CI jobs run on GitHub-hosted `ubuntu-24.04` (amd64), where the images
+come out smaller than on arm64 (353.0 MB against 387.1 MB
 for `base` before MCP Apps), so the arm64 figures below come from the release's builds and earlier
 CI runs. Since #478 the release checks both architectures (natively, except the amd64 legs in
 [`self-hosted` mode](#cicd-and-runners)); arm64 is the one that gets close to a budget, and a pull
@@ -307,8 +307,8 @@ What is published carries the licences of what it holds (#533):
 
 ## Image scan
 
-Every integration run (jobs *Docker image* and *Docker image variants* of `integration.yml`: a PR
-labelled `run integration`, a manual CI run with `integration`, every release) and every release's
+Every integration run (jobs *Docker image* and *Docker image variants* of `integration.yml`,
+started by hand: [Fast and integration tests](#fast-and-integration-tests)) and every release's
 *Scan image* jobs scan each built image variant with
 [Trivy](https://trivy.dev). Every PR lints `deploy/Dockerfile` with hadolint (CI's *Lint* job; its
 one accepted rule, with the reason, is in `.hadolint.yaml`). The scan **fails on a CRITICAL or HIGH
@@ -407,18 +407,22 @@ just bdd-integration --tags=@integration       # behave: only the @integration s
 **When CI runs them.** The jobs are in `integration.yml`: the integration pytest and behave suites
 with every service above as a container (and the ranking suite on Supabase, the persistence suite
 on libSQL), the Docker image build, scan and smoke tests, the `-ai` and `-local` variants, and uvx
-with the upgrade check and the browser end-to-end test. They run
+with the upgrade check and the browser end-to-end test. One run takes 45 to 60 minutes of runner
+time, so they run only when someone starts them by hand (#554), on the branch they pick:
 
-- on a pull request with the label **`run integration`**: adding it starts them, and each push
-  runs them again while it is on (adding any other label starts nothing). A pull request from a
-  fork runs them only when the label is added, on the commit it was added to, never on a later
-  push: look at the new commits, then remove the label and add it again. The label is defined in
-  `.github/labels.yml`; create it once with `.agents/skills/working-on-issues/scripts/sync-labels.sh`;
-- on a manual run of CI with the input `integration` (*Actions → CI → Run workflow*, or
+- a manual run of CI with the input `integration` (*Actions → CI → Run workflow*, or
   `gh workflow run ci.yml --ref <branch> -f integration=true`);
-- in every release and release dry run, before anything is published ([below](#what-the-release-workflow-does)).
+- a manual run of Integration itself (*Actions → Integration → Run workflow*, or
+  `gh workflow run integration.yml --ref <branch>`), on the same runners as from CI;
+- a release dry run with the input `integration` (*Actions → Release → Run workflow*, or
+  `gh workflow run release.yml --ref <branch> -f integration=true`), with the Python job on the
+  self-hosted runner, where the eval runs ([Dry run](#dry-run)).
 
-Pushes to `develop` and `main` do not run them; a release does, so nothing is published untested.
+No pull request, push or tag starts them, whatever its labels, and a release does not wait for
+them. A maintainer starts them when a change touches PostgreSQL, an index backend on a server, the
+Dockerfile, the wheel or the end-to-end flow, or before tagging a release that has such changes.
+Agents never start them. Locally, `just test --integration` (pytest) and `EXACTDOCS_INTEGRATION=1`
+(pytest and behave) run the same tests against the services you start, as above.
 
 **`.test_durations`** holds the time of every fast test, from a default run with
 `--store-durations`, and **`.behave_durations`** the time of every feature file; the shards are
@@ -438,9 +442,9 @@ workflow says what it does there):
 | Workflow | `hybrid` (default; also when `RUNNER_MODE` is unset) | `self-hosted` (fallback) |
 |---|---|---|
 | CI (`ci.yml`): lint, pytest shards, behave, web | every job on `ubuntu-24.04` (six pytest shards) | every job on the self-hosted runner (two pytest shards) |
-| Integration (`integration.yml`) from a PR label or a manual CI run | every job on `ubuntu-24.04` | every job on the self-hosted runner |
-| Integration from a release: **python** (pytest, behave) | self-hosted | self-hosted |
-| Integration from a release: **image**, **image-variants**, **uvx** | `ubuntu-24.04` | self-hosted |
+| Integration (`integration.yml`) from its own manual run or a manual CI run | every job on `ubuntu-24.04` | every job on the self-hosted runner |
+| Integration from a release dry run: **python** (pytest, behave) | self-hosted | self-hosted |
+| Integration from a release dry run: **image**, **image-variants**, **uvx** | `ubuntu-24.04` | self-hosted |
 | Docs (`docs.yml`) | `ubuntu-24.04` | self-hosted |
 | Release (`release.yml`): **eval**, **web**, **python** | self-hosted | self-hosted |
 | Release: **image-scan**, **image**, arm64 legs | self-hosted, native | self-hosted, native |
@@ -500,18 +504,18 @@ flowchart LR
     gh["GitHub<br/>PR, push to main or develop, tag v*"]
     subgraph hosted ["GitHub-hosted ubuntu-24.04 (amd64), hybrid mode"]
         ci["CI (every PR and push)<br/>lint, pytest shards, behave, web"]
-        integ["Integration (label, manual run, release)<br/>python, image, image variants, uvx + browser e2e"]
+        integ["Integration (only when started by hand)<br/>python, image, image variants, uvx + browser e2e"]
         docs["Docs<br/>Mermaid check, zensical build --strict"]
         relh["Release: meta, amd64 image-scan + image,<br/>pypi-kernel, pypi, image-publish, github-release"]
     end
     subgraph gb10 ["Dell Pro Max GB10 (ARM64): self-hosted runner VMs"]
-        rels["Release: eval, integration python, web, python,<br/>arm64 image-scan + image"]
+        rels["Release: eval, web, python, arm64 image-scan + image,<br/>integration python (dry run that asks)"]
         ret["GHCR retention"]
         manual["Manual: eval-providers, agent-bench,<br/>azure-search, pinecone"]
     end
     gh -->|PR and push| ci
-    gh -->|"PR labelled run integration, manual run"| integ
-    relh -->|release| integ
+    gh -->|"manual run: CI with integration, or Integration"| integ
+    relh -->|"dry run with integration"| integ
     gh -->|"docs/**, zensical.toml (PRs: any .md)"| docs
     gh -->|"tag (manual run: dry run)"| relh
     relh <--> rels
@@ -540,8 +544,8 @@ In `self-hosted` mode every box above runs in the GB10 group.
    the integration pytest and behave suites on PostgreSQL, PgBouncer, Supabase, libSQL and every
    search and vector server (on the self-hosted runner, so Pinecone Local's cases skip there),
    the Docker images' build, scan and smoke tests, uvx, the upgrade from the previous release
-   and the browser end-to-end test. Pull requests run them only when labelled, so here they are
-   a gate: `pypi-kernel` and `image` need them too.
+   and the browser end-to-end test. Only in a dry run started with the input `integration`
+   ([Dry run](#dry-run)): a tag push skips them, and no job needs them.
 3. **web**: `pnpm build`.
 4. **python**: bundles the UI into the wheel, `uv build --all-packages`, `twine check`, runs the
    wheel the way `uvx` would.
@@ -576,9 +580,12 @@ gh workflow run release.yml --ref develop     # or a feature branch with workflo
 ```
 
 It builds version `0.0.0.dev<run number>` and runs **meta** (without the tag checks), **eval**,
-**integration**, **web**, **python** and all twelve image jobs (the six **image** builds with `push=false`, no
+**web**, **python** and all twelve image jobs (the six **image** builds with `push=false`, no
 registry login). **pypi-kernel**, **pypi**, **image-publish** and **github-release** are skipped
-(`if: github.event_name == 'push'`). GHCR retention still starts after it (a `workflow_run`
+(`if: github.event_name == 'push'`). With the input `integration` it runs **integration** too
+(`gh workflow run release.yml --ref develop -f integration=true`): the integration and end-to-end
+jobs, with the Python job on the self-hosted runner. No other job waits for them; when one fails,
+the run fails. GHCR retention still starts after it (a `workflow_run`
 trigger fires on every completed Release run, from the file on the default branch) but skips its
 jobs when the run was not a tag push. Run one before
 tagging when the release workflow, the Dockerfile, the eval or a size budget changed: the gates

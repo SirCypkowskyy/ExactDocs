@@ -31,11 +31,13 @@ just bdd-integration --tags=@integration      # behave: only the @integration sc
 
 Each one runs when its service's `EXACTDOCS_TEST_<NAME>_URL` is set and is skipped, naming the
 variable, when it is not; [docs/releasing.md](docs/releasing.md#fast-and-integration-tests) lists
-them and the helper scripts that start the servers. Pull request CI runs the fast checks only; a
-maintainer adds the label **`run integration`** to a PR that touches PostgreSQL, an index
-backend on a server, the Dockerfile, the wheel or the end-to-end flow, and every release runs
-them before anything is published. On a PR from a fork, the label runs them once, on the commit
-it was added to; a later push needs a maintainer to add it again.
+them and the helper scripts that start the servers. Pull request CI runs the fast checks only.
+In GitHub Actions the integration and end-to-end jobs run only when a maintainer starts them by
+hand, never on a pull request, a push or a tag: *Actions → CI → Run workflow* with `integration`,
+*Actions → Integration → Run workflow*, or a release dry run with `integration`. They take 45 to 60
+minutes of runner time, so a maintainer starts them for a PR that touches PostgreSQL, an index
+backend on a server, the Dockerfile, the wheel or the end-to-end flow. Locally,
+`just test --integration` or `EXACTDOCS_INTEGRATION=1` runs them.
 
 ## Workflow
 

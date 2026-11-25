@@ -67,10 +67,15 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   reaches a service fails there.
 - **Pull request CI runs the fast suite only**, in parallel shards (pytest by `pytest-split`,
   behave by feature file, balanced by `.test_durations` and `.behave_durations`; refresh them with
-  `just test-durations` / `just bdd-durations` when many tests were added or became slower). The integration jobs run on a PR labelled `run integration`, on a manual CI run with
-  the input `integration`, and in every release ([docs/releasing.md](../../../docs/releasing.md#fast-and-integration-tests)).
-  Add the label when the change touches an adapter on a server, PostgreSQL, the Dockerfile,
-  the wheel or the end-to-end flow.
+  `just test-durations` / `just bdd-durations` when many tests were added or became slower).
+- **The integration and end-to-end jobs run only when a maintainer starts them by hand** (#554):
+  a manual CI run with the input `integration`, a manual run of the Integration workflow, or a
+  release dry run with `integration` ([docs/releasing.md](../../../docs/releasing.md#fast-and-integration-tests)).
+  No pull request, push or tag starts them. **Agents never start them**, by any of those runs.
+  Run the affected integration tests locally instead (`just test --integration`,
+  `EXACTDOCS_INTEGRATION=1 uv run behave`) and, when the change touches an adapter on a server,
+  PostgreSQL, the Dockerfile, the wheel or the end-to-end flow, say in the PR that it needs an
+  integration run.
 - Async tests need no decorator (`asyncio_mode = "auto"`). Warnings are errors (`filterwarnings = error`).
 - **Close every SQLite connection a test opens**, or the garbage collector finalizes it during a
   later test, which then fails with "unclosed database". An autouse guard
