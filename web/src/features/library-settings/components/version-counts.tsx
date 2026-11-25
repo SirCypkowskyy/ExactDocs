@@ -1,5 +1,5 @@
 import { formatNumber, useLanguage } from "@/shared/lib/i18n";
-import { PHONE_QUERY, useMediaQuery } from "@/shared/lib/use-media-query";
+import { usePhoneLayout } from "@/shared/lib/use-media-query";
 import { Count } from "@/shared/ui/data-table/cells";
 import { Meter } from "@/shared/ui/meter";
 import { Tooltip } from "@/shared/ui/tooltip";
@@ -17,7 +17,7 @@ export type NoEmbedding = keyof Texts["notEmbeddedWhy"];
 
 /** The articles of a version: a figure under the column's header, "120 articles" on a phone card. */
 export function ArticlesCell({ value, t }: { value: number; t: Texts }) {
-  const phone = useMediaQuery(PHONE_QUERY);
+  const phone = usePhoneLayout();
   if (phone) return <span className="num">{t.articles(value)}</span>;
   return <Count value={value} muted={value === 0} />;
 }
@@ -41,7 +41,7 @@ export function EmbeddingCell({
   t: Texts;
 }) {
   const language = useLanguage();
-  const phone = useMediaQuery(PHONE_QUERY);
+  const phone = usePhoneLayout();
   if (chunks === 0) {
     if (phone) return <span className="text-muted-foreground">{t.notIndexedShort}</span>;
     return (

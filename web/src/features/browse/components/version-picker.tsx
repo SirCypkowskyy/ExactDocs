@@ -139,6 +139,7 @@ export function VersionPicker({
         <span className="flex min-w-0 items-center gap-2">
           <Station current isDefault={shownVersion.is_default} />
           <span
+            title={shownVersion.ref}
             className={cn(
               "truncate font-mono text-mono font-semibold",
               waitingFor !== null && "text-muted-foreground",

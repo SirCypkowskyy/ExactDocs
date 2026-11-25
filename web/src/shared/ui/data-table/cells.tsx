@@ -128,7 +128,12 @@ export function LibraryCell({
     return (
       <span className="flex min-w-0 items-center gap-2">
         <LibraryMark id={id} logo={logo} size={size} />
-        {linked(<span className="truncate font-mono text-mono">{id}</span>, "min-w-0")}
+        {linked(
+          <span title={id} className="block truncate font-mono text-mono">
+            {id}
+          </span>,
+          "min-w-0",
+        )}
       </span>
     );
   }
@@ -143,7 +148,10 @@ export function LibraryCell({
           </span>
         )}
         {description && (
-          <span className="max-w-[48ch] truncate text-small text-muted-foreground max-lg:hidden">
+          <span
+            title={description}
+            className="max-w-[48ch] truncate text-small text-muted-foreground max-lg:hidden"
+          >
             {description}
           </span>
         )}
@@ -157,7 +165,9 @@ export function Person({ name, children }: { name: string; children?: ReactNode 
   return (
     <span className="flex min-w-0 items-center gap-2">
       <Avatar name={name} />
-      <span className="truncate">{name}</span>
+      <span title={name} className="truncate">
+        {name}
+      </span>
       {children}
     </span>
   );
@@ -265,7 +275,9 @@ export function MonoCopy({
   const [done, flash] = useFlash();
   return (
     <span className="inline-flex min-w-0 items-center gap-0.5">
-      <span className="truncate font-mono text-mono">{display ?? value}</span>
+      <span title={value} className="truncate font-mono text-mono">
+        {display ?? value}
+      </span>
       <IconButton
         label={t.copy(what)}
         size="icon-sm"
@@ -334,7 +346,7 @@ export function Chips({
                 variant="ghost"
                 size="sm"
                 aria-label={more(rest)}
-                className="num -my-2 min-w-11 px-1.5 text-small text-muted-foreground data-[state=open]:bg-accent fine:h-6 fine:min-w-6"
+                className="num -my-2 min-w-11 px-1.5 py-0 text-small text-muted-foreground data-[state=open]:bg-accent fine:min-h-6 fine:min-w-6"
               >
                 +{formatNumber(rest, language)}
               </Button>
