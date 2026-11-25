@@ -71,6 +71,36 @@
       "name": "escapes and entities are not text",
       "markdown": "# snake\\_case &amp; a\\*b\n\n# Tom &amp; Jerry\n",
       "anchors": ["snake_case--ab", "tom--jerry"]
+    },
+    {
+      "name": "an attribute list sets the anchor (MkDocs attr_list)",
+      "markdown": "# Async Tests { #async-tests }\n\n## HTTPX { #httpx }\n",
+      "anchors": ["async-tests", "httpx"]
+    },
+    {
+      "name": "an id without spaces (Docusaurus)",
+      "markdown": "## Hello World {#my-explicit-id}\n",
+      "anchors": ["my-explicit-id"]
+    },
+    {
+      "name": "an id among classes and keys, with or without the colon",
+      "markdown": "## Usage {: #use .wide data-x=\"a b\" }\n\n## Setup { .note #setup lang=en }\n",
+      "anchors": ["use", "setup"]
+    },
+    {
+      "name": "classes only: the text without them is slugged",
+      "markdown": "## Options { .note }\n",
+      "anchors": ["options"]
+    },
+    {
+      "name": "braces that are not a trailing attribute list stay",
+      "markdown": "## The `{#x}` literal\n\n## Use `{#y}`\n\n## A set {1, 2}\n\n## Empty {}\n\n## Word { x }\n",
+      "anchors": ["the-x-literal", "use-y", "a-set-1-2", "empty-", "word--x-"]
+    },
+    {
+      "name": "an explicit id is taken like a slug",
+      "markdown": "## A {#a}\n\n## A\n",
+      "anchors": ["a", "a-1"]
     }
   ]
 }
