@@ -35,7 +35,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/reader-dark.webp">
-  <img src="docs/assets/screenshots/reader-light.webp" alt="The ExactDocs reader showing the Resilience article of Acme Payments v1.4.0: the version picker with commit 3fb0656, the file tree, the rendered article with a Python code block and a table, and the article's headings on the right.">
+  <img src="docs/assets/screenshots/reader-light.webp" alt="The ExactDocs reader showing the Caching article of astral-sh/uv 0.13.9: the version picker with commit 6b2d39d, the file tree, the rendered article and its headings on the right.">
 </picture>
 
 Coding agents answer from whatever documentation they can reach, and it is often written for a
@@ -84,14 +84,14 @@ differ.</sub>
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/libraries-dark.webp">
-        <img width="100%" src="docs/assets/screenshots/libraries-light.webp" alt="The libraries page: Acme Payments, default version v1.4.0 at commit 3fb0656, 3 versions and 15 articles, and Acme Store, v2.1.0 at 7bd0779, 1 version and 5 articles, each with its project mark, when it was last imported and whether it syncs.">
+        <img width="100%" src="docs/assets/screenshots/libraries-light.webp" alt="The libraries page with 34 libraries, among them Ruff, ty and uv from astral-sh and several Azure docs, each with its project mark, default version and commit, number of versions and articles, when it was last imported and whether it syncs.">
       </picture>
       <br><sub>Each library with its default version and commit, and how many versions and articles it has.</sub>
     </td>
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/library-dark.webp">
-        <img width="100%" src="docs/assets/screenshots/library-light.webp" alt="The Acme Payments library at its default version, v1.4.0, with the version picker open: v1.4.0 at commit 3fb0656, v1.3.0 at db8b674 and the next branch at 30b96c1.">
+        <img width="100%" src="docs/assets/screenshots/library-light.webp" alt="The uv library at its default version, 0.13.9, with the version picker open at commit 6b2d39d.">
       </picture>
       <br><sub>A library and its versions, each a tag, branch or commit pinned to its SHA.</sub>
     </td>
@@ -100,14 +100,14 @@ differ.</sub>
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/search-dark.webp">
-        <img width="100%" src="docs/assets/screenshots/search-light.webp" alt="Search results for retry across every library: 7 results in 2 libraries, grouped by library and version, each with its heading path, its file and the matching text highlighted.">
+        <img width="100%" src="docs/assets/screenshots/search-light.webp" alt="Search results for cache across every library: the top 20 of 4,438 results, the libraries with their counts on the left, and the results grouped by library and version, each with its heading path, its file and the matching text highlighted.">
       </picture>
       <br><sub>One search across the default version of every library.</sub>
     </td>
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/playground-dark.webp">
-        <img width="100%" src="docs/assets/screenshots/playground-light.webp" alt="The search playground with the query how do I retry failed calls, ranked by hybrid search and by BM25 side by side, each result with its BM25 and vector rank.">
+        <img width="100%" src="docs/assets/screenshots/playground-light.webp" alt="The search playground with the query how do I clear the cache on /astral-sh/uv, ranked by hybrid search and by BM25 side by side, each result with its BM25 and vector rank.">
       </picture>
       <br><sub>The search playground ranks one query in two retrieval modes side by side.</sub>
     </td>

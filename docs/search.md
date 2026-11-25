@@ -259,11 +259,10 @@ budgets described below.
 
 <figure class="xd-shot" markdown>
 
-![The AI page: an openai-compatible profile named gateway, used for the embedding role; the embedding space at 100%, 136 of 136 chunks and 4 of 4 versions; and today's and this month's usage of the instance, the embedding runs and each library, with no budget set.](assets/screenshots/ai-light.webp#only-light){ loading=lazy }
-![The AI page: an openai-compatible profile named gateway, used for the embedding role; the embedding space at 100%, 136 of 136 chunks and 4 of 4 versions; and today's and this month's usage of the instance, the embedding runs and each library, with no budget set.](assets/screenshots/ai-dark.webp#only-dark){ loading=lazy }
+![The AI page: a google-vertex profile named gcp, used for the embedding role with gemini-embedding-001; the embedding space at 100%, 199,071 of 199,071 chunks and 34 of 34 versions; and today's and this month's usage of the instance, the embedding runs and the first libraries, with the instance's daily and monthly budgets.](assets/screenshots/ai-light.webp#only-light){ loading=lazy }
+![The AI page: a google-vertex profile named gcp, used for the embedding role with gemini-embedding-001; the embedding space at 100%, 199,071 of 199,071 chunks and 34 of 34 versions; and today's and this month's usage of the instance, the embedding runs and the first libraries, with the instance's daily and monthly budgets.](assets/screenshots/ai-dark.webp#only-dark){ loading=lazy }
 
-<figcaption>The <em>AI</em> page, with a stand-in embedding model behind an OpenAI-compatible
-profile.</figcaption>
+<figcaption>The <em>AI</em> page, with Gemini embeddings on Vertex AI.</figcaption>
 
 </figure>
 
