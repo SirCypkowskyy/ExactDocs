@@ -36,3 +36,21 @@ Feature: The MCP tools take the arguments agents actually send
   Scenario: An argument the tool does not have is still refused, naming the real ones
     When an agent calls "search_all_docs" with an argument "ref" it does not have
     Then the tool error names the real arguments "query", "library" and "path_prefix"
+
+  Scenario: A version written without its leading v answers from the version written with it
+    When an agent calls "search_docs" on "/fixture/docs-repo/1.4.0" for "retry_policy"
+    Then version "v1.4.0" answers and a note says ref "1.4.0" was read as it
+    When an agent reads "docs/guide/resilience.md" of "/fixture/docs-repo/1.4.0"
+    Then version "v1.4.0" answers and a note says ref "1.4.0" was read as it
+    When an agent calls "article_outline" for "docs/guide/resilience.md" of "/fixture/docs-repo/1.4.0"
+    Then version "v1.4.0" answers and a note says ref "1.4.0" was read as it
+    When a user searches "/fixture/docs-repo/1.4.0" for "retry_policy"
+    Then the response says it searched version "v1.4.0"
+
+  Scenario: A version the library does not have is refused, naming the versions it has
+    When an agent calls "search_docs" on "/fixture/docs-repo/v9.9.9" for "retry_policy"
+    Then the tool error names the library's versions "v1.4.0" and "v1.3.0"
+    When an agent reads "docs/guide/resilience.md" of "/fixture/docs-repo/v9.9.9"
+    Then the tool error names the library's versions "v1.4.0" and "v1.3.0"
+    When a user searches "/fixture/docs-repo/v9.9.9" for "retry_policy"
+    Then the error response names the library's versions "v1.4.0" and "v1.3.0"

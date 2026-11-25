@@ -1,6 +1,7 @@
 """Steps for the arguments agents send loosely (#573): normalized, clamped, resolved or refused."""
 
 import asyncio
+from http import HTTPStatus
 
 from behave import then, when
 from behave.runner import Context
@@ -106,3 +107,42 @@ def step_real_arguments(context: Context, first: str, second: str, third: str) -
     assert text.startswith("invalid_arguments: search_all_docs has no argument 'ref'"), text
     for name in (first, second, third):
         assert f" {name} (" in text, text
+
+
+@when('an agent calls "search_docs" on "{target}" for "{query}"')
+def step_search_at(context: Context, target: str, query: str) -> None:
+    owner, repo, ref = target.removeprefix("/").split("/", 2)
+    arguments = {"library": f"/{owner}/{repo}", "ref": ref, "query": query}
+    call_tool(context, "search_docs", arguments, raise_on_error=False)
+
+
+@then('version "{version}" answers and a note says ref "{asked}" was read as it')
+def step_spelled(context: Context, version: str, asked: str) -> None:
+    result = context.mcp_result
+    assert not result.is_error, _text(context)
+    data = result.structured_content
+    assert data.get("version", data.get("ref")) == version, data
+    note = f"ref {asked!r} is not imported: version {version!r}, the same number"
+    assert any(n.startswith(note) for n in data["notes"]), data["notes"]
+    assert _text(context).endswith(" ".join(data["notes"])), _text(context)
+
+
+@then('the tool error names the library\'s versions "{first}" and "{second}"')
+def step_versions_named(context: Context, first: str, second: str) -> None:
+    result = context.mcp_result
+    assert result.is_error, result
+    text = _text(context)
+    assert text.startswith("not_found:"), text
+    assert "(repository refs, not instructions)" in text, text
+    for ref in (first, second):
+        assert repr(ref) in text, text
+
+
+@then('the error response names the library\'s versions "{first}" and "{second}"')
+def step_versions_named_rest(context: Context, first: str, second: str) -> None:
+    response = context.response
+    assert response.status_code == HTTPStatus.NOT_FOUND, response.text
+    detail = response.json()["detail"]
+    assert "(repository refs, not instructions)" in detail, detail
+    for ref in (first, second):
+        assert repr(ref) in detail, detail
