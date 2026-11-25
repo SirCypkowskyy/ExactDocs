@@ -12,6 +12,7 @@ from exactdocs_kernel.constants import (
     MAX_CURSOR,
     MAX_LIMIT,
     MAX_NAME,
+    MAX_NAMED_REFS,
     MAX_OFFSET,
     MAX_PATH,
     MAX_TAG_INPUT,
@@ -21,6 +22,7 @@ from exactdocs_kernel.constants import (
     OUTBOUND_VARIABLES,
     PROXY_VARIABLES,
     REDACTED,
+    REF_ARGUMENT,
     TOOL_HINTS,
 )
 from exactdocs_kernel.errors import (
@@ -62,6 +64,12 @@ from exactdocs_kernel.pagination import (
     paginate,
 )
 from exactdocs_kernel.paths import clean_path_prefix, inside
+from exactdocs_kernel.refs import (
+    closest_refs,
+    leading_v_twin,
+    other_v_spelling,
+    respelled_note,
+)
 from exactdocs_kernel.source_link import section_link
 from exactdocs_kernel.tags import normalize_tag
 
@@ -73,6 +81,7 @@ __all__ = [
     "MAX_CURSOR",
     "MAX_LIMIT",
     "MAX_NAME",
+    "MAX_NAMED_REFS",
     "MAX_OFFSET",
     "MAX_PATH",
     "MAX_TAGS",
@@ -82,6 +91,7 @@ __all__ = [
     "OUTBOUND_VARIABLES",
     "PROXY_VARIABLES",
     "REDACTED",
+    "REF_ARGUMENT",
     "TOOL_HINTS",
     "BusyError",
     "Clock",
@@ -103,20 +113,24 @@ __all__ = [
     "UnauthenticatedError",
     "ValidationError",
     "clean_path_prefix",
+    "closest_refs",
     "decode_cursor",
     "decode_sort_cursor",
     "encode_cursor",
     "encode_sort_cursor",
     "inside",
     "is_after",
+    "leading_v_twin",
     "like_pattern",
     "normalize_tag",
+    "other_v_spelling",
     "page_offset",
     "paginate",
     "parse_sort",
     "proxy_failure",
     "redact_url",
     "resolve_outbound",
+    "respelled_note",
     "section_link",
     "sorted_page",
 ]
