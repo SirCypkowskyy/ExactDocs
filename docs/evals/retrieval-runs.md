@@ -82,6 +82,15 @@ EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
 Every result keeps its per-case `rows`, so every one has intervals and a paired test against its
 budget's default (#489).
 
+The run kept no context per case (#575). BM25 is deterministic, so its rows at every chunking were
+completed from a re-run of 25 November (Linux x86_64, 4 CPUs) that gave every case the same rank,
+nDCG and section ranks; `rows_from` names it, and the recorded latencies are kept. BM25 has recall
+within each token budget; the other results were not run again and have none. Hybrid search on
+bge-small at `default`, asked again on that machine, came back with 5 of the 321 cases at another
+rank (the vectors differ in their last digits between the two machines; recall@1, @5, @10, MRR and
+nDCG@10 are the same to the digit), so its rows were not replaced: that re-run is the grid's app
+cell `hybrid:bge-small-en-v1.5@default` ([Retrieval results](../benchmark/retrieval.md)).
+
 ### Time on that runner
 
 | Step | Time |

@@ -63,6 +63,17 @@ Recall within the first 1,000, 2,000 and 4,000 estimated tokens (characters / 4)
 | `bm25` | `h2` | 7,065 [6,784, 7,345] | 2,765 [2,450, 3,092] | 24.0% [19.1, 29.2] | 49.4% [43.5, 55.4] | 74.2% [68.9, 79.4] | - | - | - | - |
 | `bm25` | `merge-400` | 3,535 [3,398, 3,676] | 1,473 [1,345, 1,606] | 37.8% [32.2, 43.8] | 70.8% [65.2, 76.4] | 89.9% [86.1, 93.3] | `bm25` at `h2` | **+13.9** [+9.0, +18.7], p < 0.001 | **+21.3** [+15.7, +27.0], p < 0.001 | **+15.7** [+10.9, +20.6], p < 0.001 |
 
+## Within a token budget
+
+Recall within the first 1,000, 2,000 and 4,000 estimated tokens (characters / 4) of the text returned, the results read whole and in order: a case counts when the result that first answers it ends within the budget (#575). Context: the estimated tokens of all the text returned per question (each chunk's content); to the first hit: up to and including the first result that answers. In brackets: the 95% interval. Against: the budget's default, the difference in points and the p-value of McNemar's test (mid-p), **bold** when significant.
+
+| configuration | chunking | context tokens / q | tokens to first hit | within 1,000 | within 2,000 | within 4,000 | against | 1,000 | 2,000 | 4,000 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `bm25` | `default` | 3,464 [3,320, 3,614] | 656 [571, 745] | 78.3% [73.4, 83.2] | 88.8% [85.0, 92.1] | 93.6% [90.6, 96.2] | `bm25` at `h2` | **+29.2** [+23.6, +35.2], p < 0.001 | **+12.0** [+7.9, +16.5], p < 0.001 | **+4.5** [+1.5, +7.5], p 0.0044 |
+| `bm25` | `h6` | 2,876 [2,740, 3,016] | 583 [509, 661] | 77.9% [73.0, 82.8] | 89.1% [85.4, 92.5] | 92.1% [88.8, 95.1] | `bm25` at `h2` | **+28.8** [+23.2, +34.8], p < 0.001 | **+12.4** [+7.9, +16.9], p < 0.001 | +3.0 [+0.0, +6.4], p 0.064 |
+| `bm25` | `h2` | 7,065 [6,784, 7,345] | 1,366 [1,205, 1,537] | 49.1% [43.1, 55.1] | 76.8% [71.5, 82.0] | 89.1% [85.4, 92.5] | - | - | - | - |
+| `bm25` | `merge-400` | 3,534 [3,398, 3,674] | 656 [575, 745] | 77.9% [73.0, 82.8] | 88.0% [83.9, 91.8] | 93.3% [90.3, 95.9] | `bm25` at `h2` | **+28.8** [+22.9, +34.8], p < 0.001 | **+11.2** [+7.1, +15.4], p < 0.001 | **+4.1** [+1.1, +7.5], p 0.012 |
+
 ## By question kind (recall@5 / section recall@5 / nDCG@10)
 
 A kind or a project holds only part of the cases (about 50 per kind in the golden set), so its intervals, in brackets, are much wider than the whole set's.

@@ -1,0 +1,2 @@
+{"type":"step_start","timestamp":1795627000101,"sessionID":"ses_dec7a1b2c3d4RateLimit","part":{"id":"prt_2139a0000001","messageID":"msg_2139a0000001","sessionID":"ses_dec7a1b2c3d4RateLimit","type":"step-start"}}
+{"type":"error","timestamp":1795627003410,"sessionID":"ses_dec7a1b2c3d4RateLimit","error":{"name":"APIError","data":{"message":"Too Many Requests: you have reached your session usage limit, please wait or upgrade to continue","statusCode":429,"isRetryable":false}}}
