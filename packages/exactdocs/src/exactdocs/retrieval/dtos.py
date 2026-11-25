@@ -69,6 +69,7 @@ from exactdocs.retrieval.models import (
     Removed,
     RepoGuidance,
     RerankWith,
+    ResultGrouping,
     RetrievalMode,
     RoleSource,
     SearchableVersion,
@@ -148,6 +149,10 @@ class SearchDocsQuery(_Dto):
     path_prefix: str = Field(default="", max_length=MAX_NAME)
     """Only chunks of articles inside this directory, as `list_articles` filters: `guide` keeps
     `guide/install.md`, not `guide-old/x.md`; empty keeps every article."""
+    group_by: ResultGrouping = Field(default=ResultGrouping.ARTICLE)
+    """`article`: the same results, grouped by article (each result's `group`): the article of
+    the best result first with all of its results, best first, then the next article. `chunk`:
+    each result on its own, best first."""
 
     @field_validator("path_prefix")
     @classmethod
@@ -213,6 +218,9 @@ class SearchAllQuery(_Dto):
     path_prefix: str = Field(default="", max_length=MAX_NAME)
     """Only chunks of articles inside this directory of their library, as `list_articles`
     filters; empty keeps every article. The counts per library stay unfiltered."""
+    group_by: ResultGrouping = Field(default=ResultGrouping.ARTICLE)
+    """`article`: the same results, grouped by library and article (each result's `group`),
+    the groups ordered by their best result. `chunk`: each result on its own, best first."""
 
     @field_validator("path_prefix")
     @classmethod
@@ -326,6 +334,10 @@ class SearchResultOut(_Dto):
     explored_path: list[str] = Field(default_factory=list, description=EXPLORED_PATH_DESCRIPTION)
     """The agent's read calls up to this chunk; its schema description is
     ``EXPLORED_PATH_DESCRIPTION``."""
+    group: int | None = None
+    """Grouped by article (`group_by` `article`): the 1-based rank of this result's article.
+    An article's results come together, best first, and its group takes the place of its best
+    result. Null when the results are not grouped."""
 
     @classmethod
     def from_models(cls, version: SearchableVersion, stored: StoredChunk, hit: SearchHit) -> Self:
@@ -399,7 +411,7 @@ class SearchDocsResult(_Dto):
     version, filter and model was answered before, so no agent ran. Its results were checked
     against this version and filter again."""
     results: list[SearchResultOut]
-    """The results, best first; empty when nothing matched."""
+    """The results, best first, or grouped by article (`group`); empty when nothing matched."""
 
 
 class LibrarySearchResultOut(SearchResultOut):
@@ -479,7 +491,8 @@ class SearchAllResult(_Dto):
     libraries: list[LibraryFacetOut]
     """Libraries with at least one BM25 match, most matches first. Never narrowed."""
     results: list[LibrarySearchResultOut]
-    """The results, best first, each naming its library and version."""
+    """The results, best first or grouped by library and article (`group`), each naming its
+    library and version."""
 
 
 class AnswerQuery(_Dto):

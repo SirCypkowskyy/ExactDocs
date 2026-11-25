@@ -17,6 +17,7 @@ from exactdocs.retrieval.errors import EmptySearchTextError, VersionNotIndexedEr
 from exactdocs.retrieval.models import (
     DocTarget,
     ManifestStatus,
+    ResultGrouping,
     SearchableVersion,
     SourceHost,
 )
@@ -187,6 +188,28 @@ async def test_content_shared_by_two_libraries_answers_for_both(world: Fixture) 
     assert sorted(r.library for r in found.results) == ["/a/one", "/b/two"]
     assert found.results[0].score == found.results[1].score
     assert len({r.chunk_id for r in found.results}) == 2  # each library has its own chunk IDs
+
+
+async def test_results_are_grouped_by_library_and_article(world: Fixture) -> None:
+    same = {"a.md": [chunk("T", "token token token"), chunk("U", "a token")]}
+    await world.add("/a/one", "v1", same)
+    await world.add("/b/two", "v2", {"a.md": [chunk("T", "token token")]})
+
+    ranked = await world.retrieval.search_all_libraries(
+        SearchAllQuery(query="token", group_by=ResultGrouping.CHUNK)
+    )
+    grouped = await world.retrieval.search_all_libraries(SearchAllQuery(query="token"))
+
+    assert {r.chunk_id for r in grouped.results} == {r.chunk_id for r in ranked.results}
+    assert grouped.results[0].chunk_id == ranked.results[0].chunk_id
+    # the same path in two libraries is two articles, each kept together, in group order
+    groups = {(r.library, r.article_path): r.group for r in grouped.results}
+    assert sorted(groups.values()) == [1, 2]
+    assert [r.group for r in grouped.results] == [
+        groups[r.library, r.article_path] for r in grouped.results
+    ]
+    assert [r.group or 0 for r in grouped.results] == sorted(r.group or 0 for r in grouped.results)
+    assert all(r.group is None for r in ranked.results)
 
 
 async def test_the_limit_cuts_the_results_not_the_counts(world: Fixture) -> None:

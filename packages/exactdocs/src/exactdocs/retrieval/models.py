@@ -1117,6 +1117,36 @@ class TagMatch(StrEnum):
     ALL = "all"
 
 
+class ResultGrouping(StrEnum):
+    """How a search orders the results it returns (#575)."""
+
+    ARTICLE = "article"
+    """One group per article, the groups ordered by their best result and each group's results
+    best first: the article that answers best comes first with everything of it that matched."""
+    CHUNK = "chunk"
+    """Each result on its own, best first."""
+
+
+def article_groups(articles: Sequence[str]) -> list[tuple[int, int]]:
+    """Group ranked results by article, as ``ResultGrouping.ARTICLE`` orders them.
+
+    The results are the same; only their order changes. An article's group takes the place of
+    its best result, and holds its results in their own order (best first).
+
+    Args:
+        articles: The article of each result, best result first (a key that names the article,
+            with its library when several are searched).
+
+    Returns:
+        ``(index of the result, 1-based rank of its group)`` for every result, in the new order.
+    """
+    rank: dict[str, int] = {}
+    for article in articles:
+        rank.setdefault(article, len(rank) + 1)
+    order = sorted(range(len(articles)), key=lambda i: (rank[articles[i]], i))
+    return [(i, rank[articles[i]]) for i in order]
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TagFilter:
     """Which chunks may be ranked: those whose article has any / all of ``tags``.

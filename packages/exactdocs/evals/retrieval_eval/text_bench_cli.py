@@ -20,8 +20,8 @@ from typing import Final
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.retrieval.dtos import ReadChunkQuery, SearchDocsQuery
-from exactdocs.retrieval.models import RetrievalMode
-from retrieval_eval.dataset import Answer, Hit, RetrievalDataset, fingerprint
+from exactdocs.retrieval.models import ResultGrouping, RetrievalMode
+from retrieval_eval.dataset import Answer, Hit, RetrievalDataset, fingerprint, results_of
 from retrieval_eval.evaluators import RECALL_AT
 from retrieval_eval.fixture import model_free_container
 from retrieval_eval.golden import (
@@ -60,20 +60,26 @@ type Found = dict[str, tuple[Answer, list[str]]]
 
 
 async def bm25_results(
-    container: Container, projects: Sequence[Project], dataset: RetrievalDataset
+    container: Container,
+    projects: Sequence[Project],
+    dataset: RetrievalDataset,
+    *,
+    group_by: ResultGrouping = ResultGrouping.ARTICLE,
 ) -> Found:
-    """Ask every question with BM25 in its project's library; keep each hit and its text.
+    """Ask every question with BM25 in its project's library; keep each hit and the texts.
 
     As ``retrievers.SearchDocsRetriever`` does, each chunk ID is read back, so the version of a
-    hit is the chunk's own; its content is the hit's text.
+    hit is the chunk's own. A result's text is its chunk's content; grouped by article (the
+    search's default, #575), a group is one result, its chunks' contents in the order returned.
 
     Args:
         container: The container, running, with the corpus imported.
         projects: The projects.
         dataset: The golden set.
+        group_by: How the search groups its results.
 
     Returns:
-        Each case's answer, by its name, with the content of each hit.
+        Each case's answer, by its name, with the text of each result.
     """
     libraries = {p.id: p for p in projects}
     found: Found = {}
@@ -87,6 +93,7 @@ async def bm25_results(
                 query=case.inputs.query,
                 limit=max(RECALL_AT),
                 mode=RetrievalMode.BM25,
+                group_by=group_by,
             )
         )
         elapsed_ms = (time.perf_counter() - started) * 1000
@@ -104,13 +111,16 @@ async def bm25_results(
                     commit_sha=chunk.commit_sha,
                     chunk_id=chunk.chunk_id,
                     tokens=tokens(chunk.content),
+                    group=result_hit.group,
                 )
             )
             texts.append(chunk.content)
         answer = Answer(
             hits=hits, pinned_commit=project.commit(case.inputs.version), search_ms=elapsed_ms
         )
-        found[case.name or ""] = (answer, texts)
+        by_hit = dict(zip((h.chunk_id for h in hits), texts, strict=True))
+        shown = ["\n\n".join(by_hit[h.chunk_id] for h in r) for r in results_of(hits)]
+        found[case.name or ""] = (answer, shown)
     return found
 
 
@@ -146,7 +156,8 @@ async def run_chunking(
             message = f"not imported at the pinned commit: {names}"
             raise RuntimeError(message)
         matches = held_match(await held_headings(container.engine, projects))
-        found = await bm25_results(container, projects, dataset)
+        # the scorer is checked on single chunks, the finest results there are
+        found = await bm25_results(container, projects, dataset, group_by=ResultGrouping.CHUNK)
     return calibrate(chunking.name, dataset.cases, found, indexes, matches=matches)
 
 

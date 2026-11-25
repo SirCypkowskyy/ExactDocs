@@ -16,7 +16,7 @@ from typing import Any, Final, Literal, Self
 from pydantic import BaseModel, ConfigDict
 from pydantic_evals import Case
 
-from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question, parts_of
+from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question, parts_of, results_of
 from retrieval_eval.evaluators import SectionMatch, first_rank, same_section, wrong_version_hits
 from retrieval_eval.stats import DEFAULT as DEFAULT_STATS
 from retrieval_eval.stats import (
@@ -131,11 +131,12 @@ def sized(rank: int | None, sizes: Sequence[int] | None) -> tuple[int | None, in
 def section_ranks(
     expected: Sequence[Hit], hits: Sequence[Hit], matches: SectionMatch = same_section
 ) -> tuple[int, ...]:
-    """The ranks, in the top 10, of the hits that answer a part of the case.
+    """The ranks, in the top 10, of the results that answer a part of the case.
 
-    A hit counts when it answers a part no earlier hit answered: one of the part's sections or
-    of its alternatives (#501). So a part found twice, or through two of its alternatives,
-    counts once.
+    A result counts when it answers a part no earlier result answered: one of the part's
+    sections or of its alternatives (#501). So a part found twice, or through two of its
+    alternatives, counts once. A result is a hit, or the hits of one article group (#575,
+    ``results_of``), which answers one part, as a text result does (``text_bench``).
 
     Args:
         expected: The sections the case lists (``parts_of`` groups them).
@@ -147,8 +148,10 @@ def section_ranks(
     """
     left = parts_of(expected)
     ranks = []
-    for rank, hit in enumerate(hits[:NDCG_AT], start=1):
-        found = next((part for part in left if any(matches(e, hit) for e in part)), None)
+    for rank, result in enumerate(results_of(hits)[:NDCG_AT], start=1):
+        found = next(
+            (part for part in left if any(matches(e, hit) for e in part for hit in result)), None
+        )
         if found is not None:
             left.remove(found)
             ranks.append(rank)
@@ -192,8 +195,10 @@ def row_of(
     """
     expected = case.expected_output.hits if case.expected_output else []
     rank = first_rank(expected, answer, matches) if expected else None
-    sizes = [h.tokens for h in answer.hits]
-    context, to_hit = sized(rank, [s or 0 for s in sizes] if None not in sizes else None)
+    results = results_of(answer.hits)
+    known = all(h.tokens is not None for h in answer.hits)
+    sizes = [sum(h.tokens or 0 for h in r) for r in results] if known else None
+    context, to_hit = sized(rank, sizes)
     return Row(
         case=case.name or "",
         kind=case.metadata.kind if case.metadata else "",

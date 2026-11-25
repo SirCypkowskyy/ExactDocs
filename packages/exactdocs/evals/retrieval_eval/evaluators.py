@@ -6,7 +6,7 @@ from typing import Final
 
 from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
 
-from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question, TracedRead
+from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question, TracedRead, results_of
 
 RECALL_AT: Final[tuple[int, ...]] = (1, 5, 10)
 """The cut-offs recall is measured at; the suite asks every mode for the largest."""
@@ -85,7 +85,8 @@ def first_rank(
     """Return the 1-based rank of the first hit on any expected section, as recall counts it.
 
     Any section the case lists counts, its alternatives and every part of a multi-part answer
-    alike (#501): a hit on one of them is a hit.
+    alike (#501): a hit on one of them is a hit. Hits a search grouped by article are one
+    result, ranked as their group (``results_of``, #575).
 
     Args:
         expected: The sections the case lists.
@@ -95,8 +96,8 @@ def first_rank(
     Returns:
         The rank, or ``None`` when no hit answers any of them.
     """
-    for rank, hit in enumerate(answer.hits, start=1):
-        if any(matches(e, hit) for e in expected):
+    for rank, result in enumerate(results_of(answer.hits), start=1):
+        if any(matches(e, hit) for e in expected for hit in result):
             return rank
     return None
 

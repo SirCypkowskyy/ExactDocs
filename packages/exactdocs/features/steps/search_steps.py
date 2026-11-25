@@ -187,6 +187,31 @@ def step_search_tags(context: Context, query: str, target: str, tags: str) -> No
     context.wanted_tags = wanted
 
 
+@when('a user searches "{target}" for "{query}" grouped by article')
+def step_search_grouped(context: Context, target: str, query: str) -> None:
+    context.ranked_results = context.response.json()["results"]
+    _search(context, target, {"q": query, "group_by": "article", "limit": 10})
+
+
+@then("the results are best first and none names a group")
+def step_best_first(context: Context) -> None:
+    results = context.response.json()["results"]
+    assert results, context.response.text
+    scores = [r["score"] for r in results]
+    assert scores == sorted(scores, reverse=True), scores
+    assert all(r["group"] is None for r in results), results
+
+
+@then("the same results come grouped by article, as the MCP search returns them")
+def step_grouped(context: Context) -> None:
+    grouped = context.response.json()["results"]
+    ranked = context.ranked_results
+    assert {r["chunk_id"] for r in grouped} >= {r["chunk_id"] for r in ranked}
+    order = list(dict.fromkeys(r["article_path"] for r in grouped))
+    assert [r["group"] for r in grouped] == [order.index(r["article_path"]) + 1 for r in grouped]
+    assert grouped[0]["chunk_id"] == ranked[0]["chunk_id"]
+
+
 @then('the result is explicitly empty for version "{ref}"')
 def step_empty(context: Context, ref: str) -> None:
     body = context.response.json()
