@@ -134,7 +134,7 @@ def serve(
         # SQLite: one process, it alone runs jobs and their recovery and its tag lock orders
         # re-tags; uvicorn would otherwise start WEB_CONCURRENCY workers. PostgreSQL: each worker
         # is a process of its own, with its own DBOS executor and the database's advisory locks,
-        # so WEB_CONCURRENCY decides (docs/architecture.md).
+        # so WEB_CONCURRENCY decides (docs/architecture/jobs.md).
         workers=None if settings.uses_postgres else 1,
         # PostgreSQL: a process that lost its executor slot stops itself with SIGTERM; open MCP
         # streams must not keep it alive (and its DBOS threads polling) for long.

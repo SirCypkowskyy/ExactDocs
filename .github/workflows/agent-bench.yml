@@ -1,7 +1,7 @@
 name: Agent benchmark (real providers)
 
 # Manual only: it calls hosted models with the repository's keys, so it never runs on a push or a
-# pull request. It runs the agent benchmark (docs/evals.md#the-agent-benchmark,
+# pull request. It runs the agent benchmark (docs/evals/agent-bench.md,
 # `just agent-bench run`): each agent model answers the golden set with each documentation arm
 # (`none`: no tools; `exactdocs`: only the ExactDocs MCP tools, under each retrieval
 # configuration), and an LLM judge, blind to the arm, grades the answers.
@@ -56,7 +56,7 @@ env:
   FORCE_COLOR: "1"
   PYDANTIC_AI_NO_BANNER: "1"
 
-# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing.md "CI/CD and
+# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing/runners.md "CI/CD and
 # runners"); it uses none of the GitHub-hosted minutes.
 jobs:
   bench:

@@ -1,24 +1,45 @@
 # Ingestion results
 
+!!! abstract "TL;DR"
+    - Nothing is lost between chunkings: all 381 expected sections are in some chunk in every
+      configuration.
+    - `default` keeps 91.6% coverage with a p95 of 727 tokens; `h6` has 100% and 507 tokens; `h2`
+      starts a chunk for only half the expected sections.
+    - The problems found are the importer's (Zod v4's MDX fences, Pydantic's `{#id}` attributes and
+      includes, MkDocs admonitions and tabs), not a configuration's.
+    - First recorded on 13 November 2026, last on 24 November 2026.
+
 What the importer makes of the [golden set](golden-set.md)'s corpus under each chunking
 configuration, measured against the source at each pinned commit, with BM25 over the whole golden
 set on the chunks it produced. No model is involved. The metrics are defined in
 [Method](method.md#ingestion-metrics).
 
-The recorded run is `packages/exactdocs/evals/results/ingestion.json`, recorded on 13 November
-2026 with #346 on every pinned version of the five projects (the commits are on the
-[Golden set](golden-set.md#the-corpus) page). The report does not record the ExactDocs commit or
-the machine. #381 changed the default chunking and ran it again: the numbers are the same, under
-new names (`default` is what was `h3-max-4000`, and `h6` what was `default`). The golden set's
-review (#490) added expected sections to some cases, so it was recorded again on 23 November 2026
-(on Linux, 4 CPUs): only the counts of expected sections and the coverage moved, every other
-number is the same. #503 fixed how a hit is matched to an expected section at a coarser chunking
-(a chunk now counts for every section it holds, [Method](method.md#chunking-configurations)), so
-it was recorded again on 24 November 2026: only BM25 at `h2` and `merge-400` moved, to 82.8% and
-81.7% recall@5 from 76.0% and 74.2%. Then #501 counted a hit on any section a case lists
-([Method](method.md#retrieval-metrics)) and marked the review's added sections as alternatives,
-so it was recorded once more the same day: only the BM25 columns moved (recall@5 87.6% at
-`default`, 85.8% at `h6`, 89.1% at `h2`, 87.6% at `merge-400`). The lists of sections that start no chunk, and examples of each problem, are in
+The recorded run is `packages/exactdocs/evals/results/ingestion.json`, on every pinned version of
+the five projects (the commits are on the [Golden set](golden-set.md#the-corpus) page). It was
+recorded several times:
+
+| When | Issue | What moved |
+|---|---|---|
+| 13 November 2026 | #346 | first run[^first-run] |
+| after #381 | #381 | nothing: the same numbers under new names[^renames] |
+| 23 November 2026 | #490 | only the counts of expected sections and the coverage |
+| 24 November 2026 | #503 | only BM25 at `h2` and `merge-400`:<br/>82.8% and 81.7% recall@5, from 76.0% and 74.2% |
+| 24 November 2026, again | #501 | only the BM25 columns: recall@5 87.6% at `default`,<br/>85.8% at `h6`, 89.1% at `h2`, 87.6% at `merge-400` |
+
+Why each one ran:
+
+- **#381** changed the default chunking and ran it again.
+- **#490**, the golden set's review, added expected sections to some cases. That run was on
+  Linux, 4 CPUs, and every number other than those named above is the same.
+- **#503** fixed how a hit is matched to an expected section at a coarser chunking: a chunk now
+  counts for every section it holds ([Method](method.md#chunking-configurations)).
+- **#501** counted a hit on any section a case lists ([Method](method.md#retrieval-metrics)) and
+  marked the review's added sections as alternatives.
+
+[^first-run]: The report does not record the ExactDocs commit or the machine.
+[^renames]: `default` is what was `h3-max-4000`, and `h6` what was `default`.
+
+The lists of sections that start no chunk, and examples of each problem, are in
 [`results/ingestion.md`](https://github.com/SirCypkowskyy/ExactDocs/blob/develop/packages/exactdocs/evals/results/ingestion.md).
 
 What it shows:
@@ -26,13 +47,17 @@ What it shows:
 - Nothing is lost between configurations: every one of the 381 expected sections is still in some
   chunk, and the same 11,446 source characters (from Zod v4's symlinked README) are missing in all
   four.
-- Coarser chunking trades coverage for size: `h2` starts a chunk for only half the expected
-  sections and its largest chunks pass 20,000 tokens; `default` (split level 3, 4,000
-  characters, a new library's chunking since #381) keeps 91.6% coverage with a p95 of 727
-  tokens, against 100% and 507 tokens at `h6`, the default before.
-- The problems found here are the importer's, not a configuration's: Zod v4's MDX fences hide 60
-  headings, Pydantic keeps `{#id}` attributes in heading paths, MkDocs admonitions and tabs read
-  as code blocks, and Pydantic v1's includes stay unexpanded.
+- Coarser chunking trades coverage for size:
+    - `h2` starts a chunk for only half the expected sections, and its largest chunks pass 20,000
+      tokens;
+    - `default` (split level 3, 4,000 characters, a new library's chunking since #381) keeps
+      91.6% coverage with a p95 of 727 tokens;
+    - `h6`, the default before, has 100% and 507 tokens.
+- The problems found here are the importer's, not a configuration's:
+    - Zod v4's MDX fences hide 60 headings;
+    - Pydantic keeps `{#id}` attributes in heading paths;
+    - MkDocs admonitions and tabs read as code blocks;
+    - Pydantic v1's includes stay unexpanded.
 - The BM25 column is this benchmark's own run. The [retrieval results](retrieval.md) measure BM25
   again at each chunking in a separate run, with the same match rule and the same numbers. The
   defaults are chosen from the retrieval run.

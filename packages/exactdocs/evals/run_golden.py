@@ -1,4 +1,4 @@
-"""The golden set: ``just golden-validate`` / ``just golden-import`` (docs/evals.md).
+"""The golden set: ``just golden-validate`` / ``just golden-import`` (docs/evals/golden-set.md).
 
 As in ``run_retrieval_eval.py``, the test-support directory (the importer wiring) is put on the
 path before the CLI is imported.

@@ -1,6 +1,6 @@
 # Builds the Zensical site from docs/ and publishes it to GitHub Pages.
 #
-# Runners (docs/releasing.md "CI/CD and runners"), switched by the repository variable RUNNER_MODE
+# Runners (docs/releasing/runners.md "CI/CD and runners"), switched by the repository variable RUNNER_MODE
 # (Settings -> Secrets and variables -> Actions -> Variables): GitHub-hosted ubuntu-24.04 in
 # `hybrid` (the default, also when unset), the self-hosted ARM64 runner [self-hosted, linux, ARM64,
 # exactdocs] in `self-hosted` (when the GitHub-hosted minutes ran out).

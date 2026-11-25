@@ -5,7 +5,7 @@
 - ``check``: no model; every reference passes and every other-version solution fails (CI);
 - ``run``: agents complete the tasks with each documentation arm (``agent.py``).
 
-See docs/evals.md#version-pinned-coding-tasks.
+See docs/evals/coding-tasks.md.
 """
 
 import argparse
@@ -52,7 +52,7 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="coding-tasks",
         description="Version-pinned coding tasks: an agent's code must run against the version "
-        "the project pins (docs/evals.md#version-pinned-coding-tasks).",
+        "the project pins (docs/evals/coding-tasks.md).",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     for name, text in (

@@ -1,6 +1,6 @@
 """``just golden-review``: draw the review sample, run the whole-set checks, summarize the review.
 
-See docs/evals.md#reviewing-the-golden-set.
+See docs/evals/golden-set.md#reviewing-the-golden-set.
 """
 
 import argparse
@@ -53,7 +53,9 @@ def _parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="golden-review",
-        description="Review the golden set: a seeded sample, whole-set checks (docs/evals.md).",
+        description=(
+            "Review the golden set: a seeded sample, whole-set checks (docs/evals/golden-set.md)."
+        ),
     )
     parser.add_argument("command", choices=["sample", "checks", "summary"])
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED, help="sample: the random seed")

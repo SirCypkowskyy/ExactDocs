@@ -1,4 +1,4 @@
-"""The retrieval grid: ``just retrieval-grid`` (docs/evals.md#the-retrieval-grid).
+"""The retrieval grid: ``just retrieval-grid`` (docs/evals/retrieval-grid.md).
 
 As in ``run_retrieval_bench.py``, the test-support directory (the importer wiring) is put on the
 path before the CLI is imported.

@@ -9,5 +9,5 @@ sandbox and finds the forbidden APIs and the files changed; ``evaluators`` repor
 ``workspace`` gives the agent its workspace tools; ``agent`` runs a pydantic-ai agent on a task with
 a documentation arm of the agent benchmark (``agent_bench``); ``offline`` holds the scripted
 models; ``report`` aggregates per task, project and arm; ``cli`` is ``just coding-tasks``. See
-docs/evals.md#version-pinned-coding-tasks.
+docs/evals/coding-tasks.md.
 """

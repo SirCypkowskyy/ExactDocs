@@ -1,16 +1,29 @@
 # Retrieval results
 
+!!! abstract "TL;DR"
+    - Recorded on 24 November 2026 on the whole golden set, with no provider.
+    - BM25 scores alike at `h2`, `default` and `merge-400` (89.1%, 87.6% and 87.6% recall@5); `h2`'s
+      lead is not significant (p 0.42), so the shipped default stays `default`.
+    - The best local configuration, hybrid on bge-small at `merge-400` (91.0%), is 1.9 points above
+      BM25 at `h2`, not significant (p 0.33).
+    - No configuration returned a result of another version, and none signalled "no answer" on any
+      of the 54 unanswerable cases.
+
 Every retrieval configuration that could run, at every chunking configuration, on the whole
 [golden set](golden-set.md). The metrics are defined in [Method](method.md#retrieval-metrics);
 the default each budget gets is on [Recommended defaults](defaults.md).
 
 ## The recorded run
 
-`packages/exactdocs/evals/results/retrieval.json`, recorded on 24 November 2026 for #503 and #501
-on the golden set with its alternatives marked (`sha256:a00997851150e3b0`), on one self-hosted
-runner VM (Linux aarch64, 4 CPUs), with no provider, in 3 h 22 min
-([the command and the timings](../evals.md#the-recorded-run)). A full local matrix would take far
-longer, so it ran a subset:
+| | |
+|---|---|
+| Report | `packages/exactdocs/evals/results/retrieval.json` |
+| Recorded | 24 November 2026, for #503 and #501 |
+| Golden set | with its alternatives marked (`sha256:a00997851150e3b0`) |
+| Machine | one self-hosted runner VM (Linux aarch64, 4 CPUs), with no provider |
+| Duration | 3 h 22 min ([the command and the timings](../evals/retrieval-runs.md#the-recorded-run)) |
+
+A full local matrix would take far longer, so it ran a subset:
 
 - `bm25` and `hybrid:bge-small-en-v1.5` at every chunking;
 - `bm25+ce` at `default`, `h6` and `h2`, and `hybrid:bge-small-en-v1.5+ce` at `default` and `h6`;
@@ -21,25 +34,26 @@ Every result keeps each case's outcome, so every one has intervals and a paired 
 budget's default ([Intervals and significance](method.md#intervals-and-significance)). The
 latencies are that runner's.
 
-**Two scoring rules changed since the run it replaces** (23–24 November, the same subset on the
-same runner), so its numbers are not comparable with that one's
-([Method](method.md#retrieval-metrics)):
+!!! warning "Two scoring rules changed since the run it replaces"
+    The run it replaces (23–24 November, the same subset on the same runner) is not comparable
+    with this one ([Method](method.md#retrieval-metrics)):
 
-- A chunk counts for every section it holds (#503). Before, a chunk that held the expected section
-  next to a sibling was a miss, which undercounted `h2` and `merge-400` (BM25's recall@5 was 76.0%
-  and 74.2% there).
-- recall@k and MRR count a hit on any section a case lists, and section recall and nDCG@10 count
-  each part of the answer once, an alternative counting as its part (#501). Before, recall@k
-  counted the first listed section only. This alone lifts BM25's recall@5 at `default` from 81.7%
-  to 87.6%: 3 cases by the alternatives the review marked, 13 by the other parts of multi-part
-  cases (8 of them `cross-page`).
+    - A chunk counts for every section it holds (#503). Before, a chunk that held the expected
+      section next to a sibling was a miss, which undercounted `h2` and `merge-400` (BM25's
+      recall@5 was 76.0% and 74.2% there).
+    - recall@k and MRR count a hit on any section a case lists, and section recall and nDCG@10
+      count each part of the answer once, an alternative counting as its part (#501). Before,
+      recall@k counted the first listed section only. This alone lifts BM25's recall@5 at
+      `default` from 81.7% to 87.6%: 3 cases by the alternatives the review marked, 13 by the
+      other parts of multi-part cases (8 of them `cross-page`).
 
-**Every hosted configuration is not measured yet**: hybrid on a hosted embedding model, HyDE,
-agentic search and every configuration reranked by the LLM judge. They run only from the manual
-*Retrieval eval (real providers)* workflow (`.github/workflows/eval-providers.yml`) with the
-`benchmark` input ticked, or locally with `--allow-providers`
-([Running the hosted part](../evals.md#running-the-hosted-part)). They are listed under
-"Not run" below.
+!!! note "Every hosted configuration is not measured yet"
+    That is hybrid on a hosted embedding model, HyDE, agentic search and every configuration
+    reranked by the LLM judge. They run only from the manual *Retrieval eval (real providers)*
+    workflow (`.github/workflows/eval-providers.yml`) with the `benchmark` input ticked, or
+    locally with `--allow-providers`
+    ([Running the hosted part](../evals/retrieval-runs.md#running-the-hosted-part)). They are listed under
+    "Not run" below.
 
 <!-- bench:retrieval-run -->
 - Golden set: 321 cases, fingerprint `sha256:a00997851150e3b0`, projects starlette, pydantic, tanstack-query, zod, electron.
@@ -67,24 +81,30 @@ agentic search and every configuration reranked by the LLM judge. They run only 
 
 ## What it shows
 
-- BM25 scores alike at `h2`, `default` and `merge-400`: 89.1%, 87.6% and 87.6% recall@5. `h2`
-  comes first by the benchmark's ordering, so the summary names it, but its lead over `default`
-  is not significant on any metric (recall@5 +1.5 points, p 0.42; recall@1 p 0.24; MRR p 0.13),
-  and its chunks are about twice as long (7,065 estimated tokens in a question's ten results
-  against 3,464, [text calibration](../evals.md#calibration)). `h6`, where every heading starts a
-  chunk, is below them: 85.8%, with MRR and nDCG@10 significantly worse than at `default`. The
-  shipped default stays `default` (#381); a non-significant lead does not change it.
-- Hybrid search on bge-small is the best local configuration, at `merge-400` (91.0%), but only
-  1.9 points of recall@5 above BM25 at `h2`, under the 5-point margin and not significant
-  (p 0.33). At `default`, `h6` and `merge-400` it ranks the answer higher than BM25 at `default`
-  (MRR and nDCG@10 significantly better) without finding significantly more answers in the top 5.
-- The intervals per kind and per project are about twice as wide as the whole set's (around
+- **BM25 scores alike at `h2`, `default` and `merge-400`**: 89.1%, 87.6% and 87.6% recall@5.
+    - `h2` comes first by the benchmark's ordering, so the summary names it, but its lead over
+      `default` is not significant on any metric (recall@5 +1.5 points, p 0.42; recall@1 p 0.24;
+      MRR p 0.13).
+    - Its chunks are about twice as long: 7,065 estimated tokens in a question's ten results
+      against 3,464 ([text calibration](../evals/text-scoring.md#calibration)).
+    - `h6`, where every heading starts a chunk, is below them: 85.8%, with MRR and nDCG@10
+      significantly worse than at `default`.
+    - The shipped default stays `default` (#381); a non-significant lead does not change it.
+- **Hybrid search on bge-small** is the best local configuration, at `merge-400` (91.0%).
+    - That is only 1.9 points of recall@5 above BM25 at `h2`: under the 5-point margin and not
+      significant (p 0.33).
+    - At `default`, `h6` and `merge-400` it ranks the answer higher than BM25 at `default` (MRR
+      and nDCG@10 significantly better) without finding significantly more answers in the top 5.
+- **The intervals per kind and per project** are about twice as wide as the whole set's (around
   ±10 points of recall@5 on some 50 cases): differences of a few points there say little.
-- The cross-encoder on BM25 reaches 89.5% at `default` and 89.1% at `h6`, not significant over
-  BM25 at `default` (p 0.36 and 0.46), at about 2.5 s per question (p50) on this runner, and loses
-  recall at `h2` (85.4%, significantly below its `default`), whose chunks are longer than its
-  window. On hybrid it adds nothing. At `h6` it ranks the first hit slightly higher than at
-  `default` (recall@1 +1.9 points, significant for both rerankers, recall@5 the same).
+- **The cross-encoder on BM25** reaches 89.5% at `default` and 89.1% at `h6`.
+    - Neither is significant over BM25 at `default` (p 0.36 and 0.46), and it takes about 2.5 s
+      per question (p50) on this runner.
+    - It loses recall at `h2` (85.4%, significantly below its `default`), whose chunks are longer
+      than its window.
+    - On hybrid it adds nothing.
+    - At `h6` it ranks the first hit slightly higher than at `default` (recall@1 +1.9 points,
+      significant for both rerankers, recall@5 the same).
 - snowflake-arctic-embed-s scores below BM25 (79.8%).
 - No configuration returned a result of another version, and none signalled "no answer" on any of
   the 54 unanswerable cases: `search_docs` gives a caller no way to tell an unanswerable question

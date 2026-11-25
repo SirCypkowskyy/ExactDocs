@@ -1,36 +1,64 @@
 # Agent results
 
+!!! abstract "TL;DR"
+    - First run on 2026-11-24: 60 golden questions, two agent models, each with no docs (`none`)
+      and with only the ExactDocs MCP tools (`exactdocs`), judged by `glm-5.3`.
+    - With ExactDocs, accuracy rose significantly for both: `gpt-oss:120b` from 13.3% to 43.3%
+      (+30.0 points [+18.3, +43.3], p = 2.1e-05), `kimi-k3` from 33.3% to 85.0% (+51.7 points
+      [+40.0, +65.0], p = 4.7e-10).
+    - With ExactDocs no answer was true of another version only; without, 15 of `gpt-oss:120b`'s 60
+      answers and 5 of `kimi-k3`'s were.
+    - The judge is not checked against hand labels yet, and Ollama Cloud's usage limit kept the run
+      at 60 questions.
+
 Does a coding agent answer version-specific questions better with ExactDocs than from what it
 already knows, and what does that cost in time and tokens? The agent benchmark (#348, #495) asks
-the same model each [golden-set](golden-set.md) question twice: once with **no documentation**
-(arm `none`) and once with **only the ExactDocs MCP tools** (arm `exactdocs`), and an LLM judge,
-blind to the arm, grades every answer against the case's reference and facts. Context7 (#493) and
-Grounded Docs (#492) are the next arms.
+the same model each [golden-set](golden-set.md) question twice:
 
-**The first run** (2026-11-24): two agent models from different vendors, `gpt-oss:120b` (OpenAI;
-its model card gives a June 2024 knowledge cutoff, before the newest pinned version of every
-project) and `kimi-k3` (Moonshot AI), judged by `glm-5.3` (Z.ai), on 60 golden questions (2 of
-each kind in each project, a seeded stratified sample), 240 answers. With the ExactDocs tools:
+- once with **no documentation** (arm `none`);
+- once with **only the ExactDocs MCP tools** (arm `exactdocs`).
 
-- **Accuracy rose for both models, significantly.** `gpt-oss:120b` went from 13.3% [5.0, 21.7]
-  to 43.3% [31.7, 56.7] (+30.0 points [+18.3, +43.3]; 19 questions gained, 1 lost; McNemar
-  p = 2.1e-05). `kimi-k3` went from 33.3% [21.7, 45.0] to 85.0% [75.0, 93.3] (+51.7 points
-  [+40.0, +65.0]; 31 gained, 0 lost; p = 4.7e-10).
+An LLM judge, blind to the arm, grades every answer against the case's reference and facts.
+Context7 (#493) and Grounded Docs (#492) are the next arms.
+
+**The first run** (2026-11-24):
+
+| | |
+|---|---|
+| Agent models | `gpt-oss:120b` (OpenAI)[^cutoff] and `kimi-k3` (Moonshot AI), from different vendors |
+| Judge | `glm-5.3` (Z.ai) |
+| Questions | 60 golden questions (2 of each kind in each project, a seeded stratified sample) |
+| Answers | 240 |
+
+[^cutoff]: Its model card gives a June 2024 knowledge cutoff, before the newest pinned version of
+    every project.
+
+With the ExactDocs tools:
+
+- **Accuracy rose for both models, significantly.**
+
+    | Model | `none` | `exactdocs` | Difference | Gained / lost | McNemar p |
+    |---|---|---|---|---|---|
+    | `gpt-oss:120b` | 13.3% [5.0, 21.7] | 43.3% [31.7, 56.7] | +30.0 points [+18.3, +43.3] | 19 / 1 | 2.1e-05 |
+    | `kimi-k3` | 33.3% [21.7, 45.0] | 85.0% [75.0, 93.3] | +51.7 points [+40.0, +65.0] | 31 / 0 | 4.7e-10 |
+
 - **No answer was true of another version only.** Without documentation the judge flagged 15 of
   `gpt-oss:120b`'s 60 answers (25%) and 5 of `kimi-k3`'s (8%) as stating what holds for another
   version; with ExactDocs, none of either model's.
 - **More right refusals.** On the 10 `unanswerable` questions, `kimi-k3` said the documentation
   does not cover it 9 times with ExactDocs against 2 without; `gpt-oss:120b` 4 against 2. Neither
   model refused an answerable question with ExactDocs.
-- **What it costs depends on the model.** `gpt-oss:120b` took twice as long (2.9 s to 6.0 s a
-  question on average, p95 5.1 s to 10.3 s; +3.1 s [+2.4, +3.7], p = 0.0001) and wrote 21% more
-  output tokens (745 to 901, thinking included; p = 0.002). `kimi-k3` was not slower: its mean
-  fell from 19.1 s to 14.6 s and its output from 1,913 to 1,318 tokens, neither significant
-  (p = 0.19 and 0.073). Without documentation it thinks at length about versions it does not
-  know (p95: 56 s and an estimated 5,400 thinking tokens); with it, the median rose (9.8 s to
-  12.5 s) and the long tail shrank (p95 33 s). Both made about 5.5 tool calls a question, and
-  what the tools returned grew the input from about 200 tokens to 38,000 (`kimi-k3`) and 50,000
-  (`gpt-oss:120b`) a question: the bulk of the cost on a per-token price.
+- **What it costs depends on the model.**
+    - `gpt-oss:120b` took twice as long (2.9 s to 6.0 s a question on average, p95 5.1 s to
+      10.3 s; +3.1 s [+2.4, +3.7], p = 0.0001) and wrote 21% more output tokens (745 to 901,
+      thinking included; p = 0.002).
+    - `kimi-k3` was not slower: its mean fell from 19.1 s to 14.6 s and its output from 1,913 to
+      1,318 tokens, neither significant (p = 0.19 and 0.073). Without documentation it thinks at
+      length about versions it does not know (p95: 56 s and an estimated 5,400 thinking tokens);
+      with it, the median rose (9.8 s to 12.5 s) and the long tail shrank (p95 33 s).
+    - Both made about 5.5 tool calls a question. What the tools returned grew the input from
+      about 200 tokens to 38,000 (`kimi-k3`) and 50,000 (`gpt-oss:120b`) a question: the bulk of
+      the cost on a per-token price.
 - **The judge is strict.** `correct` needs every fact the case lists, and the facts often go
   beyond the literal question; a brief, right answer is often `partially_correct` (24 of
   `gpt-oss:120b`'s 60 answers with ExactDocs). That lowers the accuracy of both arms alike.
@@ -72,9 +100,12 @@ each kind in each project, a seeded stratified sample), 240 answers. With the Ex
 - Cases: 60 (2 per kind and project, seed 495); at most 20 model requests per question; thinking: medium; 3 questions at a time; 6 retries of a failed request.
 <!-- /bench -->
 
-The judge ran with its model's default thinking; the agents with `--thinking medium` (sent as
-`reasoning_effort`; the models think whatever it says). ExactDocs ran with BM25, its default with
-no model. The run was planned on 90 questions (3 per kind and project, seed 495):
+- The judge ran with its model's default thinking.
+- The agents ran with `--thinking medium` (sent as `reasoning_effort`; the models think whatever
+  it says).
+- ExactDocs ran with BM25, its default with no model.
+
+The run was planned on 90 questions (3 per kind and project, seed 495):
 
 ```bash
 OLLAMA_BASE_URL=https://ollama.com/v1 OLLAMA_API_KEY=... just agent-bench run \
@@ -83,17 +114,26 @@ OLLAMA_BASE_URL=https://ollama.com/v1 OLLAMA_API_KEY=... just agent-bench run \
   --per-stratum 3 --concurrency 3 --report reports/evals/agent-bench.json
 ```
 
-It started at 08:16 UTC; at 08:40, after about 155 answers, every request got
-`429 ... reached your session usage limit`, recorded as provider errors (not wrong answers). When
-the limit lifted (11:08), `--per-stratum 2 --resume` asked again what had failed and finished the
-60-question sample (the first two of each stratum's three draws: the same seed) at 11:29, with no
-provider error left; the start time above is that resumed run's. Extending it to 90 with
-`--per-stratum 3 --resume` hit the limit again after 17 more answers: on the plan used, an Ollama
-Cloud session held about 155 answers with their judgements. The 90-question sample (about 50
-answers short) and all 321 questions (about six more sessions) are left for a later run, which
-`--resume` lets span sessions. Each question's four answers (two models, two arms) were asked
-together, so both arms of a question ran in the same session, except for one question whose
-answers straddle the limit.
+How it went:
+
+| Time (UTC) | What happened |
+|---|---|
+| 08:16 | the run started |
+| 08:40 | after about 155 answers, every request got `429 ... reached your session usage limit`[^429] |
+| 11:08 | the limit lifted; `--per-stratum 2 --resume` asked again what had failed |
+| 11:29 | the 60-question sample finished with no provider error left[^resumed] |
+| later | extending it to 90 with `--per-stratum 3 --resume`<br/>hit the limit again after 17 more answers |
+
+[^429]: Recorded as provider errors, not wrong answers.
+[^resumed]: The first two of each stratum's three draws: the same seed. The start time above is
+    that resumed run's.
+
+On the plan used, an Ollama Cloud session held about 155 answers with their judgements. The
+90-question sample (about 50 answers short) and all 321 questions (about six more sessions) are
+left for a later run, which `--resume` lets span sessions.
+
+Each question's four answers (two models, two arms) were asked together, so both arms of a
+question ran in the same session, except for one question whose answers straddle the limit.
 
 <!-- bench:agent -->
 ## Quality
@@ -161,17 +201,25 @@ In brackets: the 95% interval, a percentile bootstrap over the questions (10,000
 
 ## What a run measures
 
-Per agent model and arm: accuracy (correct, plus a refusal on an `unanswerable` case) overall,
-per question kind and per project; answers true only of another version; refusals on answerable
-cases; correct refusals on `unanswerable` cases; how often the agent read every part of the
-answer in full (a section of each part, or one of its alternatives); tool calls; and the cost per
-question: wall time, input tokens, output tokens with the
-thinking, thinking tokens on their own, USD. Every rate and mean has a 95% interval, every cost
-its median and 95th percentile, and `exactdocs` is compared with `none` on the same cases:
-McNemar's test for accuracy, a paired permutation test for time and tokens
-([Method](method.md#agent-metrics-and-the-judge),
-[Intervals and significance](method.md#intervals-and-significance)). A question the provider
-failed on is an error, left out of every rate and test, never a wrong answer.
+Per agent model and arm:
+
+- accuracy (correct, plus a refusal on an `unanswerable` case) overall, per question kind and per
+  project;
+- answers true only of another version;
+- refusals on answerable cases, and correct refusals on `unanswerable` cases;
+- how often the agent read every part of the answer in full (a section of each part, or one of
+  its alternatives);
+- tool calls;
+- the cost per question: wall time, input tokens, output tokens with the thinking, thinking
+  tokens on their own, USD.
+
+Every rate and mean has a 95% interval, and every cost its median and 95th percentile.
+`exactdocs` is compared with `none` on the same cases: McNemar's test for accuracy, a paired
+permutation test for time and tokens ([Method](method.md#agent-metrics-and-the-judge),
+[Intervals and significance](method.md#intervals-and-significance)).
+
+A question the provider failed on is an error, left out of every rate and test, never a wrong
+answer.
 
 ## What produces the results
 
@@ -186,7 +234,8 @@ A run with real models, by hand:
 
 The recorded run is `packages/exactdocs/evals/results/agent.json` (and `agent.md`); `just
 bench-pages` fills this page's tables from it. The flags, the keys the workflow reads and the
-labelling rules are in [The agent benchmark](../evals.md#the-agent-benchmark).
+labelling rules are in [The agent benchmark](../evals/agent-bench.md).
 
-The stand-in run (`just agent-bench run --offline`) uses scripted models to check the plumbing.
-Its numbers say nothing about an agent and are not published.
+!!! note "The stand-in run"
+    `just agent-bench run --offline` uses scripted models to check the plumbing. Its numbers say
+    nothing about an agent and are not published.

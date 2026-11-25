@@ -1,6 +1,6 @@
 """Constants of ``exactdocs.retrieval``: every fixed value its modules share.
 
-Each is ``Final`` and documented; see *Python conventions* in docs/architecture.md.
+Each is ``Final`` and documented; see docs/architecture/conventions.md.
 """
 
 import re
@@ -789,8 +789,8 @@ LIBSQL_DEFAULT_COMPRESSION: Final[str] = "float1bit"
 """The ``compress_neighbors`` default: the index stores each neighbour's vector as one bit per
 dimension. The index only proposes candidates, whose exact distances rank them, and it is 5
 times smaller and several times faster to write than with ``float8`` (1536 dimensions: about
-40 KiB a chunk instead of 200), with the same recall in our measurements (docs/configuration.md,
-*libSQL*)."""
+40 KiB a chunk instead of 200), with the same recall in our measurements
+(docs/configuration/index-backends/libsql.md, *Sizing*)."""
 LIBSQL_URL_SCHEMES: Final[frozenset[str]] = frozenset({"libsql", "https", "http"})
 """The schemes of a libSQL server's URL (``libsql://`` is HTTPS, or HTTP with ``?tls=0``)."""
 LIBSQL_ANN_OVERFETCH: Final[int] = 2
@@ -991,8 +991,9 @@ FORMAT: Final[int] = 2
 """The format this build writes, stored in `retrieval_search_format` by every rebuild. Bump it when
 what an entry holds changes but the table keeps its columns (`fts_row`, `identifier_tokens`, the
 tokenizer): old entries keep answering, built the old way, until `exactdocs reindex`, and the
-release notes say "requires reindex" (docs/releasing.md). A change of columns needs an Alembic
-revision that rebuilds the table instead (as a91c4e7b3d02 did), since these queries name them.
+release notes say "requires reindex" (docs/releasing/upgrades.md). A change of columns needs an
+Alembic revision that rebuilds the table instead (as a91c4e7b3d02 did), since these queries name
+them.
 """
 REBUILD_BATCH: Final[int] = 500
 """Chunks per write transaction while the new index is built."""
@@ -1329,7 +1330,7 @@ by its weight *before* BM25 saturates it, so one occurrence in a column of weigh
 ``w * (k1 + 1) / (w + k1)`` times one in the text. Tantivy multiplies each field's whole BM25 score
 by its boost instead, so FTS5's raw weights (20 for a heading) would let any word of a short
 heading win. With the derived boosts the ranking suite passes and the retrieval eval's BM25
-recall matches SQLite's (docs/evals.md); they follow any change to the FTS5 weights."""
+recall matches SQLite's (docs/evals/suite.md#tiers); they follow any change to the FTS5 weights."""
 _PG_SEARCH_FIELDS: Final[str] = (
     "s.heading ||| CAST(:{{words}} AS text)::pdb.boost({})"
     " OR s.path ||| CAST(:{{words}} AS text)::pdb.boost({})"
@@ -1433,8 +1434,8 @@ the first that can run. Agentic is never a default; a call, a library or the ins
 it.
 
 A mode is listed only once the eval suite marks it ``eligible_as_default`` (its recall@5 beats
-BM25's by 5 points with a wrong-version rate of 0, docs/evals.md). No mode is yet: ``hybrid`` has
-not been evaluated with a real embedding model in CI (the local models are #245), and
+BM25's by 5 points with a wrong-version rate of 0, docs/evals/gates.md). No mode is yet:
+``hybrid`` has not been evaluated with a real embedding model in CI (the local models are #245), and
 ``hybrid_hyde`` has only been run on stand-in models (pydantic-ai's ``FunctionModel`` and the
 term-hash embedding, #94), which say nothing about its recall. Until then an operator chooses a
 mode (``EXACTDOCS_AI__MODE``, a library's mode or the call).

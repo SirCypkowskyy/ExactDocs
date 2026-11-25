@@ -1,7 +1,7 @@
-"""The version-pinned coding tasks: ``just coding-tasks list|prepare|check|run`` (docs/evals.md).
+"""The version-pinned coding tasks: ``just coding-tasks list|prepare|check|run``.
 
-As in ``run_agent_bench.py``, the test-support directory (the importer wiring the ``exactdocs``
-arm needs) is put on the path before the CLI is imported.
+See docs/evals/coding-tasks.md. As in ``run_agent_bench.py``, the test-support directory (the
+importer wiring the ``exactdocs`` arm needs) is put on the path before the CLI is imported.
 """
 
 import sys
