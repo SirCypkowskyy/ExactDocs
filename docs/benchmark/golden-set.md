@@ -190,14 +190,24 @@ What this means for the results:
 - Until #501, recall@k counted only the first listed section, and these sections counted for
   nDCG@10 and section recall as parts the answer also needed.
 
-The golden set's fingerprint changed twice, and the [ingestion run](ingestion.md) and the
-[retrieval run](retrieval.md) were recorded again each time:
+The golden set's fingerprint changed three times. The [ingestion run](ingestion.md) and the
+[retrieval run](retrieval.md) were recorded again after the first two:
 
 | Change | Fingerprint |
 |---|---|
 | before the review | `sha256:39f6f9d5e909d128` |
 | the fixes | `sha256:7dd51c59057c279a` |
 | marking the alternatives | `sha256:a00997851150e3b0` |
+| one heading without its attribute list (#594) | `sha256:100484c7ccdb1b89` |
+
+Since #571 the chunker cuts a heading's attribute list (`{#config-both}`) out of its heading path,
+so one Pydantic v2.5.3 case now names its section `[Config and model_config both defined]`. The
+recorded runs still carry `sha256:a00997851150e3b0`: they were measured with the earlier chunker,
+which kept the attribute list in the heading, so the case matched there (every configuration of
+the retrieval run and every tool of the Grounded Docs run found its section at rank 1), and their
+numbers stand. The ingestion and retrieval benchmarks' `--check` refuses a run on another
+fingerprint, so both runs are to be recorded again, with #571's chunker, before they are checked
+next.
 
 ### Wording
 
