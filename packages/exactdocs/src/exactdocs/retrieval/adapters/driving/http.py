@@ -346,7 +346,7 @@ class C7ContextResponse(_Camel):
     """Matching chunks that did not fit the size budget."""
     notes: list[str] = Field(default_factory=list, exclude_if=operator.not_)
     """How the request was read where it differs from what was sent: a ref read as the one
-    imported version it names but for a leading `v` (#605). Absent when it was read as sent."""
+    imported version it names but for a leading `v`. Absent when it was read as sent."""
 
     @classmethod
     def from_result(cls, result: QueryDocsResult) -> C7ContextResponse:

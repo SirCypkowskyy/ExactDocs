@@ -205,7 +205,7 @@ class ResolvedVersion(VersionOut):
     """Library ID, `/owner/repo`."""
     notes: list[str] = Field(default_factory=list, exclude_if=operator.not_)
     """How the request was read where it differs from what was sent: a ref read as the one
-    imported version it names but for a leading `v` (#605). Absent when it was read as sent."""
+    imported version it names but for a leading `v`. Absent when it was read as sent."""
 
     @classmethod
     def from_library(cls, library: Library, version: Version, *, notes: Sequence[str] = ()) -> Self:
@@ -907,7 +907,7 @@ class ArticleList(_Dto):
     """How many articles match the filters (`path_prefix`, `tags`, `q`), across every page."""
     notes: list[str] = Field(default_factory=list, exclude_if=operator.not_)
     """How the request was read where it differs from what was sent: a ref read as the one
-    imported version it names but for a leading `v` (#605). Absent when it was read as sent."""
+    imported version it names but for a leading `v`. Absent when it was read as sent."""
 
 
 class ListTagsQuery(_Dto):
@@ -961,7 +961,7 @@ class TagList(_Dto):
     """True when the version has more tags than are listed."""
     notes: list[str] = Field(default_factory=list, exclude_if=operator.not_)
     """How the request was read where it differs from what was sent: a ref read as the one
-    imported version it names but for a leading `v` (#605). Absent when it was read as sent."""
+    imported version it names but for a leading `v`. Absent when it was read as sent."""
 
 
 class GetArticleQuery(_Dto):
@@ -1203,7 +1203,7 @@ class Article(ArticleInfo):
     """The article's Markdown, verbatim as imported."""
     notes: list[str] = Field(default_factory=list, exclude_if=operator.not_)
     """How the request was read where it differs from what was sent: a ref read as the one
-    imported version it names but for a leading `v` (#605). Absent when it was read as sent."""
+    imported version it names but for a leading `v`. Absent when it was read as sent."""
 
     @classmethod
     def with_content(cls, info: ArticleInfo, content: str, *, notes: Sequence[str] = ()) -> Self:

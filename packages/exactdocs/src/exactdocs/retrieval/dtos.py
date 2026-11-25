@@ -416,7 +416,7 @@ class SearchDocsResult(_Dto):
 
     notes: list[str] = Field(default_factory=list, exclude_if=operator.not_)
     """How the request was read where it differs from what was sent: a ref read as the one
-    imported version it names but for a leading `v` (#605). Absent when it was read as sent."""
+    imported version it names but for a leading `v`. Absent when it was read as sent."""
 
 
 class LibrarySearchResultOut(SearchResultOut):
@@ -1223,7 +1223,7 @@ class ArticleOutlineOut(_Dto):
     """The top-level headings, in document order."""
     notes: list[str] = Field(default_factory=list, exclude_if=operator.not_)
     """How the request was read where it differs from what was sent: a ref read as the one
-    imported version it names but for a leading `v` (#605). Absent when it was read as sent."""
+    imported version it names but for a leading `v`. Absent when it was read as sent."""
 
     @classmethod
     def from_model(
@@ -1479,7 +1479,7 @@ class QueryDocsResult(_Dto):
     """
     notes: list[str] = Field(default_factory=list, exclude_if=operator.not_)
     """How the request was read where it differs from what was sent: a ref read as the one
-    imported version it names but for a leading `v` (#605). Absent when it was read as sent."""
+    imported version it names but for a leading `v`. Absent when it was read as sent."""
 
 
 class GetLibraryRetrievalQuery(_Dto):
