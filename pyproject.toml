@@ -196,8 +196,8 @@ convention = "google"
 ban-relative-imports = "all"
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
-"abc.ABC".msg = "Use typing.Protocol for ports; no nominal inheritance (see docs/architecture.md)."
-"abc.ABCMeta".msg = "Use typing.Protocol for ports; no nominal inheritance (see docs/architecture.md)."
+"abc.ABC".msg = "Use typing.Protocol for ports; no nominal inheritance (see docs/architecture/domains.md)."
+"abc.ABCMeta".msg = "Use typing.Protocol for ports; no nominal inheritance (see docs/architecture/domains.md)."
 
 [tool.ruff.lint.isort]
 known-first-party = ["exactdocs", "exactdocs_kernel"]

@@ -53,5 +53,5 @@ never ASCII art; `just docs-build` parses every one (`deploy/mermaid-check`) and
 strict mode, as CI does. The check is a syntax gate (the site pins the same mermaid version through
 `extra_javascript`), so look at a new diagram in `just docs` too.
 
-Read [docs/architecture.md](docs/architecture.md) before adding a domain, port or adapter, and
+Read [docs/architecture/](docs/architecture/index.md) before adding a domain, port or adapter, and
 [docs/releasing.md](docs/releasing.md) for versions and tags.

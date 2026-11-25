@@ -183,7 +183,7 @@ of failing. Articles are cut at their headings, never inside a code block or a t
   traces and Prometheus metrics.
 - Search and vector indexes in ExactDocs' own database, or in Azure AI Search, Chroma, DuckDB,
   Elasticsearch, OpenSearch, LanceDB, libSQL, Milvus, MongoDB, Pinecone, Qdrant or Redis. See
-  [External index backends](docs/architecture.md#external-index-backends).
+  [External index backends](docs/architecture/index-backends.md).
 
 ## Benchmark
 
@@ -204,7 +204,7 @@ An import fetches only the pinned commit and only the selected files, splits eve
 headings and indexes it. A new version becomes visible in one step once it is complete, and a
 re-sync of a branch re-chunks only the files that changed. The backend is a Python modular
 monolith (FastAPI, FastMCP, pydantic-ai, DBOS for durable jobs) and the React UI is served by the
-same process. [Architecture](docs/architecture.md) and [Flows](docs/flows.md) explain it.
+same process. [Architecture](docs/architecture/index.md) and [Flows](docs/flows/index.md) explain it.
 
 The image comes in three variants: `:latest` (BM25, no model), `:latest-ai` (hosted and
 self-hosted model providers) and `:latest-local` (two small local models, for instances with no
@@ -241,7 +241,7 @@ just check        # everything CI runs
 | `docs/` | the documentation site (Zensical) |
 | `.agents/skills/` | how agents work on issues, test and release |
 
-Read [Architecture](docs/architecture.md) (modular monolith, ports and adapters) and
+Read [Architecture](docs/architecture/index.md) (modular monolith, ports and adapters) and
 [Branching and releases](docs/releasing.md) before contributing.
 
 ## Contributing
