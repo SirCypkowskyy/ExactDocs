@@ -89,7 +89,7 @@ a new URL. More tools list, browse, read and search one version. See [MCP](mcp.m
 
 The standard image runs BM25 on SQLite with no model. Hybrid search, rerankers, HyDE and an
 agentic mode are optional, on hosted models or on your CPU. See
-[Search and AI models](search.md).
+[Search and AI models](search/index.md).
 
 </div>
 
@@ -172,9 +172,9 @@ yet. [Recommended defaults](benchmark/defaults.md) has the numbers and the known
 | [Getting started](getting-started.md) | Start the server, create the admin, import a library, use the CLI, private repositories, the sources file, webhooks, accounts, sign-in through an identity provider |
 | [MCP](mcp.md) | Connecting Claude, Cursor, VS Code and Codex; tokens; stdio; every tool and resource; context7 over REST |
 | [Sources file](sources.md) | Declaring libraries in `exactdocs.sources.yaml`, with `sources plan` and `sources apply` |
-| [Configuration](configuration.md) | Every environment variable, the TOML file, sign-in providers and the secret key |
-| [Search and AI models](search.md) | Retrieval modes, chunking and tags, AI providers, reranking, agentic search, local models, budgets |
-| [Deployment](deployment.md) | Image variants, hardened Docker, reverse proxies, health checks, upgrades, backups, PostgreSQL, Supabase, observability |
+| [Configuration](configuration/index.md) | Every environment variable, the TOML file, sign-in providers and the secret key |
+| [Search and AI models](search/index.md) | Retrieval modes, chunking and tags, AI providers, reranking, agentic search, local models, budgets |
+| [Deployment](deployment/index.md) | Image variants, hardened Docker, reverse proxies, health checks, upgrades, backups, PostgreSQL, Supabase, observability |
 
 ## How it is built
 

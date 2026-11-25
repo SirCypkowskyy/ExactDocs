@@ -661,7 +661,7 @@ ExactDocs makes no third-party requests by default. Open the JSON in any OpenAPI
   `<profile>:<model>`); there is no `embedding` override (one vector space per instance).
   `llm_thinking` and `judge_thinking` (`minimal`, `low`, `medium`, `high`, `xhigh`; `null`: the
   instance's) set how much the role's model thinks before it answers, its own or the instance's
-  ([Thinking level](search.md#thinking-level)); 422 `thinking_unsupported` names the role and the
+  ([Thinking level](search/thinking.md)); 422 `thinking_unsupported` names the role and the
   model when the model is known to take no thinking setting.
   `rerank_top_n` (1 to 200) is how many of its best candidates the reranker reorders (`null`: the
   instance's `EXACTDOCS_AI__RERANKER__TOP_N`, 32 by default).
@@ -825,7 +825,7 @@ See [AI retrieval decisions](decisions/ai-retrieval.md) for the kinds and what e
   level (the one their calls send; a judge that is the LLM thinks as the LLM), `own_thinking` (set
   for the role itself), `thinking_configured` (set in the environment or the TOML file, so
   read-only here) and `thinking_unsupported` (why its model cannot take the level, which its calls
-  then leave out). See [Thinking level](search.md#thinking-level).
+  then leave out). See [Thinking level](search/thinking.md).
 - `PUT /ai/roles/{role}` with `{"thinking": "low"}` (`null` clears it): the thinking level of the
   `llm` or `judge` role, used from the next call; answers the role as `GET /ai/roles` shows it.
   409 `role_configured` when `EXACTDOCS_AI__<ROLE>__THINKING` sets it, 422
@@ -970,7 +970,7 @@ See [AI retrieval decisions](decisions/ai-retrieval.md) for the kinds and what e
   database file exists, answers within 2 s and is at this version's schema revision, else 503
   `{"status": "not_ready", "reason": ...}` with a fixed sentence. Both keep their budget while a
   database statement is still running. Only exact `GET`/`HEAD`
-  requests on these paths skip the `Host` check ([Deployment](deployment.md#health-checks)).
+  requests on these paths skip the `Host` check ([Deployment](deployment/health-checks.md)).
 
 ## Job problems
 

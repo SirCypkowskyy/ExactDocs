@@ -789,8 +789,8 @@ LIBSQL_DEFAULT_COMPRESSION: Final[str] = "float1bit"
 """The ``compress_neighbors`` default: the index stores each neighbour's vector as one bit per
 dimension. The index only proposes candidates, whose exact distances rank them, and it is 5
 times smaller and several times faster to write than with ``float8`` (1536 dimensions: about
-40 KiB a chunk instead of 200), with the same recall in our measurements (docs/configuration.md,
-*libSQL*)."""
+40 KiB a chunk instead of 200), with the same recall in our measurements
+(docs/configuration/index-backends/libsql.md, *Sizing*)."""
 LIBSQL_URL_SCHEMES: Final[frozenset[str]] = frozenset({"libsql", "https", "http"})
 """The schemes of a libSQL server's URL (``libsql://`` is HTTPS, or HTTP with ``?tls=0``)."""
 LIBSQL_ANN_OVERFETCH: Final[int] = 2

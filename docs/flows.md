@@ -147,7 +147,7 @@ most recently imported version.
 
 Every mode is built: BM25, `vector`, `hybrid` (BM25 and vectors fused with reciprocal rank
 fusion, #92), `hybrid_hyde` (#94) and `agentic` (#98), and so is reranking (#93);
-[Search and AI models](search.md) describes each. Which mode answers is decided per
+[Search and AI models](search/index.md) describes each. Which mode answers is decided per
 call (RET-06): the call's `mode`, else the library's mode, else the instance's
 (`EXACTDOCS_AI__MODE`), else the best default the configured model roles allow. A mode becomes a
 default only once the eval suite shows it beats BM25 ([Retrieval evals](evals.md#gates)): `hybrid`
