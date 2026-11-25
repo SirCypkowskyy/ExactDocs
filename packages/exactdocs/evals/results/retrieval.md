@@ -1,6 +1,6 @@
 # Retrieval benchmark
 
-The golden set's 321 cases (`sha256:a00997851150e3b0`) on starlette, pydantic, tanstack-query, zod, electron, every pinned version, per configuration and chunking. ExactDocs `8e789e67177adf9514418b566473dca937ca638d`, Linux aarch64. Recall, MRR and nDCG over answerable cases; unanswerable cases scored on returning nothing of another version (clean) and on coming back empty (no answer). Definitions: docs/evals.md#the-retrieval-benchmark.
+The golden set's 321 cases (`sha256:a00997851150e3b0`) on starlette, pydantic, tanstack-query, zod, electron, every pinned version, per configuration and chunking. ExactDocs `8e789e67177adf9514418b566473dca937ca638d`, Linux aarch64. Recall, MRR and nDCG over answerable cases; unanswerable cases scored on returning nothing of another version (clean) and on coming back empty (no answer). Definitions: docs/evals/retrieval-benchmark.md.
 
 ## Recommended defaults
 

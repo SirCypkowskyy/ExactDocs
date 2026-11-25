@@ -1,6 +1,6 @@
 """``just agent-bench``: run the agent benchmark, export a labelling sample, compute agreement.
 
-See docs/evals.md#the-agent-benchmark.
+See docs/evals/agent-bench.md.
 """
 
 import argparse
@@ -480,7 +480,7 @@ def _parser() -> argparse.ArgumentParser:
         prog="agent-bench",
         description="An agent answers the golden set with each documentation arm: no docs, "
         "or only the MCP tools of ExactDocs, Context7 or Grounded Docs "
-        "(docs/evals.md#the-agent-benchmark).",
+        "(docs/evals/agent-bench.md).",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="run the benchmark and write the report")

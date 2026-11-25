@@ -25,7 +25,7 @@ Read the matching skill **before** starting the task. They live in `.agents/skil
 ## Hard rules
 
 - Domains never import each other or `bootstrap`; ports are `Protocol`s; no `abc.ABC`
-  (docs/architecture.md). Architecture tests must stay green.
+  (docs/architecture/domains.md). Architecture tests must stay green.
 - Work happens on `feature/<issue>-<slug>` / `bugfix/<issue>-<slug>` / `docs/<issue>-<slug>` branches from `develop`; PRs go to
   `develop`. Never push to `main` or `develop` directly, never delete them, never force-push them.
 - Claim an issue before working on it; release it when you stop.
@@ -41,7 +41,7 @@ just setup                 # install everything
 just check                 # everything CI runs; must pass before a PR
 just fmt                   # format Python + web
 just test -k <expr>        # pytest;  just bdd  # behave;  just arch  # architecture rules
-just eval                  # retrieval eval suite: modes compared on the fixture (docs/evals.md)
+just eval                  # retrieval eval suite: modes compared on the fixture (docs/evals/index.md)
 just serve                 # :3000 (API, /mcp, UI if built);  just dev  # + Vite on :5173
 just docs                  # documentation site preview (Zensical)
 ```

@@ -58,7 +58,7 @@ _USD_DIGITS: Final[int] = 6
 
 
 class Tier(StrEnum):
-    """Where a mode runs for real (docs/evals.md, *Tiers*)."""
+    """Where a mode runs for real (docs/evals/suite.md#tiers)."""
 
     EVERY_PR = "every_pr"
     """Model-free and gating: runs at every release (the name predates #367, when PRs ran it)."""
@@ -618,7 +618,7 @@ def baseline_of(report: SuiteReport) -> str:
         for o in report.modes
         if o.metrics is not None
     }
-    note = "Written by `just eval --write-baseline`; the release gates on it (docs/evals.md)."
+    note = "Written by `just eval --write-baseline`; the release gates on it (docs/evals/gates.md)."
     data = {"note": note, "dataset": report.fingerprint, "modes": modes}
     return json.dumps(data, indent=2) + "\n"
 

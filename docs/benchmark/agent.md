@@ -1,43 +1,79 @@
 # Agent results
 
+!!! abstract "TL;DR"
+    - First run on 2026-11-24: 60 golden questions, two agent models, each with no docs (`none`)
+      and with only the ExactDocs MCP tools (`exactdocs`), judged by `glm-5.3`.
+    - With ExactDocs, accuracy rose significantly for both: `gpt-oss:120b` from 13.3% to 43.3%
+      (+30.0 points [+18.3, +43.3], p = 2.1e-05), `kimi-k3` from 33.3% to 85.0% (+51.7 points
+      [+40.0, +65.0], p = 4.7e-10).
+    - With ExactDocs no answer was true of another version only; without, 15 of `gpt-oss:120b`'s 60
+      answers and 5 of `kimi-k3`'s were.
+    - Grounded Docs, added on 2026-11-25 on the same questions: as accurate as ExactDocs on these
+      60 (`gpt-oss:120b` 45.0%, +1.7 points [-8.3, +11.7], p = 0.75; `kimi-k3` 81.7%, -3.3 points
+      [-13.3, +5.0], p = 0.51), with fewer tool calls and output tokens, and 2 answers wrong for
+      the version against none.
+    - Context7's arm is built but has not run: no API key, and Upstash's terms forbid publishing
+      its numbers without permission.
+    - The judge is not checked against hand labels yet, and Ollama Cloud's usage limit kept the run
+      at 60 questions.
+
 Does a coding agent answer version-specific questions better with ExactDocs than from what it
 already knows, or than with another documentation tool, and what does that cost in time and
 tokens? The agent benchmark (#348, #495) asks the same model each [golden-set](golden-set.md)
-question with each **documentation arm**: **no documentation** (arm `none`), **only the ExactDocs
-MCP tools** (`exactdocs`), **only Grounded Docs' tools** over its own index of the same pinned
-versions (`grounded-docs`), and **only the official Context7 MCP server's tools** (`context7`). An
-LLM judge, blind to the arm, grades every answer against the case's reference and facts.
+question with each **documentation arm**:
 
-The `context7` arm is built and tested (against the official server, `@upstash/context7-mcp`
-4.5.0, with a stand-in of Context7's API) but has **not run**: it needs a Context7 API key, which
-this run did not have, and Upstash's terms forbid publishing benchmark results without its
-permission, so no Context7 number will be published here until it is given
-([Terms of service](../evals.md#terms-of-service)).
+- **no documentation** (arm `none`);
+- **only the ExactDocs MCP tools** (`exactdocs`);
+- **only Grounded Docs' tools**, over its own index of the same pinned versions (`grounded-docs`);
+- **only the official Context7 MCP server's tools** (`context7`).
 
-**The first run** (2026-11-24): two agent models from different vendors, `gpt-oss:120b` (OpenAI;
-its model card gives a June 2024 knowledge cutoff, before the newest pinned version of every
-project) and `kimi-k3` (Moonshot AI), judged by `glm-5.3` (Z.ai), on 60 golden questions (2 of
-each kind in each project, a seeded stratified sample), 240 answers. With the ExactDocs tools:
+An LLM judge, blind to the arm, grades every answer against the case's reference and facts.
 
-- **Accuracy rose for both models, significantly.** `gpt-oss:120b` went from 13.3% [5.0, 21.7]
-  to 43.3% [31.7, 56.7] (+30.0 points [+18.3, +43.3]; 19 questions gained, 1 lost; McNemar
-  p = 2.1e-05). `kimi-k3` went from 33.3% [21.7, 45.0] to 85.0% [75.0, 93.3] (+51.7 points
-  [+40.0, +65.0]; 31 gained, 0 lost; p = 4.7e-10).
+!!! warning "The `context7` arm has not run"
+    It is built and tested (against the official server, `@upstash/context7-mcp` 4.5.0, with a
+    stand-in of Context7's API), but it needs a Context7 API key, which this run did not have, and
+    Upstash's terms forbid publishing benchmark results without its permission. No Context7 number
+    will be published here until it is given
+    ([Terms of service](../evals/context7.md#terms-of-service)).
+
+**The first run** (2026-11-24):
+
+| | |
+|---|---|
+| Agent models | `gpt-oss:120b` (OpenAI)[^cutoff] and `kimi-k3` (Moonshot AI), from different vendors |
+| Judge | `glm-5.3` (Z.ai) |
+| Questions | 60 golden questions (2 of each kind in each project, a seeded stratified sample) |
+| Answers | 240 |
+
+[^cutoff]: Its model card gives a June 2024 knowledge cutoff, before the newest pinned version of
+    every project.
+
+With the ExactDocs tools:
+
+- **Accuracy rose for both models, significantly.**
+
+    | Model | `none` | `exactdocs` | Difference | Gained / lost | McNemar p |
+    |---|---|---|---|---|---|
+    | `gpt-oss:120b` | 13.3% [5.0, 21.7] | 43.3% [31.7, 56.7] | +30.0 points [+18.3, +43.3] | 19 / 1 | 2.1e-05 |
+    | `kimi-k3` | 33.3% [21.7, 45.0] | 85.0% [75.0, 93.3] | +51.7 points [+40.0, +65.0] | 31 / 0 | 4.7e-10 |
+
 - **No answer was true of another version only.** Without documentation the judge flagged 15 of
   `gpt-oss:120b`'s 60 answers (25%) and 5 of `kimi-k3`'s (8%) as stating what holds for another
   version; with ExactDocs, none of either model's.
 - **More right refusals.** On the 10 `unanswerable` questions, `kimi-k3` said the documentation
   does not cover it 9 times with ExactDocs against 2 without; `gpt-oss:120b` 4 against 2. Neither
   model refused an answerable question with ExactDocs.
-- **What it costs depends on the model.** `gpt-oss:120b` took twice as long (2.9 s to 6.0 s a
-  question on average, p95 5.1 s to 10.3 s; +3.1 s [+2.4, +3.7], p = 0.0001) and wrote 21% more
-  output tokens (745 to 901, thinking included; p = 0.002). `kimi-k3` was not slower: its mean
-  fell from 19.1 s to 14.6 s and its output from 1,913 to 1,318 tokens, neither significant
-  (p = 0.19 and 0.073). Without documentation it thinks at length about versions it does not
-  know (p95: 56 s and an estimated 5,400 thinking tokens); with it, the median rose (9.8 s to
-  12.5 s) and the long tail shrank (p95 33 s). Both made about 5.5 tool calls a question, and
-  what the tools returned grew the input from about 200 tokens to 38,000 (`kimi-k3`) and 50,000
-  (`gpt-oss:120b`) a question: the bulk of the cost on a per-token price.
+- **What it costs depends on the model.**
+    - `gpt-oss:120b` took twice as long (2.9 s to 6.0 s a question on average, p95 5.1 s to
+      10.3 s; +3.1 s [+2.4, +3.7], p = 0.0001) and wrote 21% more output tokens (745 to 901,
+      thinking included; p = 0.002).
+    - `kimi-k3` was not slower: its mean fell from 19.1 s to 14.6 s and its output from 1,913 to
+      1,318 tokens, neither significant (p = 0.19 and 0.073). Without documentation it thinks at
+      length about versions it does not know (p95: 56 s and an estimated 5,400 thinking tokens);
+      with it, the median rose (9.8 s to 12.5 s) and the long tail shrank (p95 33 s).
+    - Both made about 5.5 tool calls a question. What the tools returned grew the input from
+      about 200 tokens to 38,000 (`kimi-k3`) and 50,000 (`gpt-oss:120b`) a question: the bulk of
+      the cost on a per-token price.
 - **The judge is strict.** `correct` needs every fact the case lists, and the facts often go
   beyond the literal question; a brief, right answer is often `partially_correct` (24 of
   `gpt-oss:120b`'s 60 answers with ExactDocs). That lowers the accuracy of both arms alike.
@@ -46,27 +82,35 @@ each kind in each project, a seeded stratified sample), 240 answers. With the Ex
 the run with `--resume` (120 answers; Grounded Docs 3.4.1 with full-text search, its default with
 no model, as ExactDocs ran with BM25). With Grounded Docs' tools:
 
-- **As accurate as ExactDocs on these 60 questions; far above no documentation.** `gpt-oss:120b`
-  reached 45.0% [31.7, 56.7] (+31.7 points over `none`, p = 1.9e-06; +1.7 [-8.3, +11.7] over
-  `exactdocs`, 5 gained and 4 lost, p = 0.75). `kimi-k3` reached 81.7% [71.7, 91.7] (+48.3 over
-  `none`, p = 1.9e-09; -3.3 [-13.3, +5.0] against `exactdocs`, 3 gained and 5 lost, p = 0.51).
-  Neither difference between the two tools is significant, and their intervals span several points
-  either way: 60 questions cannot tell them apart.
-- **Two answers wrong for the version.** The judge flagged 2 of `gpt-oss:120b`'s 60 answers (one
-  put a deprecation in the wrong Electron release, one cited later Pydantic docs while rightly
-  saying v2.5.3 does not cover the question), against none with ExactDocs; `kimi-k3` had none.
-  The agents sometimes searched Grounded Docs with an X-range (`4.36.x`, `5.x`: 22 of its 238
-  searches), which can match a newer indexed version of the range than the one asked; ExactDocs
-  takes one exact version.
+- **As accurate as ExactDocs on these 60 questions; far above no documentation.**
+
+    | Model | `grounded-docs` | Against `none` | Against `exactdocs` | Gained / lost against `exactdocs` |
+    |---|---|---|---|---|
+    | `gpt-oss:120b` | 45.0% [31.7, 56.7] | +31.7 points, p = 1.9e-06 | +1.7 points [-8.3, +11.7], p = 0.75 | 5 / 4 |
+    | `kimi-k3` | 81.7% [71.7, 91.7] | +48.3 points, p = 1.9e-09 | -3.3 points [-13.3, +5.0], p = 0.51 | 3 / 5 |
+
+    Neither difference between the two tools is significant, and their intervals span several
+    points either way: 60 questions cannot tell them apart.
+
+- **Two answers wrong for the version.** The judge flagged 2 of `gpt-oss:120b`'s 60 answers, against
+  none with ExactDocs; `kimi-k3` had none.
+    - One put a deprecation in the wrong Electron release; one cited later Pydantic docs while
+      rightly saying v2.5.3 does not cover the question.
+    - The agents sometimes searched Grounded Docs with an X-range (`4.36.x`, `5.x`: 22 of its 238
+      searches), which can match a newer indexed version of the range than the one asked;
+      ExactDocs takes one exact version.
 - **Right refusals on `unanswerable` questions:** `kimi-k3` 7 of 10 (9 with ExactDocs),
   `gpt-oss:120b` 5 of 10 (4 with ExactDocs); no answerable question refused.
-- **Fewer calls and tokens.** About 3.5 tool calls a question against 5.5 with ExactDocs; output
-  tokens 13% (`gpt-oss:120b`, -117 [-198, -31], p = 0.0097) and 24% (`kimi-k3`, -310, p = 0.0001)
-  lower; input tokens 16,065 a question for `kimi-k3` against 37,754 (p = 0.0001) and 41,413 for
-  `gpt-oss:120b` against 50,433 (not significant; its p95, 177,000, is a few questions it searched
-  10 to 16 times, each answer a list of passages, before answering or reaching the request
-  limit). Each `search_docs` result carries the matching passage with the context Grounded Docs
-  assembles around it, so the agents read fewer pages.
+- **Fewer calls and tokens.**
+    - About 3.5 tool calls a question, against 5.5 with ExactDocs.
+    - Output tokens 13% lower for `gpt-oss:120b` (-117 [-198, -31], p = 0.0097) and 24% lower
+      for `kimi-k3` (-310, p = 0.0001).
+    - Input tokens: 16,065 a question for `kimi-k3` against 37,754 (p = 0.0001); 41,413 for
+      `gpt-oss:120b` against 50,433 (not significant; its p95, 177,000, is a few questions it
+      searched 10 to 16 times, each answer a list of passages, before answering or reaching the
+      request limit).
+    - Each `search_docs` result carries the matching passage with the context Grounded Docs
+      assembles around it, so the agents read fewer pages.
 - **Wall time is not compared.** The `grounded-docs` answers ran a day after the others, on a
   different day of Ollama Cloud: their 4.2 s and 8.4 s a question (6.0 s and 14.6 s with ExactDocs)
   mix the tool with the provider's load that day. The time columns below are given, not read.
@@ -118,9 +162,12 @@ no model, as ExactDocs ran with BM25). With Grounded Docs' tools:
 - Cases: 60 (2 per kind and project, seed 495); at most 20 model requests per question; thinking: medium; 3 questions at a time; 6 retries of a failed request.
 <!-- /bench -->
 
-The judge ran with its model's default thinking; the agents with `--thinking medium` (sent as
-`reasoning_effort`; the models think whatever it says). ExactDocs ran with BM25, its default with
-no model. The run was planned on 90 questions (3 per kind and project, seed 495):
+- The judge ran with its model's default thinking.
+- The agents ran with `--thinking medium` (sent as `reasoning_effort`; the models think whatever
+  it says).
+- ExactDocs ran with BM25, its default with no model.
+
+The run was planned on 90 questions (3 per kind and project, seed 495):
 
 ```bash
 OLLAMA_BASE_URL=https://ollama.com/v1 OLLAMA_API_KEY=... just agent-bench run \
@@ -129,17 +176,25 @@ OLLAMA_BASE_URL=https://ollama.com/v1 OLLAMA_API_KEY=... just agent-bench run \
   --per-stratum 3 --concurrency 3 --report reports/evals/agent-bench.json
 ```
 
-It started at 08:16 UTC; at 08:40, after about 155 answers, every request got
-`429 ... reached your session usage limit`, recorded as provider errors (not wrong answers). When
-the limit lifted (11:08), `--per-stratum 2 --resume` asked again what had failed and finished the
-60-question sample (the first two of each stratum's three draws: the same seed) at 11:29, with no
-provider error left. Extending it to 90 with
-`--per-stratum 3 --resume` hit the limit again after 17 more answers: on the plan used, an Ollama
-Cloud session held about 155 answers with their judgements. The 90-question sample (about 50
-answers short) and all 321 questions (about six more sessions) are left for a later run, which
-`--resume` lets span sessions. Each question's four answers (two models, two arms) were asked
-together, so both arms of a question ran in the same session, except for one question whose
-answers straddle the limit.
+How it went:
+
+| Time (UTC) | What happened |
+|---|---|
+| 08:16 | the run started |
+| 08:40 | after about 155 answers, every request got `429 ... reached your session usage limit`[^429] |
+| 11:08 | the limit lifted; `--per-stratum 2 --resume` asked again what had failed |
+| 11:29 | the 60-question sample finished with no provider error left[^resumed] |
+| later | extending it to 90 with `--per-stratum 3 --resume`<br/>hit the limit again after 17 more answers |
+
+[^429]: Recorded as provider errors, not wrong answers.
+[^resumed]: The first two of each stratum's three draws: the same seed.
+
+On the plan used, an Ollama Cloud session held about 155 answers with their judgements. The
+90-question sample (about 50 answers short) and all 321 questions (about six more sessions) are
+left for a later run, which `--resume` lets span sessions.
+
+Each question's four answers (two models, two arms) were asked together, so both arms of a
+question ran in the same session, except for one question whose answers straddle the limit.
 
 The `grounded-docs` arm was added on 2026-11-25 with the first run's 240 answers as the
 checkpoint (`reports/evals/agent-bench.rows.jsonl`), so only its 120 answers were asked, from 09:37
@@ -152,13 +207,14 @@ OLLAMA_BASE_URL=https://ollama.com/v1 OLLAMA_API_KEY=... just agent-bench run \
   --thinking medium --per-stratum 2 --concurrency 3 --report reports/evals/agent-bench.json --resume
 ```
 
-Grounded Docs searched the full-text index `just grounded-bench` had built of the 15 pinned
-versions (the same files the ExactDocs importer takes at the pinned commits), in its read-only
-mode; the agents were offered `search_docs`, `read_page`, `list_pages`, `list_libraries` and
-`find_version`, not `fetch_url`, which reads any web page. The library names it lists are the
-project IDs (`tanstack-query`): a search for `TanStack Query` (or `@tanstack/react-query`) was
-answered "not found, did you mean tanstack-query?", and every such question went on with the
-right name.
+- Grounded Docs searched the full-text index `just grounded-bench` had built of the 15 pinned
+  versions (the same files the ExactDocs importer takes at the pinned commits), in its read-only
+  mode.
+- The agents were offered `search_docs`, `read_page`, `list_pages`, `list_libraries` and
+  `find_version`; not `fetch_url`, which reads any web page.
+- The library names it lists are the project IDs (`tanstack-query`). A search for
+  `TanStack Query` (or `@tanstack/react-query`) was answered "not found, did you mean
+  tanstack-query?", and every such question went on with the right name.
 
 <!-- bench:agent -->
 ## Quality
@@ -244,18 +300,25 @@ In brackets: the 95% interval, a percentile bootstrap over the questions (10,000
 
 ## What a run measures
 
-Per agent model and arm: accuracy (correct, plus a refusal on an `unanswerable` case) overall,
-per question kind and per project; answers true only of another version; refusals on answerable
-cases; correct refusals on `unanswerable` cases; how often the agent read every part of the
-answer in full (a section of each part, or one of its alternatives); tool calls; and the cost per
-question: wall time, input tokens, output tokens with the
-thinking, thinking tokens on their own, USD. Every rate and mean has a 95% interval, every cost
-its median and 95th percentile, and each arm is compared with `none` on the same cases, and
-`grounded-docs` (and `context7`) with `exactdocs` too:
-McNemar's test for accuracy, a paired permutation test for time and tokens
-([Method](method.md#agent-metrics-and-the-judge),
-[Intervals and significance](method.md#intervals-and-significance)). A question the provider
-failed on is an error, left out of every rate and test, never a wrong answer.
+Per agent model and arm:
+
+- accuracy (correct, plus a refusal on an `unanswerable` case) overall, per question kind and per
+  project;
+- answers true only of another version;
+- refusals on answerable cases, and correct refusals on `unanswerable` cases;
+- how often the agent read every part of the answer in full (a section of each part, or one of
+  its alternatives; for `grounded-docs`, a whole page; not measured for `context7`);
+- tool calls;
+- the cost per question: wall time, input tokens, output tokens with the thinking, thinking
+  tokens on their own, USD.
+
+Every rate and mean has a 95% interval, and every cost its median and 95th percentile.
+Each arm is compared with `none` on the same cases, and `grounded-docs` (and `context7`) with
+`exactdocs` too: McNemar's test for accuracy, a paired permutation test for time and tokens ([Method](method.md#agent-metrics-and-the-judge),
+[Intervals and significance](method.md#intervals-and-significance)).
+
+A question the provider failed on is an error, left out of every rate and test, never a wrong
+answer.
 
 ## What produces the results
 
@@ -270,7 +333,8 @@ A run with real models, by hand:
 
 The recorded run is `packages/exactdocs/evals/results/agent.json` (and `agent.md`); `just
 bench-pages` fills this page's tables from it. The flags, the keys the workflow reads and the
-labelling rules are in [The agent benchmark](../evals.md#the-agent-benchmark).
+labelling rules are in [The agent benchmark](../evals/agent-bench.md).
 
-The stand-in run (`just agent-bench run --offline`) uses scripted models to check the plumbing.
-Its numbers say nothing about an agent and are not published.
+!!! note "The stand-in run"
+    `just agent-bench run --offline` uses scripted models to check the plumbing. Its numbers say
+    nothing about an agent and are not published.

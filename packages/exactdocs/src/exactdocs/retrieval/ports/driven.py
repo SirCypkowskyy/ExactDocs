@@ -1780,7 +1780,7 @@ class AgentReads(Protocol):
     """The agentic explorer's trace: every read it made, where it was bound and what it served.
 
     The eval suite records them to check that every agentic run stayed within the version the
-    question asked for (docs/evals.md); with telemetry on, each is an event of the run's span.
+    question asked for (docs/evals/suite.md); with telemetry on, each is an event of the run's span.
     Nothing is recorded by default.
     """
 

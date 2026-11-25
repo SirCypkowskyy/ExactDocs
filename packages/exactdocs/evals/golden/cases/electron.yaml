@@ -1,4 +1,4 @@
-# Golden-set cases for Electron (corpus.yaml: electron). Format and rules: docs/evals.md#the-golden-set.
+# Golden-set cases for Electron (corpus.yaml: electron). Format and rules: docs/evals/golden-set.md.
 # Check with `just golden-validate --projects electron`.
 name: electron
 cases:

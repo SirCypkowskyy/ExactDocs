@@ -1,7 +1,7 @@
 name: Agent benchmark (real providers)
 
 # Manual only: it calls hosted models with the repository's keys, so it never runs on a push or a
-# pull request. It runs the agent benchmark (docs/evals.md#the-agent-benchmark,
+# pull request. It runs the agent benchmark (docs/evals/agent-bench.md,
 # `just agent-bench run`): each agent model answers the golden set with each documentation arm
 # (`none`: no tools; `exactdocs`: only the ExactDocs MCP tools, under each retrieval
 # configuration; `context7`: only the official Context7 MCP server's, a pinned npm release;
@@ -22,7 +22,7 @@ name: Agent benchmark (real providers)
 # EVAL_PROVIDER_KIND, EVAL_PROVIDER_BASE_URL, EVAL_PROVIDER_API_VERSION and the secret
 # EVAL_PROVIDER_API_KEY. The `context7` arm needs the repository secret CONTEXT7_API_KEY (the one
 # the Context7 run of eval-providers.yml reads); no Context7 number is published until Upstash
-# permits it (docs/evals.md#terms-of-service). Blank values count as unset.
+# permits it (docs/evals/context7.md#terms-of-service). Blank values count as unset.
 
 on:
   workflow_dispatch:
@@ -61,7 +61,7 @@ env:
   FORCE_COLOR: "1"
   PYDANTIC_AI_NO_BANNER: "1"
 
-# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing.md "CI/CD and
+# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing/runners.md "CI/CD and
 # runners"); it uses none of the GitHub-hosted minutes.
 jobs:
   bench:

@@ -1,4 +1,4 @@
-# ExactDocs on PostgreSQL: several server processes share one database (docs/deployment.md, "PostgreSQL").
+# ExactDocs on PostgreSQL: several server processes share one database (docs/deployment/postgresql.md).
 #   export POSTGRES_PASSWORD=$(openssl rand -hex 24) EXACTDOCS_SECRET_KEY=$(openssl rand -base64 32)
 #   docker compose -f compose.postgres.yaml up -d
 services:
@@ -25,7 +25,7 @@ services:
       EXACTDOCS_DATABASE_URL: postgresql://exactdocs:${POSTGRES_PASSWORD}@db:5432/exactdocs
       EXACTDOCS_SECRET_KEY: ${EXACTDOCS_SECRET_KEY:?set EXACTDOCS_SECRET_KEY}
       WEB_CONCURRENCY: "2" # server processes; on PostgreSQL every one serves and runs jobs
-      # Sign-in through an OIDC provider (docs/getting-started.md, "Sign in through an identity
+      # Sign-in through an OIDC provider (docs/getting-started/accounts.md, "Sign in through an identity
       # provider"): the provider in the TOML file ([auth.providers.corp]), its secret from the env.
       # EXACTDOCS_PUBLIC_URL: https://docs.example.com
       # EXACTDOCS_CONFIG_FILE: /run/exactdocs.toml

@@ -151,7 +151,7 @@ def agent_blocks(report: BenchReport) -> dict[str, str]:
 
     Raises:
         ValueError: The run has a ``context7`` arm: no Context7 number is published until Upstash
-            permits it (docs/evals.md#terms-of-service).
+            permits it (docs/evals/context7.md#terms-of-service).
     """
     meta = report.meta
     if CONTEXT7 in meta.arms:

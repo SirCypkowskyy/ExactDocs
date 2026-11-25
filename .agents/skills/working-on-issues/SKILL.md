@@ -37,7 +37,7 @@ Follow the **testing** skill. In order:
    Run `uv run behave`; it must fail for the right reason.
 2. **Unit:** tests for the use case / model in `packages/exactdocs/tests/<domain>/`, using
    in-memory adapters and Protocol-shaped fakes.
-3. **Implement** following `docs/architecture.md` (the **backend-architecture** skill):
+3. **Implement** following `docs/architecture/` (the **backend-architecture** skill):
    model → errors → dtos → ports → use case → module → adapters → wiring in `bootstrap`.
    UI changes follow the **web-features** skill.
 4. Make every *Criteria of success* item true and tick it off mentally; if one can't be met,

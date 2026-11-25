@@ -7,7 +7,7 @@
 # unanswerable cases searched for in the whole docs tree, version-change cases against the
 # neighbouring versions. `kind` is the stratum the case was drawn from (a fix may have changed it).
 # `just golden-validate` checks this file; `just bench-pages` renders its summary on
-# docs/benchmark/golden-set.md. Problem categories: docs/evals.md#reviewing-the-golden-set.
+# docs/benchmark/golden-set.md. Problem categories: docs/evals/golden-set.md#reviewing-the-golden-set.
 sample: {seed: 490, per_stratum: 3, drawn_from: 'sha256:39f6f9d5e909d128'}
 entries:
 - case: 'electron v30.0.0: Should I use child_process.fork or a utility process for CPU-heavy work, and

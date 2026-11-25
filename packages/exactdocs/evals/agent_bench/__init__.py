@@ -8,5 +8,5 @@ what a pydantic-ai agent does and spends (tokens, thinking, wall time, retries);
 resolves the agent and judge models (stand-ins, Ollama with retries); ``judge`` grades each answer
 with an LLM; ``report`` aggregates and compares the arms; ``agreement`` compares the judge with
 hand labels; ``offline`` holds the stand-in models; ``redact`` keeps credentials out of the report.
-See docs/evals.md#the-agent-benchmark.
+See docs/evals/agent-bench.md.
 """

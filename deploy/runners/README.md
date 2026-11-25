@@ -7,7 +7,7 @@
 # Self-hosted runners (GB10)
 
 > **What runs here (#478)** depends on the repository variable `RUNNER_MODE`
-> (docs/releasing.md, *CI/CD and runners*). In `hybrid` (the default): the release's eval, web
+> (docs/releasing/runners.md, *CI/CD and runners*). In `hybrid` (the default): the release's eval, web
 > and Python builds and its arm64 image legs, GHCR retention, and the manual workflows
 > (`eval-providers.yml`, `agent-bench.yml`, `azure-search.yml`, `pinecone.yml`); CI and the docs
 > run on GitHub-hosted runners. In `self-hosted` (when the GitHub-hosted minutes ran out): every

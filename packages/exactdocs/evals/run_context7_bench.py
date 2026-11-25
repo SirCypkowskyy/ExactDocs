@@ -1,4 +1,4 @@
-"""Context7 on the golden set, next to ExactDocs: ``just context7-bench`` (docs/evals.md).
+"""Context7 on the golden set, next to ExactDocs: ``just context7-bench`` (docs/evals/context7.md).
 
 As in ``run_retrieval_eval.py``, the test-support directory (the importer wiring) is put on the
 path before the CLI is imported.

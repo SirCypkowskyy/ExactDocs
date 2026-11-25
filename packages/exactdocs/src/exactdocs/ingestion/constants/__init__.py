@@ -1,6 +1,6 @@
 """Constants of ``exactdocs.ingestion``: every fixed value its modules share.
 
-Each is ``Final`` and documented (see *Python conventions* in docs/architecture.md). Public ones are
+Each is ``Final`` and documented (see docs/architecture/conventions.md). Public ones are
 re-exported here; private ones are imported from their topic module by their only user.
 """
 
