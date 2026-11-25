@@ -59,7 +59,8 @@ What a run does:
 1. Builds the fixture repository in a temporary directory.
 2. Imports `v1.3.0`, `v1.4.0` and `next` with the real importer.
 3. Asks `search_docs` for the top 10 of every question in each mode, and reads every returned
-   chunk back with `read_chunk`.
+   chunk back with `read_chunk`. The results come grouped by article, as an agent gets them, and
+   each group counts as one result (#575).
 4. Prints a Markdown summary, appends it to `$GITHUB_STEP_SUMMARY` when that is set, and writes
    the JSON report.
 
@@ -138,8 +139,8 @@ To add a case:
 
 | Metric | Over | Meaning |
 |---|---|---|
-| recall@1, recall@5, recall@10 | questions whose version has an answer | the expected section is in the first k results |
-| MRR | the same | mean of 1 / its rank (0 when it is not in the top 10) |
+| recall@1, recall@5, recall@10 | questions whose version has an answer | the expected section is in the first k results (article groups) |
+| MRR | the same | mean of 1 / the rank of its group (0 when it is not in the top 10) |
 | wrong-version rate | every question | share of questions with at least one result of another version |
 | p50 / p95 latency | every question | time of the search alone (not the reads below), one question at a time |
 | tokens / USD per question | every question | what the models cost, read from the spend ledger around each search; 0 for BM25 |
