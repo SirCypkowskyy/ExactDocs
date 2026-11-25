@@ -17,7 +17,7 @@ just retrieval-bench --offline --configs bm25          # the model-free part: ab
 just retrieval-bench --offline                          # + every local model that was pulled (hours, below)
 just retrieval-bench --configs 'bm25*,hybrid:bge-small*' --chunkings default,h2 --projects zod
 just retrieval-bench --out packages/exactdocs/evals/results    # refresh the recorded run
-just retrieval-bench --configs bm25 --chunkings default --check   # what the release runs
+just retrieval-bench --configs bm25 --chunkings default --check   # what the Eval workflow runs
 ```
 
 ## What a run does

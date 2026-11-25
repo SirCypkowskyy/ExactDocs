@@ -5,8 +5,9 @@
       what the importer makes of the golden corpus under four chunking configurations, and the
       BM25 recall each one leads to.
     - It needs no model and takes about a minute per configuration.
-    - The release runs it with `--check` against the recorded run: coverage may not drop, the
-      integrity counts may not rise, and BM25 recall@5 may not drop more than 2 points.
+    - The manual *Eval* workflow runs it with `--check` against the recorded run: coverage may
+      not drop, the integrity counts may not rise, and BM25 recall@5 may not drop more than 2
+      points.
     - A hit counts when the returned chunk holds the expected heading, so a coarser or finer cut is
       not penalised (#503).
 
@@ -46,9 +47,9 @@ recorded again. When a change to the importer improves the numbers, record the r
 pull request.
 
 !!! warning "Run it before the pull request"
-    Like the retrieval eval, it runs on releases, not on pull requests. The release workflow's
-    *Retrieval eval* job runs `--check` (step *Ingestion benchmark*), and a regression stops the
-    release. If you change the parser, the chunker or the import path, run
+    Neither pull requests nor releases run it. The manual *Eval* workflow (`eval.yml`) runs
+    `--check` (step *Ingestion benchmark*); start it before a release that touches chunking. If
+    you change the parser, the chunker or the import path, run
     `just ingestion-bench --offline --check` before you open the pull request.
 
 Pull request CI only runs the benchmark's quick tests (`tests/evals/test_ingestion.py`,

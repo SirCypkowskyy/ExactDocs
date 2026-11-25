@@ -5,9 +5,10 @@
       fixture docs repository, imported for real.
     - Per mode it reports recall@1/5/10, MRR, the wrong-version rate, p50 and p95 latency, and
       tokens and USD per question.
-    - It runs on releases and locally, never on pull requests. If you change ranking, chunking,
-      the search index, a mode, the dataset or the fixture, run `just eval` (and
-      `uv run pytest -m eval`) before you open the pull request.
+    - It never runs on pull requests. Each release runs the model-free BM25 gates; the rest runs
+      in the manual *Eval* workflow and locally. If you change ranking, chunking, the search
+      index, a mode, the dataset or the fixture, run `just eval` (and `uv run pytest -m eval`)
+      before you open the pull request.
     - By default it is model-free, so only BM25 runs, and `bm25` is the only gating mode.
 
 The fixture is imported with every heading starting a chunk (`split_level` 6, no bound), because
@@ -16,17 +17,22 @@ their parent.
 
 ## When it runs
 
-!!! warning "On releases and locally, not on pull requests"
+!!! warning "On releases, by hand and locally, not on pull requests"
     CI on a pull request or a push to `develop` or `main` runs no eval step, and `uv run pytest`
-    skips the suite's end-to-end tests. So a ranking regression is caught when a release is cut,
-    not on the pull request that caused it.
+    skips the suite's end-to-end tests. So a BM25 regression is caught when a release is cut, and
+    everything else only when someone runs the *Eval* workflow or the suite locally.
 
     **If you change ranking, chunking, the search index, a retrieval mode, the dataset or the
     fixture, run `just eval` (and `uv run pytest -m eval`) before you open the pull request**, and
     say in it that you did.
 
-- The release workflow (`.github/workflows/release.yml`, job *Retrieval eval*) runs all of it
-  before anything is published. A failing gate stops the release (see [Tiers](#tiers)).
+- The release workflow (`.github/workflows/release.yml`, job *Retrieval eval*) runs only the two
+  model-free gating steps, BM25 on SQLite and on pg_search, before anything is published. A
+  failing gate stops the release (see [Tiers](#tiers)).
+- The manual *Eval* workflow (`.github/workflows/eval.yml`, *Actions → Eval → Run workflow*, or
+  `gh workflow run eval.yml --ref develop`) runs the same gates, then `pytest -m eval`, the
+  ingestion and retrieval benchmarks' `--check` and the report-only runs on the default local
+  models. Run it before a release that touches retrieval or chunking.
 - The suite's pytest tests that import the fixture and run the suite end to end carry the marker
   `eval`, which `addopts` deselects (`-m "not eval"` in `pyproject.toml`).
     - The quick ones (the dataset, fingerprints, evaluators and gates on stand-in retrievers) stay
@@ -43,7 +49,7 @@ just eval --modes bm25          # one mode
 just eval --report out.json     # JSON report elsewhere (default: reports/evals/retrieval.json)
 just eval --baseline develop.json --ratchet --reference-dataset develop.yaml   # a branch against develop's baseline
 just eval --configured-models --local-roles embedding,reranker   # local models from EXACTDOCS_AI__...
-                                # (after `exactdocs models pull`; see the release's eval job)
+                                # (after `exactdocs models pull`; see the *Eval* workflow)
 just eval --offline-embedding --ratchet   # hybrid on an in-process term-hash embedding (no model): what the release runs
 just eval --help
 ```
@@ -218,8 +224,8 @@ EXACTDOCS_AI__JUDGE__MODEL=corp:gpt-4.1-mini EXACTDOCS_AI__RERANK_WITH=judge jus
 
 Where a judge runs:
 
-- **At every release, on a stand-in only** (`tests/evals/`, `offline_judge_container`, marked
-  `eval`; also run by `uv run pytest -m eval`). The stand-in is a pydantic-ai `FunctionModel` that
+- **On a stand-in only**, in the manual *Eval* workflow (`tests/evals/`,
+  `offline_judge_container`, marked `eval`; also run by `uv run pytest -m eval`). The stand-in is a pydantic-ai `FunctionModel` that
   rates candidates by the query words they share, priced. It checks the plumbing, the
   wrong-version rate of 0 and the cost per question without a provider. Its recall says nothing
   about a real judge.
@@ -231,7 +237,7 @@ Where a judge runs:
 | Tier | Modes | Where they run for real |
 |---|---|---|
 | release (gating) | `bm25` | the release's *Retrieval eval* job, before anything is published; no model |
-| local (report-only) | `hybrid`, with rerank when a reranker is configured | at every release: on the term-hash stand-in, then on the default local models |
+| local (report-only) | `hybrid`, with rerank when a reranker is configured | on the term-hash stand-in at every release; on the default local models in the manual *Eval* workflow |
 | provider | `hybrid_hyde`, `agentic`, any mode reranked by the LLM judge | in tests on stand-in models; with a real provider only by hand |
 
 ### Release (gating)
@@ -250,13 +256,14 @@ Where a judge runs:
 
 - At every release, in the SQLite step, on the term-hash stand-in (`--offline-embedding`). Its
   wrong-version rate must be 0; its recall is not a measure of hybrid.
-- With real models: the last steps of the same job (#245), with the `[local]` extra and the
-  default models cached between releases, no secret.
+- With real models: the last steps of the manual *Eval* workflow (#245), with the `[local]`
+  extra and the default models cached between runs, no secret.
     - `bm25` and `hybrid` on `BAAI/bge-small-en-v1.5`;
     - then both reranked by `Xenova/ms-marco-MiniLM-L-6-v2`, with the reranker timeout raised to
       30 s so every rerank is measured;
     - compared with the tagged tree's baseline.
-- These steps never stop a release (`continue-on-error`). Their summary marks `default-eligible`.
+- These steps never fail the workflow (`continue-on-error`). Their summary marks
+  `default-eligible`.
 
 ### Provider
 
@@ -267,7 +274,7 @@ In tests, with pydantic-ai's `TestModel` / `FunctionModel`:
   and its tokens and USD reach `tokens_per_question` / `usd_per_question`.
 - `agentic`: `test_agentic_is_evaluated_on_a_scripted_model_and_stays_in_the_version` runs the
   whole suite through the real pipeline, Code Mode and limits on a scripted `FunctionModel`, in
-  the release's *Retrieval eval* job (`pytest -m eval`). It fails on any wrong-version answer or
+  the manual *Eval* workflow (`pytest -m eval`). It fails on any wrong-version answer or
   any read outside the version in a run's trace.
 
 With a real provider, only by hand:

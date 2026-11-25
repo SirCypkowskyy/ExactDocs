@@ -1,8 +1,9 @@
 # The release workflow
 
 !!! abstract "TL;DR"
-    - `.github/workflows/release.yml` validates the tag, runs the retrieval eval, builds the UI and
-      the Python distributions, and publishes them to PyPI with trusted publishing.
+    - `.github/workflows/release.yml` validates the tag, runs the model-free retrieval eval gates,
+      builds the UI and the Python distributions, and publishes them to PyPI with trusted
+      publishing. The full eval is the manual *Eval* workflow (`eval.yml`).
     - Each image variant is built, budget-checked and scanned on both architectures. Images are
       pushed only when all six scans and the eval pass, then joined into signed multi-arch indexes.
     - A tag runs the workflow file of the tagged commit: release a fix from a new tag.
@@ -14,15 +15,19 @@
 `.github/workflows/release.yml` (runners: [CI/CD and runners](runners.md)):
 
 1. **meta**: validates tag shape and branch, derives version/channel.
-2. **eval**: the retrieval eval ([Retrieval evals](../evals/suite.md#when-it-runs)), which pull
-   requests do not run:
-    - the model-free gates on SQLite and on ParadeDB's pg_search, against the `baseline.json` of
-      the tagged tree;
-    - the suite's end-to-end tests (`pytest -m eval`);
-    - the ingestion and retrieval benchmarks against their recorded runs;
-    - then hybrid and rerank on the default local models, report-only.
+2. **eval**: the model-free gates of the retrieval eval
+   ([Retrieval evals](../evals/suite.md#when-it-runs)), which pull requests do not run: BM25 on
+   SQLite and on ParadeDB's pg_search, against the `baseline.json` of the tagged tree. A few
+   minutes.
 
     `pypi-kernel` and `image` need it, so a failing gate publishes nothing.
+
+    The rest of the eval runs only in the manual *Eval* workflow (`eval.yml`): the same gates,
+    the suite's end-to-end tests (`pytest -m eval`), the ingestion and retrieval benchmarks
+    against their recorded runs, and hybrid and rerank on the default local models
+    (report-only). Start it before a release that touches retrieval or chunking: *Actions → Eval
+    → Run workflow*, or `gh workflow run eval.yml --ref develop`. The release does not wait for
+    it.
 
     **integration** (`integration.yml`, [Fast and integration tests](tests.md)) runs only in a dry
     run started with the input `integration` ([Dry run](#dry-run)). A tag push skips it, and no job

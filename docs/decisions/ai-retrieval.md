@@ -69,7 +69,7 @@ Each issue of the milestone points here instead of deciding these again.
 | Offline | Nothing configured: nothing imported, nothing sent. `-local`: no network needed at all |
 | Cost | Token and USD budgets per instance, library and user, daily and monthly, in one database table: harness `SpendLimits` (over a `BatchSpendStore`) for LLM agents, retrieval's own check for embeddings and rerankers;<br/>rate limits inside retrieval;<br/>a limit degrades search, never fails it |
 | Telemetry | pydantic-ai's OpenTelemetry instrumentation with `include_content=False`; `gen_ai.*` metrics without library, user or query labels |
-| Evals | Pydantic Evals on the fixture libraries;<br/>wrong-version rate 0 is a hard gate;<br/>run on releases and locally, not on PRs (#367);<br/>real local models at release, LLMs only with test models or by hand |
+| Evals | Pydantic Evals on the fixture libraries;<br/>wrong-version rate 0 is a hard gate;<br/>BM25 gates on releases, the rest by hand and locally, not on PRs (#367);<br/>real local models in the manual eval workflow, LLMs only with test models or by hand |
 | Sign-in (Teams) | Several named providers: `oidc` (ADFS included), `oauth2`, `github` (GHE base URL, org and team membership via the GitHub API) |
 
 ## Databases
@@ -614,7 +614,7 @@ Library names, user identities and tokens are never sent.
     | What | Runs | How |
     |---|---|---|
     | BM25 | every release, before anything is published | gating |
-    | `hybrid` and rerank | the same release job | for real with `[local]` and cached ONNX models, without any secret; report-only, compared with the baseline committed in the tagged tree |
+    | `hybrid` and rerank | the manual *Eval* workflow (`eval.yml`), before a release that touches retrieval | for real with `[local]` and cached ONNX models, without any secret; report-only, compared with the baseline committed in the tagged tree |
     | LLM modes | tests | with `TestModel` / `FunctionModel`; with a real provider only by a manual `workflow_dispatch` that has the key |
 
     - Pull requests do not run the suite (#367: it made every CI run longer). So a ranking
