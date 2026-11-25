@@ -173,6 +173,23 @@ async def test_hits_grouped_by_article_come_back_with_their_neighbours_once_per_
         _cell(window=32, expand="article")
 
 
+async def test_hits_grouped_by_article_without_neighbours_hold_only_the_hits() -> None:
+    cell = _cell(chunking="h6", expand="article", neighbours=0)
+    passages = _passages(cell, ChunkingConfig(max_chars=None))
+    index = await PassageIndex.build(cell, passages, None)
+    try:
+        answer = await index.answer("demo", "v1", "clone the repository and build the wheel")
+    finally:
+        index.close()
+
+    (text,) = answer.texts  # one article
+    assert "### From source" in text
+    assert "## Configure" not in text  # it matches nothing, and no neighbour is taken
+    for bad in ({"neighbours": 1}, {"expand": "article", "neighbours": -1}):
+        with pytest.raises(ValidationError, match="neighbours"):
+            _cell(**bad)
+
+
 async def test_cells_that_embed_the_same_texts_embed_them_once(tmp_path: Path) -> None:
     counted = _Counting(
         HashEmbeddingModels(size=16).bind(None, name="local:m", dimensions=None, batch_size=4)

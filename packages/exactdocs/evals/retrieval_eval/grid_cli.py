@@ -449,7 +449,10 @@ def _key(cell: Cell, golden: str, projects: Sequence[Project]) -> str:
         ``sha256:`` and 16 hex digits.
     """
     pinned = [(p.id, [(v.name, v.commit) for v in p.versions]) for p in projects]
-    text = f"{cell.model_dump_json(exclude={'against'})}|{golden}|{pinned}"
+    # what does not change the result is left out, and so are settings added since cells were
+    # first kept while they hold their default, so a stored cell keeps its key
+    unset = {"neighbours"} if cell.neighbours is None else set()
+    text = f"{cell.model_dump_json(exclude={'against', *unset})}|{golden}|{pinned}"
     return "sha256:" + hashlib.sha256(text.encode()).hexdigest()[:16]
 
 

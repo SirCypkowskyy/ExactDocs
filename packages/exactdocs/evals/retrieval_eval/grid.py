@@ -107,8 +107,11 @@ class Cell(_Model):
     expand: Literal["parent", "article"] | None = None
     """Eval-only: ``parent`` returns each hit's parent section, with its subsections, instead of
     the hit; ``article`` groups the top hits by article, each article one result holding its
-    hits and their neighbouring chunks (``ARTICLE_NEIGHBOURS`` on either side) in article order,
-    ranked by its best hit, as Grounded Docs assembles its results (#575)."""
+    hits and their neighbouring chunks (``neighbours`` on either side) in article order, ranked
+    by its best hit, as Grounded Docs assembles its results (#575)."""
+    neighbours: int | None = None
+    """Eval-only, ``expand: article``: the chunks taken on either side of each hit; None:
+    ``ARTICLE_NEIGHBOURS``."""
     against: str | None = None
     """The cell this one is a variant of (its control): the report also tests it against that
     cell, case by case (#575). It changes nothing the cell returns."""
@@ -139,6 +142,9 @@ class Cell(_Model):
             raise ValueError(message)
         if self.expand == "article" and self.window is not None:
             message = f"cell {self.name!r}: grouping by article needs a heading chunking"
+            raise ValueError(message)
+        if self.neighbours is not None and (self.expand != "article" or self.neighbours < 0):
+            message = f"cell {self.name!r}: neighbours, 0 or more, go with expand: article"
             raise ValueError(message)
         if not self.name:
             message = "an eval-only cell needs a name"
@@ -615,14 +621,15 @@ class PassageIndex:
 
         Returns:
             One text per article, in the order of each article's best hit: the article's hits
-            and the ``ARTICLE_NEIGHBOURS`` chunks on either side of each, in article order,
-            each chunk once.
+            and the cell's ``neighbours`` chunks on either side of each, in article order, each
+            chunk once.
         """
+        near = ARTICLE_NEIGHBOURS if self.cell.neighbours is None else self.cell.neighbours
         groups: dict[tuple[str, str, str], set[int]] = {}
         for i in hits:
             hit = self.passages[i]
             group = groups.setdefault((hit.project, hit.version, hit.article), set())
-            for j in range(i - ARTICLE_NEIGHBOURS, i + ARTICLE_NEIGHBOURS + 1):
+            for j in range(i - near, i + near + 1):
                 if 0 <= j < len(self.passages) and self._same_article(i, j):
                     group.add(j)
         return ["".join(self.passages[j].chunk.content for j in sorted(g)) for g in groups.values()]
