@@ -12,6 +12,7 @@ questions as the last one.
 | [Ingestion results](ingestion.md) | what the importer makes of the corpus under each chunking configuration |
 | [Retrieval results](retrieval.md) | every retrieval configuration at every chunking, per question kind and project |
 | [Agent results](agent.md) | an agent with only the ExactDocs MCP tools answering the golden set (not measured yet) |
+| [Comparison with other tools](comparison.md) | other documentation tools on the same golden set, scored from their text: Grounded Docs |
 | [Recommended defaults](defaults.md) | the configuration to use with no models, local models and hosted models |
 
 The tables on the result pages are generated from the recorded runs in
