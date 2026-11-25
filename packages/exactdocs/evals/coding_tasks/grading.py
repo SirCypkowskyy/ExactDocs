@@ -54,6 +54,9 @@ TS_BLOCK_COMMENT: Final[re.Pattern[str]] = re.compile(r"/\*.*?\*/", re.DOTALL)
 """A ``/* ... */`` comment."""
 TS_LINE_COMMENT: Final[re.Pattern[str]] = re.compile(r"(?<![:\"'\\])//.*$", re.MULTILINE)
 """A ``// ...`` comment (not ``://`` in a URL)."""
+TEST_TIMEOUT_MS: Final[int] = 30_000
+"""How long one Node test may take; the runner also exits once the tests end, whatever timers
+the library left (``--test-force-exit``)."""
 HIDDEN_PYTEST_INI: Final[str] = """\
 [pytest]
 pythonpath = .
@@ -314,7 +317,8 @@ def test_script(prepared: PreparedEnvironment, workspace: Path, *, hidden: bool)
         f"{node} {NODE_MODULES}/typescript/bin/tsc -p {tsconfig} --pretty false",
         "typecheck=$?",
         "echo \"@@typecheck $typecheck\"",
-        f"{node} --test --test-reporter=spec --test-reporter-destination=stdout "
+        f"{node} --test --test-force-exit --test-timeout={TEST_TIMEOUT_MS} "
+        "--test-reporter=spec --test-reporter-destination=stdout "
         f"--test-reporter=junit --test-reporter-destination={junit} "
         + " ".join(shlex.quote(f) for f in files),
         "status=$?",
