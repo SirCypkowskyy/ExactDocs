@@ -24,6 +24,7 @@ import contextlib
 import datetime as dt
 import json
 import os
+import re
 import shutil
 import socket
 import sqlite3
@@ -120,6 +121,11 @@ _PROVIDER_PREFIXES: Final[tuple[str, ...]] = (
     "DOCS_MCP_",
 )
 """Variables a run does not inherit: provider credentials and Grounded Docs' own settings."""
+_SECRET_NAME: Final[re.Pattern[str]] = re.compile(
+    r"KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|COOKIE|SESSION", re.IGNORECASE
+)
+"""Nor any credential by its name: an agent's or a judge's key (the agent benchmark's
+``grounded-docs`` arm runs it next to them, #495) is not Grounded Docs' to see."""
 _ALWAYS: Final[dict[str, str]] = {"PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1"}
 """Set for every command: no browser download (local files need none)."""
 
@@ -221,12 +227,16 @@ def _clean_environment(variables: Mapping[str, str]) -> dict[str, str]:
     """The environment of a Grounded Docs command: this one's, without provider variables.
 
     Args:
-        variables: What the configuration sets.
+        variables: What the configuration sets (its endpoint's dummy key included).
 
     Returns:
-        The environment.
+        The environment: no inherited provider variable or credential.
     """
-    inherited = {k: v for k, v in os.environ.items() if not k.startswith(_PROVIDER_PREFIXES)}
+    inherited = {
+        k: v
+        for k, v in os.environ.items()
+        if not k.startswith(_PROVIDER_PREFIXES) and not _SECRET_NAME.search(k)
+    }
     return inherited | _ALWAYS | dict(variables)
 
 
