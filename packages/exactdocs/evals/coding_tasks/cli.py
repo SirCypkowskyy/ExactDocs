@@ -314,7 +314,7 @@ def _run(args: argparse.Namespace) -> int:
     tasks = per_project(tasks, args.limit)
     try:
         prepared = asyncio.run(prepare_all(tasks, args.cache_dir))
-        wanted = {t.spec.project for t in tasks} if any(a.retrieval for a in arms) else set()
+        wanted = {t.spec.project for t in tasks} if any(a.configured for a in arms) else set()
         repos = {p.id: fetch(p, args.golden_cache) for p in corpus.projects if p.id in wanted}
     except RuntimeError as error:
         sys.stderr.write(f"coding-tasks: {error}\n")
