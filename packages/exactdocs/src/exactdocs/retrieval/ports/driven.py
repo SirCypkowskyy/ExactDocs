@@ -197,6 +197,22 @@ class ArticleSuggestions(Protocol):
         ...
 
 
+class VersionRefs(Protocol):
+    """A library's imported versions, for a ref it does not have (the catalog answers, #606)."""
+
+    async def of(self, library: str) -> Sequence[DocTarget]:
+        """Return every version the library has imported, indexed or not.
+
+        Args:
+            library: The library ID, any letter case.
+
+        Returns:
+            Its versions; empty when the library is unknown or hidden from the caller (never an
+            error).
+        """
+        ...
+
+
 class ChunkRepository(Protocol):
     """Chunk sets (shared by content) and the per-manifest chunk rows that point at them."""
 

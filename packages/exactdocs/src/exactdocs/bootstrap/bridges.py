@@ -470,6 +470,29 @@ class CatalogArticleSuggestions:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class CatalogVersionRefs:
+    """Implements ``retrieval.ports.driven.VersionRefs`` with the catalog's library read (#606)."""
+
+    get_library: GetLibrary
+    """The catalog's library read; its versions are the imported refs."""
+
+    async def of(self, library: str) -> Sequence[DocTarget]:
+        """Name every version the catalog has imported for the library.
+
+        Args:
+            library: The library ID, any letter case.
+
+        Returns:
+            Its versions; empty when the library is unknown, hidden from the caller or not an ID.
+        """
+        try:
+            detail = await self.get_library(GetLibraryQuery(id=library))
+        except NotFoundError, ValidationError, PydanticValidationError:
+            return ()
+        return [DocTarget(library=detail.id, version=v.ref) for v in detail.versions]
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CatalogNewLibraries:
     """Implements ``ingestion.ports.driven.NewLibraries`` using the catalog."""
 

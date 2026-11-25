@@ -39,6 +39,7 @@ from exactdocs.retrieval.ports.driven import (
     VectorBackend,
     VectorIndex,
     VersionArticles,
+    VersionRefs,
 )
 from exactdocs.retrieval.ports.driving import (
     ArticleOutline,
@@ -154,4 +155,5 @@ __all__ = [
     "VectorBackend",
     "VectorIndex",
     "VersionArticles",
+    "VersionRefs",
 ]

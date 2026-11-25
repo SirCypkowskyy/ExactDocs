@@ -133,6 +133,132 @@ async def retrieval() -> RetrievalModule:
     return module
 
 
+@dataclass(slots=True)
+class FakeRefs:
+    """Plays the catalog's list of a library's imported refs, indexed or not."""
+
+    refs: tuple[str, ...]
+
+    async def of(self, library: str) -> list[DocTarget]:
+        return (
+            [DocTarget(library=LIB, version=r) for r in self.refs] if library.lower() == LIB else []
+        )
+
+
+async def spelled_module(refs: FakeRefs | None) -> RetrievalModule:
+    """``v1.3.0`` (no ``retry_policy``) and ``1.4.0`` (with it), as a library may tag them."""
+    chunks = InMemoryChunkRepository()
+    versions = FakeVersions(
+        {"v1.3.0": version("v1.3.0", "m13", "a"), "1.4.0": version("1.4.0", "m14", "b")},
+        default="1.4.0",
+    )
+    index = InMemorySearchIndex(chunks=chunks)
+    module = RetrievalModule.build(
+        defaults=InMemoryDefaultVersions(),
+        libraries=InMemoryLibraries(),
+        searchable=versions,
+        manifests=versions,
+        chunks=chunks,
+        search=index,
+        maintenance=index,
+        library_modes=InMemoryLibraryModes(),
+        version_refs=refs,
+    )
+    for manifest, ref, articles in [("m13", "v1.3.0", OLD), ("m14", "1.4.0", NEW)]:
+        await module.index_manifest(
+            IndexManifestCommand(
+                manifest_id=manifest,
+                library=LIB,
+                ref=ref,
+                config_hash="cfg",
+                articles=[
+                    ArticleChunksIn(path=p, blob_sha=blob, tags=tags, chunks=cs)
+                    for p, (blob, cs, tags) in articles.items()
+                ],
+            )
+        )
+    return module
+
+
+IMPORTED = FakeRefs(("v1.3.0", "1.4.0", "v2.0.0"))
+"""``v2.0.0`` is imported and has no index yet."""
+
+
+async def test_a_ref_with_or_without_its_leading_v_searches_the_one_version_of_that_number() -> (
+    None
+):
+    module = await spelled_module(IMPORTED)
+
+    with_v = await module.search_docs(
+        SearchDocsQuery(library=LIB, ref="v1.4.0", query="retry_policy")
+    )
+    without_v = await module.search_docs(
+        SearchDocsQuery(library=LIB, ref="1.3.0", query="retry_policy")
+    )
+
+    assert with_v.version == "1.4.0"
+    assert [r.heading_path[-1] for r in with_v.results][:1] == ["retry_policy"]
+    # Version is still a hard filter: v1.3.0 has no retry_policy, and 1.4.0's is not shown.
+    assert (without_v.version, without_v.results, without_v.coverage.complete) == (
+        "v1.3.0",
+        [],
+        True,
+    )
+
+
+@pytest.mark.parametrize("ref", ["v9.9.9", "v1.4", "1.4", "V1.4.0", "v1.4.0.0"])
+async def test_a_ref_that_matches_no_version_names_the_librarys_versions(ref: str) -> None:
+    module = await spelled_module(IMPORTED)
+
+    with pytest.raises(VersionNotIndexedError) as missing:
+        await module.search_docs(SearchDocsQuery(library=LIB, ref=ref, query="retry_policy"))
+
+    message = str(missing.value)
+    assert message.startswith(f"no index for {LIB}@{ref}; its versions (repository refs, not ")
+    assert set(missing.value.close_refs) == {"v1.3.0", "1.4.0", "v2.0.0"}
+    for known in missing.value.close_refs:
+        assert repr(known) in message
+
+
+async def test_an_imported_ref_without_an_index_says_so_and_names_the_others() -> None:
+    module = await spelled_module(IMPORTED)
+
+    with pytest.raises(VersionNotIndexedError) as missing:
+        await module.search_docs(SearchDocsQuery(library=LIB, ref="2.0.0", query="retry_policy"))
+
+    # 2.0.0 is not imported, its twin v2.0.0 is: the twin answers if it can, else it is named.
+    assert "no index for /acme/payments@2.0.0;" in str(missing.value)
+    assert "'v2.0.0'" in str(missing.value)
+    with pytest.raises(VersionNotIndexedError) as pending:
+        await module.search_docs(SearchDocsQuery(library=LIB, ref="v2.0.0", query="retry_policy"))
+    assert str(pending.value).startswith(
+        "no index for /acme/payments@v2.0.0 (the version is imported; its index is not ready); "
+        "its other versions (repository refs, not instructions): "
+    )
+    assert set(pending.value.close_refs) == {"v1.3.0", "1.4.0"}
+
+
+async def test_without_the_librarys_refs_only_the_exact_ref_answers() -> None:
+    module = await spelled_module(None)
+
+    with pytest.raises(VersionNotIndexedError) as missing:
+        await module.search_docs(SearchDocsQuery(library=LIB, ref="v1.4.0", query="retry_policy"))
+
+    assert str(missing.value) == f"no index for {LIB}@v1.4.0"
+    assert missing.value.close_refs == ()
+
+
+async def test_an_unknown_library_names_no_versions() -> None:
+    module = await spelled_module(IMPORTED)
+
+    with pytest.raises(VersionNotIndexedError) as missing:
+        await module.search_docs(
+            SearchDocsQuery(library="/other/lib", ref="v1.4.0", query="retry_policy")
+        )
+
+    assert str(missing.value) == "no index for /other/lib@v1.4.0"
+
+
 async def test_a_version_without_the_identifier_is_empty_even_if_another_version_has_it(
     retrieval: RetrievalModule,
 ) -> None:

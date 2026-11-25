@@ -13,6 +13,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogSearchableVersions,
     CatalogStoredArticles,
     CatalogVersionCopier,
+    CatalogVersionRefs,
 )
 from exactdocs.catalog.adapters.driven.memory import (
     InMemoryImportedTags,
@@ -194,6 +195,16 @@ async def test_a_searchable_version_needs_an_active_manifest_and_names_its_sourc
     assert await SEARCHABLE.find("/acme/payments", "abc12340") is None  # not an exact ref
     assert await SEARCHABLE.find("/vuejs/docs", None) is None
     assert await SEARCHABLE.find("/acme/payments", "v 1") is None  # not a ref at all
+    assert await SEARCHABLE.find("/acme/payments", "1.4.0") is None  # exact: no other spelling
+
+
+async def test_a_librarys_refs_are_every_imported_version_and_none_for_an_unknown_one() -> None:
+    refs = CatalogVersionRefs(get_library=CATALOG.get_library)
+
+    assert sorted(t.version for t in await refs.of("/Acme/Payments")) == ["abc1234", "v1.4.0"]
+    assert {t.library for t in await refs.of("/Acme/Payments")} == {"/acme/payments"}
+    assert await refs.of("/vuejs/docs") == ()
+    assert await refs.of("not an id") == ()
 
 
 async def test_the_library_bridge_reads_every_page_and_skips_libraries_without_a_version() -> None:

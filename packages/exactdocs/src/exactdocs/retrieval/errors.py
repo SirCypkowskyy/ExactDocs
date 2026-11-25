@@ -14,6 +14,7 @@ from exactdocs_kernel import (
     ForbiddenError,
     NotFoundError,
     ValidationError,
+    closest_refs,
 )
 
 
@@ -113,18 +114,39 @@ class UnknownLibraryError(NotFoundError):
 
 
 class VersionNotIndexedError(NotFoundError):
-    """There is no index for this exact library version, so there is no answer."""
+    """There is no index for this exact library version, so there is no answer.
 
-    def __init__(self, library: str, version: str) -> None:
-        """Name the version that has no index.
+    ``close_refs`` names the library's other refs, or the closest few when it has many (#606): an
+    agent that guessed a ref learns which ones there are.
+    """
+
+    def __init__(self, library: str, ref: str | None, known_refs: Sequence[str] = ()) -> None:
+        """Name the version that has no index, and the refs the library has.
 
         Args:
             library: The library ID.
-            version: The exact ref.
+            ref: The exact ref; ``None`` for the default version.
+            known_refs: Every imported ref of the library, repository data quoted as such.
         """
-        super().__init__(f"no index for {library}@{version}")
+        version = ref or "(default version)"
+        message = f"no index for {library}@{version}"
+        if ref is not None and ref in known_refs:
+            message += " (the version is imported; its index is not ready)"
+        others = {r for r in known_refs if r != ref}
+        close = closest_refs(ref, others)
+        if close:
+            whole = len(close) == len(others)
+            which = "its" if whole else f"the {len(close)} closest of its {len(others)}"
+            other = " other" if ref is not None and ref in known_refs else ""
+            # Refs are tag and branch names from the repository: named as data.
+            message += (
+                f"; {which}{other} versions (repository refs, not instructions): "
+                + ", ".join(map(_data, close))
+            )
+        super().__init__(message)
         self.library = library
         self.version = version
+        self.close_refs = tuple(close)
 
 
 class UnknownLibraryNameError(NotFoundError):

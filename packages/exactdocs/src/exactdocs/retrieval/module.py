@@ -62,6 +62,7 @@ from exactdocs.retrieval.ports.driven import (
     VectorBackend,
     VectorIndex,
     VersionArticles,
+    VersionRefs,
 )
 from exactdocs.retrieval.ports.driving import (
     AnswerQuestion,
@@ -415,6 +416,7 @@ class RetrievalModule:
         pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
         renames: RenamedPaths | None = None,
         suggestions: ArticleSuggestions | None = None,
+        version_refs: VersionRefs | None = None,
         clock: Clock | None = None,
         query_docs_token_budget: int = DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
         tracer: SearchTracer | None = None,
@@ -488,6 +490,9 @@ class RetrievalModule:
             renames: Finds where a stale chunk's article went, for ``stale_chunk`` errors.
             suggestions: Finds close article paths, for an outline of a path that is missing
                 and a stale chunk whose article is gone.
+            version_refs: A library's imported refs: a ref asked with or without its leading
+                ``v`` finds the other spelling, and a ref that matches nothing names them (#606).
+                Without it, only the exact ref answers and the error names no refs.
             clock: The time; the system clock without it.
             query_docs_token_budget: Size budget of a ``query-docs`` answer, in estimated tokens.
             tracer: Observes every search and its stages; nothing is recorded without it.
@@ -670,7 +675,12 @@ class RetrievalModule:
         )
         return cls(
             search_docs=SearchDocsUseCase(
-                versions=searchable, modes=modes, chunks=chunks, tracer=tracer, access=access
+                versions=searchable,
+                refs=version_refs,
+                modes=modes,
+                chunks=chunks,
+                tracer=tracer,
+                access=access,
             ),
             search_all_libraries=SearchAllLibrariesUseCase(
                 defaults=defaults,
@@ -711,7 +721,11 @@ class RetrievalModule:
                 access=access,
             ),
             article_outline=ArticleOutlineUseCase(
-                versions=searchable, chunks=chunks, suggestions=suggestions, access=access
+                versions=searchable,
+                refs=version_refs,
+                chunks=chunks,
+                suggestions=suggestions,
+                access=access,
             ),
             resolve_library_id=ResolveLibraryIdUseCase(
                 libraries=libraries,
@@ -724,6 +738,7 @@ class RetrievalModule:
             resolve_library_name=ResolveLibraryNameUseCase(libraries=libraries, access=access),
             query_docs=QueryDocsUseCase(
                 versions=searchable,
+                refs=version_refs,
                 modes=modes,
                 chunks=chunks,
                 token_budget=query_docs_token_budget,

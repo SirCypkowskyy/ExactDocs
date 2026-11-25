@@ -353,8 +353,9 @@ from exactdocs.retrieval.ports.driven import (
     VectorBackend,
     VectorIndex,
     VersionArticles,
+    VersionRefs,
 )
-from exactdocs_kernel import NOTICE, Clock, SystemClock, inside
+from exactdocs_kernel import NOTICE, Clock, SystemClock, inside, leading_v_twin
 
 logger = logging.getLogger(__name__)
 
@@ -1931,12 +1932,47 @@ def _fallen_back(answer: PipelineAnswer, reason: FallbackReason) -> PipelineAnsw
     return replace(answer, reranked=0, fallback_reason=answer.fallback_reason or reason)
 
 
+async def _asked_version(
+    versions: SearchableVersions, refs: VersionRefs | None, library: str, ref: str | None
+) -> SearchableVersion:
+    """Find the version a search or read asked for; never one of another version number.
+
+    The exact ref (the default version without one) answers when it has an index. Else, when the
+    library has not imported that ref as written, the one ref that is it with its version number's
+    leading ``v`` dropped or added answers (#606): ``v1.10.0`` reads ``1.10.0``. The result names
+    the version that answered.
+
+    Args:
+        versions: Resolves a ref to the version's active manifest.
+        refs: The library's imported refs; without it only the exact ref answers.
+        library: The library ID.
+        ref: The ref as asked; ``None`` for the default version.
+
+    Returns:
+        The version that answers.
+
+    Raises:
+        VersionNotIndexedError: No version of that ref, or of its other spelling, has an index;
+            it names the library's refs.
+    """
+    version = await versions.find(library, ref)
+    if version is not None:
+        return version
+    known = [target.version for target in await refs.of(library)] if refs is not None else []
+    twin = leading_v_twin(ref, known) if ref is not None else None
+    if twin is not None and (version := await versions.find(library, twin)) is not None:
+        return version
+    raise VersionNotIndexedError(library, ref, known)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SearchDocsUseCase:
     """Implements ``ports.driving.SearchDocs``."""
 
     versions: SearchableVersions
     """Resolves the asked version to the manifest the search reads."""
+    refs: VersionRefs | None = None
+    """The library's refs: a ref's other ``v`` spelling, and the refs a miss names."""
     modes: RetrievalModes
     """Picks the mode and runs its pipeline."""
     chunks: ChunkRepository
@@ -1990,15 +2026,10 @@ class SearchDocsUseCase:
 
         Returns:
             The results of the one version searched.
-
-        Raises:
-            VersionNotIndexedError: The version is not imported or has no active manifest.
         """
         mode = choice.mode.value
         with self.tracer.span(f"{SEARCH_DOCS}.version", mode=mode):
-            version = await self.versions.find(query.library, query.ref)
-        if version is None:
-            raise VersionNotIndexedError(query.library, query.ref or "(default version)")
+            version = await _asked_version(self.versions, self.refs, query.library, query.ref)
         # Only a search that will run counts against the caller's limits; every stage after this
         # one sees the same choice.
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
@@ -2449,7 +2480,7 @@ async def _default_versions(
     for library in chosen:
         only = await versions.find(library, None)
         if only is None or only.library.casefold() not in allowed:
-            raise VersionNotIndexedError(library, "(default version)")
+            raise VersionNotIndexedError(library, None)
         if only.manifest_id not in searched:  # beyond the cap: read, so no longer omitted
             searched[only.manifest_id] = only
             omitted -= 1
@@ -2865,6 +2896,8 @@ class ArticleOutlineUseCase:
 
     versions: SearchableVersions
     """Which version answers: the exact ref, or the default one."""
+    refs: VersionRefs | None = None
+    """The library's refs: a ref's other ``v`` spelling, and the refs a miss names."""
     chunks: ChunkRepository
     """The article's chunk rows in that version's active manifest."""
     suggestions: ArticleSuggestions | None = None
@@ -2882,13 +2915,10 @@ class ArticleOutlineUseCase:
             The heading tree with a chunk ID per heading and the version that answered.
 
         Raises:
-            VersionNotIndexedError: The version is not imported or has no active manifest.
             ArticleNotFoundError: The version has no article at this path.
         """
         await _require(self.access, query.library, Access.READ)
-        version = await self.versions.find(query.library, query.ref)
-        if version is None:
-            raise VersionNotIndexedError(query.library, query.ref or "(default version)")
+        version = await _asked_version(self.versions, self.refs, query.library, query.ref)
         sections = await self.chunks.article(version.manifest_id, query.path)
         if not sections:
             target = DocTarget(library=version.library, version=version.version)
@@ -3506,6 +3536,8 @@ class QueryDocsUseCase:
 
     versions: SearchableVersions
     """Resolves the library ID to the version's active manifest."""
+    refs: VersionRefs | None = None
+    """The library's refs: a ref's other ``v`` spelling, and the refs a miss names."""
     modes: RetrievalModes
     """Picks the mode (the library's, else the instance's) and runs its pipeline."""
     chunks: ChunkRepository
@@ -3571,15 +3603,10 @@ class QueryDocsUseCase:
 
         Returns:
             The packed sections of the one version searched.
-
-        Raises:
-            VersionNotIndexedError: The version is not imported or has no active manifest.
         """
         mode = choice.mode.value
         with self.tracer.span(f"{QUERY_DOCS}.version", mode=mode):
-            version = await self.versions.find(library, ref)
-        if version is None:
-            raise VersionNotIndexedError(library, ref or "(default version)")
+            version = await _asked_version(self.versions, self.refs, library, ref)
         # Only a request that will run counts against the caller's limits.
         everything = TagFilter(tags=(), match=TagMatch.ANY)
         choice = await self.modes.within_budget(
