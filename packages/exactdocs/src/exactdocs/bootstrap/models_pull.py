@@ -81,6 +81,11 @@ def hub_downloader(network: OutboundNetwork) -> Download:
 def hub_download(repository: str, files: Sequence[str], folder: Path, revision: str | None) -> str:
     """Fetch files of a Hub repository at one commit into a folder (huggingface_hub, here only).
 
+    The Hub's telemetry is turned off first (#589), so the pull sends only the requests the
+    download needs. With it on, huggingface_hub fetches the Hub's list of AI agent harnesses
+    (``/api/agent-harnesses``, at most once a day, cached in ``HF_HOME``) before its first
+    request, to name the agent running the process in its user agent.
+
     Args:
         repository: ``<org>/<name>`` on the Hub.
         files: The files (glob patterns) to fetch; others in the repository are skipped.
@@ -91,6 +96,8 @@ def hub_download(repository: str, files: Sequence[str], folder: Path, revision: 
         The commit fetched.
     """
     hub = importlib.import_module("huggingface_hub")
+    constants = importlib.import_module("huggingface_hub.constants")
+    constants.HF_HUB_DISABLE_TELEMETRY = True  # read at each request, not only at import
     commit = revision or str(hub.HfApi().model_info(repository).sha)
     hub.snapshot_download(
         repo_id=repository, revision=commit, allow_patterns=list(files), local_dir=folder
