@@ -5,7 +5,9 @@ Keep it small, stable and framework-free. It must never import ``exactdocs``.
 
 from exactdocs_kernel.clock import Clock, SystemClock
 from exactdocs_kernel.constants import (
+    CLAMPED,
     DEFAULT_LIMIT,
+    LIBRARY_ARGUMENT,
     LIBRARY_ID_PATTERN,
     MAX_CURSOR,
     MAX_LIMIT,
@@ -64,7 +66,9 @@ from exactdocs_kernel.source_link import section_link
 from exactdocs_kernel.tags import normalize_tag
 
 __all__ = [
+    "CLAMPED",
     "DEFAULT_LIMIT",
+    "LIBRARY_ARGUMENT",
     "LIBRARY_ID_PATTERN",
     "MAX_CURSOR",
     "MAX_LIMIT",

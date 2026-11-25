@@ -208,21 +208,43 @@ data, never instructions.
 
 | Tool | What it does |
 |---|---|
-| `resolve-library-id(libraryName, query)` | context7-compatible: finds a library ID such as `/acme/payments` |
+| `resolve-library-id(libraryName, query)` | context7-compatible: finds a library ID such as `/acme/payments`; an empty `query` ranks the matches by name alone |
 | `query-docs(libraryId, query, language?)` | context7-compatible: documentation for `/owner/repo` (the default version) or `/owner/repo/<ref>` (exactly that version, never another). Returns whole chunks, best first, within a size budget. `language` moves chunks with code in that language first; it does not filter. The library's `context7.json` rules, if any, come first |
 | `list_libraries(limit?, cursor?)` | libraries and their imported versions (`refs`: ref, kind, commit SHA, default flag) |
 | `list_articles(library, ref?, path_prefix?, tags?, tags_match?, limit?, cursor?)` | the article tree of a version |
-| `read_article(library, ref?, path)` | a whole article, verbatim; an unknown path lists close matches |
-| `search_docs(library, query, ref?, tags?, tags_match?, limit?, mode?)` | searches one version (see below) |
-| `search_all_docs(query, library?, tags?, tags_match?, limit?)` | searches the default version of every library at once (REST: `GET /api/v1/search`) |
-| `read_chunk(chunk_id)` | one chunk verbatim, for example a neighbour of a search result; a chunk ID from before a re-sync answers `stale_chunk` |
+| `read_article(library, ref?, path)` | a whole article, verbatim; an unknown path names the closest paths of that version |
+| `search_docs(library, query, ref?, tags?, tags_match?, limit?, path_prefix?, mode?)` | searches one version (see below) |
+| `search_all_docs(query, library?, tags?, tags_match?, limit?, path_prefix?)` | searches the default version of every library at once (REST: `GET /api/v1/search`) |
+| `read_chunk(chunk_id)` | one chunk verbatim, for example a neighbour of a search result; a chunk ID from before a re-sync answers `stale_chunk`, naming the version's closest paths when its article is gone |
 | `article_outline(library, path, ref?)` | an article's heading tree with each heading's chunk ID and no body text, to see what it covers before reading it (REST: `GET /api/v1/libraries/{owner}/{repo}/outline?path=&ref=`) |
 | `view_article(library, path, ref?)` | MCP App: shows an article to the user as UI, with a text fallback (see [MCP Apps](#mcp-apps)) |
-| `view_search(library, query, ref?, tags?, tags_match?, limit?)` | MCP App: shows the results of a search of one version to the user as UI, with a text fallback |
+| `view_search(library, query, ref?, tags?, tags_match?, limit?, path_prefix?)` | MCP App: shows the results of a search of one version to the user as UI, with a text fallback |
 
 Library IDs are `/owner/repo`. Without a ref, a library's default version answers: the highest
 imported stable semver tag, else the default branch, else the most recently imported version,
 unless a version is pinned as the default. Every response says which version answered.
+
+### Arguments agents get wrong
+
+The tools take the arguments agents actually send instead of failing on them (#573). Before a
+tool validates its arguments, the server:
+
+- treats an optional argument that is `null` or blank (`"ref": ""`, `"query": ""` of
+  `resolve-library-id`) as not given;
+- clamps a number outside its range to the range (`"limit": 1000` on `list_articles` lists 200)
+  and says so in the result;
+- resolves a library name given as `library` (or `libraryId` of `query-docs`) to its ID when
+  exactly one library the caller may read matches it, as `resolve-library-id` matches names (an
+  ID or exact name beats a prefix, a prefix beats a part). Otherwise the error lists the candidate
+  IDs (`ambiguous_library`) or says no library matches (`not_found`). A `library` written
+  `/owner/repo/<ref>` on a tool that takes `ref` is read as the ID and that ref.
+- still refuses an argument the tool does not have (`invalid_arguments`), never ignoring it, and
+  names the tool's real arguments, their types and which are required.
+
+What it changed is in the result: a last text block `Notes: ...` and, for a tool with structured
+content, a `notes` list that every output schema declares. A missing article, outline or stale
+chunk names the closest existing paths of that version: the same file name elsewhere, near typos,
+then the paths sharing the most words with it.
 
 `search_docs` results carry their location, their neighbours (`prev_chunk_id`, `next_chunk_id`),
 `coverage`, the retrieval mode that answered (`retrieval_mode`, `reranked`) and, when a cheaper
@@ -232,8 +254,14 @@ configured. Asking for a mode that is not available is an error, `mode_unavailab
 the missing model role and lists the modes that are available (see
 [Search and AI models](search.md)).
 
+`path_prefix` keeps the results of the articles in one directory, read as `list_articles` reads
+it (`guide` keeps `guide/install.md`, not `guide-old/x.md`). The search ranks the best 200 chunks
+and keeps those inside the directory, so with a narrow prefix in a large version `coverage.complete`
+can be false while fewer results than `limit` came back: more matches may exist further down.
+
 `search_all_docs` results each name their library and version, and `libraries` counts the matches
-per library. At most 500 libraries are searched; `libraries_omitted` says how many were left out.
+per library, `path_prefix` aside. At most 500 libraries are searched; `libraries_omitted` says how
+many were left out.
 
 In `article_outline`, a heading merged into another heading's chunk points to that chunk, and a
 path the version lacks is `not_found`.

@@ -250,19 +250,31 @@ async def test_unreadable_libraries_do_not_use_up_the_slots() -> None:
     assert await resolve(module, "a") == ["/acme/zz-good"]
 
 
-@pytest.mark.parametrize(("name", "query"), [("  ", "x"), ("x", "  ")])
-async def test_blank_text_is_refused_the_same_way_in_either_argument(name: str, query: str) -> None:
+async def test_a_blank_name_is_refused_like_a_blank_search() -> None:
     module = await world([lib("/acme/payments")], {})
 
     with pytest.raises(EmptySearchTextError):
-        await module.resolve_library_id(ResolveLibraryIdQuery(library_name=name, query=query))
+        await module.resolve_library_id(ResolveLibraryIdQuery(library_name="  ", query="x"))
 
 
-async def test_a_blank_query_is_refused_like_a_blank_search() -> None:
-    module = await world([lib("/acme/payments")], {})
+@pytest.mark.parametrize("query", [None, "", "  "])
+async def test_no_query_ranks_the_matches_by_name_alone(query: str | None) -> None:
+    # #573: context7 takes an empty query as no context; gpt-oss sends "" 17 times in 60 runs.
+    module = await world(
+        [lib("/acme/payments-sdk"), lib("/acme/payments"), lib("/acme/pay")],
+        {
+            "/acme/payments": [("a.md", "invoices")],
+            "/acme/payments-sdk": [("a.md", "retry")],
+            "/acme/pay": [("a.md", "x")],
+        },
+    )
 
-    with pytest.raises(EmptySearchTextError):
-        await module.resolve_library_id(ResolveLibraryIdQuery(library_name="x", query="  "))
+    found = await module.resolve_library_id(
+        ResolveLibraryIdQuery(library_name="payments", query=query)
+    )
+
+    assert [m.id for m in found.matches] == ["/acme/payments", "/acme/payments-sdk"]
+    assert [m.query_hits for m in found.matches] == [0, 0]
 
 
 def test_untrusted_text_cannot_start_a_field_of_its_own() -> None:
