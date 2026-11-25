@@ -446,3 +446,145 @@ test("the library list and the file tree stay responsive with large libraries", 
   expect(tree.p95).toBeLessThan(100);
   await context.close();
 });
+
+/**
+ * Elements whose content runs out of their box (#576): a child or a line of text reaches past an
+ * edge of an element that neither scrolls nor ends in an ellipsis that a title spells out in full.
+ * Children placed on purpose (absolute, fixed), a child's negative margin (a bleed), hanging spaces
+ * in pre-wrapped text and pseudo-elements (a larger hit area) don't count. Only the innermost
+ * culprits: a parent that overflows because its child does is the same problem.
+ */
+const overflowing = (page: Page) =>
+  page.evaluate(() => {
+    const flagged: [HTMLElement, string][] = [];
+    const placed = (el: Element) => /absolute|fixed/.test(getComputedStyle(el).position);
+    const range = document.createRange();
+    /** A child's box with its negative margins added back: a bleed is meant. */
+    const marginBox = (child: Element) => {
+      const r = child.getBoundingClientRect();
+      const m = getComputedStyle(child);
+      const out = (v: string) => Math.min(0, Number.parseFloat(v));
+      return {
+        left: r.left - out(m.marginLeft),
+        right: r.right + out(m.marginRight),
+        bottom: r.bottom + out(m.marginBottom),
+        width: r.width,
+        height: r.height,
+      };
+    };
+    for (const el of document.body.querySelectorAll<HTMLElement>("*")) {
+      if (!(el instanceof HTMLElement) || el.closest(".sr-only, [aria-hidden=true], svg")) continue;
+      if (el.matches("input, textarea, select, iframe, canvas, img, video")) continue;
+      const box = el.getBoundingClientRect();
+      if (box.width < 2 || box.height < 2 || !el.checkVisibility({ visibilityProperty: true })) {
+        continue;
+      }
+      const style = getComputedStyle(el);
+      // An inline element has no box of its own for text to run out of: its lines wrap in the parent.
+      if (style.display === "inline" || style.display === "contents") continue;
+      const scrolls = (v: string) => v === "auto" || v === "scroll";
+      // An ellipsis is fine when the full text is one hover away.
+      const ellipsis = style.textOverflow === "ellipsis" && !!el.closest("[title]");
+      const left = box.left + el.clientLeft;
+      const right = left + el.clientWidth;
+      const bottom = box.top + el.clientTop + el.clientHeight;
+      let wide = 0;
+      let tall = 0;
+      // Spaces at the end of a pre-wrapped line hang past the edge by design.
+      const hanging = style.whiteSpace.startsWith("pre-wrap");
+      for (const child of el.childNodes) {
+        const rects: { left: number; right: number; bottom: number; width: number; height: number }[] = [];
+        if (child instanceof Element) {
+          if (placed(child) || child.closest(".sr-only") || !child.checkVisibility()) continue;
+          if (hanging && getComputedStyle(child).display === "inline") continue;
+          rects.push(marginBox(child));
+        } else if (child.nodeType === Node.TEXT_NODE && child.textContent?.trim() && !hanging) {
+          range.selectNodeContents(child);
+          rects.push(...range.getClientRects());
+        }
+        for (const r of rects) {
+          if (r.width === 0 && r.height === 0) continue;
+          wide = Math.max(wide, r.right - right, left - r.left);
+          tall = Math.max(tall, r.bottom - bottom);
+        }
+      }
+      const isWide = !scrolls(style.overflowX) && !ellipsis && wide > 1;
+      const isTall = !scrolls(style.overflowY) && tall > 2;
+      if (!isWide && !isTall) continue;
+      const name = `${el.tagName.toLowerCase()}.${String(el.className).split(" ").slice(0, 5).join(".")}`;
+      const how = `${isWide ? ` ${Math.round(wide)} px wide` : ""}${isTall ? ` ${Math.round(tall)} px tall` : ""}`;
+      flagged.push([el, `${name} "${el.textContent?.trim().slice(0, 40)}"${how}`]);
+    }
+    return flagged
+      .filter(([el]) => !flagged.some(([other]) => other !== el && el.contains(other)))
+      .map(([, text]) => text);
+  });
+
+// #576: at the two largest text sizes the main pages reflow: nothing runs out of its box, nothing
+// scrolls the page sideways, and axe still passes. Runs after the first test: it reads the library
+// that test imported.
+test("the main pages reflow at the two largest text sizes", async ({ browser }) => {
+  test.setTimeout(400_000);
+  const pages = [
+    ["libraries", "/"],
+    ["overview", "/overview"],
+    ["library", "/libraries/fixture/docs-repo?version=v1.4.0"],
+    ["article", "/libraries/fixture/docs-repo?version=v1.4.0&path=docs%2Fguide%2Fresilience.md"],
+    ["search", "/libraries/fixture/docs-repo?version=v1.4.0&q=retry_policy"],
+    ["global-search", "/search?q=retry_policy"],
+    ["settings", "/libraries/fixture/docs-repo/settings"],
+    ["sharing", "/libraries/fixture/docs-repo/sharing"],
+    ["add-library", "/libraries/new"],
+    ["playground", "/playground"],
+    ["jobs", "/jobs"],
+    ["users", "/users"],
+    ["access-log", "/access-log"],
+    ["ai", "/ai"],
+    ["account", "/account"],
+    ["account-sign-in", "/account?tab=sign-in"],
+    ["interface", "/account?tab=interface"],
+  ] as const;
+  const widths = [
+    ["desktop", { width: 1280, height: 900 }],
+    ["phone", { width: 375, height: 812 }],
+  ] as const;
+  const problems: string[] = [];
+  for (const scale of [125, 150]) {
+    for (const [size, viewport] of widths) {
+      const context = await browser.newContext({ baseURL, viewport, reducedMotion: "reduce" });
+      const page = await context.newPage();
+      await signIn(page);
+      const saved = await (await page.request.get("/api/v1/account/preferences")).json();
+      const setScale = async (text_scale: number) => {
+        const response = await page.request.put("/api/v1/account/preferences", {
+          data: { ...saved.preferences, text_scale },
+        });
+        expect(response.ok()).toBe(true);
+      };
+      await setScale(scale);
+      const check = async (label: string) => {
+        await settled(page);
+        problems.push(...(await overflowing(page)).map((p) => `${label}: ${p}`));
+        const sideways = await page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        );
+        if (sideways > 0) problems.push(`${label}: the page scrolls sideways by ${sideways} px`);
+        await expectNoViolations(page, label);
+      };
+      for (const [name, path] of pages) {
+        await page.goto(path);
+        await page.waitForLoadState("networkidle");
+        await expect(page.locator("html")).toHaveCSS("font-size", `${(16 * scale) / 100}px`);
+        await page.screenshot({ path: `shots/text-${scale}-${size}-${name}.png`, fullPage: true });
+        await check(`${name} ${scale}% ${size}`);
+      }
+      await page.goto("/account");
+      await page.getByRole("button", { name: "New token" }).click();
+      await expect(page.getByRole("dialog")).toBeVisible();
+      await check(`new-token dialog ${scale}% ${size}`);
+      await setScale(100);
+      await context.close();
+    }
+  }
+  expect(problems).toEqual([]);
+});

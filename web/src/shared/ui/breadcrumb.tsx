@@ -69,6 +69,8 @@ function BreadcrumbPage({ className, ...props }: React.ComponentProps<"span">) {
     <span
       data-slot="breadcrumb-page"
       aria-current="page"
+      // The full text one hover away when it is cut short.
+      title={typeof props.children === "string" ? props.children : undefined}
       className={cn("truncate font-medium text-foreground", className)}
       {...props}
     />

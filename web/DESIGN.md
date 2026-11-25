@@ -496,7 +496,13 @@ file first.
 - **Every page** starts with `PageHeader`: an h1 (`text-title`), one line about the data, and the
   actions at the right. Sections use `Section` (h2 `text-section`).
 - **Breakpoints:** phone below `md` (the band opens a menu sheet from the left). `xl` puts the
-  search field in the band. `xl` shows the reader's contents column.
+  search field in the band. `xl` shows the reader's contents column. They follow the text size
+  (#576): `sm:` to `2xl:` and `max-*:` are container queries on `<body>`, where `rem` is the root
+  font size, so 150% on a 1280 px window lays out like 853 px. In JS use `usePhoneLayout()`.
+- **Reflow:** text wraps or its box grows; nothing spills out of a card at any text size. Buttons
+  and toggle items have a minimum height, not a fixed one, and wrap a label that doesn't fit;
+  `truncate` comes with a `title` holding the full text; wide content (code, config) scrolls
+  inside its own box. The browser test checks the main pages at 125% and 150%.
 - **Targets:** every control is 44px on touch and with the large-targets preference; with a fine
   pointer it is 36px (small buttons 32px, menu rows 32px, tabs 40px).
 
@@ -788,7 +794,7 @@ inline script in `index.html`, and synced to the account when signed in (GET/PUT
 |---|---|---|
 | Theme | light, dark, system | `.dark`, `color-scheme`, `data-theme` |
 | Contrast | standard, more | `data-contrast="more"` |
-| Text size | 90, 100, 110, 125, 150% | the root font size |
+| Text size | 90, 100, 110, 125, 150% | the root font size (the breakpoints follow it) |
 | Text spacing | standard, wide (WCAG 1.4.12: line 1.5, paragraphs 2em, letters 0.12em, words 0.16em) | `data-spacing="wide"` |
 | Motion | system, reduced, full | `data-motion`, and `data-reduce-motion` when reduced either way |
 | Font | default, hyperlegible, dyslexic, system | `data-font` |

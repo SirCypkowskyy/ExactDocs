@@ -96,7 +96,12 @@ export function Tag({
       )}
     >
       {leading}
-      <span className={cn("min-w-0 truncate", mono && "font-mono")}>{children}</span>
+      <span
+        title={typeof children === "string" ? children : undefined}
+        className={cn("min-w-0 truncate", mono && "font-mono")}
+      >
+        {children}
+      </span>
       {onRemove && (
         <IconButton
           label={removeLabel ?? ""}

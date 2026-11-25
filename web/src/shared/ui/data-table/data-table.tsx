@@ -2,7 +2,7 @@ import { flexRender, type RowData } from "@tanstack/react-table";
 import type { LucideIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { useMessages } from "@/shared/lib/i18n";
-import { PHONE_QUERY, useMediaQuery } from "@/shared/lib/use-media-query";
+import { usePhoneLayout } from "@/shared/lib/use-media-query";
 import { cn } from "@/shared/lib/utils";
 import { messages } from "../messages";
 import { Skeleton } from "../skeleton";
@@ -113,7 +113,7 @@ export function DataTable<T extends RowData>({
   rowLabel,
   ...states
 }: DataTableProps<T>) {
-  const phone = useMediaQuery(PHONE_QUERY);
+  const phone = usePhoneLayout();
   const fresh = useFreshRows(
     model.viewKey,
     model.rows.map((r) => r.id),
