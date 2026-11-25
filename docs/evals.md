@@ -654,6 +654,27 @@ Each metric is reported per configuration and chunking, over all cases, per ques
 | p50 / p95 latency | every case | nearest-rank percentiles of the search alone, one question at a time, on the machine named in the report |
 | tokens / USD per question | every case | what the spend ledger grew by during each search (an embedding, a judgment, a HyDE answer, an agent run); USD from the configured prices or `genai-prices` |
 | index | per embedding model and chunking | seconds, tokens and USD of embedding the whole corpus once |
+| context tokens / question | every case | estimated tokens (characters / 4, `CHARS_PER_TOKEN`) of the content of every chunk returned: what a caller holds once it has read the results |
+| tokens to first hit | answerable cases with a hit in the top 10 | estimated tokens of the chunks up to and including the first that answers |
+| recall within 1,000 / 2,000 / 4,000 tokens | answerable cases | the result that first answers the case ends within the first 1,000, 2,000 or 4,000 estimated tokens of the text returned, the results read whole and in order (below) |
+
+**Recall within a token budget** (#575). Tools return very different amounts of text per result:
+an ExactDocs chunk at `default` holds about 350 estimated tokens, a Grounded Docs result about
+1,000, a section widened to its parent more. A tool that returns more text per result finds the
+answer in its first result more often for that reason alone, so recall@k does not compare them at
+the same amount of context. Recall within *B* tokens does: the results are read in order, whole,
+and a case counts when the first result that answers it ends within the first *B* estimated
+tokens of what was returned (its tokens to the first hit are at most *B*). The budgets are
+`TOKEN_BUDGETS`; each comes with its interval, and each result is tested against its budget's
+default by McNemar's test (mid-p), as recall@k is. The tokens are those of the "context tokens /
+question" every report gives: characters / 4, of each chunk's content (ExactDocs) or each text
+result (a tool scored from text). A tool scored from its text is also measured with its text
+**cut at the budget**: a case counts as well when the result the budget cuts answers it from its
+part within the budget, by the text scorer's own rule (the part holds the section, or lies in it).
+That is the literal "the answer is in the first *B* tokens", and it favours a tool whose results
+are long; whole results favour one whose results are short. Chunk-ID scoring cannot cut a chunk,
+so it reports the whole-results form only. A row recorded before #575 kept no sizes, and its
+result has no budget metrics.
 
 **nDCG@10.** A returned hit at rank *i* is relevant (*rel* = 1) when it answers a part of the case
 (one of its sections or of their alternatives) that no earlier hit answered, so a part found twice,
@@ -735,7 +756,8 @@ The definitions, and why mid-p and a permutation test, are in
   timeout, HyDE and agentic limits; never a key); `metrics`, `by_kind`, `by_project` (each with
   its `intervals`), `index`, `fallbacks`, `reranked`, `rerank_fallbacks`, `misses`, `errors`,
   `wrong_version_cases`, `left_version_cases`; `rows`, every case's outcome by case name (its
-  kind, project, rank, nDCG, section ranks, wrong version, empty, search time, tokens and USD),
+  kind, project, rank, nDCG, section ranks, wrong version, empty, search time, tokens and USD,
+  and since #575 `context_tokens`, `tokens_to_hit` and, scored from text, `cut_hits`),
   from which the metrics, intervals and tests can be recomputed; `rows_from`, set when the rows
   come from a later run than the metrics (below); and `versus_default`, the paired tests
   against its budget's default;
@@ -873,15 +895,32 @@ each budget is tested against: what ExactDocs ships for it (BM25 at `default` fo
     - `prefix_indexed` / `prefix_embedded`: put `title > heading > path` in front of the text
       indexed for BM25, or of the text embedded. The text returned is never prefixed. (ExactDocs'
       own index already weights the heading path in its own columns; the prefix adds the title
-      and puts the path in the text.)
+      and puts the path in the text. ExactDocs' own vector index already embeds the title and the
+      heading path in front of each chunk, embedding input format 1, so `prefix_embedded` is the
+      eval-only form of what it ships.)
     - `expand: parent`: return each hit's parent section with its subsections instead of the hit
       (a top-level section widens to itself); a widened text returned twice is returned once.
+    - `expand: article` (#575): group the top 10 hits by article, as Grounded Docs assembles its
+      results. Each article is one result, ranked by its best hit, holding its hits and the chunk
+      on either side of each (`ARTICLE_NEIGHBOURS`), in article order, each chunk once. Heading
+      chunkings only.
     - `embedding`: a local model pulled with `exactdocs models pull`; a cell whose model is not
       pulled is reported unavailable, with the command.
+    - `against` (#575): the cell this one is a variant of, its control. The report then also
+      tests the variant against it, case by case, on every metric of
+      [Intervals and paired tests](#intervals-and-paired-tests) and on recall within each token
+      budget. It changes nothing the cell returns, and running a variant with `--cells` runs its
+      control too.
 
 `default/bm25`, the grid's own BM25 at ExactDocs' chunking, is the control: it should score as
 the app's `bm25@default` does, so a gap between an eval-only variant and the default comes from
 the variant, not from the grid's search.
+
+Embedding the corpus is what an embedding cell spends its time on, and several cells embed the
+same texts (the same chunks, prefixed alike). The grid keeps every slice of 256 embedded texts in
+`<out>/embeddings/`, under a hash of the model and the texts: a cell whose texts were embedded
+before reads them back, and a cell interrupted while embedding takes up where it stopped. A
+cell's index cost still counts the seconds embedding its texts took the first time.
 
 ### The baselines
 
@@ -904,6 +943,12 @@ those declared defaults, not a pick. On top:
 - `ingestion`: per eval-only chunker, the ingestion benchmark's metrics (#346), so the report says
   where windows cut code blocks, tables and lists. Coverage and lost characters say little of
   windows (they start mid-section and overlap), so the summary shows the sections held instead.
+- `versus_control`: per variant that names a control (`against`), the paired tests against it,
+  shown under *Against each variant's control*.
+
+Every cell also reports recall within 1,000, 2,000 and 4,000 tokens
+([Metrics](#metrics)), under *Within a token budget*: whole results for every cell, and cut at the
+budget for the cells scored from their text.
 
 A text-scored cell searches only the version asked. A result the text scorer places only in
 another version is a text that crosses sections; it counts in the wrong-version rate and does
@@ -986,6 +1031,8 @@ its results is. Next to them:
 | results / question | every case | results returned |
 | context tokens / question, p95 | every case | estimated tokens of all the text returned (characters / 4, as `CHARS_PER_TOKEN`); tools return very different amounts of text, so a hit costs a different number of tokens in each |
 | tokens to first hit | answerable cases with a hit in the top 10 | estimated tokens of the results up to and including the first that answers a section the case lists |
+| recall within 1,000 / 2,000 / 4,000 tokens, whole results | answerable cases | the first result that answers ends within the budget, as the retrieval benchmark measures it ([Recall within a token budget](#metrics)) |
+| recall within 1,000 / 2,000 / 4,000 tokens, text cut | answerable cases | the text cut at the budget answers: a result within it answers, or the result the budget cuts answers from its part within it (`cut_answers`) |
 | facts found | answerable cases | the share of the case's facts the returned text holds, averaged over the cases |
 
 **Facts found** is a second signal, independent of the sections: a fact is found when at least
@@ -1210,7 +1257,10 @@ environment variables set), `embedding` (`model`, `revision`, `dimensions`, `sto
 `cases_not_indexed` (answerable cases none of whose listed articles was indexed). The command
 exits with 1 when a question failed, a version got nothing indexed, or a chunk of the vector
 configuration got no vector (`problems`). `grounded-docs.md` is the summary; `just bench-pages`
-fills [Comparison with other tools](benchmark/comparison.md) from the recorded run.
+fills [Comparison with other tools](benchmark/comparison.md) from the recorded run. Since #575
+the summary also compares every result within 1,000, 2,000 and 4,000 tokens of the text it
+returned, read whole and cut at the budget ([Recall within a token budget](#metrics)), with the
+paired tests of each Grounded Docs configuration against ExactDocs on both.
 
 ### When it runs
 

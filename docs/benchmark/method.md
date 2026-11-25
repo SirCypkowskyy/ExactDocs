@@ -50,6 +50,24 @@ Answerable cases are the 267 cases that name sections; unanswerable cases are th
 | p50 / p95 latency | every case | nearest-rank percentiles of the search alone, one question at a time, on the machine the run names |
 | tokens / USD per question | every case | what the spend ledger grew by during each search (embedding a query, a judgment, a HyDE answer, an agent run); USD from the configured prices or `genai-prices` |
 | index | per embedding model and chunking | seconds, tokens and USD of embedding the whole corpus once |
+| context tokens / question | every case | estimated tokens (characters / 4) of all the text returned: every chunk's content for ExactDocs, every result's text for a tool scored from text |
+| tokens to first hit | answerable cases with a hit in the top 10 | estimated tokens of the results up to and including the first that answers |
+| recall within 1,000 / 2,000 / 4,000 tokens | answerable cases | the result that first answers the case ends within the first 1,000, 2,000 or 4,000 estimated tokens of the text returned, the results read whole and in order |
+| the same, text cut | answerable cases, tools scored from text | the text returned, cut at the budget, answers the case: a result within the budget answers, or the result the budget cuts answers from its part within it |
+
+**At the same amount of context** (#575). Tools return very different amounts of text per result:
+an ExactDocs chunk at `default` holds about 350 estimated tokens, a Grounded Docs result about
+1,000. A tool whose results are longer finds the answer in its first result more often for that
+reason alone, so recall@1 and recall@5 do not compare tools at the same amount of context. Recall
+within a token budget does: how often the answer is among the first 1,000, 2,000 or 4,000 tokens
+a caller reads, the same tokens the reports give as "context tokens / question". It is measured
+two ways, because neither is neutral. *Whole results* counts a result only when all of it fits,
+the way a caller that takes results one at a time reads them; it favours a tool whose results are
+short. *Text cut* cuts the text at the budget and counts the result the budget cuts when the part
+of it within the budget answers (it holds the section, or lies in it, by the text scorer's rule);
+it favours a tool whose results are long, since the start of a long result can answer. Chunk-ID
+scoring cannot cut a chunk, so ExactDocs' own benchmark reports whole results only; a tool scored
+from its text gets both. Each comes with its interval and the paired test (McNemar, mid-p).
 
 A case lists the sections that answer it as **parts** a complete answer needs ("all of"), each
 followed by its **alternatives**: sections that answer that part as well, either being enough

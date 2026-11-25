@@ -263,6 +263,10 @@ def test_the_recorded_grid_holds_every_variant_and_baseline_the_issue_asks_for()
     assert any(c.prefix_indexed for c in grid.cells)
     assert any(c.expand == "parent" for c in grid.cells)
     assert any(c.search == "grep" for c in grid.cells)
+    # #575: grouping by article, for BM25 and hybrid search, each variant with its control
+    grouped = [c for c in grid.cells if c.expand == "article"]
+    assert {c.search for c in grouped} == {"bm25", "hybrid"}
+    assert all(c.against in cells for c in grouped)
     rag = [c for c in grid.cells if c.window is not None and c.search == "dense"]
     assert rag
     assert all(c.embedding == "BAAI/bge-small-en-v1.5" for c in rag)
@@ -309,6 +313,37 @@ def test_the_command_runs_the_grid_and_resumes_per_cell(tmp_path: Path) -> None:
     assert main([*run, "--fresh"]) == 0
     fresh = GridReport.model_validate_json((out / f"{REPORT_NAME}.json").read_text("utf-8"))
     assert fresh.resumed == []
+
+
+def test_a_variant_runs_with_its_control_and_is_tested_against_it(tmp_path: Path) -> None:
+    args = tiny_corpus(tmp_path)
+    grid = tmp_path / "matrix.yaml"
+    grid.write_text(
+        yaml.safe_dump({
+            "defaults": {"none": "bm25@default"},
+            "cells": [
+                {"app": "bm25"},
+                {"name": "own", "search": "bm25"},
+                {"name": "grouped", "search": "bm25", "expand": "article", "against": "own"},
+            ],
+        }),
+        encoding="utf-8",
+    )  # fmt: skip
+    out = tmp_path / "out"
+
+    assert main([*args, "--grid", str(grid), "--out", str(out), "--cells", "grouped"]) == 0
+
+    report = GridReport.model_validate_json((out / f"{REPORT_NAME}.json").read_text("utf-8"))
+    assert [r.configuration for r in report.bench.results] == ["bm25", "own", "grouped"]
+    versus = report.versus_control["grouped"]
+    assert versus.configuration == "own"
+    assert {"recall_at_1", "recall_at_1k_tokens", "recall_at_1k_tokens_cut"} <= set(versus.tests)
+    summary = (out / f"{REPORT_NAME}.md").read_text("utf-8")
+    assert "## Against each variant's control" in summary
+    assert "| `grouped` | `own` |" in summary
+    assert "## Within a token budget" in summary
+    with pytest.raises(ValidationError, match="controls that name no cell"):
+        Grid.model_validate({"defaults": {}, "cells": [{"app": "bm25", "against": "nope"}]})
 
 
 def test_the_command_refuses_an_unknown_configuration(tmp_path: Path) -> None:

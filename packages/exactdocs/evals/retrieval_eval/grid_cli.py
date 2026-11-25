@@ -65,6 +65,7 @@ from retrieval_eval.ingestion_cli import (
 )
 from retrieval_eval.retrieval_bench import (
     BUDGETS,
+    CUT_BUDGETS,
     TOKEN_BUDGETS,
     ConfigResult,
     ModelInfo,
@@ -738,7 +739,8 @@ _CONTROL_TESTS: Final[tuple[tuple[str, str], ...]] = (
     ("recall_at_10", "recall@10"),
     ("mrr", "MRR"),
     ("ndcg_at_10", "nDCG@10"),
-    *((name, f"within {budget:,} tokens") for name, budget in TOKEN_BUDGETS.items()),
+    *((name, f"within {budget:,}") for name, budget in TOKEN_BUDGETS.items()),
+    *((name, f"cut at {budget:,}") for name, budget in CUT_BUDGETS.items()),
 )
 """The metrics a variant is tested on against its control, and their labels."""
 
