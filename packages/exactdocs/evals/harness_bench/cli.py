@@ -152,6 +152,12 @@ def _run_options(run: argparse.ArgumentParser) -> None:
     run.add_argument("--work-dir", type=Path, help="runs and server logs (default: temporary)")
     run.add_argument("--report", type=Path, default=REPORT)
     run.add_argument("--resume", action="store_true", help="continue from <report>.rows.jsonl")
+    run.add_argument(
+        "--report-only",
+        action="store_true",
+        help="run nothing: report the runs <report>.rows.jsonl holds for what is asked (runs "
+        "made by several commands, e.g. a harness on fewer models)",
+    )
     run.add_argument("--tasks-dir", type=Path, default=TASKS_DIR, help=argparse.SUPPRESS)
     run.add_argument(
         "--environments-dir", type=Path, default=ENVIRONMENTS_DIR, help=argparse.SUPPRESS
@@ -192,7 +198,9 @@ def _asked(args: argparse.Namespace) -> _Asked | str:
     except ValueError as error:
         return str(error)
     kinds = {k.strip() for k in args.jobs.split(",") if k.strip()}
-    problem = _problem(args, harnesses, models, kinds) or _keys(harnesses, models, setups)
+    problem = _problem(args, harnesses, models, kinds)
+    if not problem and not args.report_only:  # a report alone needs no key
+        problem = _keys(harnesses, models, setups)
     if problem:
         return problem
     return _Asked(
@@ -422,9 +430,14 @@ def _run(args: argparse.Namespace) -> int:
     )
     checkpoint = args.report.with_suffix(ROWS_SUFFIX)
     args.report.parent.mkdir(parents=True, exist_ok=True)
-    done = load_rows(checkpoint) if args.resume else {}
-    if not args.resume:
+    resume = args.resume or args.report_only
+    done = load_rows(checkpoint) if resume else {}
+    if not resume:
         checkpoint.write_text("", encoding="utf-8")
+    earlier = None
+    if args.report_only and args.report.exists():
+        text = args.report.read_text(encoding="utf-8")
+        earlier = HarnessReport.model_validate_json(text).meta.servers
     try:
         report = asyncio.run(
             run_bench(
@@ -440,6 +453,8 @@ def _run(args: argparse.Namespace) -> int:
                 image=DOCKER_IMAGE,
                 baseline=baseline,
                 baselines=baselines,
+                run_missing=not args.report_only,
+                servers=earlier,
             )
         )
     except RuntimeError as error:

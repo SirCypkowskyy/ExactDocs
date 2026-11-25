@@ -30,12 +30,10 @@ HARNESSES: Final[dict[str, Harness]] = {
 RIPGREP_VERSION: Final[str] = "14.1.1"
 """The ripgrep release every run's container gets: OpenCode's and Gemini CLI's search tools run
 ``rg``, and OpenCode would otherwise try to download it, which the gate refuses."""
+RIPGREP_RELEASES: Final[str] = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1"
+"""Where its builds are published."""
 RIPGREP_BUILDS: Final[dict[str, tuple[str, str]]] = {
-    machine: (
-        f"https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-{build}"
-        ".tar.gz",
-        sha256,
-    )
+    machine: (f"{RIPGREP_RELEASES}/ripgrep-{RIPGREP_VERSION}-{build}.tar.gz", sha256)
     for machines, build, sha256 in (
         (
             ("x86_64", "amd64"),

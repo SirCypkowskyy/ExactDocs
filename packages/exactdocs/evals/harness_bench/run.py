@@ -27,6 +27,7 @@ import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
+from itertools import starmap
 from pathlib import Path
 from typing import Final
 from urllib.parse import urlsplit
@@ -509,6 +510,8 @@ async def run_bench(
     image: str = "",
     baseline: Mapping[BaselineKey, tuple[bool, float, float, float]] | None = None,
     baselines: Sequence[str] = (),
+    run_missing: bool = True,
+    servers: Mapping[str, dict[str, str]] | None = None,
 ) -> HarnessReport:
     """Run every job with every harness, model and arm, and report.
 
@@ -525,6 +528,9 @@ async def run_bench(
         image: The container image, for the report.
         baseline: The same models' runs without a harness (``report.baseline_outcomes``).
         baselines: The reports they come from, for the report.
+        run_missing: Run what ``done`` does not hold; ``False`` reports ``done`` alone (no server
+            starts, nothing runs): a report over runs made by several commands.
+        servers: What the arms' servers were, when none starts here (an earlier report's).
 
     Returns:
         The report.
@@ -547,12 +553,16 @@ async def run_bench(
         if model.provider.name in installed.harness.providers
         for setup in plan.setups
     ]
-    async with contextlib.AsyncExitStack() as stack:
-        for setup in plan.setups:
-            running.endpoints[setup.arm.name, setup.retrieval] = await stack.enter_async_context(
-                endpoints.endpoint(setup.arm, setup.config)
-            )
-        every = await running.run_all(specs)
+    if run_missing:
+        async with contextlib.AsyncExitStack() as stack:
+            for setup in plan.setups:
+                running.endpoints[
+                    setup.arm.name, setup.retrieval
+                ] = await stack.enter_async_context(endpoints.endpoint(setup.arm, setup.config))
+            every = await running.run_all(specs)
+    else:
+        earlier = done or {}  # failed runs included: they are counted as errors
+        every = [earlier[k] for k in starmap(key_for, specs) if k in earlier]
     meta = RunMeta(
         started_at=started_at,
         exactdocs_version=importlib.metadata.version("exactdocs"),
@@ -561,7 +571,7 @@ async def run_bench(
         agent_models=[m.name for m in plan.models],
         thinking={m.name: m.thinking or "model default" for m in plan.models},
         arms=list(dict.fromkeys(s.arm.name for s in plan.setups)),
-        servers=endpoints.described,
+        servers=endpoints.described or dict(servers or {}),
         jobs=len(plan.jobs),
         selection=plan.selection,
         cutoff=plan.cutoff,
@@ -571,7 +581,7 @@ async def run_bench(
         concurrency=concurrency,
         isolation=runner.isolation,
         image=image,
-        resumed=len(specs) - running.todo,
+        resumed=len(specs) - running.todo if run_missing else len(every),
         baselines=list(baselines),
     )
     return HarnessReport(meta=meta, cells=cells_of(every, DEFAULT_STATS, baseline), results=every)
