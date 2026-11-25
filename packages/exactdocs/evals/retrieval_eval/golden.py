@@ -22,7 +22,14 @@ from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.constants import DEFAULT_MAX_ARTICLE_BYTES
 from exactdocs.ingestion.models import PathSelection, parse_article
 from fixture_repo import git, git_bytes
-from retrieval_eval.dataset import GOLDEN_KINDS, Answer, CaseInfo, Question, RetrievalDataset
+from retrieval_eval.dataset import (
+    GOLDEN_KINDS,
+    Answer,
+    CaseInfo,
+    Question,
+    RetrievalDataset,
+    parts_of,
+)
 
 GOLDEN_DIR: Final[Path] = Path(__file__).parents[1] / "golden"
 """The golden set in the repository."""
@@ -35,7 +42,7 @@ UNANSWERABLE: Final[str] = "unanswerable"
 CROSS_PAGE: Final[str] = "cross-page"
 """The kind of a case that needs sections of more than one article."""
 MIN_CROSS_PAGE_ARTICLES: Final[int] = 2
-"""The fewest articles a cross-page case expects sections of."""
+"""The fewest articles a cross-page case needs parts of (its alternatives aside)."""
 
 type GoldenCase = Case[Question, Answer, CaseInfo]
 """One golden-set case."""
@@ -301,11 +308,31 @@ def _answer_problems(kind: str | None, version: str, expected: Answer) -> Iterab
             yield "expects no section: name them, or make it unanswerable"
         if not [f for f in expected.facts if f.strip()]:
             yield "lists no facts a correct answer must contain"
-    if kind == CROSS_PAGE and len({hit.article for hit in expected.hits}) < MIN_CROSS_PAGE_ARTICLES:
-        yield "is cross-page but expects sections of fewer than two articles"
+    yield from _section_list_problems(kind, version, expected)
+
+
+def _section_list_problems(kind: str | None, version: str, expected: Answer) -> Iterable[str]:
+    """Check the sections a case lists: their version, repeats, and the parts of a cross-page case.
+
+    Args:
+        kind: The case's kind.
+        version: The version it asks about.
+        expected: Its expected sections (each part, then its alternatives).
+
+    Yields:
+        Each broken rule.
+    """
+    needed = {part[0].article for part in parts_of(expected.hits)}
+    if kind == CROSS_PAGE and len(needed) < MIN_CROSS_PAGE_ARTICLES:
+        yield "is cross-page but needs parts of fewer than two articles (alternatives aside)"
+    seen: set[tuple[str, str, tuple[str, ...]]] = set()
     for hit in expected.hits:
         if hit.version != version:
             yield f"expects a section of {hit.version}, not of its version {version}"
+        key = (hit.version, hit.article, tuple(hit.heading_path))
+        if key in seen:
+            yield f"lists {hit.article} {_shown(hit.heading_path)} twice"
+        seen.add(key)
 
 
 def article_sections(

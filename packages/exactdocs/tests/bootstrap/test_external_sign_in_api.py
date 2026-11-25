@@ -242,7 +242,9 @@ async def test_signing_out_ends_only_the_exactdocs_session(instance: Instance) -
 async def test_the_session_state_lists_the_providers(instance: Instance) -> None:
     state = (await instance.client.get("/api/v1/session")).json()
 
-    assert state["providers"] == [{"name": "corp", "display_name": "Corp SSO"}]
+    assert state["providers"] == [
+        {"name": "corp", "display_name": "Corp SSO", "icon": None, "icon_url": None}
+    ]
 
 
 async def test_the_users_page_shows_provider_and_groups(instance: Instance) -> None:
@@ -367,6 +369,10 @@ async def test_before_the_setup_no_external_sign_in_starts() -> None:
         (
             {"auth": {"providers": {"Corp": provider()}}},
             "lower-case letters, digits and hyphens",
+        ),
+        (
+            {"auth": {"providers": {"password": provider()}}},
+            "it names local \\(password\\) accounts",
         ),
         (
             {"auth": {"providers": {"corp": provider(issuer="http://idp.example.com")}}},

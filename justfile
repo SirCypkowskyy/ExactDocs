@@ -57,9 +57,17 @@ lint:
     uv run ty check
     cd {{ web }} && pnpm lint
 
-# Python tests: unit, integration, architecture (pass extra pytest args; `just test -m eval`: the slow eval tests)
+# Python tests: unit, in-process integration, architecture (pass extra pytest args; `just test -m eval`: the slow eval tests)
 test *args:
     uv run pytest {{ args }}
+
+# Python tests with the integration tests too: they need PostgreSQL, a search or vector server, Docker or the network, each named by an EXACTDOCS_TEST_<NAME>_URL (docs/releasing.md); `just test-integration -m integration`: only them
+test-integration *args:
+    uv run pytest --integration {{ args }}
+
+# Refresh .test_durations, which CI's pytest shards are balanced by (the default suite, timed)
+test-durations:
+    uv run pytest --store-durations --clean-durations -q
 
 # Architecture rules only (ArchUnitPython)
 arch:
@@ -68,6 +76,16 @@ arch:
 # Acceptance scenarios (behave); e.g. `just bdd packages/exactdocs/features/search.feature`
 bdd *args:
     uv run behave {{ args }}
+
+# Refresh .behave_durations, which CI's behave shards are balanced by (every scenario but the @integration ones, timed)
+bdd-durations:
+    rm -rf reports/behave-durations
+    uv run behave --format=progress --junit --junit-directory=reports/behave-durations
+    uv run python deploy/behave_shards.py --store reports/behave-durations
+
+# Acceptance scenarios with the @integration ones too (their services: docs/releasing.md); `just bdd-integration --tags=@integration`: only them
+bdd-integration *args:
+    EXACTDOCS_INTEGRATION=1 uv run behave {{ args }}
 
 # Retrieval eval suite (runs on releases, not in CI): modes compared on the fixture docs repository (docs/evals.md); `just eval --help`
 eval *args:
@@ -81,6 +99,10 @@ golden-validate *args:
 golden-import *args:
     uv run python packages/exactdocs/evals/run_golden.py import {{ args }}
 
+# Golden set review: `sample` draws the seeded review sample and its sheet, `checks` measures the whole set's wording, `summary` (docs/evals.md)
+golden-review *args:
+    uv run python packages/exactdocs/evals/run_golden_review.py {{ args }}
+
 # Ingestion benchmark: chunking configurations measured on the golden corpus, with BM25 recall (docs/evals.md)
 ingestion-bench *args:
     uv run python packages/exactdocs/evals/run_ingestion_bench.py {{ args }}
@@ -88,6 +110,22 @@ ingestion-bench *args:
 # Retrieval benchmark: modes, models, rerankers and chunking measured on the golden set (docs/evals.md)
 retrieval-bench *args:
     uv run python packages/exactdocs/evals/run_retrieval_bench.py {{ args }}
+
+# Retrieval grid: chunking, context and embedding variants and plain baselines on the golden set, resumable (docs/evals.md)
+retrieval-grid *args:
+    uv run python packages/exactdocs/evals/run_retrieval_grid.py {{ args }}
+
+# Text scorer: calibrate scoring from a result's text against chunk-ID scoring on BM25 (docs/evals.md)
+text-bench *args:
+    uv run python packages/exactdocs/evals/run_text_bench.py {{ args }}
+
+# Grounded Docs (never in CI): a pinned docs-mcp-server indexes the golden corpus, answers the golden set, scored next to ExactDocs' BM25 (docs/evals.md); needs Node.js 22
+grounded-bench *args:
+    uv run python packages/exactdocs/evals/run_grounded_bench.py {{ args }}
+
+# Context7 (never in CI): its REST API answers the golden set where it serves the pinned versions, scored next to ExactDocs' BM25 (docs/evals.md); needs CONTEXT7_API_KEY, or --from-cache
+context7-bench *args:
+    uv run python packages/exactdocs/evals/run_context7_bench.py {{ args }}
 
 # Agent benchmark (never in CI): an agent with only the ExactDocs MCP tools answers the golden set (docs/evals.md); `just agent-bench run --offline`
 agent-bench *args:
@@ -176,3 +214,10 @@ e2e: web-build
     rm -rf packages/exactdocs/src/exactdocs/_web
     cp -r {{ web }}/dist packages/exactdocs/src/exactdocs/_web
     cd e2e && pnpm install --frozen-lockfile && pnpm exec playwright install chromium && python3 run.py
+
+# Screenshots of the README and the docs from the real UI, light and dark, into docs/assets/screenshots/ (e2e/screenshots.py)
+screenshots *args: web-build
+    rm -rf packages/exactdocs/src/exactdocs/_web
+    cp -r {{ web }}/dist packages/exactdocs/src/exactdocs/_web
+    cd e2e && pnpm install --frozen-lockfile && pnpm exec playwright install chromium
+    uv run python e2e/screenshots.py {{ args }}

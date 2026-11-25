@@ -926,6 +926,8 @@ LIBSQL_NEAREST_SCAN: Final[str] = (
 # ---------------------------------------------------------------- adapters.driven.pinecone_index
 PINECONE_BACKEND: Final[str] = "pinecone"
 """The registered name of the Pinecone vector backend (#362)."""
+PINECONE_API_URL: Final[str] = "https://api.pinecone.io"
+"""Pinecone's control plane: where an index given by name is looked up (#538: its proxy then)."""
 PINECONE_NAMESPACE: Final[str] = "exactdocs"
 """The namespace an instance keeps its vectors in when its options name none."""
 PINECONE_MAX_NAMESPACE: Final[int] = 500
@@ -1708,6 +1710,22 @@ SPEND_SCOPE_KINDS: Final[frozenset[str]] = frozenset(
 """Every scope kind of the ledger, the first part of its row key."""
 MONTHS_PER_YEAR: Final[int] = 12
 """December is the last month: the month window after it starts in January."""
+SPEND_INSTANCE_WIDE_KINDS: Final[frozenset[str]] = frozenset(
+    {SPEND_SCOPE_INSTANCE, SPEND_SCOPE_EMBEDDING}
+)
+"""The scope kinds with one row per window, whose scope ID is ``SPEND_INSTANCE_ID``; the others
+(``library``, ``user``) have one per library or account."""
+SPEND_HISTORY_MAX_DAYS: Final[int] = 366
+"""The most days one spend history shows (a leap year's worth); a longer range is refused."""
+SPEND_HISTORY_MAX_MONTHS: Final[int] = 60
+"""The most months one spend history shows (five years); a longer range is refused."""
+SPEND_HISTORY_BEFORE_YEAR_ONE: Final[str] = "it would start before year 1"
+"""Why a spend history whose default start is before the first day there is is refused."""
+SPEND_HISTORY_DEFAULT_DAYS: Final[int] = 30
+"""Days a daily spend history shows when it is not told where to start: today and the 29 before."""
+SPEND_HISTORY_DEFAULT_MONTHS: Final[int] = 12
+"""Months a monthly spend history shows when it is not told where to start: this month and the
+11 before."""
 BUDGET_WITHOUT_CEILING: Final[str] = "a budget needs a US dollar or a token ceiling"
 """Why a budget with neither ceiling is refused (it would limit nothing)."""
 BUDGET_NOT_POSITIVE: Final[str] = "a budget ceiling must be positive"

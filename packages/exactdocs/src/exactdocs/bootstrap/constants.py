@@ -87,6 +87,16 @@ CONFIG_FILE_VARIABLE: Final[str] = "EXACTDOCS_CLIENT_CONFIG"
 """Environment variable that points the CLI client at another credentials file (it was
 ``EXACTDOCS_CONFIG_FILE`` before that became the server's TOML configuration file, #241).
 """
+OUTBOUND_OVERRIDES: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "http_proxy": "EXACTDOCS_HTTP_PROXY",
+        "https_proxy": "EXACTDOCS_HTTPS_PROXY",
+        "no_proxy": "EXACTDOCS_NO_PROXY",
+        "ca_bundle": "EXACTDOCS_CA_BUNDLE",
+    }
+)
+"""The ``EXACTDOCS_`` variables that replace the standard outbound ones (#538), by the setting
+they fill: the server reads them as settings, the CLI's client from its environment."""
 DEFAULT_PORTS: Final[dict[str, int]] = {"http": 80, "https": 443}
 """The port each URL scheme implies, so ``https://x`` and ``https://x:443`` are one server."""
 MAX_TOKEN_NAME_LENGTH: Final[int] = (
@@ -295,7 +305,13 @@ MIGRATION_TURN_NOTICE_SECONDS: Final[float] = 5.0
 MIGRATION_TURN_REPEAT_SECONDS: Final[float] = 60.0
 """While the wait for another process's migration goes on, it is logged again this often, so a
 start stuck behind a hung migration stays visible in the logs."""
-COLLATED_PREFIXES: Final[tuple[str, ...]] = ("catalog_", "identity_", "ingestion_", "retrieval_")
+COLLATED_PREFIXES: Final[tuple[str, ...]] = (
+    "catalog_",
+    "identity_",
+    "ingestion_",
+    "retrieval_",
+    "usage_",
+)
 """Tables whose text columns get the "C" collation on PostgreSQL, so text compares and sorts by
 code point, as SQLite's BINARY collation does, whatever the database's locale."""
 
@@ -430,6 +446,49 @@ _OWNER_ONLY: Final[int] = 0o600
 # ---------------------------------------------------------------- settings
 LOCAL_HOSTS: Final[tuple[str, ...]] = ("localhost", "127.0.0.1", "::1")
 """Hosts every instance accepts; anything else must be listed in EXACTDOCS_ALLOWED_HOSTS."""
+SIGN_IN_PRESETS: Final[Mapping[str, Mapping[str, object]]] = MappingProxyType(
+    {
+        "discord": MappingProxyType(
+            {
+                "display_name": "Discord",
+                "issuer": "https://discord.com",
+                "authorization_url": "https://discord.com/oauth2/authorize",
+                "token_url": "https://discord.com/api/oauth2/token",
+                "userinfo_url": "https://discord.com/api/users/@me",
+                "subject_claim": "id",
+                "username_claim": "username",
+                "scopes": ("identify", "email"),
+            }
+        ),
+        "google": MappingProxyType(
+            {
+                "display_name": "Google",
+                "issuer": "https://accounts.google.com",
+                "scopes": ("openid", "email", "profile"),
+            }
+        ),
+        "microsoft": MappingProxyType({"display_name": "Microsoft"}),
+    }
+)
+"""What the provider presets (``kind = "discord"``, ``"google"``, ``"microsoft"``) set: an
+operator gives only the client ID and secret (and Microsoft's ``tenant``). Discord is OAuth2
+(its user ID is the subject); Google and Microsoft are OpenID Connect."""
+PRESET_FIXED_FIELDS: Final[frozenset[str]] = frozenset(
+    {"issuer", "authorization_url", "token_url", "userinfo_url", "base_url", "api_url"}
+)
+"""Fields a preset sets itself: a provider of a preset kind that sets one is refused."""
+MICROSOFT_LOGIN: Final[str] = "https://login.microsoftonline.com"
+"""Microsoft Entra ID's sign-in host: tenants' issuers are ``<this>/<tenant ID>/v2.0``."""
+MICROSOFT_MULTI_TENANTS: Final[frozenset[str]] = frozenset({"common", "organizations"})
+"""Microsoft tenants that stand for many directories: tokens come from each person's own one,
+whose ID (``tid``) is in the issuer."""
+MICROSOFT_CONSUMERS: Final[str] = "consumers"
+"""Microsoft's tenant of personal accounts (Outlook.com, Xbox)."""
+MICROSOFT_CONSUMERS_TENANT_ID: Final[str] = "9188040d-6c67-4c5b-b112-36a304b66dad"
+"""The directory ID of Microsoft's personal accounts: the ``consumers`` issuer names it."""
+GOOGLE_AUTHORIZATION_PARAMS: Final[Mapping[str, str]] = MappingProxyType({"access_type": "offline"})
+"""Google sends a refresh token only when asked this way (OIDC's ``offline_access`` scope is
+refused there), and only at the person's first consent."""
 
 # ---------------------------------------------------------------- index_backends (#352)
 DATABASE_BACKEND: Final[str] = "database"
@@ -453,6 +512,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             # `azure` is a namespace shared with the `ai` extra's azure-identity (sync): only
             # this module imports the search SDK.
             packages=("azure.search",),
+            outbound=True,
         ),
         "chroma": IndexBackendKind(
             name="chroma",
@@ -461,6 +521,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="chroma",
             packages=("chromadb",),
+            outbound=True,
         ),
         "duckdb": IndexBackendKind(
             name="duckdb",
@@ -477,6 +538,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="elasticsearch",
             packages=("elasticsearch", "elastic_transport"),
+            outbound=True,
         ),
         "lancedb": IndexBackendKind(
             name="lancedb",
@@ -493,6 +555,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="libsql",
             packages=("libsql",),
+            outbound=True,
         ),
         "milvus": IndexBackendKind(
             name="milvus",
@@ -501,6 +564,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="milvus",
             packages=("pymilvus", "milvus_lite"),
+            outbound=True,
         ),
         "mongodb": IndexBackendKind(
             name="mongodb",
@@ -509,6 +573,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="mongodb",
             packages=("pymongo", "bson", "gridfs"),
+            outbound=True,
         ),
         "opensearch": IndexBackendKind(
             name="opensearch",
@@ -517,6 +582,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="opensearch",
             packages=("opensearchpy",),
+            outbound=True,
         ),
         "pinecone": IndexBackendKind(
             name="pinecone",
@@ -525,6 +591,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="pinecone",
             packages=("pinecone",),
+            outbound=True,
         ),
         "qdrant": IndexBackendKind(
             name="qdrant",
@@ -533,6 +600,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="qdrant",
             packages=("qdrant_client",),
+            outbound=True,
         ),
         "redis": IndexBackendKind(
             name="redis",
@@ -541,6 +609,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="redis",
             packages=("redis",),
+            outbound=True,
         ),
     }
 )
@@ -610,6 +679,9 @@ DOCSTRING_SECTIONS: Final[frozenset[str]] = frozenset(
 # ---------------------------------------------------------------- telemetry, otlp
 SERVICE_NAME: Final[str] = "exactdocs"
 """``service.name`` of the exported telemetry, unless ``OTEL_SERVICE_NAME`` names another."""
+CERTIFICATE_VARIABLE: Final[str] = "OTEL_EXPORTER_OTLP_CERTIFICATE"
+"""The standard variable naming the CA file of the collector's TLS; when set, it wins over the
+outbound CA bundle (#538)."""
 OTLP_ENDPOINT_VARIABLE: Final[str] = "OTEL_EXPORTER_OTLP_ENDPOINT"
 """The collector for every signal; ``OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT`` names one per signal.
 With neither set, that signal is not exported (there is no default collector).
@@ -762,6 +834,13 @@ WINDOW_RESET_GRACE_SECONDS: Final[float] = 5.0
 REQUEUE_JITTER_SECONDS: Final[float] = 300.0
 """At most this many seconds more, at random, before the midnight re-queue: processes and
 instances sharing a provider do not all wake together."""
+USAGE_FLUSH_SECONDS: Final[float] = 10.0
+"""How often a serving process writes the usage counts it added up in memory (#510), so a
+request never waits for the database; a stop writes what is left. On PostgreSQL another
+process's counts reach the reports within this time."""
+USAGE_STOP_SECONDS: Final[float] = 3.0
+"""How long a stopping process waits for its last write of the usage counts; then it logs what
+it lost and stops."""
 UPKEEP_STOP_SECONDS: Final[float] = 5.0
 """How long a stopping server waits for its cancelled nightly upkeep (embedding queueing and
 cache pruning) to end; then it logs a warning and cancels it again (#308). Well under the 10 s
@@ -780,6 +859,17 @@ REQUEUE_UNLOCK: Final[str] = "SELECT pg_advisory_unlock(hashtextextended(:key, 0
 LOCAL_SDK_MODULE: Final[str] = "exactdocs.bootstrap.local_sdk"
 """The module that imports fastembed (the ``[local]`` extra): loaded only once a local model is
 used."""
+HUB_CLIENT_MODULE: Final[str] = "exactdocs.bootstrap.hub_client"
+"""The Hugging Face Hub's client behind the outbound settings (#538), imported by ``models pull``
+only: it imports ``httpx`` and the Hub, which come with the ``[local]`` extra."""
+ENTRA_URL: Final[str] = "https://login.microsoftonline.com"
+"""Entra ID's sign-in endpoint: the instance's proxy for it is what the Entra ID credentials of
+an AI profile get with ``ai.use_instance_proxy`` (#538)."""
+HUB_TIMEOUT_SECONDS: Final[float] = 60.0
+"""The Hub client's timeout where a call of the Hub sets none (a read of a large file)."""
+PROXY_FAILURE_MARKERS: Final[tuple[str, ...]] = ("the proxy ", "through the proxy ")
+"""How the messages of ``exactdocs_kernel.proxy_failure`` read: an error saying either is the one
+that names the proxy and the host."""
 LOCAL_EXTRA: Final[str] = (
     "install exactdocs[local] (uvx --from 'exactdocs[local]' exactdocs, or the -local image)"
 )

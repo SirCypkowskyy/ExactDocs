@@ -66,6 +66,12 @@ A `context7.json` at the repository root pre-fills the library. Added without pa
 takes its folders and exclusions; its title and description win over the README's; and its rules
 come first in every `query-docs` answer. The [REST API](rest-api.md) page has the details.
 
+The import also looks for the project's logo: an image the root README opens with whose path or
+alt text says "logo", else a conventional file such as `logo.svg` or `.github/logo.png`. ExactDocs
+keeps a bounded copy (an SVG cleaned of scripts and external references) and serves it itself, so
+showing a library loads nothing from the git host. A library without one has no logo, and a logo
+never fails an import.
+
 ## From `docker run` to a searchable library, over REST
 
 CI runs this flow on every change ([`deploy/smoke.sh`](https://github.com/SirCypkowskyy/ExactDocs/blob/develop/deploy/smoke.sh),
@@ -129,8 +135,10 @@ on the server until you revoke it on the web UI's **Account** page.
 The CLI looks for the server and token in this order: flags, then `EXACTDOCS_URL` and
 `EXACTDOCS_TOKEN`, then that file. A stored token is only sent to the server it came from. Plain
 `http://` is accepted for loopback (`localhost`, `127.0.0.1`, `::1`) only; anything else needs
-`https://`. Proxy variables (`HTTPS_PROXY` and the like) are honoured for remote servers, where the
-proxy sees where you connect but not your HTTPS traffic, and ignored for loopback.
+`https://`. Proxy variables (`HTTPS_PROXY`, `NO_PROXY` and the like, or their `EXACTDOCS_`
+overrides) and a CA bundle are honoured for remote servers, where the proxy sees where you connect
+but not your HTTPS traffic, and ignored for loopback
+([Outbound connections](configuration.md#outbound-connections)).
 
 ### Manage libraries and tokens
 
@@ -447,8 +455,11 @@ other accounts neither see nor reach (403).
   tokens are refused at once. The last enabled admin cannot be disabled.
 - Enabling an account ends any session or token stored while it was disabled, so nothing that raced
   the disable comes back.
-- The Users page offers no reset of your own password, since it would sign you out. Use
-  `exactdocs user reset-password <you>` or ask another admin. A reset also clears the username's
+- The Users page offers no reset of your own password, since it would sign you out. Anyone with a
+  local account changes their own password under **Account settings** instead (the current one
+  first, checked like a sign-in and throttled the same way; `PUT /api/v1/account/password`): their
+  other sessions end, this one stays, and their API tokens keep working. A lost password still
+  needs `exactdocs user reset-password <you>` or another admin. A reset also clears the username's
   sign-in throttle, as `admin reset-password` does.
 - The Users page also lists the accounts made by a first sign-in through an identity provider,
   with their provider and groups.

@@ -133,6 +133,13 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
 
 There are four roles: `embedding`, `reranker`, `llm` and `judge`. The `judge` defaults to the `llm`.
 
+A profile's `proxy` carries its calls (and its Entra ID sign-in) and wins over everything else. A
+profile without one connects directly, whatever `HTTPS_PROXY` says, unless
+`EXACTDOCS_AI__USE_INSTANCE_PROXY=true`: then it goes through the instance's outbound proxy
+unless `NO_PROXY` lists its endpoint. The instance's CA bundle (`EXACTDOCS_CA_BUNDLE`, or
+`SSL_CERT_FILE`) is trusted by every profile. See
+[Behind a corporate proxy](deployment.md#behind-a-corporate-proxy).
+
 ### Thinking level
 
 Current chat models think before they answer, and their thinking tokens are billed as output.
@@ -231,8 +238,9 @@ reaches another host:
   the calls to `login.microsoftonline.com`, but never those to managed identity's local endpoint.
   Entra ID never uses the Azure CLI, PowerShell, VS Code or any developer sign-in; for local
   development, use a client secret (`AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`).
-- Google's token refresh uses the environment's proxy variables, because google-auth reads them
-  itself.
+- Google's token refresh uses the standard proxy variables, because google-auth reads them
+  itself; the server sets them from its outbound settings at start
+  ([Behind a corporate proxy](deployment.md#behind-a-corporate-proxy)).
 
 ### Managing profiles
 
@@ -248,6 +256,15 @@ latency, the model that answered and an embedding's dimensions, never a key.
 The *AI* page of the web UI (admins only) lists the providers and roles (never a key) with a check
 per profile, the embedding progress of each space (`GET /api/v1/ai/embedding`), and the usage and
 budgets described below.
+
+<figure class="xd-shot" markdown>
+
+![The AI page: a google-vertex profile named gcp, used for the embedding role with gemini-embedding-001; the embedding space at 100%, 199,071 of 199,071 chunks and 34 of 34 versions; and today's and this month's usage of the instance, the embedding runs and the first libraries, with the instance's daily and monthly budgets.](assets/screenshots/ai-light.webp#only-light){ loading=lazy }
+![The AI page: a google-vertex profile named gcp, used for the embedding role with gemini-embedding-001; the embedding space at 100%, 199,071 of 199,071 chunks and 34 of 34 versions; and today's and this month's usage of the instance, the embedding runs and the first libraries, with the instance's daily and monthly budgets.](assets/screenshots/ai-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>The <em>AI</em> page, with Gemini embeddings on Vertex AI.</figcaption>
+
+</figure>
 
 ### Per-library settings
 
@@ -350,7 +367,8 @@ model it does not know gets `input_usd_per_mtok` and `output_usd_per_mtok` under
 
 **Usage**: `GET /api/v1/ai/usage` (admins) shows what the instance, embedding runs, each library and
 each account spent today and this month, and what is left of each budget (a library's own budget
-where it is tighter). `/metrics` has pydantic-ai's `gen_ai.client.token.usage` and
+where it is tighter); `GET /api/v1/ai/usage/history` shows one of those scopes per UTC day or
+month, zero-filled, for up to 366 days or 60 months ([REST API](rest-api.md)). `/metrics` has pydantic-ai's `gen_ai.client.token.usage` and
 `operation.cost`, `exactdocs_ai_fallbacks_total` by mode and reason, and
 `exactdocs_ai_cache_hits_total` (searches whose LLM step a cache answered) by cache
 (`agentic_answer`, `hyde_answer`) and mode, never by library, user or query. Spans never carry

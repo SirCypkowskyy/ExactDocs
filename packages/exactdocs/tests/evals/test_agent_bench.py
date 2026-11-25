@@ -13,6 +13,7 @@ import yaml
 from pydantic_evals import Case
 
 from agent_bench.agreement import LABELLING_HEADER, agreement, answer_id, sample
+from agent_bench.arms import parse_arms
 from agent_bench.cli import main, run_bench
 from agent_bench.harness import (
     AgentRun,
@@ -164,6 +165,8 @@ def test_an_answer_is_grounded_when_every_answering_section_was_read() -> None:
         assert grounded(_info(), _read(wrong)) is False
     cross = _info(hits=[*_info().hits, Hit(version="v1", article="docs/b.md", heading_path=[])])
     assert grounded(cross, _read(install)) is False
+    either = Hit(version="v1", article="docs/b.md", heading_path=[], alternative=True)
+    assert grounded(_info(hits=[*_info().hits, either]), _read(install)) is True  # #501
     assert grounded(_info(kind="unanswerable", facts=[], hits=[]), _read(install)) is None
 
 
@@ -268,7 +271,7 @@ CASES = [
 ]
 
 
-async def test_the_judge_labels_answers_and_a_failed_run_is_wrong_unjudged() -> None:
+async def test_the_judge_labels_answers_and_a_run_without_an_answer_is_a_miss_unjudged() -> None:
     dataset = bench_dataset([("demo", c) for c in CASES], _corpus())
     dataset.add_evaluator(AnswerJudge(judge=judge_agent(offline_judge())))
     runs = {
@@ -296,7 +299,11 @@ async def test_the_judge_labels_answers_and_a_failed_run_is_wrong_unjudged() -> 
             answer="The documentation of v1 does not cover this.", usd=0.001, seconds=0.5
         ),
         CASES[2].inputs.query: AgentRun(
-            answer="", error="UsageLimitExceeded: request limit", usd=0.003, seconds=3.0
+            answer="",
+            error="UsageLimitExceeded: request limit",
+            failure="no_answer",
+            usd=0.003,
+            seconds=3.0,
         ),
     }
 
@@ -307,7 +314,7 @@ async def test_the_judge_labels_answers_and_a_failed_run_is_wrong_unjudged() -> 
     rows = results_of(evaluated, "offline:read", "bm25")
 
     by_case = {r.case: r for r in rows}
-    assert [by_case[c.name or ""].grade for c in CASES] == ["correct", "refused", "wrong"]
+    assert [by_case[c.name or ""].grade for c in CASES] == ["correct", "refused", "no_answer"]
     assert by_case[CASES[2].name or ""].judge_reason.startswith("no answer: UsageLimitExceeded")
     first = by_case[CASES[0].name or ""]
     assert first.grounded is True
@@ -321,8 +328,9 @@ async def test_the_judge_labels_answers_and_a_failed_run_is_wrong_unjudged() -> 
     assert cell.grades == {
         "correct": 1,
         "partially_correct": 0,
-        "wrong": 1,
+        "wrong": 0,
         "refused": 1,
+        "no_answer": 1,
         "error": 0,
     }
     measured = (cell.accuracy, cell.grounded_share, cell.tool_calls_per_question)
@@ -397,7 +405,7 @@ def _report(rows: list[QuestionResult]) -> BenchReport:
         max_requests=20,
         concurrency=1,
         cases=len(rows),
-        agent_instructions="i",
+        agent_instructions={"exactdocs": "i"},
         prompt="p",
         corpus=[],
     )
@@ -409,8 +417,11 @@ def _report(rows: list[QuestionResult]) -> BenchReport:
 
 def test_the_markdown_report_shows_each_cell_and_the_breakdowns() -> None:
     text = markdown(_report([_row("a"), _row("b", grade="wrong", wrong_version=True, agent="m2")]))
-    assert "| `m1` | bm25 | 100.0 % [100.0, 100.0] |" in text
-    assert "| `m2` | bm25 | 0.0 % [0.0, 0.0] | 0 | 1 | 0 | 0 | 1 |" in text
+    assert "| `m1` | exactdocs (bm25) | 100.0 % [100.0, 100.0] | 1 |" in text
+    assert (
+        "| `m2` | exactdocs (bm25) | 0.0 % [0.0, 0.0] | 0 | 0 | 1 | 0 | 0 | 0 | 1 (100.0 %" in text
+    )
+    assert "## Cost per question" in text
     assert "## Accuracy per kind" in text
     assert "## Accuracy per project" in text
     assert "`EXACTDOCS_AI__MODE=bm25`; searches answered by no search" in text
@@ -466,7 +477,7 @@ def test_each_configuration_is_tested_against_the_first_one() -> None:
     )
     text = markdown(report)
     assert "## Against the first retrieval configuration" in text
-    assert "| `m1` | hybrid | none | **+50.0** [" in text
+    assert "| `m1` | exactdocs (hybrid) | none | **+50.0** [" in text
     assert "10,000 resamples, seed 489" in text
 
 
@@ -531,6 +542,13 @@ def test_the_cli_exports_a_sample_and_reads_the_labels_back(
         (["run", "--agent-model", "m"], "give --agent-model and --judge-model, or --offline"),
         (["run", "--offline", "--retrieval", "bm25:mode"], "is not key=value"),
         (["run", "--offline", "--projects", "nope"], "no case matches"),
+        (["run", "--offline", "--arm", "web"], "unknown arm 'web'"),
+        (
+            ["run", "--offline", "--arm", "none,context7"],
+            "the context7 arm is not built yet (#493)",
+        ),
+        (["run", "--offline", "--arm", "grounded-docs"], "not built yet (#492)"),
+        (["run", "--offline", "--thinking", "loud"], "thinking 'loud' is not on, off or one of"),
     ],
 )
 def test_the_cli_refuses_an_incomplete_run(
@@ -619,6 +637,7 @@ async def test_stand_in_agents_answer_through_exactdocs_as_shipped(tmp_path: Pat
         repos,
         agent_models=OFFLINE_AGENTS,
         judge_model=OFFLINE_JUDGE,
+        arms=parse_arms(["none,exactdocs"]),
         retrieval=[
             RetrievalConfig.parse("bm25:mode=bm25"),
             RetrievalConfig.parse("hybrid:mode=hybrid"),
@@ -626,33 +645,37 @@ async def test_stand_in_agents_answer_through_exactdocs_as_shipped(tmp_path: Pat
         work_dir=tmp_path / "work",
     )
 
-    assert [(c.agent_model, c.retrieval) for c in report.cells] == [
-        ("offline:search", "bm25"),
-        ("offline:read", "bm25"),
-        ("offline:search", "hybrid"),
-        ("offline:read", "hybrid"),
+    assert [(c.agent_model, c.arm, c.retrieval) for c in report.cells] == [
+        (model, arm, retrieval)
+        for model in OFFLINE_AGENTS
+        for arm, retrieval in (("none", ""), ("exactdocs", "bm25"), ("exactdocs", "hybrid"))
     ]
     assert all(c.questions == 3 and c.grades["error"] == 0 for c in report.cells)
-    assert {c.retrieval: c.retrieval_modes for c in report.cells} == {
-        "bm25": {"bm25": 3},
-        "hybrid": {"bm25 (mode_unavailable)": 3},  # no embedding model: the server falls back
+    assert {(c.arm, c.retrieval): c.retrieval_modes for c in report.cells} == {
+        ("none", ""): {},
+        ("exactdocs", "bm25"): {"bm25": 3},
+        ("exactdocs", "hybrid"): {"bm25 (mode_unavailable)": 3},  # no embedding model: fallback
     }
     assert [(c.project, c.version, c.imported_commit) for c in report.meta.corpus] == [
         ("demo", "v1", v1),
         ("demo", "v2", v2),
     ]
     assert report.meta.retrieval["hybrid"] == {"EXACTDOCS_AI__MODE": "hybrid"}
+    assert report.meta.arms == ["none", "exactdocs"]
     for row in report.questions:
         names = [call.name for call in row.tool_calls]
-        assert names[:2] == ["list_libraries", "search_docs"], row
         assert row.input_tokens > 0
         assert row.usd is None  # stand-ins are not in the price list
+        if row.arm == "none":
+            assert (names, row.grade, row.retrieval_modes) == ([], "refused", []), row
+            continue
+        assert names[:2] == ["list_libraries", "search_docs"], row
         assert row.other_versions_read == []
         assert row.retrieval_modes == [
             "bm25" if row.retrieval == "bm25" else "bm25 (mode_unavailable)"
         ]
         assert all(chunk.endswith(f"@{row.version}") for chunk in row.chunks_read)
-        if row.agent_model == "offline:read":
+        if row.agent_model != "offline:search":
             assert names == ["list_libraries", "search_docs", "read_chunk"]
             if row.kind != "unanswerable":
                 assert row.grounded is True, row
@@ -660,10 +683,32 @@ async def test_stand_in_agents_answer_through_exactdocs_as_shipped(tmp_path: Pat
         else:
             assert row.chunks_read == []
             assert row.grounded in {False, None}
-    unanswerable = [r for r in report.questions if r.kind == "unanswerable"]
+        assert (row.thinking_tokens is not None) == (row.agent_model == "offline:think")
+    unanswerable = [r for r in report.questions if r.kind == "unanswerable" and r.arm != "none"]
     assert {r.grade for r in unanswerable} == {"wrong"}  # the stand-ins answer anyway
-    # each agent model's hybrid cell is tested against its bm25 cell, the first configuration
     assert report.statistics is not None
-    assert [c.reference for c in report.cells] == [None, None, "bm25", "bm25"]
-    assert all(c.versus_reference.cases == 3 for c in report.cells[2:] if c.versus_reference)
-    assert "# Agent benchmark" in markdown(report)
+    # each exactdocs cell against none; each hybrid cell against its arm's bm25 cell
+    for cell in report.cells:
+        assert [v.against for v in cell.versus] == ([] if cell.arm == "none" else ["none"])
+        assert cell.reference == ("bm25" if cell.retrieval == "hybrid" else None)
+        assert all(v.cases == 3 and v.accuracy is not None for v in cell.versus)
+    assert "## Against the other arms, on the same cases" in markdown(report)
+
+    # a resumed run in the same work directory imports into a new data directory, asks nothing
+    done = {
+        (q.agent_model, q.arm, q.retrieval, q.case): q
+        for q in report.questions
+        if q.arm == "exactdocs" and q.retrieval == "bm25"
+    }
+    again = await run_bench(
+        [("demo", c) for c in cases],
+        corpus,
+        repos,
+        agent_models=OFFLINE_AGENTS,
+        judge_model=OFFLINE_JUDGE,
+        arms=parse_arms(["exactdocs"]),
+        retrieval=[RetrievalConfig.parse("bm25:mode=bm25")],
+        work_dir=tmp_path / "work",
+        done=done,
+    )
+    assert again.questions == list(done.values())

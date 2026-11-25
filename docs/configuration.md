@@ -54,8 +54,11 @@ not valid stops the server at start, with a message naming the field.
 
 | Field | Default | What it does |
 |---|---|---|
-| `kind` | required | `oidc`, `oauth2`, or `github`, using authorization code + PKCE S256. ADFS 2016+ is `oidc` |
-| `display_name` | the name | What the button says: **Sign in with** *display_name* |
+| `kind` | required | `oidc`, `oauth2`, or `github`, using authorization code + PKCE S256. ADFS 2016+ is `oidc`. `discord`, `google` and `microsoft` are presets: see [Discord, Google and Microsoft](#discord-google-and-microsoft) |
+| `display_name` | the name | What the button says: **Sign in with** *display_name*. A preset's default is `Discord`, `Google` or `Microsoft` |
+| `auto_create_users` | `true`; `false` for the presets | Create an account at an identity's first sign-in. When `false`, only identities people linked to their account in Account settings sign in; anyone else is refused with `not_linked`. With it `false` and no `allowed_groups`, everyone the provider vouches for may link |
+| `icon` | the preset's; `github` for `github` | A built-in icon for the provider's buttons: `discord`, `github`, `google` or `microsoft` |
+| `icon_file` | unset | An icon of your own: a PNG, WebP or SVG file of at most 64 KiB and 512x512 pixels, read at start and served by ExactDocs itself (`/api/v1/auth/<name>/icon`), never from the provider. Its type is told by its content; an SVG is rebuilt from an allowlist (shapes, gradients, references to its own `#ids`; no scripts, event handlers, styles, external links or DOCTYPE). A file that does not pass stops the server at start. Not together with `icon` |
 | `issuer` | required for `oidc` | OIDC discovery issuer; OAuth2 stable linking namespace (default: token URL origin). HTTPS; plain HTTP only to loopback for development |
 | `client_id` | required | The client ID registered at the provider |
 | `client_secret` | unset | The client secret, from the environment only (`EXACTDOCS_AUTH__PROVIDERS__<NAME>__CLIENT_SECRET`). Leave it and `client_secret_file` unset for a public client |
@@ -128,6 +131,57 @@ The non-expiring OAuth App access token is sealed and used for periodic membersh
 membership or explicit token revocation ends web sessions and refuses API tokens on the next
 check; transient provider outages retain access only within the existing bounded grace period.
 The local password admin remains available for recovery.
+
+### Discord, Google and Microsoft
+
+These presets need only the client ID and secret (and, for Microsoft, the tenant); they set the
+endpoints, scopes, claims, display name and icon themselves, and refuse an `issuer` or endpoint
+set by hand. Register `<EXACTDOCS_PUBLIC_URL>/api/v1/auth/<name>/callback` as the redirect URI at
+the provider.
+
+```toml
+[auth.providers.google]
+kind = "google"
+client_id = "1234.apps.googleusercontent.com"   # the secret from the environment, as above
+
+[auth.providers.discord]
+kind = "discord"
+client_id = "112233445566778899"
+
+[auth.providers.microsoft]
+kind = "microsoft"
+tenant = "organizations"
+client_id = "00000000-0000-0000-0000-000000000000"
+```
+
+- `google` is OpenID Connect at `https://accounts.google.com` with `openid email profile`, and
+  asks for offline access (Google sends a refresh token only at a person's first consent).
+- `discord` is OAuth2: the subject is the Discord user ID, the username its `username`, with the
+  `identify email` scopes. Discord has no groups.
+- `microsoft` is OpenID Connect at Microsoft Entra ID. `tenant` is required: the directory
+  (tenant) ID, a GUID, for one organization; `organizations` for any work or school account;
+  `common` for those and personal accounts; `consumers` for personal accounts only. With
+  `organizations` or `common`, each token's issuer names the person's own tenant (from its `tid`
+  claim), so the same subject in two tenants is two identities. Groups come from the `groups`
+  claim when the app registration emits it.
+
+A preset creates no accounts (`auto_create_users = false`): anyone with a Google, Discord or
+Microsoft account could otherwise get one. People sign in with another method (a password, or
+your own identity provider) and link the provider under **Account settings → Sign-in**; from
+then on it signs them in to that account, which keeps its own role and groups. To let a preset
+create accounts, set `auto_create_users = true` together with `allowed_groups` or
+`allow_any_user = true` (for Microsoft, usually with a single-tenant `tenant`).
+
+### Linking providers to an account
+
+Every account has at most one identity per provider. The one it was created through (by a first
+sign-in, or by Cloudflare Access) is its *origin*: an account without a password follows it, its
+role, groups and access, and it can never be unlinked. Any other configured provider can be
+linked from Account settings, and unlinked again (after a confirmation); a linked identity only
+signs the account in, and its groups and role at the provider are not used. An identity that is
+already linked to another account is refused. Linking needs a signed-in session: the
+provider's callback must come back to the same browser session that started it. See
+[REST API](rest-api.md) (*Linked sign-in providers*).
 
 Two settings apply to all providers:
 
@@ -231,6 +285,43 @@ How a request is checked and linked:
 
 [Observability](deployment.md#observability) explains what each of these exports.
 
+### Outbound connections
+
+ExactDocs reads the standard proxy variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`,
+`NO_PROXY`, in upper or lower case, lower case winning) and the standard CA bundle variables
+(`SSL_CERT_FILE`, then `REQUESTS_CA_BUNDLE`, then `CURL_CA_BUNDLE`) once, and every outbound
+client takes them from there: git, model downloads, AI providers, index backends, sign-in
+providers, the OpenTelemetry exporter and the command-line client. Each `EXACTDOCS_` variable
+below replaces its standard one, so ExactDocs can use another proxy than the rest of the machine.
+[Behind a corporate proxy](deployment.md#behind-a-corporate-proxy) shows complete setups.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `EXACTDOCS_HTTPS_PROXY` | `https_proxy`, `HTTPS_PROXY`, then `ALL_PROXY` | The forward proxy of `https://` connections, as `http://host:port`; credentials go in the URL (`http://user:password@host:port`, percent-encoded) and are never logged or shown |
+| `EXACTDOCS_HTTP_PROXY` | `http_proxy`, `HTTP_PROXY`, then `ALL_PROXY` | The forward proxy of plain `http://` connections |
+| `EXACTDOCS_NO_PROXY` | `no_proxy`, `NO_PROXY` | Hosts reached without the proxy, separated by commas or spaces: a host name (and every name under it: `example.com`, `.example.com` and `*.example.com` all match `docs.example.com`), an IP address, a CIDR range (`10.0.0.0/8`, `fd00::/8`, matched against URLs that name an address; a host name is never resolved for it), `host:port` for one port only, or `*` for every host. Set but empty, it lists no host. Loopback (`localhost`, `127.0.0.0/8`, `::1`), link-local addresses (`169.254.0.0/16`, the cloud metadata endpoints) and `metadata.google.internal` are never proxied, whatever it says |
+| `EXACTDOCS_CA_BUNDLE` | `SSL_CERT_FILE`, `REQUESTS_CA_BUNDLE`, then `CURL_CA_BUNDLE` | A PEM file of the CA certificates every outbound TLS connection trusts, git included (as its `http.sslCAInfo`), instead of the system's: the company CA of a proxy that re-signs TLS. It replaces the system's certificates, so include the public ones too when some hosts are reached without the re-signing proxy. A file that cannot be read stops the server at start. Verification is never turned off |
+| `EXACTDOCS_AI__USE_INSTANCE_PROXY` | `false` | AI provider profiles without a `proxy` of their own call their provider (and Entra ID) through the proxy above, unless `NO_PROXY` lists the endpoint. Off, they connect directly, as before #538; a profile's own `proxy` always wins. The CA bundle applies to them either way. See [Behind a corporate proxy](deployment.md#behind-a-corporate-proxy) |
+
+The proxy can be `socks5://` (or `socks5h://`) where the client supports it: git does, the Python
+clients need the `socksio` package. Redis and MongoDB backends speak their own protocols, which no
+HTTP proxy carries: they connect directly, and use the CA bundle for TLS when their options name
+no CA file.
+
+### Usage counts and leaderboards
+
+ExactDocs counts reads, searches and agent answers per UTC day, account, API token, library and
+operation (#510): counts only, never a query, a path or any text. Operators read them at
+`GET /api/v1/stats/usage`, everyone their own at `GET /api/v1/account/usage`, and the leaderboards
+at `GET /api/v1/stats/leaderboard` (see [REST API](rest-api.md)). Per-person usage is monitoring
+data under the GDPR, hence the opt-in for people and the bounded retention. The `[usage]` table
+of the TOML file takes the same settings.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `EXACTDOCS_USAGE__PEOPLE_LEADERBOARD` | `false` | Turn the people leaderboard on. Even then it ranks, and operators' usage reports name, only people who opted in (the `leaderboard_opt_in` interface preference, off by default); everyone else counts in totals only. Off, nobody is shown by name to anyone, operators included. The libraries leaderboard is always on |
+| `EXACTDOCS_USAGE__RETENTION_MONTHS` | `13` | How many months of daily counts are kept (1 to 120). Every night the days before it are deleted: 13 keeps a year and the month before it |
+
 ### Command-line client
 
 These are read by the CLI commands that talk to a server (`login`, `add`, `sync` and the rest), not
@@ -241,6 +332,11 @@ by the server.
 | `EXACTDOCS_URL` | The server, when `--url` is not given |
 | `EXACTDOCS_TOKEN` | The API token, when `--token` is not given; also what `exactdocs config` snippets refer to |
 | `EXACTDOCS_CLIENT_CONFIG` | Another file instead of `config.json` in your user config directory |
+
+The client follows the [outbound connections](#outbound-connections) settings too (the standard
+variables and their `EXACTDOCS_` overrides, from its own environment): a remote server is reached
+through the proxy unless `NO_PROXY` lists it, a server on `localhost` or a loopback address never
+is, and the CA bundle is trusted.
 
 ## External index backends
 
@@ -414,11 +510,12 @@ service's region must offer the semantic ranker (its Free plan's requests are pl
 ```bash
 EXACTDOCS_TEST_AZURE_SEARCH_URL=https://<service>.search.windows.net \
 EXACTDOCS_TEST_AZURE_SEARCH_KEY=<admin key> \
-  uv run pytest packages/exactdocs/tests/retrieval -k "azure_search and not fake"
+  uv run pytest --integration packages/exactdocs/tests/retrieval -k "azure_search and not fake"
 ```
 
 (Without `EXACTDOCS_TEST_AZURE_SEARCH_KEY`, the tests sign in with `DefaultAzureCredential`,
-e.g. after `az login`.)
+e.g. after `az login`. The real service's cases are integration tests: `--integration` turns them
+on, see [Fast and integration tests](releasing.md#fast-and-integration-tests).)
 
 ### Chroma
 
@@ -1127,7 +1224,7 @@ EXACTDOCS_VECTOR_BACKEND=pinecone EXACTDOCS_INDEX_BACKENDS__PINECONE__HOST=http:
 ```
 
 The contract tests run on it with `EXACTDOCS_TEST_PINECONE_URL=http://localhost:5081` (an index of
-at least 256 dimensions). CI runs them on Pinecone Local (the image above, 256 dimensions,
+at least 256 dimensions) and `--integration` (they are integration tests). CI's integration job runs them on Pinecone Local (the image above, 256 dimensions,
 `dotproduct`), which ignores sparse values; the manual **Pinecone** workflow runs them, hybrid
 included, against a real index (repository secret `PINECONE_API_KEY`, its host as the workflow's
 input). CI never calls Pinecone itself.

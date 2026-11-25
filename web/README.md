@@ -8,17 +8,24 @@
 
 React client served by the ExactDocs backend from `web/dist` in production.
 
-Stack: Vite 8, React 19, TypeScript (strict), TanStack Router (file-based) and TanStack Query, shadcn/ui on Tailwind v4, Biome, react-doctor, fallow, Vitest.
+Stack: Vite 8, React 19, TypeScript (strict), TanStack Router (file-based) and TanStack Query, shadcn/ui on Tailwind v4, Recharts (only in the overview's lazily loaded chart chunk), Biome, react-doctor, fallow, Vitest.
 
 Requires Node 26 LTS (`.nvmrc`) and pnpm 12 (`packageManager` in `package.json`).
 
 ```bash
 pnpm install
 pnpm dev          # http://localhost:5173, proxies /api and /mcp to http://localhost:3000 (override: EXACTDOCS_API_URL)
-pnpm build        # typecheck + production build into dist/
+pnpm build        # typecheck + production build into dist/ (with dist/THIRD_PARTY_NOTICES.txt)
 pnpm test         # Vitest
 pnpm lint         # Biome + fallow (architecture, dead code) + react-doctor
 ```
+
+The build writes `dist/THIRD_PARTY_NOTICES.txt` (`scripts/third-party-notices.ts`): the licence
+of every package the production `dependencies` pull in (the IBM Plex fonts' SIL Open Font License
+among them), of the build tools whose code is in the bundle (Tailwind CSS, Vite), and of the
+source adapted into `src/` (shadcn/ui, and the Shadcnblocks.com free blocks named in `DESIGN.md`).
+It ships with the UI in the wheel and the image. A bundled module from any other package (say, a
+devDependency imported by the app) fails the build: make it a production dependency.
 
 ## Layout: vertical slices
 
@@ -41,7 +48,7 @@ flowchart TD
     parts --> shared
 ```
 
-The features are `access-log`, `ai`, `auth`, `browse`, `libraries`, `library-settings`, `playground`, `search`, `sharing`, `tokens` and `users`. An
+The features are `access-log`, `ai`, `auth`, `browse`, `instance-status`, `leaderboard`, `libraries`, `library-settings`, `overview`, `playground`, `search`, `sharing`, `tokens` and `users`. An
 arrow is an allowed import; anything not drawn is forbidden (a feature never imports another
 feature, `app/` or `routes/`; `shared/` imports nothing from the rest).
 

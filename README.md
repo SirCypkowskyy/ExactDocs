@@ -35,7 +35,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/reader-dark.webp">
-  <img src="docs/assets/screenshots/reader-light.webp" alt="The ExactDocs reader showing the Resilience article of Acme Payments v1.4.0: the version picker with commit 3fb0656, the file tree, the rendered article with a Python code block and a table, and the article's headings on the right.">
+  <img src="docs/assets/screenshots/reader-light.webp" alt="The ExactDocs reader showing the Caching article of astral-sh/uv 0.13.9: the version picker with commit 6b2d39d, the file tree, the rendered article and its headings on the right.">
 </picture>
 
 Coding agents answer from whatever documentation they can reach, and it is often written for a
@@ -84,19 +84,38 @@ differ.</sub>
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/libraries-dark.webp">
-        <img width="100%" src="docs/assets/screenshots/libraries-light.webp" alt="The libraries page: Acme Payments with versions v1.4.0, v1.3.0 and next, and ExactDocs with v0.4.0, v0.3.1 and v0.2.0, each default version shown with its commit.">
+        <img width="100%" src="docs/assets/screenshots/libraries-light.webp" alt="The libraries page with 34 libraries, among them Ruff, ty and uv from astral-sh and several Azure docs, each with its project mark, default version and commit, number of versions and articles, when it was last imported and whether it syncs.">
       </picture>
-      <br><sub>Each library with its imported versions; the default one shows its commit.</sub>
+      <br><sub>Each library with its default version and commit, and how many versions and articles it has.</sub>
+    </td>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/library-dark.webp">
+        <img width="100%" src="docs/assets/screenshots/library-light.webp" alt="The uv library at its default version, 0.13.9, with the version picker open at commit 6b2d39d.">
+      </picture>
+      <br><sub>A library and its versions, each a tag, branch or commit pinned to its SHA.</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/search-dark.webp">
+        <img width="100%" src="docs/assets/screenshots/search-light.webp" alt="Search results for cache across every library: the top 20 of 4,438 results, the libraries with their counts on the left, and the results grouped by library and version, each with its heading path, its file and the matching text highlighted.">
+      </picture>
+      <br><sub>One search across the default version of every library.</sub>
     </td>
     <td width="50%">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/assets/screenshots/playground-dark.webp">
-        <img width="100%" src="docs/assets/screenshots/playground-light.webp" alt="The search playground with the query how do I retry failed calls, ranked by hybrid search and by BM25 side by side, each result with its BM25 and vector rank.">
+        <img width="100%" src="docs/assets/screenshots/playground-light.webp" alt="The search playground with the query how do I clear the cache on /astral-sh/uv, ranked by hybrid search and by BM25 side by side, each result with its BM25 and vector rank.">
       </picture>
       <br><sub>The search playground ranks one query in two retrieval modes side by side.</sub>
     </td>
   </tr>
 </table>
+
+<sub>`just screenshots` takes every picture here from the running UI, with the test fixture
+libraries and a stand-in embedding model.</sub>
 
 ## Quick start
 
@@ -170,10 +189,14 @@ of failing. Articles are cut at their headings, never inside a code block or a t
 
 ExactDocs is measured on a [golden set](docs/benchmark/golden-set.md) of 321 questions about the
 docs of Starlette, Pydantic, TanStack Query, Zod and Electron, at three pinned versions each. With
-no model at all, BM25 puts the section that answers in the top 5 for 81.7% of the 267 answerable
-questions, at 57 ms p95. Hybrid search on a small local embedding model (bge-small) reaches up
-to 84.6%. Hosted models and the agent benchmark have not run yet. [Benchmark](docs/benchmark/index.md) has
-the method, every table and the known weak spots.
+no model at all, BM25 puts a section that answers in the top 5 for 87.6% of the 267 answerable
+questions, at 52 ms p95. Hybrid search on a small local embedding model (bge-small) reaches up
+to 91.0%. Hosted retrieval models have not run yet. In the first run of the
+[agent benchmark](docs/benchmark/agent.md) (60 questions, two open-weight models on Ollama Cloud,
+an LLM judge not yet checked against people), an agent with the ExactDocs MCP tools answered 43%
+(`gpt-oss:120b`) and 85% (`kimi-k3`) of the questions right, against 13% and 33% from memory, and
+none of its answers held only for another version. [Benchmark](docs/benchmark/index.md) has the
+method, every table and the known weak spots.
 
 ## How it works
 
@@ -228,4 +251,6 @@ and see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-Apache-2.0. Imported documentation stays under the license of its original repository.
+Apache-2.0. Imported documentation stays under the license of its original repository. The web
+UI bundles third-party code and fonts under their own licences, listed in `THIRD_PARTY_NOTICES.txt`
+next to it (`exactdocs/_web/` in the wheel and the image; see [web/README.md](web/README.md)).

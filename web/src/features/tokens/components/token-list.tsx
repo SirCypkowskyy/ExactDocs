@@ -1,202 +1,188 @@
-import {
-  type ColumnDef,
-  getCoreRowModel,
-  type SortingState,
-  useReactTable,
-} from "@tanstack/react-table";
-import { useEffect, useEffectEvent, useId, useState } from "react";
-import { UI_LOCALE } from "@/shared/lib/time";
+import { CircleX, Clock, Infinity as Endless } from "lucide-react";
+import { useMessages } from "@/shared/lib/i18n";
+import { useNow } from "@/shared/lib/use-now";
 import { cn } from "@/shared/lib/utils";
-import { Button } from "@/shared/ui/button";
-import { Input } from "@/shared/ui/input";
-import { EmptyState } from "@/shared/ui/page";
-import { SelectField } from "@/shared/ui/select-field";
-import { Skeleton } from "@/shared/ui/skeleton";
-import type { TokensView } from "../model/list-view";
-import { isExpired, type Token } from "../model/token";
+import { Badge } from "@/shared/ui/badge";
+import { Chips, MonoCopy, RelativeTime } from "@/shared/ui/data-table/cells";
+import type { ColumnDef, FilterFn, SortFn } from "@/shared/ui/data-table/features";
+import type { TableFilter } from "@/shared/ui/data-table/use-data-table";
+import { messages } from "../messages";
+import {
+  expiryOf,
+  lastUseOf,
+  scopeOf,
+  sortTime,
+  TOKEN_EXPIRIES,
+  TOKEN_SCOPES,
+  TOKEN_USES,
+} from "../model/list-view";
+import type { Token } from "../model/token";
 
-const date = new Intl.DateTimeFormat(UI_LOCALE, { dateStyle: "medium" });
-const when = (iso: string) => date.format(new Date(iso));
+/*
+ * The token table's columns and filters (blocks-map §2.3, API tokens). The filterable columns hold
+ * a token's category (its scope, how soon it expires, how recently it was used), so the browser
+ * filters and counts them; the time columns still sort by the time itself.
+ */
 
-/** Sorting is done by the API; the table holds the sort state the URL gives it. */
-const columnDefs: ColumnDef<Token>[] = [
-  { accessorKey: "name" },
-  { accessorKey: "created_at" },
-  { accessorKey: "expires_at" },
-  { accessorKey: "last_used_at" },
-];
-const DEFAULT_SORT = "-created_at";
-const sortingOf = (sort: string | undefined): SortingState => {
-  const spec = sort ?? DEFAULT_SORT;
-  return [{ id: spec.replace(/^-/, ""), desc: spec.startsWith("-") }];
-};
-const specOf = ([first]: SortingState) =>
-  first ? `${first.desc ? "-" : ""}${first.id}` : undefined;
+type TokensMessages = (typeof messages)["en"];
 
-interface TokenListProps {
-  tokens: readonly Token[];
-  view: TokensView;
-  onView: (view: TokensView) => void;
-  total: number;
-  hasMore: boolean;
-  loadingMore: boolean;
-  onLoadMore: () => void;
-  onRevoke: (token: Token) => void;
-}
+/** A row matches when its category is one of the picked values. */
+const inList: FilterFn<Token> = (row, id, values: readonly string[]) =>
+  values.includes(row.getValue<string>(id));
 
-export function TokenList({
-  tokens,
-  view,
-  onView,
-  total,
-  hasMore,
-  loadingMore,
-  onLoadMore,
-  onRevoke,
-}: TokenListProps) {
-  const id = useId();
-  const [text, setText] = useState(view.q ?? "");
-  const commit = useEffectEvent((value: string) => {
-    if ((view.q ?? "") !== value.trim()) onView({ ...view, q: value.trim() || undefined });
-  });
-  // Typing waits a moment before it asks the server.
-  useEffect(() => {
-    const t = setTimeout(() => commit(text), 300);
-    return () => clearTimeout(t);
-  }, [text]);
-  const table = useReactTable({
-    data: tokens as Token[],
-    columns: columnDefs,
-    getCoreRowModel: getCoreRowModel(),
-    getRowId: (token) => token.id,
-    manualSorting: true,
-    manualFiltering: true,
-    state: { sorting: sortingOf(view.sort) },
-    onSortingChange: (updater) => {
-      const next = typeof updater === "function" ? updater(sortingOf(view.sort)) : updater;
-      const spec = specOf(next);
-      onView({ ...view, sort: spec === DEFAULT_SORT ? undefined : spec });
-    },
-  });
+/** Sorts by a time of the token (never first ascending), not by the column's category. */
+const byTime =
+  (field: "expires_at" | "last_used_at"): SortFn<Token> =>
+  (a, b) => {
+    const x = sortTime(a.original[field]);
+    const y = sortTime(b.original[field]);
+    return x < y ? -1 : x > y ? 1 : 0;
+  };
+
+/** The libraries a token reaches: all, none, or the first two as chips and the rest on demand. */
+function LibrariesCell({ token }: { token: Token }) {
+  const t = useMessages(messages).list;
+  const ids = token.library_ids;
+  if (ids == null) return <span className="text-muted-foreground">{t.allLibraries}</span>;
   return (
-    <div>
-      <search className="mb-4 flex flex-wrap items-end gap-3">
-        <div className="flex min-w-0 flex-1 basis-60 flex-col gap-2">
-          <label htmlFor={`${id}-q`} className="text-body font-medium">
-            Find a token
-          </label>
-          <Input
-            id={`${id}-q`}
-            type="search"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="Name"
-          />
-        </div>
-        <div className="w-52">
-          <SelectField
-            id={`${id}-sort`}
-            label="Sort by"
-            value={specOf(table.getState().sorting)}
-            onChange={(e) => table.setSorting(sortingOf(e.target.value))}
-          >
-            <option value="-created_at">Newest first</option>
-            <option value="created_at">Oldest first</option>
-            <option value="name">Name, A to Z</option>
-            <option value="-name">Name, Z to A</option>
-            <option value="-last_used_at">Recently used</option>
-            <option value="expires_at">No expiry, then soonest</option>
-          </SelectField>
-        </div>
-      </search>
-      {tokens.length === 0 ? (
-        <EmptyState title="No tokens match" className="max-w-2xl">
-          <p>No token name contains “{view.q}”.</p>
-          <Button
-            variant="ghost"
-            className="mt-3"
-            onClick={() => {
-              setText("");
-              onView({ sort: view.sort });
-            }}
-          >
-            Clear search
-          </Button>
-        </EmptyState>
-      ) : (
-        <>
-          <ul aria-label="API tokens" className="divide-y divide-rule border-y border-border">
-            {table.getRowModel().rows.map(({ original: token }) => {
-              const expired = isExpired(token);
-              return (
-                <li key={token.id} className="row-in flex items-start justify-between gap-3 py-4">
-                  <div className="min-w-0">
-                    <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      <span
-                        className={cn(
-                          "font-medium [overflow-wrap:anywhere]",
-                          expired && "text-muted-foreground",
-                        )}
-                      >
-                        {token.name}
-                      </span>
-                      <code className="font-mono text-small text-muted-foreground">
-                        {token.prefix}…
-                      </code>
-                    </p>
-                    <p className="mt-0.5 text-small text-muted-foreground [overflow-wrap:anywhere]">
-                      {token.library_ids == null
-                        ? "All libraries you can access"
-                        : token.library_ids.length === 0
-                          ? "No libraries"
-                          : token.library_ids.join(", ")}
-                    </p>
-                    <p className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-small text-muted-foreground tabular-nums">
-                      <span>Created {when(token.created_at)}</span>
-                      <span className={expired ? "font-medium text-destructive" : undefined}>
-                        {token.expires_at
-                          ? expired
-                            ? `Expired ${when(token.expires_at)}`
-                            : `Expires ${when(token.expires_at)}`
-                          : "No expiry"}
-                      </span>
-                      <span>
-                        {token.last_used_at
-                          ? `Last used ${when(token.last_used_at)}`
-                          : "Never used"}
-                      </span>
-                    </p>
-                  </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="shrink-0 text-destructive hover:bg-destructive-soft"
-                    aria-label={`Revoke ${token.name}`}
-                    onClick={() => onRevoke(token)}
-                  >
-                    Revoke
-                  </Button>
-                </li>
-              );
-            })}
-            {loadingMore && (
-              <li aria-hidden="true" className="py-4">
-                <Skeleton className="h-12 w-full" />
-              </li>
-            )}
-          </ul>
-          <div className="flex items-center gap-3 pt-4 text-small text-muted-foreground">
-            <p className="num">
-              Showing {tokens.length} of {total}
-            </p>
-            {hasMore && (
-              <Button variant="outline" onClick={onLoadMore} disabled={loadingMore}>
-                Load more
-              </Button>
-            )}
-          </div>
-        </>
-      )}
-    </div>
+    <Chips
+      items={ids}
+      more={(n) => t.moreLibraries(n, token.name)}
+      title={t.librariesOf(token.name)}
+      empty={t.noLibraries}
+    />
   );
 }
+
+/** When it stops working: "in 12 days", a warning pill within a week, "Expired", or no expiry. */
+function ExpiresCell({ token }: { token: Token }) {
+  const t = useMessages(messages).list;
+  const now = useNow();
+  const at = token.expires_at;
+  if (at === null) return <span className="text-muted-foreground">{t.noExpiry}</span>;
+  const expiry = expiryOf(token, now);
+  if (expiry === "expired") {
+    return (
+      <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Badge tone="destructive">
+          <CircleX aria-hidden="true" className="size-3" />
+          {t.expired}
+        </Badge>
+        <span className="text-muted-foreground">
+          <RelativeTime iso={at} />
+        </span>
+      </span>
+    );
+  }
+  if (expiry === "soon") {
+    return (
+      <Badge tone="warning">
+        <Clock aria-hidden="true" className="size-3" />
+        <RelativeTime iso={at} future />
+      </Badge>
+    );
+  }
+  return <RelativeTime iso={at} future />;
+}
+
+/** The name, muted once the token has expired. */
+function NameCell({ token }: { token: Token }) {
+  const expired = expiryOf(token, useNow()) === "expired";
+  return (
+    <span
+      className={cn("font-medium [overflow-wrap:anywhere]", expired && "text-muted-foreground")}
+    >
+      {token.name}
+    </span>
+  );
+}
+
+// Built once per language: a cell is rendered as a component, so a new function would remount it.
+export const columnsOf = (m: TokensMessages): ColumnDef<Token>[] => [
+  {
+    accessorKey: "name",
+    header: m.list.columns.name,
+    enableHiding: false,
+    meta: { priority: 1 },
+    cell: ({ row }) => <NameCell token={row.original} />,
+  },
+  {
+    accessorKey: "prefix",
+    header: m.list.columns.token,
+    enableSorting: false,
+    enableGlobalFilter: false,
+    meta: { priority: 2, skeleton: "mono" },
+    cell: ({ row }) => (
+      <MonoCopy
+        value={row.original.prefix}
+        display={`${row.original.prefix}…`}
+        what={m.list.prefix}
+      />
+    ),
+  },
+  {
+    id: "libraries",
+    accessorFn: scopeOf,
+    header: m.list.columns.libraries,
+    enableSorting: false,
+    enableGlobalFilter: false,
+    filterFn: inList,
+    meta: { className: "max-lg:hidden" },
+    cell: ({ row }) => <LibrariesCell token={row.original} />,
+  },
+  {
+    id: "created",
+    accessorFn: (token) => Date.parse(token.created_at),
+    header: m.list.columns.created,
+    sortDescFirst: true,
+    enableGlobalFilter: false,
+    meta: { className: "max-md:hidden" },
+    cell: ({ row }) => <RelativeTime iso={row.original.created_at} />,
+  },
+  {
+    id: "expires",
+    accessorFn: (token) => expiryOf(token, Date.now()),
+    header: m.list.columns.expires,
+    enableGlobalFilter: false,
+    filterFn: inList,
+    sortFn: byTime("expires_at"),
+    meta: { priority: 2, skeleton: "pill" },
+    cell: ({ row }) => <ExpiresCell token={row.original} />,
+  },
+  {
+    id: "used",
+    accessorFn: (token) => lastUseOf(token, Date.now()),
+    header: m.list.columns.used,
+    sortDescFirst: true,
+    enableGlobalFilter: false,
+    filterFn: inList,
+    sortFn: byTime("last_used_at"),
+    meta: { priority: 3 },
+    cell: ({ row }) => <RelativeTime iso={row.original.last_used_at} empty={m.list.neverUsed} />,
+  },
+];
+
+/** The same marks as the expiry cell's pills. */
+const EXPIRY_ICONS = { expired: CircleX, soon: Clock, never: Endless } as const;
+
+export const filtersOf = (m: TokensMessages): TableFilter[] => [
+  {
+    id: "libraries",
+    title: m.list.columns.libraries,
+    options: TOKEN_SCOPES.map((s) => ({ value: s, label: m.list.scopes[s] })),
+  },
+  {
+    id: "expires",
+    title: m.list.columns.expires,
+    options: TOKEN_EXPIRIES.map((e) => ({
+      value: e,
+      label: m.list.expiries[e],
+      icon: EXPIRY_ICONS[e],
+    })),
+  },
+  {
+    id: "used",
+    title: m.list.columns.used,
+    options: TOKEN_USES.map((u) => ({ value: u, label: m.list.uses[u] })),
+  },
+];

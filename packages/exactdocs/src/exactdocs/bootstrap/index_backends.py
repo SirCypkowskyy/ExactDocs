@@ -14,7 +14,7 @@ import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import cast
 
 from exactdocs.bootstrap.cancellation import being_cancelled
 from exactdocs.bootstrap.constants import (
@@ -29,6 +29,7 @@ from exactdocs.bootstrap.settings import Settings
 from exactdocs.retrieval.dtos import ExternalIndexScope, IndexDriftOut
 from exactdocs.retrieval.errors import IndexBackendUnavailableError
 from exactdocs.retrieval.ports import CheckExternalIndexes, SearchBackend, VectorBackend
+from exactdocs_kernel import OutboundNetwork
 
 logger = logging.getLogger(__name__)
 
@@ -90,26 +91,43 @@ class IndexBackends:
 
 
 def build_index_backends(
-    settings: Settings, kinds: Mapping[str, IndexBackendKind] = INDEX_BACKENDS
+    settings: Settings,
+    kinds: Mapping[str, IndexBackendKind] = INDEX_BACKENDS,
+    *,
+    network: OutboundNetwork | None = None,
 ) -> IndexBackends:
     """Build the backends the settings name (no connection is opened here).
 
     Args:
         settings: ``search_backend``, ``vector_backend`` and ``index_backends``.
         kinds: The registered backends (tests add their own).
+        network: The outbound proxy, NO_PROXY and CA bundle (#538) handed to the backends that
+            connect over the network (``IndexBackendKind.outbound``); the settings' by default.
 
     Returns:
         The backends.
+
+    Raises:
+        StartupError: The outbound settings are unusable (``_build`` raises it for a backend).
     """
-    search = _build(settings, kinds, settings.search_backend, "search")
-    vectors = _build(settings, kinds, settings.vector_backend, "vectors")
+    if network is None:
+        try:
+            network = settings.outbound()
+        except ValueError as error:
+            raise StartupError(str(error)) from None
+    search = _build(settings, kinds, settings.search_backend, "search", network)
+    vectors = _build(settings, kinds, settings.vector_backend, "vectors", network)
     return IndexBackends(
         search=cast("SearchBackend | None", search), vectors=cast("VectorBackend | None", vectors)
     )
 
 
 def _build(
-    settings: Settings, kinds: Mapping[str, IndexBackendKind], name: str, role: str
+    settings: Settings,
+    kinds: Mapping[str, IndexBackendKind],
+    name: str,
+    role: str,
+    network: OutboundNetwork,
 ) -> object | None:
     """Import a backend's adapter module and build it from its options.
 
@@ -118,6 +136,7 @@ def _build(
         kinds: The registered backends.
         name: The backend named in the settings.
         role: ``search`` or ``vectors``.
+        network: The outbound settings, for a backend that connects over the network.
 
     Returns:
         The backend, or ``None`` for the database's own index.
@@ -143,10 +162,10 @@ def _build(
             f"({error.name or error}): pip install '{extra}' (or uvx --from '{extra}' exactdocs)"
         )
         raise StartupError(message) from error
-    factory: Callable[[Mapping[str, Any]], object] = getattr(module, factory_name)
+    factory: Callable[..., object] = getattr(module, factory_name)
     options = settings.index_backends.get(name, {})
     try:
-        return factory(options)
+        return factory(options, network=network) if kind.outbound else factory(options)
     except (ValueError, TypeError) as error:
         message = (
             f"[index_backends.{name}] (EXACTDOCS_INDEX_BACKENDS__{name.upper()}__...): {error}"

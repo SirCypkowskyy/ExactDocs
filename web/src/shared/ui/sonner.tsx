@@ -6,15 +6,19 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import { Toaster as Sonner, type ToasterProps } from "sonner";
+import { useMessages } from "@/shared/lib/i18n";
 import { useTheme } from "@/shared/lib/theme";
+import { messages } from "./messages";
 
 const Toaster = ({ ...props }: ToasterProps) => {
   const { resolved } = useTheme();
+  const t = useMessages(messages).toasts;
 
   return (
     <Sonner
       theme={resolved}
       className="toaster group"
+      containerAriaLabel={t.region}
       icons={{
         success: <CircleCheckIcon className="size-4" />,
         info: <InfoIcon className="size-4" />,
@@ -34,6 +38,7 @@ const Toaster = ({ ...props }: ToasterProps) => {
       position="bottom-right"
       toastOptions={{
         classNames: { toast: "font-sans text-body", description: "text-muted-foreground" },
+        closeButtonAriaLabel: t.close,
       }}
       {...props}
     />

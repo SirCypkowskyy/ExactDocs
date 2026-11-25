@@ -1,11 +1,18 @@
-import type { ColumnDef } from "@tanstack/react-table";
-import { ChevronDown, Users } from "lucide-react";
-import { createContext, use, useId } from "react";
-import { cn } from "@/shared/lib/utils";
-import { Button } from "@/shared/ui/button";
-import { DataTable, ListFooter, SearchFilter, useServerTable } from "@/shared/ui/data-table";
-import { pill, pillTone, select } from "@/shared/ui/recipes";
-import { SelectField } from "@/shared/ui/select-field";
+import { useSearch } from "@tanstack/react-router";
+import { ChevronDown, UserPlus, UserRound, Users } from "lucide-react";
+import { createContext, type ReactNode, use, useMemo } from "react";
+import { useMessages } from "@/shared/lib/i18n";
+import { Badge } from "@/shared/ui/badge";
+import { Person } from "@/shared/ui/data-table/cells";
+import { DataTable } from "@/shared/ui/data-table/data-table";
+import type { ColumnDef } from "@/shared/ui/data-table/features";
+import { DataTablePagination } from "@/shared/ui/data-table/pagination";
+import type { RowActions } from "@/shared/ui/data-table/row-actions";
+import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
+import { type TableFilter, useDataTable } from "@/shared/ui/data-table/use-data-table";
+import { select } from "@/shared/ui/recipes";
+import { grantsSource } from "../api/grants";
+import { messages, roleLabel, type SharingMessages } from "../messages";
 import {
   type CallerRole,
   canManage,
@@ -13,67 +20,78 @@ import {
   type GrantedRole,
   givableRoles,
   grantKey,
-  KIND_LABELS,
-  ROLE_LABELS,
 } from "../model/grant";
-import { GRANT_KINDS, GRANT_ROLES, parseSharingView, type SharingView } from "../model/grants-view";
+import { GRANT_KINDS, GRANT_ROLES, GRANTS_TABLE, parseSharingView } from "../model/grants-view";
 
-/** What a row may do, from the page: the columns stay the same between renders. */
-interface RowActions {
+/*
+ * Who holds a role on the library (blocks-map §2.3, "Grants"): DataTable v2 over the grants API,
+ * which sorts, filters and pages; the view in the URL; a role select on the rows the caller may
+ * change, and each row's actions in its kebab and its context menu.
+ */
+
+/** What a row's role select needs from the page: the columns stay the same between renders. */
+interface RoleControl {
   caller: CallerRole;
   /** The grant whose change is on its way, as `kind:subject`. */
   busy: string | undefined;
   onRole: (grant: Grant, role: GrantedRole) => void;
-  onRemove: (grant: Grant) => void;
 }
 
-const RowContext = createContext<RowActions>({
+const RoleContext = createContext<RoleControl>({
   caller: "admin",
   busy: undefined,
   onRole: () => {},
-  onRemove: () => {},
 });
 
+const KIND_ICONS = { user: UserRound, group: Users } as const;
+
+/** A user as a person (initials and username); a group by its icon and exact name, in mono. */
 function Subject({ grant }: { grant: Grant }) {
+  if (grant.kind === "user") return <Person name={grant.subject} />;
   return (
-    <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-      <span
-        className={cn(
-          "font-medium [overflow-wrap:anywhere]",
-          grant.kind === "group" && "font-mono",
-        )}
-      >
-        {grant.subject}
+    <span className="flex min-w-0 items-center gap-2">
+      <span className="inline-flex size-6 flex-none items-center justify-center rounded-full bg-secondary text-muted-foreground">
+        <Users aria-hidden="true" className="size-3.5" />
       </span>
-      {grant.kind === "group" && (
-        <span className={cn(pill, pillTone.neutral, "md:hidden")}>Group</span>
-      )}
+      <span className="font-mono text-mono [overflow-wrap:anywhere]">{grant.subject}</span>
     </span>
   );
 }
 
+function KindBadge({ grant }: { grant: Grant }) {
+  const t = useMessages(messages);
+  const Icon = KIND_ICONS[grant.kind];
+  return (
+    <Badge>
+      <Icon aria-hidden="true" className="size-3" />
+      {t.kinds[grant.kind]}
+    </Badge>
+  );
+}
+
+/** A select on rows the caller may change; the role as a pill otherwise (the creator's lit). */
 function RoleCell({ grant }: { grant: Grant }) {
-  const { caller, busy, onRole } = use(RowContext);
+  const t = useMessages(messages);
+  const { caller, busy, onRole } = use(RoleContext);
   if (!canManage(grant, caller)) {
     return (
-      <span className={cn(pill, grant.role === "creator" ? pillTone.route : pillTone.neutral)}>
-        {ROLE_LABELS[grant.role] ?? grant.role}
-      </span>
+      <Badge tone={grant.role === "creator" ? "route" : "neutral"}>
+        {roleLabel(t, grant.role)}
+      </Badge>
     );
   }
-  const roles = givableRoles(caller);
   return (
     <span className="relative -my-1.5 inline-block w-40">
       <select
-        aria-label={`Role of ${grant.subject}`}
+        aria-label={t.table.roleOf(grant.subject)}
         value={grant.role}
         disabled={busy === grantKey(grant)}
         onChange={(e) => onRole(grant, e.target.value as GrantedRole)}
         className={select}
       >
-        {roles.map((role) => (
+        {givableRoles(caller).map((role) => (
           <option key={role} value={role}>
-            {ROLE_LABELS[role]}
+            {t.roles[role]}
           </option>
         ))}
       </select>
@@ -85,151 +103,88 @@ function RoleCell({ grant }: { grant: Grant }) {
   );
 }
 
-function RemoveButton({ grant }: { grant: Grant }) {
-  const { caller, onRemove } = use(RowContext);
-  if (!canManage(grant, caller)) return null;
-  return (
-    <Button
-      type="button"
-      variant="ghost"
-      size="sm"
-      aria-label={`Remove ${grant.subject}`}
-      onClick={() => onRemove(grant)}
-      className="-my-1.5 text-muted-foreground hover:bg-destructive-soft hover:text-destructive focus-visible:text-destructive"
-    >
-      Remove
-    </Button>
-  );
-}
-
-// Module level on purpose: a cell is rendered as a component, so a new function would remount it.
-const columns: ColumnDef<Grant>[] = [
+// Built once per language, not per render: a cell is rendered as a component, so a new function
+// would remount it. The headers stay strings: the sort buttons are named after them.
+const columnsOf = (t: SharingMessages): ColumnDef<Grant>[] => [
   {
     accessorKey: "subject",
-    header: "Who",
+    header: t.table.who,
+    enableHiding: false,
+    meta: { priority: 1, skeleton: "avatar" },
     cell: ({ row }) => <Subject grant={row.original} />,
   },
   {
     accessorKey: "kind",
-    header: "Kind",
-    meta: { className: "max-md:hidden" },
-    cell: ({ row }) => KIND_LABELS[row.original.kind],
+    header: t.table.kind,
+    meta: { priority: 3, skeleton: "pill" },
+    cell: ({ row }) => <KindBadge grant={row.original} />,
   },
   {
     accessorKey: "role",
-    header: "Role",
+    header: t.table.role,
     sortDescFirst: true,
+    enableHiding: false,
+    meta: { priority: 2, skeleton: "pill" },
     cell: ({ row }) => <RoleCell grant={row.original} />,
-  },
-  {
-    id: "actions",
-    header: "Actions",
-    enableSorting: false,
-    meta: { className: "w-28 text-right" },
-    cell: ({ row }) => <RemoveButton grant={row.original} />,
   },
 ];
 
-interface Props extends RowActions {
-  grants: readonly Grant[];
-  view: SharingView;
-  onView: (view: SharingView) => void;
-  total: number;
-  hasMore: boolean;
-  loadingMore: boolean;
-  onLoadMore: () => void;
+const filtersOf = (t: SharingMessages): TableFilter[] => [
+  {
+    id: "kind",
+    title: t.table.kind,
+    options: GRANT_KINDS.map((k) => ({ value: k, label: t.kindsPlural[k], icon: KIND_ICONS[k] })),
+  },
+  {
+    id: "role",
+    title: t.table.role,
+    options: GRANT_ROLES.map((r) => ({ value: r, label: t.roles[r] })),
+  },
+];
+
+interface Props extends RoleControl {
+  owner: string;
+  repo: string;
+  rowActions: RowActions<Grant>;
+  /** The way to share it, for a table that turns out empty. */
+  shareAction: ReactNode;
 }
 
-/** Who holds a role on the library: sorted and filtered by the server, the view in the URL. */
-export function GrantsTable({
-  grants,
-  view,
-  onView,
-  total,
-  hasMore,
-  loadingMore,
-  onLoadMore,
-  ...actions
-}: Props) {
-  const id = useId();
-  const table = useServerTable({
-    data: grants,
+/** Who holds a role on the library: sorted, filtered and paged by the server, the view in the URL. */
+export function GrantsTable({ owner, repo, rowActions, shareAction, ...control }: Props) {
+  const t = useMessages(messages);
+  const view = parseSharingView(useSearch({ strict: false }) as Record<string, unknown>);
+  const columns = useMemo(() => columnsOf(t), [t]);
+  const filters = useMemo(() => filtersOf(t), [t]);
+  const model = useDataTable({
+    config: GRANTS_TABLE,
+    search: view,
     columns,
     getRowId: grantKey,
-    sort: view.sort,
-    onSort: (sort) => onView({ ...view, sort }),
+    filters,
+    source: grantsSource(owner, repo, view),
   });
   return (
-    <RowContext value={actions}>
-      <search className="mb-3 flex flex-wrap items-end gap-3">
-        <SearchFilter
-          id={`${id}-q`}
-          label="Find a person or group"
-          placeholder="Username or group"
-          value={view.q}
-          onCommit={(q) => onView({ ...view, q })}
-        />
-        <div className="w-32">
-          <SelectField
-            id={`${id}-kind`}
-            label="Kind"
-            value={view.kind ?? ""}
-            onChange={(e) =>
-              onView({ ...view, kind: parseSharingView({ kind: e.target.value }).kind })
-            }
-          >
-            <option value="">Any</option>
-            {GRANT_KINDS.map((k) => (
-              <option key={k} value={k}>
-                {KIND_LABELS[k]}s
-              </option>
-            ))}
-          </SelectField>
-        </div>
-        <div className="w-36">
-          <SelectField
-            id={`${id}-role`}
-            label="Role"
-            value={view.role ?? ""}
-            onChange={(e) =>
-              onView({ ...view, role: parseSharingView({ role: e.target.value }).role })
-            }
-          >
-            <option value="">Any</option>
-            {GRANT_ROLES.map((r) => (
-              <option key={r} value={r}>
-                {ROLE_LABELS[r]}
-              </option>
-            ))}
-          </SelectField>
-        </div>
-      </search>
-      {grants.length === 0 ? (
-        <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed border-input px-5 py-6">
-          <Users aria-hidden="true" className="size-5 text-muted-foreground" />
-          <p className="text-body">
-            <span className="font-medium">Nobody matches.</span>{" "}
-            <button
-              type="button"
-              onClick={() => onView({ sort: view.sort })}
-              className="cursor-pointer font-medium underline underline-offset-2"
-            >
-              Clear filters
-            </button>
-          </p>
-        </div>
-      ) : (
-        <>
-          <DataTable table={table} label="Who has access" loadingMore={loadingMore} />
-          <ListFooter
-            shown={grants.length}
-            total={total}
-            hasMore={hasMore}
-            loadingMore={loadingMore}
-            onLoadMore={onLoadMore}
-          />
-        </>
-      )}
-    </RowContext>
+    <RoleContext value={control}>
+      <DataTableToolbar
+        model={model}
+        search={{ label: t.table.find, placeholder: t.table.findPlaceholder }}
+      />
+      <DataTable
+        model={model}
+        label={t.table.label}
+        rowActions={rowActions}
+        rowLabel={(grant) => grant.subject}
+        empty={{
+          icon: UserPlus,
+          title: t.page.emptyTitle,
+          body: t.page.empty,
+          action: shareAction,
+        }}
+        noMatch={{ title: t.table.nobody }}
+        errorMessage={t.table.loadFailed}
+      />
+      <DataTablePagination model={model} />
+    </RoleContext>
   );
 }

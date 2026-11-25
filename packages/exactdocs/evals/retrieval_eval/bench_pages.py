@@ -2,7 +2,8 @@
 
 Each page under ``docs/benchmark/`` holds generated blocks between ``<!-- bench:<name> -->`` and
 ``<!-- /bench -->``; everything around them is written by hand. This rewrites the blocks from
-``evals/results/*.json`` and the golden set, with the benchmarks' own Markdown renderers, and with
+``evals/results/*.json`` (ingestion, retrieval, agent, and other tools' runs such as
+``grounded-docs.json``) and the golden set, with the benchmarks' own Markdown renderers, and with
 ``--check`` fails when a page differs from what they give. See docs/benchmark/method.md.
 """
 
@@ -14,8 +15,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Final, get_args
 
+from agent_bench.report import BenchReport
+from agent_bench.report import markdown as agent_markdown
 from retrieval_eval.dataset import GoldenKind
 from retrieval_eval.golden import load_cases, load_corpus
+from retrieval_eval.golden_review import load_review, review_block
+from retrieval_eval.grounded_docs import GroundedDocsReport, page_blocks
 from retrieval_eval.ingestion_cli import IngestionReport
 from retrieval_eval.ingestion_cli import markdown as ingestion_markdown
 from retrieval_eval.retrieval_bench import RetrievalBenchReport
@@ -137,6 +142,34 @@ def retrieval_blocks(report: RetrievalBenchReport) -> dict[str, str]:
     }
 
 
+def agent_blocks(report: BenchReport) -> dict[str, str]:
+    """The run and the result tables of the agent benchmark (#495).
+
+    Returns:
+        The Markdown of the blocks ``agent-run`` and ``agent``.
+    """
+    meta = report.meta
+    served = ", ".join(f"{name} at `{url}`" for name, url in meta.providers.items())
+    agents = ", ".join(f"`{m}`" for m in meta.agent_models)
+    arms = ", ".join(f"`{a}`" for a in meta.arms)
+    retrieval = ", ".join(f"`{name}`" for name in meta.retrieval) or "none"
+    run = [
+        (
+            f"- Started {meta.started_at}; ExactDocs `{meta.exactdocs_version}` at "
+            f"`{meta.git_commit[:12]}`."
+        ),
+        f"- Agents: {agents}; judge `{meta.judge_model}`"
+        + (f"; served by {served}." if served else "."),
+        f"- Arms: {arms}; retrieval configurations of `exactdocs`: {retrieval}.",
+        (
+            f"- Cases: {meta.cases} ({meta.selection}); at most {meta.max_requests} model "
+            f"requests per question; thinking: {meta.thinking}; {meta.concurrency} questions at "
+            f"a time; {meta.max_retries} retries of a failed request."
+        ),
+    ]
+    return {"agent-run": "\n".join(run), "agent": _body(agent_markdown(report))}
+
+
 def blocks(results: Path = RESULTS) -> dict[str, str]:
     """Every generated block, by name.
 
@@ -147,10 +180,20 @@ def blocks(results: Path = RESULTS) -> dict[str, str]:
     retrieval = RetrievalBenchReport.model_validate_json(
         (results / "retrieval.json").read_text("utf-8")
     )
+    agent = BenchReport.model_validate_json((results / "agent.json").read_text("utf-8"))
+    grounded = results / "grounded-docs.json"
+    competitors = (
+        page_blocks(GroundedDocsReport.model_validate_json(grounded.read_text("utf-8")))
+        if grounded.exists()
+        else {}
+    )
     return {
         "golden": golden_block(),
+        "golden-review": review_block(load_review()),
         "ingestion": ingestion_block(ingestion),
         **retrieval_blocks(retrieval),
+        **agent_blocks(agent),
+        **competitors,
     }
 
 

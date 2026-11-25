@@ -35,7 +35,8 @@ Watch it: `gh run watch $(gh run list --workflow release.yml --limit 1 --json da
 `gh workflow run release.yml --ref develop` runs everything but the publishing (version
 `0.0.0.dev<run number>`; no PyPI, no ghcr.io push, no GitHub Release). Do it before tagging when the
 release workflow, the Dockerfile, the eval or a dependency changed: the eval and the arm64 size
-budgets and scans do not run on pull requests.
+budgets and scans do not run on pull requests. It leaves out the integration and end-to-end jobs
+unless started with `-f integration=true`, which only a maintainer does, never an agent (#554).
 
 ## Runners
 

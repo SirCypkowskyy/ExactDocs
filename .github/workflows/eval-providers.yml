@@ -17,6 +17,8 @@ name: Retrieval eval (real providers)
 # Blank variables count as unset. Roles left empty stay unset, and the modes that need them are
 # reported `unavailable`. With the `benchmark` input, the retrieval benchmark's hosted
 # configurations also run on the golden set (job `benchmark`, `just retrieval-bench`).
+# With the `context7` input, Context7's REST API answers the golden set where it serves the
+# pinned versions (job `context7`, `just context7-bench`, repository secret CONTEXT7_API_KEY).
 
 on:
   workflow_dispatch:
@@ -40,6 +42,13 @@ on:
         description: Extra arguments for the benchmark (e.g. --chunkings default,h2)
         required: false
         default: ""
+      context7:
+        description: >-
+          Also measure Context7 on the golden set (docs/evals.md#context7); needs the
+          CONTEXT7_API_KEY secret
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: eval-providers
@@ -63,6 +72,8 @@ env:
 jobs:
   eval:
     name: Retrieval eval with real providers
+    # Nothing to measure without a provider (a local-models benchmark run leaves it unset).
+    if: ${{ vars.EVAL_PROVIDER_KIND != '' }}
     runs-on: [self-hosted, linux, ARM64, exactdocs]
     timeout-minutes: 60
     environment: eval-providers # its protection rules decide who may spend the keys
@@ -70,10 +81,10 @@ jobs:
       EXACTDOCS_AI__RERANK_WITH: ${{ vars.EVAL_RERANK_WITH || 'cross_encoder' }}
       EXTRA_ARGS: ${{ inputs.args }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           enable-cache: true
       - name: Install
@@ -92,14 +103,21 @@ jobs:
       - name: Check the roles reach the provider (exactdocs ai check)
         env:
           EXACTDOCS_AI__PROVIDERS__EVAL__API_KEY: ${{ secrets.EVAL_PROVIDER_API_KEY }}
-        run: EXACTDOCS_DATA_DIR="$RUNNER_TEMP/exactdocs-check" uv run exactdocs ai check
+        run: |
+          # A blank EVAL_PROVIDER_KIND means no provider: drop the blank profile, which ExactDocs
+          # would otherwise refuse at startup ("unknown kind"); local models still run.
+          [ -n "$EXACTDOCS_AI__PROVIDERS__EVAL__KIND" ] || unset "${!EXACTDOCS_AI__PROVIDERS__EVAL__@}"
+          EXACTDOCS_DATA_DIR="$RUNNER_TEMP/exactdocs-check" uv run exactdocs ai check
       - name: Retrieval eval (just eval --configured-models --allow-providers)
         env:
           EXACTDOCS_AI__PROVIDERS__EVAL__API_KEY: ${{ secrets.EVAL_PROVIDER_API_KEY }}
         run: |
+          # A blank EVAL_PROVIDER_KIND means no provider: drop the blank profile, which ExactDocs
+          # would otherwise refuse at startup ("unknown kind"); local models still run.
+          [ -n "$EXACTDOCS_AI__PROVIDERS__EVAL__KIND" ] || unset "${!EXACTDOCS_AI__PROVIDERS__EVAL__@}"
           # shellcheck disable=SC2086 # EXTRA_ARGS is a list of arguments
           uv run python packages/exactdocs/evals/run_retrieval_eval.py --configured-models --allow-providers $EXTRA_ARGS
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: retrieval-eval-providers
@@ -122,10 +140,10 @@ jobs:
       BENCH_CONFIGS: ${{ inputs.benchmark_configs }}
       BENCH_ARGS: ${{ inputs.benchmark_args }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           enable-cache: true
       - name: Install
@@ -139,7 +157,7 @@ jobs:
               echo "EXACTDOCS_AI__${upper}__MODEL=eval:${!model_var}" >> "$GITHUB_ENV"
             fi
           done
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .models
           key: retrieval-bench-models-${{ hashFiles('packages/exactdocs/evals/retrieval_eval/retrieval_bench_cli.py') }}
@@ -151,12 +169,55 @@ jobs:
         env:
           EXACTDOCS_AI__PROVIDERS__EVAL__API_KEY: ${{ secrets.EVAL_PROVIDER_API_KEY }}
         run: |
+          # A blank EVAL_PROVIDER_KIND means no provider: drop the blank profile, which ExactDocs
+          # would otherwise refuse at startup ("unknown kind"); local models still run.
+          [ -n "$EXACTDOCS_AI__PROVIDERS__EVAL__KIND" ] || unset "${!EXACTDOCS_AI__PROVIDERS__EVAL__@}"
           # shellcheck disable=SC2086 # BENCH_ARGS is a list of arguments
           uv run python packages/exactdocs/evals/run_retrieval_bench.py --allow-providers \
             --configs "$BENCH_CONFIGS" --out reports/evals/retrieval-bench $BENCH_ARGS
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: retrieval-bench-providers
           path: reports/evals/
+          retention-days: 30
+
+  # Context7 (#493): its hosted REST API, `/v2/context` with each golden question's library and
+  # pinned version, scored with the text scorer next to ExactDocs' BM25. Its raw responses are an
+  # artifact (`context7-responses`), never committed: `just context7-bench --from-cache` scores
+  # them again without calling the service. Context7's index changes, so a run holds for its date.
+  context7:
+    name: Context7 on the golden set
+    if: ${{ inputs.context7 }}
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    timeout-minutes: 120
+    environment: eval-providers # its protection rules decide who may spend the keys
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          enable-cache: true
+      - name: Install
+        run: uv sync --locked
+      - name: Context7 benchmark (just context7-bench)
+        env:
+          CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
+        run: >-
+          uv run python packages/exactdocs/evals/run_context7_bench.py
+          --responses reports/evals/context7-responses --out reports/evals
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: context7-bench
+          path: |
+            reports/evals/context7.json
+            reports/evals/context7.md
+          retention-days: 30
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: context7-responses
+          path: reports/evals/context7-responses/
           retention-days: 30

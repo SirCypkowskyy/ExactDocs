@@ -1,13 +1,13 @@
 # Ingestion benchmark
 
-The golden corpus (starlette, pydantic, tanstack-query, zod, electron; every pinned version) imported with each chunking configuration; BM25 over the golden set's 321 cases (`sha256:39f6f9d5e909d128`). Tokens are estimated at 4 characters; a small chunk is under 50 tokens. Definitions: docs/evals.md#the-ingestion-benchmark.
+The golden corpus (starlette, pydantic, tanstack-query, zod, electron; every pinned version) imported with each chunking configuration; BM25 over the golden set's 321 cases (`sha256:a00997851150e3b0`). Tokens are estimated at 4 characters; a small chunk is under 50 tokens. Definitions: docs/evals.md#the-ingestion-benchmark.
 
 | configuration | coverage | held | cut fence / table / list | lost chars | tokens p50 / p95 / max | small | multi-top | empty / wrong path | headings missed / extra | BM25 recall@5 (exact) | MRR |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `default` | 91.3% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 114 / 738 / 8645 | 23.1% | 0.0% | 723 / 102 | 60 / 3 | 81.7% (76.8%) | 0.651 |
-| `h6` | 100.0% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 88 / 516 / 8645 | 32.2% | 0.0% | 723 / 103 | 60 / 3 | 79.8% (79.8%) | 0.626 |
-| `h2` | 51.8% | 367/367 | 3 / 0 / 0 | 11446 of 7940351 | 179 / 1699 / 8645 | 14.3% | 0.6% | 726 / 95 | 60 / 3 | 76.0% (39.3%) | 0.626 |
-| `merge-400` | 77.1% | 367/367 | 4 / 0 / 0 | 11446 of 7940351 | 183 / 654 / 8645 | 3.0% | 5.1% | 723 / 88 | 60 / 3 | 74.2% (65.2%) | 0.602 |
+| `default` | 91.6% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 114 / 738 / 8645 | 23.1% | 0.0% | 723 / 102 | 60 / 3 | 87.6% (83.5%) | 0.711 |
+| `h6` | 100.0% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 88 / 516 / 8645 | 32.2% | 0.0% | 723 / 103 | 60 / 3 | 85.8% (85.8%) | 0.689 |
+| `h2` | 53.0% | 381/381 | 3 / 0 / 0 | 11446 of 7940351 | 179 / 1699 / 8645 | 14.3% | 0.6% | 726 / 95 | 60 / 3 | 89.1% (49.4%) | 0.737 |
+| `merge-400` | 77.4% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 183 / 654 / 8645 | 3.0% | 5.1% | 723 / 88 | 60 / 3 | 87.6% (73.4%) | 0.715 |
 
 - `default`: today's default (#381): # to ### start a chunk; one over 4,000 characters is cut again at deeper headings.
 - `h6`: every heading starts a chunk; nothing is merged or bounded (the default before #381).
@@ -19,18 +19,18 @@ The golden corpus (starlette, pydantic, tanstack-query, zod, electron; every pin
 | project | version | articles (no chunk) | chunks | coverage | cut fence | lost chars | tokens p50 / p95 / max | small | empty / wrong path | headings missed / extra | no H1 | includes | MkDocs blocks as code |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | starlette | 0.27.0 | 23 (0) | 299 | 89.5% | 0 | 0 | 69 / 569 / 900 | 40.5% | 20 / 0 | 0 / 0 | 21 | 0 | 9 |
-| starlette | 0.52.1 | 25 (0) | 390 | 87.0% | 0 | 0 | 69 / 540 / 932 | 39.0% | 20 / 0 | 0 / 0 | 21 | 0 | 14 |
+| starlette | 0.52.1 | 25 (0) | 390 | 87.5% | 0 | 0 | 69 / 540 / 932 | 39.0% | 20 / 0 | 0 / 0 | 21 | 0 | 14 |
 | starlette | 1.10.0 | 25 (0) | 396 | 85.7% | 0 | 0 | 69 / 561 / 989 | 38.1% | 21 / 0 | 0 / 0 | 22 | 0 | 20 |
 | pydantic | v1.10.22 | 25 (0) | 233 | 93.8% | 0 | 0 | 153 / 641 / 3017 | 10.7% | 23 / 0 | 0 / 0 | 23 | 113 | 67 |
-| pydantic | v2.5.3 | 67 (1) | 537 | 91.7% | 0 | 0 | 138 / 832 / 3017 | 12.1% | 56 / 40 | 0 / 0 | 56 | 0 | 118 |
+| pydantic | v2.5.3 | 67 (1) | 537 | 92.3% | 0 | 0 | 138 / 832 / 3017 | 12.1% | 56 / 40 | 0 / 0 | 56 | 0 | 118 |
 | pydantic | v2.14.3 | 91 (0) | 644 | 91.4% | 0 | 0 | 160 / 910 / 2762 | 10.2% | 77 / 59 | 0 / 0 | 79 | 0 | 204 |
-| tanstack-query | v4.36.1 | 140 (27) | 475 | 95.2% | 0 | 0 | 140 / 585 / 3424 | 14.5% | 103 / 0 | 0 / 0 | 113 | 0 | 0 |
+| tanstack-query | v4.36.1 | 140 (27) | 475 | 95.5% | 0 | 0 | 140 / 585 / 3424 | 14.5% | 103 / 0 | 0 / 0 | 113 | 0 | 0 |
 | tanstack-query | v5.0.0 | 147 (25) | 550 | 100.0% | 0 | 0 | 152 / 637 / 3269 | 12.4% | 110 / 0 | 0 / 0 | 122 | 0 | 0 |
 | tanstack-query | v5.90.3 | 327 (67) | 1253 | 100.0% | 0 | 0 | 81 / 528 / 3571 | 38.1% | 211 / 0 | 0 / 0 | 170 | 0 | 0 |
 | zod | v3.23.8 | 1 (0) | 97 | 72.2% | 2 | 0 | 157 / 814 / 996 | 13.4% | 1 / 0 | 0 / 1 | 1 | 0 | 0 |
 | zod | v4.0.17 | 17 (0) | 243 | 100.0% | 1 | 5289 | 169 / 630 / 2306 | 14.0% | 17 / 0 | 27 / 1 | 17 | 0 | 0 |
 | zod | v4.6.7 | 24 (0) | 351 | 100.0% | 1 | 6157 | 183 / 684 / 8645 | 12.5% | 24 / 3 | 33 / 1 | 24 | 0 | 0 |
-| electron | v30.0.0 | 239 (0) | 1852 | 84.6% | 0 | 0 | 103 / 765 / 2493 | 24.2% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
+| electron | v30.0.0 | 239 (0) | 1852 | 85.7% | 0 | 0 | 103 / 765 / 2493 | 24.2% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
 | electron | v38.0.0 | 264 (0) | 2099 | 92.3% | 0 | 0 | 110 / 824 / 3582 | 22.3% | 14 / 0 | 0 / 0 | 37 | 0 | 0 |
 | electron | v45.3.2 | 301 (0) | 2329 | 82.1% | 0 | 0 | 120 / 828 / 3582 | 21.8% | 14 / 0 | 0 / 0 | 40 | 0 | 0 |
 
@@ -94,18 +94,18 @@ Sections that start no chunk under `default`:
 | project | version | articles (no chunk) | chunks | coverage | cut fence | lost chars | tokens p50 / p95 / max | small | empty / wrong path | headings missed / extra | no H1 | includes | MkDocs blocks as code |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | starlette | 0.27.0 | 23 (0) | 159 | 63.2% | 0 | 0 | 123 / 1040 / 1821 | 26.4% | 20 / 0 | 0 / 0 | 21 | 0 | 9 |
-| starlette | 0.52.1 | 25 (0) | 224 | 60.9% | 0 | 0 | 115 / 875 / 1923 | 25.4% | 20 / 0 | 0 / 0 | 21 | 0 | 14 |
+| starlette | 0.52.1 | 25 (0) | 224 | 62.5% | 0 | 0 | 115 / 875 / 1923 | 25.4% | 20 / 0 | 0 / 0 | 21 | 0 | 14 |
 | starlette | 1.10.0 | 25 (0) | 235 | 53.6% | 0 | 0 | 107 / 978 / 1946 | 25.1% | 21 / 0 | 0 / 0 | 22 | 0 | 20 |
 | pydantic | v1.10.22 | 25 (0) | 136 | 68.8% | 0 | 0 | 215 / 1591 / 3017 | 7.3% | 23 / 0 | 0 / 0 | 23 | 81 | 67 |
-| pydantic | v2.5.3 | 67 (1) | 400 | 50.0% | 0 | 0 | 148 / 1378 / 3017 | 9.5% | 56 / 40 | 0 / 0 | 56 | 0 | 118 |
+| pydantic | v2.5.3 | 67 (1) | 400 | 53.8% | 0 | 0 | 148 / 1378 / 3017 | 9.5% | 56 / 40 | 0 / 0 | 56 | 0 | 118 |
 | pydantic | v2.14.3 | 91 (0) | 504 | 57.1% | 0 | 0 | 156 / 1610 / 2762 | 9.7% | 77 / 55 | 0 / 0 | 79 | 0 | 204 |
-| tanstack-query | v4.36.1 | 140 (27) | 339 | 61.9% | 0 | 0 | 166 / 1027 / 3424 | 10.9% | 104 / 0 | 0 / 0 | 113 | 0 | 0 |
+| tanstack-query | v4.36.1 | 140 (27) | 339 | 63.6% | 0 | 0 | 166 / 1027 / 3424 | 10.9% | 104 / 0 | 0 / 0 | 113 | 0 | 0 |
 | tanstack-query | v5.0.0 | 147 (25) | 374 | 61.9% | 0 | 0 | 179 / 1182 / 3269 | 8.8% | 111 / 0 | 0 / 0 | 122 | 0 | 0 |
-| tanstack-query | v5.90.3 | 327 (67) | 893 | 72.0% | 0 | 0 | 98 / 802 / 3571 | 32.9% | 212 / 0 | 0 / 0 | 170 | 0 | 0 |
+| tanstack-query | v5.90.3 | 327 (67) | 893 | 75.9% | 0 | 0 | 98 / 802 / 3571 | 32.9% | 212 / 0 | 0 / 0 | 170 | 0 | 0 |
 | zod | v3.23.8 | 1 (0) | 41 | 22.2% | 1 | 0 | 334 / 1846 / 1969 | 4.9% | 1 / 0 | 0 / 1 | 1 | 0 | 0 |
-| zod | v4.0.17 | 17 (0) | 146 | 72.0% | 1 | 5289 | 243 / 1263 / 2306 | 7.5% | 17 / 0 | 27 / 1 | 17 | 0 | 0 |
-| zod | v4.6.7 | 24 (0) | 200 | 59.4% | 1 | 6157 | 265 / 1402 / 8645 | 7.5% | 24 / 0 | 33 / 1 | 24 | 0 | 0 |
-| electron | v30.0.0 | 239 (0) | 742 | 34.6% | 0 | 0 | 220 / 1906 / 2493 | 10.0% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
+| zod | v4.0.17 | 17 (0) | 146 | 74.1% | 1 | 5289 | 243 / 1263 / 2306 | 7.5% | 17 / 0 | 27 / 1 | 17 | 0 | 0 |
+| zod | v4.6.7 | 24 (0) | 200 | 58.8% | 1 | 6157 | 265 / 1402 / 8645 | 7.5% | 24 / 0 | 33 / 1 | 24 | 0 | 0 |
+| electron | v30.0.0 | 239 (0) | 742 | 35.7% | 0 | 0 | 220 / 1906 / 2493 | 10.0% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
 | electron | v38.0.0 | 264 (0) | 871 | 26.9% | 0 | 0 | 238 / 1931 / 3582 | 9.4% | 14 / 0 | 0 / 0 | 37 | 0 | 0 |
 | electron | v45.3.2 | 301 (0) | 965 | 17.9% | 0 | 0 | 265 / 1929 / 3582 | 8.8% | 14 / 0 | 0 / 0 | 40 | 0 | 0 |
 
@@ -117,6 +117,7 @@ Sections that start no chunk under `h2`:
 - electron v30.0.0:docs/api/auto-updater.md [autoUpdater > Platform Notices > macOS] (held)
 - electron v30.0.0:docs/api/context-bridge.md [contextBridge > Methods > contextBridge.exposeInMainWorld(apiKey, api)] (held)
 - electron v30.0.0:docs/api/web-contents-view.md [WebContentsView > Class: WebContentsView extends View > new WebContentsView([options])] (held)
+- electron v30.0.0:docs/breaking-changes.md [Breaking Changes > Planned Breaking API Changes (20.0) > Default Changed: renderers without nodeIntegration: true are sandboxed by default] (held)
 - electron v30.0.0:docs/breaking-changes.md [Breaking Changes > Planned Breaking API Changes (30.0) > Behavior Changed: BrowserView.setAutoResize behavior on macOS] (held)
 - electron v30.0.0:docs/breaking-changes.md [Breaking Changes > Planned Breaking API Changes (30.0) > Removed: params.inputFormType property on context-menu on WebContents] (held)
 - electron v30.0.0:docs/tutorial/dark-mode.md [Dark Mode > Overview > Manually update your own interfaces] (held)
@@ -282,6 +283,7 @@ Sections that start no chunk under `h2`:
 - zod v4.6.7:packages/docs/content/api.mdx [String formats > IBANs] (held)
 - zod v4.6.7:packages/docs/content/api.mdx [String formats > ISO datetimes] (held)
 - zod v4.6.7:packages/docs/content/blog/zod-4-5.mdx [Bug fixes > ⚠️ z.iso.datetime() requires seconds] (held)
+- zod v4.6.7:packages/docs/content/blog/zod-4-5.mdx [z.compile() > import "zod/compile"] (held)
 - zod v4.6.7:packages/docs/content/codecs.mdx [How encoding works > Transforms] (held)
 - zod v4.6.7:packages/docs/content/codecs.mdx [How encoding works > isoDatetimeToDate] (held)
 - zod v4.6.7:packages/docs/content/error-customization.mdx [Internationalization > Locales] (held)
@@ -294,18 +296,18 @@ Sections that start no chunk under `h2`:
 | project | version | articles (no chunk) | chunks | coverage | cut fence | lost chars | tokens p50 / p95 / max | small | empty / wrong path | headings missed / extra | no H1 | includes | MkDocs blocks as code |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | starlette | 0.27.0 | 23 (0) | 184 | 68.4% | 0 | 0 | 160 / 561 / 891 | 4.3% | 20 / 0 | 0 / 0 | 21 | 0 | 9 |
-| starlette | 0.52.1 | 25 (0) | 236 | 73.9% | 0 | 0 | 153 / 605 / 932 | 3.8% | 20 / 0 | 0 / 0 | 21 | 0 | 14 |
+| starlette | 0.52.1 | 25 (0) | 236 | 70.8% | 0 | 0 | 153 / 605 / 932 | 3.8% | 20 / 0 | 0 / 0 | 21 | 0 | 14 |
 | starlette | 1.10.0 | 25 (0) | 250 | 82.1% | 0 | 0 | 153 / 560 / 989 | 3.2% | 21 / 0 | 0 / 0 | 22 | 0 | 20 |
 | pydantic | v1.10.22 | 25 (0) | 194 | 68.8% | 0 | 0 | 215 / 637 / 3017 | 1.6% | 23 / 0 | 0 / 0 | 23 | 91 | 67 |
-| pydantic | v2.5.3 | 67 (1) | 440 | 87.5% | 0 | 0 | 207 / 830 / 3017 | 5.7% | 56 / 33 | 0 / 0 | 56 | 0 | 118 |
+| pydantic | v2.5.3 | 67 (1) | 440 | 88.5% | 0 | 0 | 207 / 830 / 3017 | 5.7% | 56 / 33 | 0 / 0 | 56 | 0 | 118 |
 | pydantic | v2.14.3 | 91 (0) | 568 | 80.0% | 0 | 0 | 213 / 930 / 2762 | 6.2% | 77 / 52 | 0 / 0 | 79 | 0 | 204 |
-| tanstack-query | v4.36.1 | 140 (27) | 388 | 90.5% | 0 | 0 | 184 / 644 / 3424 | 5.1% | 103 / 0 | 0 / 0 | 113 | 0 | 0 |
+| tanstack-query | v4.36.1 | 140 (27) | 388 | 90.9% | 0 | 0 | 184 / 644 / 3424 | 5.1% | 103 / 0 | 0 / 0 | 113 | 0 | 0 |
 | tanstack-query | v5.0.0 | 147 (25) | 455 | 90.5% | 0 | 0 | 191 / 679 / 3269 | 4.0% | 110 / 0 | 0 / 0 | 122 | 0 | 0 |
-| tanstack-query | v5.90.3 | 327 (67) | 796 | 92.0% | 0 | 0 | 176 / 656 / 3571 | 9.7% | 211 / 0 | 0 / 0 | 170 | 0 | 0 |
+| tanstack-query | v5.90.3 | 327 (67) | 796 | 93.1% | 0 | 0 | 176 / 656 / 3571 | 9.7% | 211 / 0 | 0 / 0 | 170 | 0 | 0 |
 | zod | v3.23.8 | 1 (0) | 88 | 77.8% | 2 | 0 | 200 / 564 / 996 | 0.0% | 1 / 0 | 0 / 1 | 1 | 0 | 0 |
-| zod | v4.0.17 | 17 (0) | 182 | 80.0% | 1 | 5289 | 237 / 701 / 2306 | 1.1% | 17 / 0 | 27 / 1 | 17 | 0 | 0 |
-| zod | v4.6.7 | 24 (0) | 273 | 71.9% | 1 | 6157 | 237 / 761 / 8645 | 1.1% | 24 / 3 | 33 / 1 | 24 | 0 | 0 |
-| electron | v30.0.0 | 239 (0) | 1521 | 69.2% | 0 | 0 | 171 / 544 / 2493 | 1.4% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
+| zod | v4.0.17 | 17 (0) | 182 | 81.5% | 1 | 5289 | 237 / 701 / 2306 | 1.1% | 17 / 0 | 27 / 1 | 17 | 0 | 0 |
+| zod | v4.6.7 | 24 (0) | 273 | 70.6% | 1 | 6157 | 237 / 761 / 8645 | 1.1% | 24 / 3 | 33 / 1 | 24 | 0 | 0 |
+| electron | v30.0.0 | 239 (0) | 1521 | 71.4% | 0 | 0 | 171 / 544 / 2493 | 1.4% | 12 / 0 | 0 / 0 | 34 | 0 | 0 |
 | electron | v38.0.0 | 264 (0) | 1768 | 46.2% | 0 | 0 | 177 / 628 / 3582 | 1.2% | 14 / 0 | 0 / 0 | 37 | 0 | 0 |
 | electron | v45.3.2 | 301 (0) | 1979 | 78.6% | 0 | 0 | 181 / 627 / 3582 | 1.4% | 14 / 0 | 0 / 0 | 40 | 0 | 0 |
 
@@ -365,6 +367,7 @@ Sections that start no chunk under `merge-400`:
 - starlette 0.52.1:docs/release-notes.md [0.29.0 (July 13, 2023) > Added] (held)
 - starlette 0.52.1:docs/release-notes.md [0.33.0 (December 1, 2023) > Added] (held)
 - starlette 0.52.1:docs/release-notes.md [0.39.0 (September 23, 2024) > Added] (held)
+- starlette 0.52.1:docs/release-notes.md [0.52.0 (January 18, 2026)] (held)
 - starlette 0.52.1:docs/requests.md [Request > Other state] (held)
 - starlette 1.10.0:docs/release-notes.md [1.0.0rc1 (February 23, 2026) > Fixed] (held)
 - starlette 1.10.0:docs/release-notes.md [1.2.0 (May 28, 2026) > Added] (held)
@@ -390,6 +393,7 @@ Sections that start no chunk under `merge-400`:
 - zod v4.6.7:packages/docs/content/api.mdx [Records > z.record] (held)
 - zod v4.6.7:packages/docs/content/api.mdx [String formats > IBANs] (held)
 - zod v4.6.7:packages/docs/content/api.mdx [String formats > ISO datetimes] (held)
+- zod v4.6.7:packages/docs/content/blog/introducing-z-compile.mdx [Compile all the things!] (held)
 - zod v4.6.7:packages/docs/content/blog/zod-4-5.mdx [Bug fixes > ⚠️ z.iso.datetime() requires seconds] (held)
 - zod v4.6.7:packages/docs/content/blog/zod-4-5.mdx [z.deepPartial()] (held)
 - zod v4.6.7:packages/docs/content/codecs.mdx [How encoding works > isoDatetimeToDate] (held)

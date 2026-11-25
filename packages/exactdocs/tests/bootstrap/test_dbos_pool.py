@@ -16,7 +16,8 @@ from dbos import DBOS
 from sqlalchemy import QueuePool, create_engine
 from sqlalchemy.engine import make_url
 
-from databases import ADMIN_URL, PostgresDatabase, postgres_database
+import integration
+from databases import PostgresDatabase, postgres_database
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.database import ClosingQueuePool
 from exactdocs.bootstrap.settings import Settings
@@ -31,7 +32,7 @@ from exactdocs.ingestion.models import Job
 from exactdocs.ingestion.ports import JobProgress
 from exactdocs_kernel import SystemClock
 
-pytestmark = pytest.mark.skipif(ADMIN_URL is None, reason="needs EXACTDOCS_TEST_POSTGRES_URL")
+pytestmark = integration.POSTGRES
 
 STEP = JobKind("import")
 WAIT = 10.0

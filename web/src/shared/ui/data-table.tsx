@@ -1,40 +1,30 @@
 import {
-  type ColumnDef,
+  type ColumnVisibilityState,
   flexRender,
-  getCoreRowModel,
-  type Header,
   type RowData,
-  type SortingState,
-  type Table,
-  useReactTable,
-  type VisibilityState,
+  useTable,
 } from "@tanstack/react-table";
-import { ArrowDown, ArrowUp, ArrowUpDown, Columns3 } from "lucide-react";
-import { useEffect, useEffectEvent, useState } from "react";
+import { useState } from "react";
+import { useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "./button";
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuTrigger,
-} from "./dropdown-menu";
-import { Input } from "./input";
+import { SortHeader } from "./data-table/columns";
+import { type ColumnDef, features, type Table } from "./data-table/features";
+import { sortingOf } from "./data-table/table-search";
+import { messages } from "./messages";
 import { Skeleton } from "./skeleton";
 
-declare module "@tanstack/react-table" {
-  interface ColumnMeta<TData extends RowData, TValue> {
-    /** Classes of the column's cells, e.g. `max-md:hidden` to drop it on narrow screens. */
-    className?: string;
-  }
-}
+/*
+ * DataTable v1: "Load more" tables. The pages not yet on DataTable v2 (`./data-table/`: numbered
+ * pages, faceted filters, row actions) use these; the sort header, the Columns menu and the search
+ * box are v2's, re-exported here so both look alike. Remove this file once the last page moved.
+ */
 
-/** The table's sorting from an API `sort` value (a field, `-` in front for descending). */
-export const sortingOf = (sort: string | undefined): SortingState =>
-  sort ? [{ id: sort.replace(/^-/, ""), desc: sort.startsWith("-") }] : [];
+export { ColumnsMenu, SortHeader } from "./data-table/columns";
+export { SearchFilter } from "./data-table/search-filter";
+export { sortingOf };
 
-interface ServerTableOptions<T> {
+interface ServerTableOptions<T extends RowData> {
   data: readonly T[];
   columns: ColumnDef<T>[];
   getRowId: (row: T) => string;
@@ -46,18 +36,18 @@ interface ServerTableOptions<T> {
  * A table whose rows the server sorts and filters (manual mode): it holds the sort, which lives in
  * the URL, and which columns are shown.
  */
-export function useServerTable<T>({
+export function useServerTable<T extends RowData>({
   data,
   columns,
   getRowId,
   sort,
   onSort,
 }: ServerTableOptions<T>) {
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
-  return useReactTable({
+  const [columnVisibility, setColumnVisibility] = useState<ColumnVisibilityState>({});
+  return useTable({
+    features,
     data: data as T[],
     columns,
-    getCoreRowModel: getCoreRowModel(),
     getRowId,
     manualSorting: true,
     manualFiltering: true,
@@ -74,62 +64,8 @@ export function useServerTable<T>({
   });
 }
 
-/** A column header; a sortable one is a button that says how the column is sorted. */
-export function SortHeader<T>({ header }: { header: Header<T, unknown> }) {
-  const label = flexRender(header.column.columnDef.header, header.getContext());
-  if (!header.column.getCanSort()) return <>{label}</>;
-  const dir = header.column.getIsSorted();
-  return (
-    <button
-      type="button"
-      aria-label={`Sort by ${String(header.column.columnDef.header)}${dir ? `, sorted ${dir === "asc" ? "ascending" : "descending"}` : ""}`}
-      onClick={header.column.getToggleSortingHandler()}
-      className="inline-flex cursor-pointer items-center gap-1 rounded outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-    >
-      {label}
-      {dir === "asc" ? (
-        <ArrowUp aria-hidden="true" className="size-3.5" />
-      ) : dir === "desc" ? (
-        <ArrowDown aria-hidden="true" className="size-3.5" />
-      ) : (
-        <ArrowUpDown aria-hidden="true" className="size-3.5 opacity-50" />
-      )}
-    </button>
-  );
-}
-
-/** Show or hide the columns that can be hidden. */
-export function ColumnsMenu<T>({ table }: { table: Table<T> }) {
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="outline" size="sm">
-          <Columns3 aria-hidden="true" />
-          Columns
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuLabel>Show columns</DropdownMenuLabel>
-        {table
-          .getAllLeafColumns()
-          .filter((c) => c.getCanHide())
-          .map((column) => (
-            <DropdownMenuCheckboxItem
-              key={column.id}
-              checked={column.getIsVisible()}
-              onCheckedChange={(on) => column.toggleVisibility(on)}
-              onSelect={(e) => e.preventDefault()}
-            >
-              {String(column.columnDef.header)}
-            </DropdownMenuCheckboxItem>
-          ))}
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-}
-
 /** The rows of a server-side table, with a skeleton row while the next page is on its way. */
-export function DataTable<T>({
+export function DataTable<T extends RowData>({
   table,
   label,
   loadingMore,
@@ -204,62 +140,15 @@ export function ListFooter({
   loadingMore: boolean;
   onLoadMore: () => void;
 }) {
+  const t = useMessages(messages).table;
   return (
     <div className="flex items-center gap-3 pt-4 text-small text-muted-foreground">
-      <p className="num">
-        Showing {shown} of {total}
-      </p>
+      <p className="num">{t.showing(shown, total)}</p>
       {hasMore && (
         <Button variant="outline" onClick={onLoadMore} disabled={loadingMore}>
-          Load more
+          {t.loadMore}
         </Button>
       )}
-    </div>
-  );
-}
-
-/**
- * A text filter that waits until typing pauses before it changes the view (and asks the server).
- * `value` is the filter in the view: when it changes elsewhere (Clear filters), the box follows.
- */
-export function SearchFilter({
-  id,
-  label,
-  placeholder,
-  value,
-  onCommit,
-}: {
-  id: string;
-  label: string;
-  placeholder?: string | undefined;
-  value: string | undefined;
-  onCommit: (value: string | undefined) => void;
-}) {
-  const [text, setText] = useState(value ?? "");
-  const [seen, setSeen] = useState(value);
-  if (seen !== value) {
-    setSeen(value);
-    if (text.trim() !== (value ?? "")) setText(value ?? "");
-  }
-  const commit = useEffectEvent((next: string) => {
-    if ((value ?? "") !== next.trim()) onCommit(next.trim() || undefined);
-  });
-  useEffect(() => {
-    const t = setTimeout(() => commit(text), 300);
-    return () => clearTimeout(t);
-  }, [text]);
-  return (
-    <div className="flex min-w-0 flex-1 basis-60 flex-col gap-2">
-      <label htmlFor={id} className="text-body font-medium">
-        {label}
-      </label>
-      <Input
-        id={id}
-        type="search"
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder={placeholder}
-      />
     </div>
   );
 }

@@ -1,28 +1,32 @@
 import { Link } from "@tanstack/react-router";
-import { LibraryBig } from "lucide-react";
+import { ArrowLeft, LibraryBig } from "lucide-react";
+import { useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { buttonVariants } from "@/shared/ui/button";
 import { StatusScreen } from "@/shared/ui/status-screen";
+import { messages } from "../messages";
 
 /** The address names a library this instance does not have (or the caller may not see). */
 export function LibraryNotFound({ owner, repo }: { owner: string; repo: string }) {
-  const heading = usePageTitle("Library not found");
+  const t = useMessages(messages).notFound;
+  const heading = usePageTitle(t.title);
   return (
     <StatusScreen
       icon={<LibraryBig aria-hidden="true" />}
-      title="Library not found"
+      title={t.title}
       headingRef={heading}
       actions={
         <Link to="/" className={buttonVariants()}>
-          All libraries
+          <ArrowLeft aria-hidden="true" data-icon-motion="back" />
+          {t.allLibraries}
         </Link>
       }
     >
-      ExactDocs has no library{" "}
-      <code className="font-mono text-foreground">
-        /{owner}/{repo}
-      </code>
-      . Check the address, or pick one from the list.
+      {t.body(
+        <code className="font-mono text-foreground">
+          /{owner}/{repo}
+        </code>,
+      )}
     </StatusScreen>
   );
 }

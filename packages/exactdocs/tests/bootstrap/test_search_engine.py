@@ -1,7 +1,7 @@
 """On PostgreSQL the search engine is chosen at start: `pg_search` when the database has it.
 
-Needs ``EXACTDOCS_TEST_POSTGRES_URL``; the `pg_search` cases also need a server that has the
-extension (``EXACTDOCS_TEST_PG_SEARCH=1``, as on CI's ParadeDB).
+Integration tests (#507): they need ``EXACTDOCS_TEST_POSTGRES_URL``; the `pg_search` cases also
+need a server that has the extension (``EXACTDOCS_TEST_PG_SEARCH=1``, as on CI's ParadeDB).
 """
 
 import asyncio
@@ -12,8 +12,9 @@ import pytest
 from sqlalchemy import event, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+import integration
 from app_lifespan import serving
-from databases import ADMIN_URL, PG_SEARCH, PostgresDatabase
+from databases import PostgresDatabase
 from exactdocs.bootstrap.container import Container, ReadOnlyContainer
 from exactdocs.bootstrap.database import migrate, open_database
 from exactdocs.bootstrap.http import create_app
@@ -29,10 +30,8 @@ from exactdocs.retrieval.constants import (
 )
 from exactdocs.retrieval.models import ChunkSet, TagFilter
 
-if ADMIN_URL is None:
-    pytest.skip("needs a PostgreSQL server (EXACTDOCS_TEST_POSTGRES_URL)", allow_module_level=True)
-
-needs_pg_search = pytest.mark.skipif(not PG_SEARCH, reason="the server has no pg_search")
+pytestmark = integration.POSTGRES
+needs_pg_search = integration.POSTGRES_PG_SEARCH
 
 BM25_INDEXES = """
     SELECT ix.relname, i.indisvalid FROM pg_index i

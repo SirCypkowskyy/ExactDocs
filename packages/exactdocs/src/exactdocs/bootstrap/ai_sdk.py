@@ -8,9 +8,11 @@ Every SDK client is built with explicit values only: the endpoint, the key (``un
 profile without one), the project, location and credentials, the API version. No model is ever
 built from a ``"<provider>:<model>"`` string, which would let pydantic-ai infer the provider and
 the SDKs read ``OPENAI_API_KEY``, ``*_BASE_URL`` and the like from the environment. Every call
-goes through the profile's own ``httpx2`` client: its proxy on the transport (the environment's
-proxy variables are not read), its extra headers, one retry layer (the SDK's), an overall
-timeout, and a guard that refuses any host but the profile's endpoint.
+goes through the profile's own ``httpx2`` client: its proxy on the transport (the profile's
+own, else the instance's outbound proxy when ``ai.use_instance_proxy`` is on; the environment's
+proxy variables are never read by the client), the instance's CA bundle (#538), its extra
+headers, one retry layer (the SDK's), an overall timeout, and a guard that refuses any host but
+the profile's endpoint.
 """
 
 import asyncio
@@ -101,6 +103,7 @@ from exactdocs.bootstrap.constants import (
     SDK_HEADER_VARIABLES,
     VERTEX_HOST,
 )
+from exactdocs.bootstrap.outbound import RoutedTransport, tls_verify
 from exactdocs.retrieval.adapters.driven.http_reranker import HttpReranker, RerankDialect
 from exactdocs.retrieval.errors import ProviderUnsupportedError, RerankerError
 from exactdocs.retrieval.models import (
@@ -111,7 +114,7 @@ from exactdocs.retrieval.models import (
     ThinkingLevel,
 )
 from exactdocs.retrieval.ports.driven import Reranker
-from exactdocs_kernel import SealedTextUnreadableError
+from exactdocs_kernel import OutboundNetwork, SealedTextUnreadableError
 
 logger = logging.getLogger(__name__)
 
@@ -317,7 +320,12 @@ def read_key(
 
 
 def http_client(
-    profile: ProviderProfile, url: str, *, bearer: Callable[[], str] | None = None
+    profile: ProviderProfile,
+    url: str,
+    *,
+    bearer: Callable[[], str] | None = None,
+    instance_proxy: str | None = None,
+    network: OutboundNetwork | None = None,
 ) -> httpx2.AsyncClient:
     """Build the profile's one HTTP client.
 
@@ -325,12 +333,21 @@ def http_client(
         profile: The profile.
         url: Its endpoint; the client reaches nothing else.
         bearer: Signs every request with an Entra ID token (Claude on Foundry with Entra ID).
+        instance_proxy: The instance's outbound proxy for the endpoint, given only when
+            ``ai.use_instance_proxy`` is on and ``NO_PROXY`` does not list it; the profile's own
+            ``proxy`` wins over it.
+        network: The outbound settings: the CA bundle every connection trusts, and what a
+            failure through the proxy is redacted with.
 
     Returns:
         A client with the proxy on its transport, the extra headers, no retries of its own (the
         SDK's are the one retry layer), an overall timeout and the host guard.
     """
-    transport = httpx2.AsyncHTTPTransport(proxy=profile.proxy, retries=0, trust_env=False)
+    network = network or OutboundNetwork()
+    proxy = profile.proxy or instance_proxy
+    transport = RoutedTransport(
+        route=lambda _: proxy, verify=tls_verify(network), retries=0, redact=network.redact
+    )
     parts = httpx2.URL(url)
     guard = _Guard(
         origin=(parts.scheme, parts.host, parts.port),
@@ -367,7 +384,7 @@ def _openai_client(endpoint: Endpoint) -> AsyncOpenAI:
 
 
 def entra_chain(
-    profile: ProviderProfile, environ: Mapping[str, str]
+    profile: ProviderProfile, environ: Mapping[str, str], *, instance_proxy: str | None = None
 ) -> list[tuple[type[TokenCredential], dict[str, Any]]]:
     """The Entra ID credentials to try, in order, each with its arguments.
 
@@ -377,17 +394,19 @@ def entra_chain(
     VS Code) are not tried: a server never signs in as a person. The profile's ``proxy`` goes
     only to the credentials that call ``login.microsoftonline.com``; managed identity talks to a
     link-local or local endpoint (IMDS, ``IDENTITY_ENDPOINT``) that a proxy cannot reach.
+    Without a ``proxy`` of the profile's own, the instance's outbound proxy goes there when
+    ``ai.use_instance_proxy`` is on (``instance_proxy``).
 
     Args:
         profile: The profile.
         environ: The process environment (the Entra ID variables).
+        instance_proxy: The instance's proxy for Entra ID, when profiles use it.
 
     Returns:
         ``(credential class, keyword arguments)`` pairs.
     """
-    via_proxy: dict[str, Any] = (
-        {"proxies": {"http": profile.proxy, "https": profile.proxy}} if profile.proxy else {}
-    )
+    proxy = profile.proxy or instance_proxy
+    via_proxy: dict[str, Any] = {"proxies": {"http": proxy, "https": proxy}} if proxy else {}
     chain: list[tuple[type[TokenCredential], dict[str, Any]]] = [(EnvironmentCredential, via_proxy)]
     if environ.get("AZURE_FEDERATED_TOKEN_FILE"):
         chain.append((WorkloadIdentityCredential, via_proxy))
@@ -398,7 +417,9 @@ def entra_chain(
     return chain
 
 
-def entra_token_provider(profile: ProviderProfile) -> Callable[[], str]:
+def entra_token_provider(
+    profile: ProviderProfile, *, instance_proxy: str | None = None
+) -> Callable[[], str]:
     """Entra ID tokens through the sync credentials (``azure.identity.aio`` would need aiohttp).
 
     Built once per profile (``ai_models`` keeps it on the endpoint), so its token cache lives
@@ -407,11 +428,13 @@ def entra_token_provider(profile: ProviderProfile) -> Callable[[], str]:
 
     Args:
         profile: The profile.
+        instance_proxy: The instance's proxy for Entra ID, when profiles use it.
 
     Returns:
         A callable returning a bearer token.
     """
-    credentials = [kind(**arguments) for kind, arguments in entra_chain(profile, os.environ)]
+    chain = entra_chain(profile, os.environ, instance_proxy=instance_proxy)
+    credentials = [kind(**arguments) for kind, arguments in chain]
     return get_bearer_token_provider(ChainedTokenCredential(*credentials), AZURE_SCOPE)
 
 

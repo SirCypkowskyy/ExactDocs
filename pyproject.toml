@@ -42,6 +42,8 @@ dev = [
     "pytest>=9",
     "pytest-asyncio>=1.2",
     "pytest-cov>=7",
+    # CI shards the fast suite by recorded durations (.test_durations; #507).
+    "pytest-split>=0.11",
     "ruff>=0.14",
     "ty>=0.0.1",
 ]
@@ -138,15 +140,26 @@ ignore = [
 # The eval runner script sits beside its package, outside any package, like e2e/run.py.
 "packages/exactdocs/evals/run_retrieval_eval.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_golden.py" = ["implicit-namespace-package"]
+"packages/exactdocs/evals/run_golden_review.py" = ["implicit-namespace-package"]
+# The golden-set review sample is drawn with random.Random(seed) on purpose: a seeded, reproducible
+# draw (#490), not a secret, so the non-cryptographic generator is the right one.
+"packages/exactdocs/evals/retrieval_eval/golden_review.py" = ["suspicious-non-cryptographic-random-usage"]
 "packages/exactdocs/evals/run_ingestion_bench.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_retrieval_bench.py" = ["implicit-namespace-package"]
+"packages/exactdocs/evals/run_retrieval_grid.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_agent_bench.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_bench_pages.py" = ["implicit-namespace-package"]
+"packages/exactdocs/evals/run_text_bench.py" = ["implicit-namespace-package"]
+"packages/exactdocs/evals/run_grounded_bench.py" = ["implicit-namespace-package"]
+"packages/exactdocs/evals/run_context7_bench.py" = ["implicit-namespace-package"]
 "**/features/**" = ["assert", "D", "DOC", "ANN", "FBT", "implicit-namespace-package"]
 # Alembic revisions are generated from migrations/script.py.mako: no per-function docstrings.
 "**/migrations/versions/**" = ["D"]
 # Every test must start in its own empty data directory (see packages/exactdocs/tests/conftest.py).
 "**/conftest.py" = ["pytest-fixture-autouse"]
+# The Grounded Docs benchmark (#492) runs node and npm, resolved to absolute paths, with fixed
+# arguments and a pinned package, on purpose.
+"packages/exactdocs/evals/retrieval_eval/grounded_docs_cli.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
 # The fixture builder runs git (a fixed binary, test-controlled arguments) on purpose.
 "**/tests/fixtures/fixture_repo.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
 # The CI artifact guard is a standalone stdlib script that runs docker and reports on stdout.
@@ -159,12 +172,16 @@ ignore = [
 "deploy/check_sqlite_vec.py" = ["implicit-namespace-package"]
 # Runs inside the `-local` image (python - < file) to prove it searches with no network (#246).
 "deploy/smoke_local.py" = ["implicit-namespace-package"]
+# CI's behave shards (#507): a standalone stdlib script that prints a group's feature files.
+"deploy/behave_shards.py" = ["implicit-namespace-package", "print"]
 # The CI upgrade test is a standalone stdlib script that runs two releases and reports on stdout.
 "deploy/upgrade_check.py" = ["implicit-namespace-package", "suspicious-subprocess-import", "subprocess-without-shell-equals-true", "start-process-with-partial-path", "print", "undocumented-public-function", "undocumented-public-method"]
 # Runs the app in a fresh interpreter to see which modules it imports.
 "**/tests/bootstrap/test_model_free.py" = ["suspicious-subprocess-import", "subprocess-run-without-check", "subprocess-without-shell-equals-true"]
 # The browser CI regression runs a fixed repository script and local fake executables.
 "**/tests/ci/test_playwright_setup.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
+# Collects the suite in a fresh interpreter, as `uv run pytest` does (#507).
+"**/tests/ci/test_integration_tests.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
 # Runs its span test in a fresh interpreter: a process's tracer provider is set once.
 "**/tests/retrieval/test_agentic_search.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
 # Runs the app behind a socket guard in a fresh interpreter, with the SDKs' variables set.
@@ -220,9 +237,12 @@ pythonpath = [
 addopts = [
     "-ra", "--strict-markers", "--strict-config", "--import-mode=importlib",
     "-m", "not eval",  # docs/evals.md: the release runs them; `uv run pytest -m eval` locally
+    # The `integration` tests are deselected too, by tests/fixtures/integration.py (#507), unless
+    # `--integration` or EXACTDOCS_INTEGRATION=1 asks for them: the summary says how many.
 ]
 markers = [
     "eval: runs the retrieval eval suite end to end on the imported fixture (slow); skipped by default",
+    "integration(*variables): needs a container, a service, the network or a download, named by the variables (#507); deselected unless --integration or EXACTDOCS_INTEGRATION=1, skipped then while a variable is unset",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
@@ -236,6 +256,12 @@ filterwarnings = [
     # deprecated in Python 3.14; third-party, harmless until 3.16.
     "ignore:'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:chromadb.telemetry.opentelemetry",
 ]
+
+# ---------------------------------------------------------------- coverage
+[tool.coverage.run]
+# Paths relative to the repository root: CI combines the shards' data files on whichever runner
+# the aggregate job lands on, and absolute paths differ between runners (#541).
+relative_files = true
 
 # ---------------------------------------------------------------- behave (BDD acceptance)
 [tool.behave]

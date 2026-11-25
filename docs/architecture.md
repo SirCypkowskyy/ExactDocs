@@ -20,8 +20,9 @@ flowchart TD
         catalog["Catalog<br/>libraries, versions, manifests"]
         importer["Ingestion and job worker<br/>fetch → parse → chunk → index → activate"]
         identity["Identity<br/>accounts, sessions, API tokens"]
-        mcp --> retrieval & catalog
-        api --> retrieval & catalog & importer & identity
+        usage["Usage<br/>daily counts, leaderboards"]
+        mcp --> retrieval & catalog & usage
+        api --> retrieval & catalog & importer & identity & usage
         importer --> catalog & retrieval
     end
     db[("SQLite in the data directory<br/>or PostgreSQL")]
@@ -52,6 +53,7 @@ re-sync of a branch re-chunks only the files that changed. [Flows](flows.md) dra
 | `packages/exactdocs/src/exactdocs/identity/` | domain: local and external accounts (admins and users), web sessions, API tokens and library roles |
 | `packages/exactdocs/src/exactdocs/retrieval/` | domain: chunks, the BM25 index, `search_docs`, `query-docs`, `resolve-library-id` |
 | `packages/exactdocs/src/exactdocs/ingestion/` | domain: jobs, the DBOS worker, git access, parsing, chunking and the import |
+| `packages/exactdocs/src/exactdocs/usage/` | domain: daily counts of reads, searches and answers, usage reports and leaderboards |
 | `packages/exactdocs/src/exactdocs/_web/` | the built web UI (gitignored, added by CI / Docker) |
 | `packages/exactdocs/tests/`, `packages/exactdocs/features/` | pytest (unit, integration, architecture) and behave (Gherkin acceptance scenarios) |
 | `packages/exactdocs/evals/` | the retrieval eval suite (Pydantic Evals), not shipped; see [Retrieval evals](evals.md) |
@@ -71,19 +73,22 @@ flowchart TD
         identity
         retrieval
         ingestion
+        usage
     end
     kernel["<b>exactdocs_kernel</b><br/>shared kernel, standard library only"]
-    boot --> catalog & identity & retrieval & ingestion
-    catalog & identity & retrieval & ingestion --> kernel
+    boot --> catalog & identity & retrieval & ingestion & usage
+    catalog & identity & retrieval & ingestion & usage --> kernel
     retrieval -. "bridges: SearchableVersions,<br/>article titles" .-> catalog
-    ingestion -. "bridges: library sources,<br/>version publisher, removals" .-> catalog
+    ingestion -. "bridges: library sources,<br/>version publisher, logos, removals" .-> catalog
     ingestion -. "bridges: chunk index,<br/>version embedder" .-> retrieval
     catalog & retrieval & ingestion -. "bridge: AccessPolicy<br/>(library roles)" .-> identity
+    usage -. "bridges: People (opt-in),<br/>LibraryAccess (library roles)" .-> identity
 ```
 
 Solid arrows are imports; dotted arrows are runtime calls through a bridge that lives in
 `bootstrap`, so the domains stay unaware of each other. `identity` asks for nothing, but the other
-three ask it what the caller may do with a library ([Library roles](#library-roles)).
+four ask it what the caller may do with a library ([Library roles](#library-roles)); `usage` also
+asks who opted in to the people leaderboard ([Usage counts](#usage-counts)).
 
 | From \ may import | own domain | other domain | `bootstrap` | `exactdocs_kernel` |
 |---|---|---|---|---|
@@ -100,11 +105,19 @@ later move to its own package or service without touching the other.
 ### Bridges are one-way
 
 Bridges point in one direction only: **retrieval → catalog**, **ingestion → catalog /
-retrieval** and **catalog / retrieval / ingestion → identity** (library roles). Identity and
-catalog call no domain for their own needs, and nothing calls ingestion, so the domain graph has
-no cycles. An architecture test (`tests/architecture/test_bridge_direction.py`) reads the
+retrieval**, **catalog / retrieval / ingestion → identity** (library roles) and **usage →
+identity** (library roles and the people leaderboard's opt-in). Identity and catalog call no
+domain for their own needs, and nothing calls ingestion or usage, so the domain graph has no
+cycles. An architecture test (`tests/architecture/test_bridge_direction.py`) reads the
 imports of every bridge class in `bootstrap/bridges.py`: the consumer's `models` / `ports.driven`
 on one side, the provider's `ports.driving` / `dtos` on the other, and only the edges above pass.
+
+**When the catalog's answer needs another domain's data**, the composition root composes it
+instead of a bridge against the direction: it wraps the catalog's driving port and asks the
+other domain's driving port once per page. `ListLibrariesByAi` (`bootstrap/library_filters.py`)
+turns retrieval's AI switch into the IDs the catalog lists; `ListVersionsWithChunks`
+(`bootstrap/version_counts.py`) adds retrieval's chunk and embedded-chunk counts of a whole page
+of versions (`CountVersionChunks`) to the catalog's list, which counts the articles itself (#513).
 
 **Secrets every domain seals: one box, one port per domain.** The instance's secret box
 (`bootstrap/secret_box.py:FernetSecretBox`: Fernet keyed from `EXACTDOCS_SECRET_KEY` with HKDF,
@@ -132,6 +145,23 @@ architecture test checks it), so none depends on another's adapter to seal a sec
 The kernel `NOTICE` constant (the untrusted-content notice every MCP result carries, see the
 *MCP-07* story) is a reviewed kernel addition: it is shared text, not business logic, so it lives
 in the kernel instead of being duplicated per domain.
+
+**Outbound connections: one resolution, in the kernel (#538).** Which proxy a connection goes
+through, which hosts `NO_PROXY` keeps direct (names and the names under them, addresses, CIDR
+ranges, ports, `*`; loopback and link-local always) and which CA bundle TLS trusts is
+`exactdocs_kernel.OutboundNetwork`, built by `resolve_outbound` from the standard variables
+(`HTTP(S)_PROXY`, `ALL_PROXY`, `NO_PROXY`, `SSL_CERT_FILE`...) and the `EXACTDOCS_` overrides
+(`Settings.outbound()`). It is a reviewed kernel addition: standard library only, no business
+concept, and the domains' driven adapters need it as much as bootstrap does. Bootstrap resolves it
+once and hands it to every client: `outbound.RoutedTransport` (an `httpx2` transport that picks
+the direct or proxied connection per request, never reads the environment, and turns a failure
+on the way through a proxy into an error naming the proxy and the host) for the CLI's, the sign-in
+providers' and the AI profiles' clients; `GitCli.network` for git (its environment, with the CA
+as `GIT_SSL_CAINFO`); `hub_client.py` for `exactdocs models pull`; the index backends' factories
+(`network=`, for the kinds marked `outbound`) and the OpenTelemetry exporter. Libraries that read
+only the environment see the same settings: `cli.main` writes the resolution into the process's
+standard variables (`outbound.publish`). Proxy credentials are never shown: `redact_url` and
+`OutboundNetwork.redact` mask them in reprs, logs and errors.
 
 **Why not a `shared` domain?** Everything shared ends up there. The kernel is a separate
 *package* on purpose: adding to it is a visible, reviewed decision, it may only use the
@@ -286,6 +316,9 @@ only holds each process's git work folders and `known_hosts`. What changes:
   period, then `CollectGarbage` deletes them and the contents no manifest uses. `RemoveVersion` and
   `RemoveLibrary` delete a version's manifests at once (no grace: nothing serves them), and
   ingestion's `collect` job then runs each domain's collector, catalog first.
+- **Library logos (#504):** `catalog_library_logos` keeps one logo per library (its bytes, type,
+  digest and where it was found), deleted with the library; written through the `LibraryLogos`
+  port, read into `Library.logo` by the library repository. See *Project logos* under the import.
 - **Manual tags (E4-06):** `catalog_manual_tags` holds the tags users set by hand per library and
   article path (`SetManualTags`). A manifest entry keeps `tags` as every tag of the article (what
   listings filter and count), `manual_tags` (each with the path it was set on, which is where it is
@@ -497,8 +530,10 @@ something differs: the vector store searches with libSQL's `vector_distance_cos`
 loading sqlite-vec (`SqliteVectorIndex(native=True)`), no PRAGMA but `foreign_keys` is set, and
 read-only access and `exactdocs backup` are refused. The driver's errors become `sqlite3`'s, and
 a statement outside a transaction is sent again once when the server had dropped the idle
-stream. CI runs the persistence contract tests' SQLite cases on a `sqld` server
-(`EXACTDOCS_TEST_LIBSQL_DATABASE_URL`, its own step). See *ExactDocs' own database on libSQL* in
+stream. CI's integration job runs the persistence contract tests' SQLite cases on a `sqld` server,
+and the libSQL database's own server tests, several processes migrating and writing it at once
+among them (`EXACTDOCS_TEST_LIBSQL_DATABASE_URL` with `--integration`, its own step;
+[Fast and integration tests](releasing.md#fast-and-integration-tests)). See *ExactDocs' own database on libSQL* in
 configuration.md for what an operator sees.
 
 ### Data model
@@ -599,12 +634,14 @@ erDiagram
     identity_accounts ||--o{ identity_api_tokens : "owns"
     identity_accounts ||..o{ identity_library_grants : "holds roles by ID"
     identity_accounts ||..o{ identity_access_events : "changed access, by ID"
+    identity_accounts ||--o| identity_preferences : "saved"
 
     identity_accounts {
         text id PK
         text username UK
         text password_hash "argon2id"
         text role
+        text last_active_at "to the hour"
     }
     identity_sessions {
         text token_hash PK "SHA-256 of the cookie"
@@ -642,6 +679,10 @@ erDiagram
     identity_known_sign_ins {
         text key PK "username@address"
         text signed_in_at "pruned after 30 days"
+    }
+    identity_preferences {
+        text account_id PK, FK
+        json preferences "theme, contrast, text size, ...; a missing key is its default"
     }
 
     ingestion_jobs {
@@ -765,7 +806,10 @@ once one does.
 goes to the browser in an HttpOnly, SameSite=Lax cookie (`Path=/api`, `Secure` over HTTPS), and
 only its SHA-256 is stored, so a leaked database holds no usable token. A session ends after
 7 days without use or 30 days in all (`models.IDLE_TIMEOUT`/`ABSOLUTE_TIMEOUT`, checked against the
-kernel `Clock`); using it writes `last_used_at` at most once an hour. Signing out deletes the row,
+kernel `Clock`); using it writes `last_used_at` at most once an hour. The account's own
+`last_active_at` (the users page, #515) is kept to the hour and moved forward by the request that
+reads the account anyway (a sign-in, a session, an API token, a provider's ID token, Cloudflare
+Access), only when the hour changed: at most one write per account and hour. Signing out deletes the row,
 so a copied cookie dies too, and a password reset (`exactdocs admin|user reset-password`, or
 `PUT /api/v1/users/{id}/password` by an operator) changes the hash first and then
 deletes all the account's sessions, then drops the username's throttle count
@@ -928,9 +972,49 @@ identity's `ResolveLibraryRoles`, `ClaimLibrary` and `DropLibraryGrants`).
   shows a non-operator only the events since the library's last removal, so a library created
   again under an old ID does not reveal who had access to the one before; `ListAccessLog` (`GET /access-log`, operators) reads every
   library's, removed ones included. The event is written after the grant, not in the same
-  transaction: a crash between the two loses that entry.
+  transaction: a crash between the two loses that entry. Both lists (#514) page in the database
+  through `AccessLog.search`, a keyset over `(sort value, id)` (`at`, `library` or `change`;
+  `AccessEvent.sort_value`), with an `AccessLogFilter` that also holds the actor (an account
+  ID), the subjects (`(kind, subject)` pairs) and a time range. The use cases turn the request's
+  `actor` and `subject`, which name people as the log shows them (a username, or the ID of an
+  account that is gone), into account IDs (`Sharing.account_id_of`); a `subject` matches the
+  user and the group of that name. Indexes on `(at, id)`, `(library, at, id)`,
+  `(actor, at, id)` and `(subject, at, id)` serve the default newest-first order.
 - **Upgrading**: libraries that exist when the migration runs get no grant. Operators keep full
   access; other accounts hold no role until an operator or the creator shares the library.
+
+## Usage counts
+
+`usage` (#510) counts how ExactDocs is used: one number per UTC day, account, API token, library
+and operation (`read`, `search`, `answer`) in `usage_daily_counts`, never a query, a path or any
+text. Accounts, tokens and libraries are held by value (empty for none: no person, a browser
+session, an operation over several libraries), so the table depends on no other domain's.
+
+- **Who counts.** No domain knows it is counted. `bootstrap/usage_meter.py` wraps the driving
+  ports the REST and MCP adapters serve reads, searches and answers with (catalog's `GetArticle`,
+  retrieval's `ReadChunk`, `SearchDocs`, `SearchAllLibraries`, `QueryDocs` and `AnswerQuestion`):
+  the request is served, then counted with the account and token of the request
+  (`bootstrap.caller`). A request that fails is not counted; calls made inside the server (the
+  answering agent's own reads, jobs) use the plain ports, and a stdio MCP process (read-only)
+  counts nothing.
+- **Never on the request's path.** `RecordUsage` adds to an in-memory `UsageTally` (at most
+  100,000 counters; past that, new ones are dropped and logged); `bootstrap.usage_meter.flushing`
+  writes it every `USAGE_FLUSH_SECONDS` (10 s) and once more when the server stops, as one
+  `INSERT ... ON CONFLICT DO UPDATE` transaction per write, in key order, so processes sharing a
+  PostgreSQL database never deadlock. A failed write keeps its counts for the next one. A report
+  writes the pending counts first, so it includes the requests just served.
+- **Retention.** The nightly upkeep runs `PruneUsage`, deleting the days before
+  `EXACTDOCS_USAGE__RETENTION_MONTHS` (13 by default).
+- **Reports and leaderboards.** Counts are summed in SQL by day and operation, then bucketed into
+  days, ISO weeks, months or years in UTC. A leaderboard ranks libraries (always, only those the
+  caller may read: the `LibraryAccess` port, bridged to identity's library roles by
+  `IdentityAccessPolicy.readable`) or people (only while `EXACTDOCS_USAGE__PEOPLE_LEADERBOARD` is
+  on), with each subject's rank in the previous period among the same subjects.
+- **People are opt-in.** The `People` port (`bootstrap/bridges.py:IdentityLeaderboardPeople`, over
+  identity's `FindLeaderboardPeople`) answers which accounts exist, are enabled and set the
+  `leaderboard_opt_in` interface preference. Whether the board is on is usage's own setting
+  (`UsagePolicy`); identity only knows who agreed. Anyone not shown by name is summed into one
+  `others` group of the operators' report.
 
 ## Background jobs
 
@@ -1116,8 +1200,9 @@ that last step, which is one transaction in the catalog.
   read, even if they were edited in between, `STEPS_VERSION` `jobs-4`); list the selected
   files; parse and chunk them `EXACTDOCS_IMPORT_BATCH_FILES` (100) at a time; read the README and
   the images; fetch the images outside the selection; detect renames; publish (store, index,
-  activate). What follows the publish (renewing a newer version's rename map, #216, and the
-  README/`context7.json` text) is no step: it never fails the import, works on what is imported
+  activate). What follows the publish (renewing a newer version's rename map, #216, the
+  README/`context7.json` text and the default version's logo, #504) is no step: it never fails
+  the import, works on what is imported
   now and replaces whole maps, so a run killed there simply does it again. A killed import resumes at its first unfinished step: an import killed after 120 of
   200 files (batches of 20) parses and chunks files 121 to 200 only, and the version has each
   article once. A step's result carries everything later steps and the job's progress depend on
@@ -1261,6 +1346,46 @@ that last step, which is one transaction in the catalog.
   opened directly it is an attachment under that CSP, so a hostile SVG can neither run nor
   phone home. SVGs declaring entities are refused. Not stored: images in raw HTML, MDX
   components or front matter.
+- **Project logos (#504).** A library carries the logo of its **default version**, as it takes
+  that version's title and description (LIB-07), so an import of an older tag never replaces it.
+  *Where it is found:* after the publish, an import or re-sync of the version that is the default
+  then (`LibraryLogos.wants_logo`, so no other import reads anything) looks, in order, at the
+  images at the top of the root README (before the first heading below H1) whose `src` or `alt`
+  says "logo" and that are no badge, Markdown or HTML `<img>` (also in an `<h1>` or a
+  `<picture>`), at most 4 (`ReadmeSummary.logos`, read with the README); a relative `src` resolves
+  against the root, and an absolute URL counts only when it points into the library's own GitHub
+  repository (`raw.githubusercontent.com/<owner>/<repo>/<ref>/<path>`, `github.com/.../raw|blob/
+  <ref>/<path>`), which names `<path>` of the **imported commit**: no URL is ever fetched. Then the
+  conventional files `LOGO_FILES` (`logo.svg`, `.github/logo.png`, `assets/logo.*`,
+  `docs/public/logo.svg`, `docs/assets/logo.png`, `static/img/logo.svg`, ...). All candidates
+  are read in one `RepositoryFiles.read_files` (the commit's trees, then each existing file's
+  blob, also outside the selected paths), at most `MAX_LOGO_BYTES` (512 KiB) each. *What is
+  kept* (`check_logo`, in a thread): the first candidate whose sniffed type is PNG, JPEG, WebP or
+  SVG (no GIF). A raster image is kept byte for byte when its header (never decoded) says 16 to
+  4096 pixels a side and at most 2048 x 2048 pixels in all, so a 1 x 1 spacer is no logo and a
+  decompression bomb is refused. An SVG is **cleaned** (`clean_svg`): expat parses it and refuses
+  any DTD internal subset, entity declaration or undeclared entity before anything is expanded,
+  and more than 10,000 elements; only SVG-namespace shapes, text, paint servers, clipping, masks,
+  filters and `<style>` are kept (scripts, `foreignObject`, `image`, animations, metadata and
+  editors' elements go with their content), event handlers and foreign-namespace attributes go,
+  any value or `<style>` with `url()` to another document, `javascript:`, `@import`, an
+  expression or a CSS escape goes, `href` stays only as `#fragment`, and `<use>` may neither copy
+  another `<use>` nor copy more than 10,000 elements in all (copies of copies multiply). The
+  result is written anew as UTF-8. *Never fatal:* the logo step is no durable step (like the
+  README text it reads what is imported now and replaces the logo whole); any failure (the
+  remote, the catalog) is logged and the library keeps the logo it had. A version with no usable
+  candidate removes the library's logo. `ReadmeSummary.logos` changed the import's step results:
+  `STEPS_VERSION` `jobs-12`.
+  *Stored:* `catalog_library_logos` (one row per library: `digest`, `content_type`, `data`,
+  `path`, `ref`; foreign key to `catalog_libraries` with `ON DELETE CASCADE`, so a removed
+  library loses it) behind the catalog's `LibraryLogos` port (`ApplyLogo` re-checks type and
+  size, keeps only the default version's and skips identical bytes). The library repository
+  reads the digest with a left join into `Library.logo`, so `LibrarySummary` and
+  `LibraryDetail` carry `logo` (16 hex digits of the SHA-256) without reading the bytes.
+  *Served:* `GET /api/v1/libraries/{owner}/{repo}/logo` (`GetLogo`, library read access) with
+  the asset headers above; `?v=<logo>` makes it `immutable` for a year, so a list of libraries
+  costs no request once seen. Pinning another default or removing the default version does not
+  re-derive the logo until that version is imported again, as for the title.
 - **Relative links and images in the UI.** A link to `.md`/`.mdx` stays in the app (same
   version, resolved path, same `#anchor`); any other repository file opens on the host's blob page
   at the commit; a link to an article the import left out lands on "Not in this version", which
@@ -1469,14 +1594,15 @@ fills with the Fernet box under its own HKDF purpose (`AI_KEYS_PURPOSE`). The `M
 (pydantic-ai, the OpenAI, Anthropic and Google SDKs, azure-identity) and builds every client with
 explicit values, after removing `OPENAI_CUSTOM_HEADERS` / `ANTHROPIC_CUSTOM_HEADERS` from the
 process (the SDKs merge them over the key, in the constructor, so `copy()` cannot undo them).
-Each profile has one `httpx2` client, built under a per-profile lock (proxy on the transport,
-`trust_env=False`, extra headers, no transport retries so the SDK's are the one layer, an overall
+Each profile has one `httpx2` client, built under a per-profile lock (proxy on the transport:
+the profile's own, else the instance's outbound proxy when `ai.use_instance_proxy` is on and
+`NO_PROXY` does not list the endpoint; the instance's CA bundle; `trust_env=False`, extra headers, no transport retries so the SDK's are the one layer, an overall
 timeout, and a request hook that refuses any scheme, host or port but the profile's endpoint,
 drops `OpenAI-Organization` / `OpenAI-Project` filled from the environment and, for Claude on
 Foundry with Entra ID, signs each request with a fresh token), rebuilt when the profile changes
 and closed when it is deleted (`ModelFactory.release`). An Entra ID token provider is built once
 per profile (a chain of client secret or certificate, workload identity and managed identity; the
-profile's proxy goes to the first two only). Profiles signed with the server's own cloud identity
+profile's proxy, or the instance's with `ai.use_instance_proxy`, goes to the first two only). Profiles signed with the server's own cloud identity
 (ADC, a service-account file, Entra ID, Claude on Bedrock) come from configuration only and take
 no `base_url`: `ProviderProfile` refuses both, so their endpoint is always derived. `resource`,
 `location` and `project` are single DNS labels, and `ai_sdk._official_url` builds a derived

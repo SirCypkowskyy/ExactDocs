@@ -45,10 +45,10 @@ jobs:
     timeout-minutes: 30
     environment: azure-search # its protection rules decide who may use the service's key
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.3.3 # upstream has no floating major tag
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           enable-cache: true
       - name: Install
@@ -79,7 +79,7 @@ jobs:
           EXACTDOCS_REQUIRE_AZURE_SEARCH: "1" # no endpoint: fail, never skip
           EXACTDOCS_TEST_AZURE_SEARCH_KEY: ${{ inputs.auth == 'api_key' && secrets.AZURE_SEARCH_API_KEY || '' }}
         run: >-
-          uv run pytest -v
+          uv run pytest --integration -v
           packages/exactdocs/tests/retrieval/test_index_backends.py
           packages/exactdocs/tests/retrieval/test_search_index.py
           packages/exactdocs/tests/retrieval/test_vector_index.py

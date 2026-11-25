@@ -207,9 +207,10 @@ just eval --write-baseline
 
 The fingerprint (`sha256:...` in `baseline.json`) is a hash of what the dataset states: each
 case's question (`inputs`, defaults left out) and the version, article and heading path of each
-section it expects. Renaming, reordering or commenting cases keeps it, and so does a new field with
-a default in the dataset's models; adding, removing or changing a question or an expected section
-changes it. Numbers measured on different datasets are not comparable (harder questions lower
+section it expects, in order, and whether it is an alternative (#501). Renaming, reordering or
+commenting cases keeps it, and so does a new field with a default in the dataset's models; adding,
+removing or changing a question or an expected section, or marking one as an alternative, changes
+it. Numbers measured on different datasets are not comparable (harder questions lower
 recall without anything getting worse), so:
 
 1. Change `dataset.yaml` (see [The dataset](#the-dataset)).
@@ -315,9 +316,22 @@ holds the full commit SHAs; each was resolved from the release tag with `git ls-
   `how-to` (steps to do something), `conceptual` (what something is or why it behaves so),
   `version-change` (what changed in or by this version), `cross-page` (needs sections of at least
   two articles), `unanswerable` (this version's docs do not answer it).
-- `expected_output.hits`: the sections that answer it, best first, each the article path and the
-  heading path from the top heading, as ExactDocs cuts the article (below). An `unanswerable`
-  case has none.
+- `expected_output.hits`: the sections that answer it, each the article path and the heading
+  path from the top heading, as ExactDocs cuts the article (below). An `unanswerable` case has
+  none. Each section is a **part** a complete answer needs ("all of"), unless it is marked
+  `alternative: true`: then it answers the same part as the section listed before it, as well as
+  that one does, and either is enough ("any of", #501). List each part first, then its
+  alternatives:
+
+  ```yaml
+  hits:
+  - {version: v4.36.1, article: docs/react/reference/useQuery.md, heading_path: []}
+  - {version: v4.36.1, article: docs/react/guides/important-defaults.md, heading_path: [], alternative: true}
+  - {version: v4.36.1, article: docs/react/guides/caching.md, heading_path: [Basic Example], alternative: true}
+  ```
+
+  A `cross-page` case lists two parts or more in different articles; a reference page and a
+  guide that both state the answer are alternatives of one part.
 - `expected_output.reference`: a short reference answer, as the pinned docs give it; for an
   unanswerable case, a sentence saying the version does not cover it.
 - `expected_output.facts`: the short facts a correct answer must contain, each checkable on its
@@ -333,12 +347,19 @@ Every case file must load as the dataset's models, and every case must:
 - have a unique `name`, a golden `kind`, the `project` its file is named after, and a `version`
   the manifest pins;
 - have a reference answer; name sections and facts unless it is `unanswerable`, and neither when
-  it is; name sections of the case's own version only; for `cross-page`, of two articles or more;
+  it is; name sections of the case's own version only, none of them twice; start with a part (an
+  alternative follows the part it answers, or the file does not load); for `cross-page`, need
+  parts of two articles or more, alternatives aside;
 - name only sections that exist **at the pinned commit**: the article is read from the cache,
   must be selected by the project's docs paths, and its heading path must be one of the chunks the
   importer's own parser and chunker (`parse_article`, `MarkdownChunker` with no settings, which
   cuts at every heading) cut it into. So a case can only name a section ExactDocs produces, and moving the pins (or changing how
   articles are cut) shows every case that no longer holds.
+
+It also checks the review's verdicts, `review.yaml` beside the case files
+([Reviewing the golden set](#reviewing-the-golden-set)): a `correct` or `fixed` case is in the set
+and a `removed` one is not, no case is reviewed twice, a wrong case names its problems and says
+why, and every kind of every project has the sample's number of entries.
 
 It prints every broken case (`<case>: <problem>`, with the closest existing sections when only
 the heading path is wrong) and exits with 1. `uv run pytest` checks the rules on the real files
@@ -377,6 +398,78 @@ Pitfalls the corpus shows:
 - **Unanswerable** means the pinned docs do not answer it at all: search the whole docs tree at
   that commit (`git grep`) before writing one; a third-party page that mentions the name is enough
   to make it answerable.
+
+### Reviewing the golden set
+
+Agents wrote and checked the cases, so a sample of them is reviewed independently (#490); the
+result is on [Golden set](benchmark/golden-set.md#the-independent-review).
+
+```bash
+just golden-review sample              # draw the sample, write reports/golden-review/sheet.md
+just golden-review sample --seed 7 --per-stratum 5 --no-text
+just golden-review checks              # whole-set checks: reports/golden-review/checks.md, .json
+just golden-review summary             # the recorded review's verdicts and error rate
+```
+
+`sample` draws `--per-stratum` cases (3 by default) of every kind in every project, at random
+with `--seed` (490 by default): each stratum is drawn with its own generator, from its cases in
+name order, so the same seed and cases give the same sample. It writes a sheet with, per case, the
+question, version, kind, reference answer, facts and sections, each linked to the source at the
+pinned commit; with the cache (the default) also the text of each expected section, the sections
+of that version closest to the question and reference, and the same section and the closest ones
+in the neighbouring versions. `review-draft.yaml` lists the sampled cases with the verdict left
+blank.
+
+The verdicts go in `packages/exactdocs/evals/golden/review.yaml`:
+
+```yaml
+sample: {seed: 490, per_stratum: 3, drawn_from: 'sha256:39f6f9d5e909d128'}
+entries:
+- case: 'zod v4.6.7: Is there a util ...'
+  project: zod
+  kind: identifier-lookup        # the stratum it was drawn from; a fix may change the case's kind
+  verdict: fixed                 # correct, fixed (the case was corrected) or removed
+  problems: [unsupported-fact]   # empty when correct
+  reviewer: independent review agent (adversarial brief; not the agent that wrote the cases)
+  date: 2026-11-23
+  note: The source line that proves the defect, and what was changed.
+```
+
+`drawn_from` is the golden set's fingerprint when the sample was drawn, before any fix: fixes change
+the cases' sections and kinds, so drawing again from today's set gives another sample. A fix that
+rewrites a question renames the case; its entry names the new case and keeps the old name in `was`.
+
+The problem categories:
+
+| Problem | The case |
+|---|---|
+| `unsupported-fact` | lists a fact the expected sections do not state at that version, or only imply |
+| `wrong-reference` | has a reference answer that is wrong or incomplete for that version |
+| `missing-section` | leaves out another section of that version that answers it as well |
+| `wrong-section` | names a section that does not answer it |
+| `wrong-kind` | has the wrong kind; `cross-page` when one article states every fact |
+| `answerable` | is `unanswerable`, but its version's docs answer it |
+| `not-a-change` | is a `version-change` whose change the neighbouring versions contradict |
+| `ambiguous` | has more than one fair answer, or none without guessing |
+| `duplicate` | asks what another case asks of the same version |
+
+`checks` runs over the whole set and needs the cache. It cuts every article of every pinned version
+as the importer does (every heading starts a section) and compares words: lower-case, stemmed,
+stop words left out, each weighted by its inverse document frequency in that version.
+
+- **Lexical overlap**, per answerable case: the weighted share of the question's words its best
+  expected section holds, the same for the best section that is not expected, the expected
+  section's rank among all sections of the version, and the longest run of words the question
+  shares with an expected section. A run of 5 words or more, 3 of them content words, is listed as
+  copied. A question written from its section's words would favour keyword search (BM25).
+- **Near-duplicate questions**: pairs of one project that share at least half their content words
+  (Jaccard), same version or not.
+- **The vocabulary of every `unanswerable` case**: its words no section of its version holds, and
+  the three sections holding most of them; one section with 75% of the weighted words is flagged
+  to check by hand. Synonyms are not searched; the reviewer does that.
+
+The tests (`tests/evals/test_golden_review.py`, `golden_review.feature`) run on a tiny local
+repository; one checks the recorded `review.yaml` against the real case files in CI.
 
 ## The ingestion benchmark
 
@@ -463,10 +556,16 @@ misses of the golden set's answerable cases, with the suite's own evaluators.
 **Matching a hit across chunking depths.** A configuration that cuts coarser or finer than the
 golden set's sections would otherwise lose every hit to a heading path that no longer exists. So a
 returned chunk of the expected version and article answers the expected section when its heading
-path is the expected one; or the expected path is a non-empty prefix of it (a finer cut: the chunk
-is part of the section); or its path is a prefix of the expected one and the chunk holds the
-expected heading (a coarser cut merged the section into it). `recall_at_5_exact` is recall@5 with
-only the exact heading path, for comparison. The rule is `golden_run.nested_match`.
+path is the expected one (the section, or a part of it split at its blocks); or the expected path
+is a non-empty prefix of it (a finer cut: the chunk is part of the section with its subsections);
+or the chunk holds the expected heading. The last is read from what the chunk holds, not guessed
+from heading paths: the chunker records every heading it puts in a chunk (`headings` of the stored
+chunk), the benchmark reads those records by chunk ID once the corpus is imported, and each
+returned hit carries its chunk ID. So a coarser cut that keeps the section inside its parent, a cut
+at `max_chars` that keeps it in a sibling's chunk, and sections merged by `min_chars` all count
+(#503; until then only a chunk named after a parent of the section counted, and `h2` and
+`merge-400` lost 6 to 7 points of recall@5 to it). `recall_at_5_exact` is recall@5 with only the
+exact heading path, for comparison. The rule is `golden_run.held_match`.
 
 ### The JSON report
 
@@ -486,7 +585,7 @@ and `schema_version` changes when a field is renamed or removed.
 `retrieval_eval/golden_run.py` is the golden set's multi-library runner: `golden_retriever` sends
 each question to its project's library through the suite's `SearchDocsRetriever`, and
 `run_golden` scores the whole set with the suite's evaluators and `evaluate_mode`, with the exact
-or the nested match rule. The ingestion benchmark runs BM25 through it, and the retrieval
+or the held match rule. The ingestion benchmark runs BM25 through it, and the retrieval
 benchmark (below) every mode.
 
 ## The retrieval benchmark
@@ -508,7 +607,9 @@ of its own (the ingestion benchmark's import). Then every configuration runs on 
 directory in a container built with only the model roles it calls, embeds the corpus the first
 time an embedding model is used (as the `embed` jobs would, timed and costed as `index`), and asks
 every golden question in its project's library (`golden_run`), one at a time. Hits are matched
-with the nested rule, so a coarser or finer chunking is not penalised for cutting at another depth.
+by the headings their chunk holds (`golden_run.held_match`, in
+[the ingestion benchmark](#the-ingestion-benchmark)), so a coarser or finer chunking is not
+penalised for cutting at another depth or merging sections.
 It writes `retrieval.json` and `retrieval.md` to `reports/evals/` (or `--out`), prints the summary
 (and appends it to `$GITHUB_STEP_SUMMARY`), and exits with 1 when a configuration returned a result
 of another version, read outside its version (agentic traces), or failed on a question.
@@ -542,10 +643,10 @@ Each metric is reported per configuration and chunking, over all cases, per ques
 
 | Metric | Over | Definition |
 |---|---|---|
-| recall@1, recall@5, recall@10 | answerable cases | the first expected section is in the top k |
-| MRR | answerable cases | mean of 1 / the rank of the first expected section (0 past 10) |
-| section recall@5, @10 | answerable cases | the share of a case's expected sections in the top k, averaged over the cases |
-| nDCG@10 | answerable cases | binary relevance over every expected section, below |
+| recall@1, recall@5, recall@10 | answerable cases | a section the case lists (any part, any alternative) is in the top k |
+| MRR | answerable cases | mean of 1 / the rank of the first hit on a section the case lists (0 past 10) |
+| section recall@5, @10 | answerable cases | the share of a case's parts in the top k, averaged over the cases |
+| nDCG@10 | answerable cases | binary relevance over the case's parts, below |
 | wrong-version rate | every case | share of cases with a result of another version (read back by chunk ID, as in the suite); must be 0 |
 | unanswerable clean | unanswerable cases | share that returned nothing of another version |
 | no answer | unanswerable cases | share that signalled no answer: came back with no result |
@@ -554,20 +655,26 @@ Each metric is reported per configuration and chunking, over all cases, per ques
 | tokens / USD per question | every case | what the spend ledger grew by during each search (an embedding, a judgment, a HyDE answer, an agent run); USD from the configured prices or `genai-prices` |
 | index | per embedding model and chunking | seconds, tokens and USD of embedding the whole corpus once |
 
-**nDCG@10.** A returned hit at rank *i* is relevant (*rel* = 1) when it answers an expected section
-that no earlier hit answered, so a section found twice counts once; otherwise *rel* = 0.
+**nDCG@10.** A returned hit at rank *i* is relevant (*rel* = 1) when it answers a part of the case
+(one of its sections or of their alternatives) that no earlier hit answered, so a part found twice,
+or through two of its alternatives, counts once; otherwise *rel* = 0.
 DCG@10 = Σ<sub>i=1..10</sub> *rel*<sub>i</sub> / log<sub>2</sub>(*i* + 1). The ideal DCG puts every
-expected section first: IDCG@10 = Σ<sub>i=1..min(R, 10)</sub> 1 / log<sub>2</sub>(*i* + 1), with *R*
-the number of expected sections. nDCG@10 = DCG@10 / IDCG@10.
+part first: IDCG@10 = Σ<sub>i=1..min(R, 10)</sub> 1 / log<sub>2</sub>(*i* + 1), with *R* the number
+of parts. nDCG@10 = DCG@10 / IDCG@10.
 
-**Cases with several expected sections** (`cross-page`, and any case listing more than one).
-recall@k and MRR follow the suite's rule and the fixture suite's numbers: they count the first
-expected section only (`VersionAndRank`, `rank_of`), so they stay comparable with the retrieval
-eval and the ingestion benchmark. Section recall@k counts every expected section: a case scores
-the share of its sections found in the top k (each found section counted once, by the hit
-matching rule above), and the metric is the mean over cases; for a case with one section it equals
-recall@k. The per-kind and per-project tables show recall@5, section recall@5 and nDCG@10 side by
-side, so the `cross-page` row says how often the whole answer came back, not only its first page.
+**Cases with several expected sections** (`cross-page`, and any case listing more than one,
+#501). recall@k and MRR count the first hit on **any** section the case lists: a part, or an
+alternative of one (`VersionAndRank`, `first_rank`). So a tool that returns the reference page
+where ExactDocs returns the guide, both of which answer, is not scored a miss, and a tool that
+returns the second page of a two-page answer has found an answer. Section recall@k and nDCG@10 say
+how much of the answer came back: they count each **part** once, its alternatives counting as that
+part. A case scores the share of its parts found in the top k (each found part counted once, by
+the hit matching rule above), and section recall is the mean over cases; for a case of one part it
+equals recall@k. The per-kind and per-project tables show recall@5, section recall@5 and nDCG@10
+side by side, so the `cross-page` row says how often the whole answer came back, not only a part
+of it. Until #501, recall@k and MRR counted the first listed section only, as the fixture suite
+did, and section recall and nDCG@10 counted every listed section as a part; the fixture's cases
+list one section each, so its numbers are the same under both rules.
 
 **"No answer".** `search_docs` has no explicit no-answer signal: a result carries a `score` that is
 "only comparable within one search", and no mode applies a relevance threshold. The only signal a
@@ -643,40 +750,44 @@ still 1, and a report without them still reads.
 
 ### The recorded run
 
-Measured on an Apple M-series laptop (10 cores) with no network, on the whole golden set, in about
-1 h 40 min. A full local matrix (three embedding models, each with and without the cross-encoder,
-at four chunkings) would take about six hours on that CPU, so it ran on this subset:
+Recorded on 24 November 2026 for #503 and #501, on the golden set with its alternatives marked
+(`sha256:a00997851150e3b0`), by the manual *Retrieval eval (real providers)* workflow with
+`benchmark` ticked and local configurations only
+([run 45353553786](https://github.com/SirCypkowskyy/ExactDocs/actions/runs/45353553786)): one
+self-hosted runner VM (Linux aarch64, 4 CPUs), ExactDocs `8e789e6`, in 3 h 22 min. A full local
+matrix (three embedding models, each with and without the cross-encoder, at four chunkings) would
+take far longer there, so it ran on this subset:
 
 - `bm25` and `hybrid:bge-small-en-v1.5` at every chunking configuration;
-- `bm25+ce` at `h6` and `h2`; `hybrid:bge-small-en-v1.5+ce` at `h6`;
+- `bm25+ce` at `default`, `h6` and `h2`; `hybrid:bge-small-en-v1.5+ce` at `default` and `h6`;
 - `hybrid:snowflake-arctic-embed-s` at `h6` (the second local embedding model);
-- `hybrid:bge-base-en-v1.5` did not run (about 50 minutes of embedding per chunking there);
+- `hybrid:bge-base-en-v1.5` did not run (about 50 minutes of embedding per chunking);
 - every hosted configuration is listed as skipped: it needs a real-providers run.
 
 ```bash
 EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
-  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@h6,bm25+ce@h2,hybrid:bge-small-en-v1.5+ce@h6,hybrid:snowflake-arctic-embed-s@h6,*+judge,*:hosted*' \
+  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@h6,bm25+ce@h2,bm25+ce@default,hybrid:bge-small-en-v1.5+ce@h6,hybrid:bge-small-en-v1.5+ce@default,hybrid:snowflake-arctic-embed-s@h6' \
   --out packages/exactdocs/evals/results
 ```
 
-The run predates #381, so its `default` was today's `h6`; the report was relabelled when the
-default changed (the commands above name today's chunkings). Embedding the whole corpus took 17
-minutes with bge-small at `h6` (8 at `h2`, 13 at `default`, 11 at `merge-400`) and 16 with
-arctic-embed-s; the cross-encoder adds about 1.4 s per question (32 candidates). What it found:
-BM25 is best at `default`, split level 3 and 4,000 characters (recall@5 81.7%, against 79.8% at
-`h6`), which #381 made the default for new libraries; hybrid on bge-small reaches 84.6% at `h6`,
-3 points more, under the 5-point margin, so BM25 stays the default for both the no-model and the
-local budget; the cross-encoder adds as much as hybrid at `h6` and loses recall at `h2`, whose
-chunks are longer than its window; arctic-embed-s is below BM25 (75.3%).
+Every result keeps its per-case `rows`, so every one has intervals and a paired test against its
+budget's default (#489). On that runner, embedding the whole corpus took 25 minutes with
+bge-small at `default` (32 at `h6`, 14 at `h2`, 23 at `merge-400`) and 35 with arctic-embed-s; the
+cross-encoder adds about 2.5 s per question (32 candidates). What it found: BM25 scores alike at
+`h2`, `default` and `merge-400` (recall@5 89.1%, 87.6%, 87.6%), above `h6` (85.8%); `h2` comes
+first by the benchmark's ordering, so the summary names it for the no-model budget, but its lead
+over `default` is not significant (+1.5 points, McNemar mid-p 0.42), and the shipped default stays
+`default`. Hybrid on bge-small reaches 91.0% at `merge-400`, 1.9 points over BM25 at `h2`, under
+the 5-point margin and not significant (p 0.33), so BM25 stays the default for the local budget
+too; the cross-encoder loses recall at `h2`, whose chunks are longer than its window;
+arctic-embed-s is below BM25 (79.8%).
 
-The run kept aggregates only, so it had no per-case outcomes for intervals and tests (#489).
-BM25 was run again at every chunking for #489 (`just retrieval-bench --offline --configs bm25`,
-on Linux x86_64 with 4 CPUs); its recall@k, MRR, nDCG@10, section recall and rates matched the
-recorded ones exactly overall, per kind and per project, so its `rows` were added to the four
-recorded BM25 results, with `rows_from` saying where they come from (their `search_ms` are that
-re-run's; the recorded latencies stay), and the intervals, tests and recommendation were derived
-again. The model configurations were not run again: they have no rows, so no interval and no
-test, until the next recorded run, which keeps rows for every result.
+It replaces a run of 23–24 November 2026 (the same subset on the same runner) scored by the rules
+before #503 and #501, whose numbers are not comparable: a chunk that held the expected section
+next to a sibling was a miss (BM25's recall@5 was 76.0% at `h2` and 74.2% at `merge-400`), and
+recall@k counted only a case's first listed section (81.7% at `default`). Scored that way, BM25's
+results at `default` give the same 81.7%; the alternatives the review marked add 3 cases, and the
+other parts of multi-part cases 13 (8 of them `cross-page`).
 
 ### Running it with local models
 
@@ -722,136 +833,703 @@ or recall@5 or nDCG@10 more than 2 points below the recorded run (the same golde
 are required). The local and hosted parts never run in CI; refresh the recorded run by hand when
 ranking, chunking or a model changes. Pull request CI runs the quick tests only.
 
+## The retrieval grid
+
+The benchmark above tries heading chunking only. The grid (#494) cross-tests what it never
+tried: fixed token windows with overlap, the article title and heading path put in front of the
+text that is embedded or indexed, small heading chunks widened to their parent section when read,
+larger embedding models, and two plain baselines to read every number against: a keyword grep
+over the raw files and a fixed-window RAG. None of it changes what ExactDocs ships; a variant
+that wins significantly gets a follow-up issue to ship it.
+
+```bash
+just retrieval-grid --offline                      # every cell of evals/golden/matrix.yaml
+just retrieval-grid --offline --cells 'grep,window-*'
+EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-grid --offline
+```
+
+### The grid file
+
+`packages/exactdocs/evals/golden/matrix.yaml` declares the cells and, under `defaults`, the cell
+each budget is tested against: what ExactDocs ships for it (BM25 at `default` for both `none` and
+`local`, [Recommended defaults](benchmark/defaults.md)). A cell is one of:
+
+- **An app cell** (`app: <configuration>`, optional `chunking`): a configuration of the retrieval
+  benchmark (`bm25`, `hybrid:bge-base-en-v1.5`, `bm25+ce`, `hybrid:hosted`, ...), imported and
+  answered by ExactDocs itself and scored by chunk ID, exactly as `just retrieval-bench` runs it.
+  Hosted ones run only with `--allow-providers`.
+- **An eval-only cell** (`name` and `search`): the grid cuts, indexes and searches the pinned
+  versions itself, in process, and scores the text it returns with the
+  [text scorer](#scoring-text-results). Settings:
+    - `chunking`: a heading chunking of the ingestion benchmark (`default`, `h6`, `h2`,
+      `merge-400`), cut with ExactDocs' own chunker; or `window` and `overlap`: windows of whole
+      lines of about `window` estimated tokens, the next starting so that at most `overlap`
+      tokens are shared. Windows ignore headings, code blocks and tables; a window's heading path
+      is the one it starts in.
+    - `search`: `bm25` (an in-memory SQLite FTS5 table with the columns, weights and tokenizer
+      of ExactDocs' index, BM25 statistics over the whole corpus, each search filtered to the
+      version asked), `dense` (cosine to the query over the `embedding` model's vectors), `hybrid`
+      (both, fused by RRF as ExactDocs fuses them), or `grep`.
+    - `prefix_indexed` / `prefix_embedded`: put `title > heading > path` in front of the text
+      indexed for BM25, or of the text embedded. The text returned is never prefixed. (ExactDocs'
+      own index already weights the heading path in its own columns; the prefix adds the title
+      and puts the path in the text.)
+    - `expand: parent`: return each hit's parent section with its subsections instead of the hit
+      (a top-level section widens to itself); a widened text returned twice is returned once.
+    - `embedding`: a local model pulled with `exactdocs models pull`; a cell whose model is not
+      pulled is reported unavailable, with the command.
+
+`default/bm25`, the grid's own BM25 at ExactDocs' chunking, is the control: it should score as
+the app's `bm25@default` does, so a gap between an eval-only variant and the default comes from
+the variant, not from the grid's search.
+
+### The baselines
+
+- **`grep`**: `rg -i -w -C 3` over the raw Markdown files of the version asked, with the question's
+  content terms (`question_terms`, stop words left out). Overlapping matches merge; snippets rank
+  by the distinct terms they hold, then by their matching lines. It needs no index.
+- **`rag:window-256+64/bge-small`**: fixed windows embedded with the same model as hybrid search,
+  dense search only.
+
+### Reading the report
+
+`<out>/retrieval-grid.json` and `.md` (default `reports/evals/grid/`). `bench` is the retrieval
+benchmark's report: every cell with its metrics, 95% intervals, breakdowns and index cost
+(`index`: seconds and embedding tokens; eval-only cells count cutting and indexing too), and the
+paired test of every cell against its budget's declared default (#489). `recommendations` holds
+those declared defaults, not a pick. On top:
+
+- `text`: per text-scored cell, the text scorer's numbers (context tokens per question, tokens
+  to the first hit, facts found): widening to the parent or a larger window returns more text.
+- `ingestion`: per eval-only chunker, the ingestion benchmark's metrics (#346), so the report says
+  where windows cut code blocks, tables and lists. Coverage and lost characters say little of
+  windows (they start mid-section and overlap), so the summary shows the sections held instead.
+
+A text-scored cell searches only the version asked. A result the text scorer places only in
+another version is a text that crosses sections; it counts in the wrong-version rate and does
+not fail the run. A wrong version of an app cell fails it, as in the benchmark.
+
+### Resuming
+
+Each finished cell is written to `<out>/cells/<name>.json` with a key of its settings, the golden
+set and the pinned commits. A later run reuses a cell whose key matches (`resumed` in the report)
+and runs the others, so an interrupted run goes on where it stopped and a changed cell runs again.
+`--fresh` runs every cell; `--cells` runs some (the declared defaults always run).
+
+### When it runs
+
+By hand. The tests run the grid on the tiny corpus with the term-hash stand-in embedding
+(`tests/evals/test_retrieval_grid.py`, `retrieval_grid.feature`): no model is downloaded and
+their numbers are never results. A full grid embeds the corpus once per embedding cell (about
+50 minutes per chunking for `bge-base` on a 4-CPU runner, see the recorded run above), so it is
+meant for the self-hosted runner.
+
+## Scoring text results
+
+The retrieval benchmark scores ExactDocs by reading each result's chunk ID back. Other
+documentation tools return text: Context7's context endpoint, Grounded Docs' search, a grep or a
+fixed-window RAG baseline. The text scorer (#491) decides from the text alone which sections of
+the golden corpus a result holds, in every pinned version of the project, and scores the results
+with the retrieval benchmark's own metrics. It is deterministic and needs no model. The matcher is
+`retrieval_eval/text_match.py`; the rows, metrics, calibration and report are
+`retrieval_eval/text_bench.py`. The runs of other tools (#492, #493, #494) score with it: see
+[Grounded Docs](#grounded-docs) and [Context7](#context7).
+
+```bash
+just text-bench --offline                                         # calibrate at `default`: about two minutes
+just text-bench --offline --chunkings default,h6,h2,merge-400     # at every chunking
+just text-bench --offline --chunkings default,h6,h2,merge-400 --out packages/exactdocs/evals/results   # refresh the recorded run
+```
+
+### Matching a text to sections
+
+- **Sections.** Each pinned version's articles (the files the importer takes, read at the pinned
+  commit) are cut with the importer's own parser and chunker, every heading starting a section and
+  no size bound (`SECTION_CHUNKING`, the golden set's `h6`): a section is one heading's own text, up
+  to the next heading. `golden-validate` cuts the same headings, so these are the sections the
+  cases name. A heading path that occurs twice in an article is one section with two texts.
+- **Normalized text.** HTML entities are decoded (and the text NFKC-normalized); code fence info
+  strings, ordered-list numbers, Markdown link targets, bare URLs and HTML or JSX tags are dropped;
+  the rest is case folded and split into words of letters and digits (`on_startup` is
+  `on startup`). A text is compared as the set of its 5-word shingles (`SHINGLE_WORDS`); a text of
+  fewer words is one shingle. A reflowed paragraph, another list marker, Markdown rendered as
+  plain text or a link without its URL still matches; a paraphrase does not.
+- **A result answers a section** when it holds at least 80% (`MATCH_THRESHOLD`) of the shingles
+  of the section's own text (the section is inside it: a coarser result, such as a chunk of
+  several sections), or when at least 80% of its own shingles are in the section with its
+  subsections (it is a part of the section: a finer result, such as a window of it or a part of a
+  long section). These are the text forms of the rule chunk-ID scoring matches hits with
+  (`golden_run.held_match`, in [the ingestion benchmark](#the-ingestion-benchmark)), so both
+  scorings count the same hits.
+- **Version.** For a question about version V, a result is *right* when its text matches sections
+  of V and of no other pinned version; *version-neutral* when it matches sections of V and of
+  another version (the text is the same in both, so it cannot say which it came from);
+  *wrong-version* when it matches sections of another version and none of V; *unmatched* when it
+  matches no section at all (text from elsewhere, or too little of it).
+
+### Metrics of text results
+
+A tool's answer to a question is the text of each of its results, best first (`TextAnswer`);
+each tool's harness splits the tool's response into its results, in the tool's order. Each case
+becomes the retrieval benchmark's own `Row`, so the metrics are computed by the same code
+(`metrics_of`) with [the same definitions](#the-retrieval-benchmark): recall@1/5/10, MRR, section
+recall and nDCG@10 over the top 10, the wrong-version rate, unanswerable clean, no answer,
+answerable empty, and latency, model tokens and USD when the harness measures them. A hit is the
+first result in the top 10 that answers a section the case lists, and each part counts once in
+section recall and nDCG@10, its alternatives with it, as above; a case is wrong-version when any of
+its results is. Next to them:
+
+| Metric | Over | Definition |
+|---|---|---|
+| version-neutral | every result returned | share whose text matches the version asked and another pinned version |
+| unmatched | every result returned | share whose text matches no section of any pinned version |
+| results / question | every case | results returned |
+| context tokens / question, p95 | every case | estimated tokens of all the text returned (characters / 4, as `CHARS_PER_TOKEN`); tools return very different amounts of text, so a hit costs a different number of tokens in each |
+| tokens to first hit | answerable cases with a hit in the top 10 | estimated tokens of the results up to and including the first that answers a section the case lists |
+| facts found | answerable cases | the share of the case's facts the returned text holds, averaged over the cases |
+
+**Facts found** is a second signal, independent of the sections: a fact is found when at least
+75% (`FACT_SHARE`) of its content words are in the text the tool returned (words normalized as
+above, a fixed list of stopwords left out, a plural `s` cut). It is lexical: a fact the docs
+phrase otherwise can be missed, and a lot of text finds more facts by chance. So the calibration
+gives both bounds on ExactDocs' results: the share of facts in the expected sections' own text
+(about the most a tool can reach), and in the results of another question of the same version
+(what text that does not answer reaches).
+
+`TextResult.of(tool, rows)` aggregates one tool's rows overall, by question kind and by project,
+and `results_table` renders tools side by side.
+
+**Version-neutral results.** Most text of a pinned version is the same in the other pinned
+versions of its project, so most results, right or wrong, are version-neutral, and a result of
+another version is caught as wrong only where the text changed. The text scorer's wrong-version
+rate is in effect a lower bound of the rate chunk-ID scoring would give; the version-neutral share
+says how much of what a tool returned no check on the text alone can attribute.
+
+### Calibration
+
+`just text-bench` checks the text scorer against chunk-ID scoring on ExactDocs' own results. For
+each chunking configuration it imports the corpus as the ingestion benchmark does, asks every
+golden question with BM25 in its project's library, reads each result back by its chunk ID and
+keeps the chunk's content as the result's text. Then it scores the results both ways, chunk IDs
+with the retrieval benchmark's rule (`golden_run.held_match`). A decision is where an expected section of an
+answerable case is in the top 10 (its rank), or that it is not; the two agree on a decision when
+they give the same rank, or both a miss. The criterion is 98% agreement at `default`, the
+chunking ExactDocs ships (`MIN_AGREEMENT`, `GATED_CHUNKING`); below it the command exits with 1.
+The report (`text-scorer.json` and `text-scorer.md`, in `reports/evals/` or `--out`) also gives:
+
+- the agreement on hit or miss alone, whatever the rank;
+- the agreement on the same results rendered as plain text (the Markdown rendered and the tags
+  dropped), as a tool that renders its results returns them;
+- the agreement on each case's wrong-version decision;
+- the agreement at each threshold from 0.5 to 1, on the results as returned and as rendered;
+- both scorings' metrics side by side, the text-only metrics, and every disagreement with what
+  the result at the earlier rank is.
+
+**The recorded calibration** is `packages/exactdocs/evals/results/text-scorer.json` and
+`text-scorer.md`, on the whole reviewed golden set (321 cases, 404 decisions), about two minutes
+per chunking on 4 CPUs:
+
+| chunking | same rank | hit / miss | rendered as plain text | BM25 recall@5, text (chunk ID) |
+|---|---|---|---|---|
+| `default` | **99.8%** | 100.0% | 99.8% | 87.6% (87.6%) |
+| `h6` | 99.8% | 100.0% | 99.8% | 85.8% (85.8%) |
+| `h2` | 99.8% | 100.0% | 99.5% | 89.1% (89.1%) |
+| `merge-400` | 99.5% | 99.8% | 99.5% | 87.6% (87.6%) |
+
+The criterion is met at `default`, and the agreement is above it at every chunking. Both
+scorings take the same wrong-version decision on every case at every chunking (BM25 returns
+nothing of another version, and no result's text is only in another version). At `default`, 72%
+of BM25's results are version-neutral; its ten results hold 3,464 tokens of context on average,
+656 of them up to the first hit; they hold 87% of the cases' facts, where the expected sections'
+own text holds 81% and another question's results 25%.
+
+The threshold is 0.8 because of the sweep: below it, results of other articles that share part of
+a section's text count as hits (at `default`, 98.8% agreement at 0.7, 97.5% at 0.5); above it the
+results as returned agree as well, but rendered ones less (99.5% at 0.9, 90.3% at 1), since a
+rendering loses a little text. Shingles of 5 words are the usual size for near-duplicate text; in
+trial runs, 3 to 9 words moved the agreement at 0.8 by less than a point.
+
+Until #503, chunk-ID scoring counted a coarser chunk only when it was named after a parent of the
+expected section. The calibration showed what that missed: at `h2` and `merge-400` the two
+scorings agreed on only 93.2% and 90.9% of the decisions, and in 25 of `h2`'s 26 disagreements and
+33 of `merge-400`'s 35 the returned chunk held the expected section next to another one (a section
+with its subsections; small sections merged with the next), as did one at `default`: Starlette's
+1.0.0rc1 release notes are longer than 4,000 characters, so they are cut again at their `####`
+headings, and the chunk `1.0.0rc1 > Removed` also holds `Fixed`. Chunk-ID scoring now reads what
+each chunk holds, and BM25's recall@5 at `h2` and `merge-400` went from 76.0% and 74.2% to the
+82.8% and 81.7% the text gives. Then #501 counted a hit on any section a case lists (the recall@5
+column above), which moved both scorings alike.
+
+What still disagrees, and why:
+
+- **The same text in two articles.** TanStack Query v5.90.3 explains streaming with
+  `useSuspenseQuery` in `guides/suspense.md` and again, nearly word for word, in
+  `guides/advanced-ssr.md`. BM25 returns the second at rank 1 and the expected one at rank 7; the
+  text scorer finds the expected section's text at rank 1. Text alone cannot say which article a
+  result came from; a tool that returns it does answer the question. This is the one
+  disagreement at `default`, `h6` and `h2`.
+- **A part of a section that runs past it.** At `merge-400`, Electron's chunk
+  `Signing & notarizing macOS builds > Signing Mac App Store applications`, a subsection of the
+  expected section, was merged with the start of the next section: chunk-ID scoring counts it as
+  part of the expected section, the text scorer does not, since less than 80% of its text is.
+
+### The JSON report
+
+`text-scorer.json` (`schema_version` 2) records `golden` (the golden set's fingerprint), `cases`,
+`projects`, `corpus` (every pinned version's commit), `environment` (as the retrieval benchmark
+records it), `scorer` (`shingle_words`, `threshold`, `fact_share`, `min_agreement`,
+`gated_chunking`) and, per chunking, in `calibrations`: `agreement` and `rendered_agreement`
+(each `decisions`, `agreed`, `rate`, `hit_miss_rate`; version 1 also had `held_agreement`, the
+agreement with a rule that counted held headings, which chunk-ID scoring does itself since #503),
+`wrong_version_agreement`, `sweep` (`threshold`, `rate`, `rendered_rate`), `disagreements`
+(`case`, `section`, `chunk_id_rank`, `text_rank`, `why`), `chunk_id` (the retrieval benchmark's
+metrics), `text` (the same scored from text, with the metrics only text gives),
+`facts_in_expected_sections` and `facts_in_other_results`. Like the other benchmarks, it runs by
+hand, not in CI: run it when the matcher, the parser or the chunker changes, and record it in the
+same pull request. Pull request CI runs the quick tests (`tests/evals/test_text_match.py`,
+`test_text_bench.py`, `text_scorer.feature`) on small local corpora.
+
+## Grounded Docs
+
+[Grounded Docs](https://github.com/arabold/docs-mcp-server) (`@arabold/docs-mcp-server`, MIT) is
+the closest open-source alternative to ExactDocs: a self-hosted MCP server that indexes each
+library version separately, from websites, GitHub, npm, PyPI or local folders, and searches it
+with full-text search, and with vector search too when an embedding model is configured. Because
+it runs locally, the comparison can use the same documentation at the same commits, the same
+questions and the same embedding model. The run (#492) is `retrieval_eval/grounded_docs_cli.py`;
+its report, comparison and Markdown are `retrieval_eval/grounded_docs.py`, and the local embedding
+endpoint is `retrieval_eval/openai_embeddings.py`. Its results are on
+[Comparison with other tools](benchmark/comparison.md).
+
+```bash
+exactdocs models pull BAAI/bge-small-en-v1.5      # the vector configuration's model, once
+just grounded-bench                               # both configurations, every project: about half an hour on 4 CPUs
+just grounded-bench --configs full-text           # full-text search only: a few minutes
+just grounded-bench --resume                      # after an interruption: keeps the versions already indexed
+just grounded-bench --out packages/exactdocs/evals/results   # refresh the recorded run, then `just bench-pages`
+```
+
+It needs Node.js 22 and npm, the golden corpus cache (`--offline` uses it as it is), and, for the
+vector configuration, the model in `EXACTDOCS_MODELS_DIR` (or `--models-dir`). The first run
+installs the pinned release, `@arabold/docs-mcp-server@3.4.1` (`VERSION`), with `npm install` into
+`~/.cache/exactdocs/grounded-docs/3.4.1/` (`--home` moves the whole directory) and refuses an
+install whose `package-lock.json` does not carry the registry's integrity hash (`INTEGRITY`).
+Changing the release means recording its responses for the tests again (below) and a new run.
+
+### What a run does
+
+- **The same files.** For every pinned version, the files the ExactDocs importer takes at the
+  pinned commit (the project's include and exclude paths, `.md` and `.mdx`, a symbolic link
+  followed one hop, the same selection as [the ingestion benchmark](#the-ingestion-benchmark))
+  are written byte for byte under their repository paths to
+  `<home>/corpus/<project>/<version>/`. Grounded Docs' `scrape` command indexes that folder
+  (`file://`) as library `<project>` at version `<version>`, into the configuration's own data
+  directory, `<home>/stores/<configuration>/`. The report lists, per version, the articles
+  offered, the pages and chunks stored, and every offered article it did not store.
+- **Its documented defaults.** The run writes Grounded Docs' configuration file (`--config`, which
+  it reads and never writes) with three settings: telemetry off; the corpus folder as the one
+  root `file://` may read (its default is `~/Documents`, which a headless machine lacks); and
+  `embeddings.requestTimeoutMs` 300,000 instead of 30,000 (`REQUEST_TIMEOUT_MS`), because the
+  local endpoint embeds one request at a time on the CPU and Grounded Docs sends several at once,
+  so a request can wait more than 30 seconds for its answer, after which the client gives up and
+  sends it again. That timeout decides how long it waits, nothing it indexes or ranks. Scraping,
+  its default exclusion patterns (`CHANGELOG.md`, `**/legacy/**`, ...), splitting (500, 1,500 and
+  5,000 characters), search (reciprocal rank fusion of full-text and vector results) and result
+  assembly keep their defaults. The crawl's depth (3) and page (1,000) limits are raised only for
+  a version whose folder is deeper or larger, so that every article is offered (`limits`; the
+  report records what was passed). A command inherits no provider credential or `DOCS_MCP_*`
+  variable from the shell, and runs with `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` (local files need
+  no browser). The configuration in effect (`docs-mcp-server config`) is recorded per
+  configuration.
+- **Two configurations** (`CONFIGURATIONS`): `full-text`, with no embedding model, which is what
+  Grounded Docs does when no provider credentials are set; and `bge-small-en-v1.5`, full-text and
+  vector search with ExactDocs' best local model, `BAAI/bge-small-en-v1.5`. Grounded Docs reaches
+  a local model through an OpenAI-compatible server (`OPENAI_API_BASE`); the run serves the model
+  `exactdocs models pull` fetched (the same quantized ONNX file at the same pinned revision, loaded
+  by fastembed as ExactDocs loads it) at `POST /v1/embeddings` on a loopback port, with a dummy
+  `OPENAI_API_KEY` (the endpoint checks none) and `DOCS_MCP_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5`.
+  Documents and queries are embedded alike, with no query instruction, as ExactDocs embeds them
+  with this model. Grounded Docs' table of known models gives this one 512 dimensions, so it pads
+  each 384-dimension vector with zeros, which changes no distance between two vectors. The model
+  truncates a text to 512 tokens, in both tools.
+- **The questions** go through Grounded Docs' MCP server (`docs-mcp-server mcp --protocol http` on
+  a loopback port), one `search_docs` call per case with the case's project as the library, its
+  version and its question, and a limit of 10 (`TOP_K`, the cut-off ExactDocs is measured at).
+  The tool always searches with `exactMatch: false`; the version asked is indexed, so that is the
+  one searched. Its response is one text, each result after a rule of 60 dashes and
+  `Result <n>: <url>`; `split_results` cuts it into the results, in order.
+- **Scoring** is the text scorer's (`text_row`), so every metric of
+  [Metrics of text results](#metrics-of-text-results) is reported, with its interval. ExactDocs'
+  BM25 at `default` answers the same questions in the same run (the corpus imported model-free,
+  each hit's chunk content as its text, as the calibration does) and is scored the same way; every
+  configuration is tested against it, case by case (McNemar mid-p for recall@1, @5 and @10, the
+  sign-flip permutation test for MRR and nDCG@10). The report also lists ExactDocs' `bm25` and
+  `hybrid:bge-small-en-v1.5` at `default` from the recorded retrieval benchmark run
+  (`results/retrieval.json`, scored by chunk ID, which agrees with the text scorer on 99.8% of
+  decisions at `default`) with paired tests against their rows, when that run measured the same
+  golden set on the same projects.
+- **Indexing time** is the wall time of each `scrape` command (the Node.js start included, about
+  two seconds); **index size** is the data directory (its SQLite database) once every version is
+  indexed. For the vector configuration the report also counts what the endpoint embedded per
+  version and for the questions, and how many requests a client abandoned.
+
+What to keep in mind when reading the numbers:
+
+- Grounded Docs returns bigger results: each is the matching chunks with the context it assembles
+  around them (parent sections, a preceding and two following siblings, child sections). A bigger
+  result holds more sections, and the text scorer counts a hit when a result holds a section's
+  text, so compare recall with the context tokens per question and the tokens to the first hit.
+- Most text of a pinned version is the same in the others, so most results of both tools are
+  version-neutral and the text scorer's wrong-version rate is a lower bound (see
+  [Metrics of text results](#metrics-of-text-results)). Grounded Docs searches only the version
+  it is given, so a result of another version is not expected from it.
+- Grounded Docs has no reranker and no "no answer" threshold. Its full-text search can return
+  nothing ("No results found") when no word of the question is indexed, which the run scores as
+  an empty answer.
+- The latencies are not comparable: Grounded Docs' include a call through MCP over HTTP (and the
+  query's embedding); the baseline's are ExactDocs' search alone, in-process.
+
+### The Grounded Docs report
+
+`grounded-docs.json` (`schema_version` 1, in `reports/evals/` or `--out`) records `golden`,
+`cases`, `projects`, `corpus` (every pinned version's commit), `date` (when the run ended),
+`tool` (`name`, `package`, `version`, `integrity`, `node`, `search`, `top_k`), `environment` (the
+ExactDocs commit the run started from, Python, platform, CPUs), `scorer` (the text scorer's
+settings), `statistics` (seed, resamples, confidence, significance level), `baseline`
+(ExactDocs' BM25 at `default`: `result`, `context_tokens_interval`, `rows`), `recorded`
+(ExactDocs configurations from `retrieval.json`: `configuration`, `chunking`, `metrics`,
+`environment`) and, per configuration, in `runs`: `configuration`, `about`, `settings` (Grounded
+Docs' configuration in effect, its paths shown as `<store>` and `<corpus>`), `variables` (the
+environment variables set), `embedding` (`model`, `revision`, `dimensions`, `stored_dimensions`,
+`served_by`, and `indexing` and `questions`, each `requests`, `texts`, `tokens`, `seconds`,
+`abandoned`), `indexing` (per version: `seconds`, `offered`, `indexed`, `chunks`, `embedded`,
+`max_depth`, `max_pages`, `not_indexed`, `embedding`), `index_seconds`, `index_bytes`, `result`
+(the text scorer's metrics overall, by kind and by project), `context_tokens_interval`, `rows`
+(every case's row, for intervals and paired tests), `versus` (per ExactDocs result: `against`,
+`scored_by`, `tests`), `errors` (questions whose search failed, scored as empty) and
+`cases_not_indexed` (answerable cases none of whose listed articles was indexed). The command
+exits with 1 when a question failed, a version got nothing indexed, or a chunk of the vector
+configuration got no vector (`problems`). `grounded-docs.md` is the summary; `just bench-pages`
+fills [Comparison with other tools](benchmark/comparison.md) from the recorded run.
+
+### When it runs
+
+By hand, or with the manual workflow `.github/workflows/grounded-bench.yml` on the self-hosted
+runner (input `args`, e.g. `--configs full-text`; the report is the `grounded-bench` artifact);
+never in pull request CI. Pull request CI runs the quick tests (`tests/evals/test_grounded_docs.py`,
+`test_openai_embeddings.py`, `grounded_docs.feature`), which replay Grounded Docs 3.4.1's real
+`search_docs` responses (`tests/fixtures/grounded_docs_responses.json`, recorded on the
+retrieval benchmark's tiny corpus in both configurations and on three synthetic pages; the corpus
+path replaced by `file:///corpus`) through a stand-in (`tests/fixtures/grounded_docs_stand_in.py`).
+The data directories stay in `<home>/stores/` after a run, for the agent benchmark's Grounded Docs
+arm (#495) to search; `--resume` reuses them and asks the questions again, which is how a
+scorer change is applied without indexing again (about three minutes on 4 CPUs for both
+configurations, the ExactDocs baseline included).
+
+## Context7
+
+[Context7](https://context7.com) (Upstash) is the documentation MCP most coding agents use. It is
+hosted: we cannot choose how it indexes, and it serves a library's version only when someone added
+it. The run (#493) asks two things: which of the golden set's pinned versions it serves at all, and
+how good its answers are for those it does. It is `retrieval_eval/context7_cli.py`; the response
+reader, coverage, report and Markdown are `retrieval_eval/context7.py`.
+
+```bash
+export CONTEXT7_API_KEY=...                       # from context7.com/dashboard; the run refuses to go out without it
+just context7-bench                               # every project: one request per golden question
+just context7-bench --from-cache                  # score the kept responses again, calling nothing
+just context7-bench --projects starlette          # one project
+```
+
+It needs the golden corpus cache (`--offline` uses it as it is) and the key. Nothing has been
+measured yet: see [Terms of service](#terms-of-service) before a run is published.
+
+### What a run does
+
+- **The API.** Every request is `GET https://context7.com/api/v2/context?libraryId=&query=&type=json`
+  of the Public API 2.0.0 (`API_VERSION`, `info.version` of `https://context7.com/openapi.json`),
+  with `Authorization: Bearer $CONTEXT7_API_KEY`. A rate-limited request (429) waits out
+  `Retry-After` (at most 60 s) and is sent again, up to five times.
+- **Coverage.** For each pinned version, the first of its questions goes to
+  `/<owner>/<repo>/<version>`, the project's library from `corpus.yaml` and the pinned tag. A
+  version Context7 has not indexed is not an error: it serves a matching tag, another release of
+  the line, or the current docs, and the JSON response's `version` object says which. The run
+  reads it (`coverage_of`): no `version` object, or `status: verified`, is **served**; `unverified`
+  with a release in `served` is **unverified** (another release stands in for the pinned one);
+  `unverified` with `served: null`, or 404 `version_not_found`, is **not served**. The coverage
+  table gives, per version, the status, the library ID Context7 says served it (a library that
+  moved, such as `encode/starlette` to `kludex/starlette`, is followed by Context7 itself), the
+  release served and the date of the answer. Asking a version Context7 lacks queues it for
+  indexing, so coverage can change between runs.
+- **The questions.** The other questions of a served or unverified version go to the same pinned
+  ID; the probe's answer is its first question's. Questions of a version Context7 does not serve
+  go to `/<owner>/<repo>` alone, its current docs, which is what an agent gets there. The three
+  groups (`pinned`, `unverified`, `latest only`) are scored and reported apart and never mix.
+- **The budget.** Context7's API takes no size budget, so each response is cut where ExactDocs'
+  `query-docs` would stop (`TOKEN_BUDGET`, 10,000 estimated tokens, 4 characters each): the
+  results are kept best first while their text fits.
+- **The results.** A response's `codeSnippets` and `infoSnippets` are one list in Context7's
+  `rank` order. An info snippet's text is its `content`; a code snippet's is its code blocks,
+  fenced. The code snippet's title and description are left out of the text scored: Context7
+  writes them, they are not the docs', and the text scorer would count them as unmatched text.
+- **Scoring** is the text scorer's (`text_row`), with every metric of
+  [Metrics of text results](#metrics-of-text-results) and its interval. ExactDocs' BM25 at
+  `default` answers every question in the same run and is scored the same way, as in the
+  [Grounded Docs run](#what-a-run-does); each group is tested against it on its own cases
+  (McNemar mid-p for recall@1, @5 and @10, the sign-flip permutation test for MRR and nDCG@10),
+  and against ExactDocs' `bm25` and `hybrid:bge-small-en-v1.5` from `results/retrieval.json` when
+  that run measured the same golden set.
+- **The cache.** Every answer (200 or 404) is kept as it came, one JSON file per request
+  (`status`, `body`, `date`, `ms`), in `--responses` (`reports/evals/context7-responses/`). A later
+  run asks only what is not there; `--from-cache` calls nothing and fails on a missing response. A
+  failed request is not kept, so a rerun asks it again. The cache is never committed.
+
+What to keep in mind when reading the numbers:
+
+- Context7's index changes over time: every number carries the run's date, and no two dates are
+  compared.
+- Context7 indexes from its own sources and with its own chunking, which may not be the commits
+  the corpus pins. Text that differs from the pinned commit's does not match its sections, so the
+  `unmatched` share is worth reading next to recall.
+- The latencies include a call over the internet; ExactDocs' are its search alone, in-process.
+
+### The Context7 report
+
+`context7.json` (`schema_version` 1, in `reports/evals/` or `--out`) records `golden`, `cases`,
+`projects`, `corpus`, `date`, `tool` (`name`, `api`, `api_version`, `endpoint`, `token_budget`,
+`client`), `environment`, `scorer`, `statistics`, `coverage` (per version: `project`, `version`,
+`requested_id`, `status`, `resolved_id`, `served`, `date`), `baseline` (ExactDocs' BM25 at
+`default` on every case), `recorded` and, per group with questions, in `groups`: `name`, `about`,
+`versions`, `result`, `context_tokens_interval`, `rows`, `baseline` (BM25 on the group's cases)
+and `versus` (the paired tests). `errors` lists questions whose request failed, scored as empty.
+The command exits with 1 when a request failed or a version's coverage is unknown. `context7.md`
+is the summary.
+
+### When it runs
+
+By hand, or with the manual workflow *Retrieval eval (real providers)*
+(`.github/workflows/eval-providers.yml`, input `context7`, repository secret `CONTEXT7_API_KEY`);
+the report is the `context7-bench` artifact and the raw responses the `context7-responses`
+artifact. Never in pull request CI, which runs the quick tests (`tests/evals/test_context7_bench.py`,
+`context7_bench.feature`) against a stand-in that answers in the API's documented shape
+(`tests/fixtures/context7_stand_in.py`).
+
+### Terms of service
+
+Context7's use is governed by Upstash's Terms of Service (`upstash.com/trust/terms`, April 2025)
+and the Context7 Addendum (`upstash.com/trust/context7addendum.pdf`, August 2025), read on
+2026-11-25. The Terms forbid benchmark tests or analyses of the services without Upstash's express
+permission (section C.8). The Addendum grants use for internal development, educational and
+evaluation purposes, and forbids using Outputs to build competing documentation services, bulk
+extraction for redistribution, and getting around rate limits (section 4). So no Context7 number
+is published, on the benchmark pages or elsewhere, until Upstash has given permission in writing;
+the run and its cache stay internal until then.
+
 ## The agent benchmark
 
-Retrieval numbers do not show that a coding agent reaches the right answer. The agent benchmark
-(#348) measures that: a [pydantic-ai](https://ai.pydantic.dev/) agent whose only documentation
-is ExactDocs answers the golden-set questions, and an LLM judge grades each answer against the
-case's reference answer and facts. It lives in
+Retrieval numbers do not show that a coding agent reaches the right answer, nor that it reaches it
+more often with ExactDocs than without. The agent benchmark (#348, #495) measures both: a
+[pydantic-ai](https://ai.pydantic.dev/) agent answers the golden-set questions with each
+**documentation arm**, and an LLM judge, blind to the arm, grades each answer against the case's
+reference answer and facts. It lives in
 [`packages/exactdocs/evals/agent_bench/`](https://github.com/SirCypkowskyy/ExactDocs/tree/develop/packages/exactdocs/evals/agent_bench)
 and never runs in CI with a model: locally, or from the manual *Agent benchmark (real providers)*
-workflow.
+workflow. The recorded runs and their caveats are on [Agent results](benchmark/agent.md).
+
+### The arms
+
+| Arm | The agent's tools | Status |
+|---|---|---|
+| `none` | none: it answers from what it knows of that version, or says it does not know | built |
+| `exactdocs` | only the ExactDocs MCP tools, `exactdocs serve --stdio`, under each retrieval configuration | built |
+| `context7` | the official Context7 MCP server at a pinned version | #493 |
+| `grounded-docs` | Grounded Docs' MCP server over its own index | #492 |
+
+Every arm gets the same prompt, the same usage limits (`--max-requests`) and only its own tools.
+The instructions are the same for every arm and model apart from one sentence: an arm with a tool
+is told its only source of documentation is *that tool's* tools (only the name differs between
+`exactdocs`, `context7` and `grounded-docs`), to search exactly the version the project uses,
+read what it needs, answer from what it read and say when that version's documentation does not
+cover the question; `none` is told it has no tools and to answer from what it knows about that
+version or say that it does not know. Both end with "answer briefly; do not answer from another
+version". The arms are declared in `agent_bench/arms.py`; an arm whose toolset is not built yet is
+refused on the command line with its issue, and building one only adds its server to
+`ArmServers.tools` (`agent_bench/harness.py`).
 
 ### How a run works
 
-For each retrieval configuration, the projects of the asked cases are imported with the real
-importer at their pinned commits (as `golden-import` does), and embedded when the configuration
-names an embedding model. Configurations that share an embedding model share one import. Then
-ExactDocs is started **as shipped**, `exactdocs serve --stdio` on that data directory with the
-configuration's settings, and each agent model answers every case through a pydantic-ai
-`MCPToolset` on that server. The agent has no other tool.
+For the `exactdocs` arm and each retrieval configuration, the projects of the asked cases are
+imported with the real importer at their pinned commits (as `golden-import` does), and embedded
+when the configuration names an embedding model. Configurations that share an embedding model
+share one import. Then ExactDocs is started **as shipped**, `exactdocs serve --stdio` on that data
+directory with the configuration's settings (and none of the agents' API keys), and the agent
+reaches it through a pydantic-ai `MCPToolset`. The `none` arm has no toolset.
+
+The questions are interleaved: each case is asked of every agent model with every arm before the
+next case, `--concurrency` at a time, so a slow hour of the provider weighs on every arm alike.
+Each finished question is appended to `<report>.rows.jsonl` next to the report; `--resume` keeps
+the questions a previous run of the same command answered and asks only the others and those the
+provider failed on, so a long run survives a restart or a rate limit.
 
 What the agent is told is what a coding agent knows from a project, never the answer:
 
-- the instructions, the same for every model: its only documentation source is the ExactDocs
-  tools; find the library, search exactly the version the project uses, read what it needs, answer
-  briefly from what it read, and say so when that version's documentation does not cover the
-  question instead of answering from memory or another version;
+- the instructions of its arm (above);
 - the prompt: `My project uses <project title> at version <version>.` and the question. The
   ExactDocs library ID is not given: finding it (`list_libraries`, `resolve-library-id`) is part
   of the task.
 
-Both are recorded in the report (`meta.agent_instructions`, `meta.prompt`).
+Both are recorded in the report (`meta.agent_instructions` per arm, `meta.prompt`).
 
 A `process_tool_call` hook records, per question: every tool call (name, arguments cut to 200
 characters, time, error), the sections read in full (`read_chunk`, the chunks `query-docs`
 returned, whole articles from `read_article`) with their version, and how each search was
-answered (`bm25`, or `bm25 (mode_unavailable)` when the server fell back). The run also records
-the input and output tokens over every model request, the USD from ExactDocs' own price list
-(`GenaiPrices`, the bundled `genai-prices` data; `unpriced` when the model is not in it, as for
-the stand-ins), and the wall time. A run that hits the request limit (`--max-requests`, default
-20) or a provider error keeps its record with the error and is graded wrong.
+answered (`bm25`, or `bm25 (mode_unavailable)` when the server fell back). The run also records,
+over every model request:
+
+- **input tokens** and **output tokens**, as the provider reports them; the output includes the
+  thinking (Ollama counts the `reasoning` text inside `completion_tokens`);
+- **thinking tokens on their own**: the provider's count where its usage reports one (OpenAI's
+  `reasoning_tokens`); otherwise, where the model returns its thinking as text (Ollama's
+  `reasoning` field, a pydantic-ai `ThinkingPart`), an **estimate**: each response's reported
+  output tokens times the thinking's share of the characters that response produced (thinking,
+  text and tool-call arguments). It assumes the thinking costs as many tokens per character as the
+  rest, so it never exceeds the output. A model that returns no thinking and whose provider
+  reports none is recorded as *not returned* (`null`), not 0;
+- **wall time**, and of it the time lost to provider retries (`retry_seconds`, with
+  `provider_retries`): an Ollama model's client retries a 408, 409, 429 or 5xx with backoff up to
+  `--max-retries` times (default 6, `Retry-After` honoured), and the client's event hooks add up,
+  per run, the time from each failed request to its retry. The report's wall time leaves it out;
+- **USD** from ExactDocs' own price list (`GenaiPrices`, the bundled `genai-prices` data),
+  `null` (shown *unpriced*) when the model is not in it, as for Ollama Cloud and the stand-ins;
+  never 0 for an unpriced model.
+
+A run that ends without an answer is not judged. On the agent's side (the request limit, a tool
+call or output it never got right, a request the provider refused for its content: 400, 413) it
+is graded `no_answer` and counts as a miss. On the provider's side (rate limited, a server error,
+a lost connection, after the retries) it is graded `error`: a failure, never a wrong answer. It is
+left out of every rate, mean and paired test, counted in *Errors*, listed under *Runs without an
+answer*, and `--resume` asks it again.
 
 ### The judge
 
 The judge is a pydantic-ai agent with a typed output (grade, `wrong_version`, reason), run as a
-Pydantic Evals evaluator. It gets the question, the version, the kind, the reference answer, the
-facts and the answer as JSON, not the documentation, and grades:
+Pydantic Evals evaluator. It gets the question, the library and version, the kind, the reference
+answer, the facts and the answer as JSON, not the documentation, and nothing of the run: no model,
+no arm, no tool call. It is **blind to the arm**: before it reads an answer, every arm's product
+and tool names (`ExactDocs`, `search_docs`, `read_chunk`, `Context7`, `get-library-docs`,
+`Grounded Docs`, ... as whole words, ignoring case) are replaced by `[redacted]`, the same names
+for every arm (`arms.blind`). It grades:
 
 | Grade | When |
 |---|---|
 | `correct` | every required fact, in any wording, and nothing the reference contradicts |
 | `partially_correct` | some of the facts, nothing contradicted |
 | `wrong` | none of them, something the reference contradicts, or an invented API or behaviour |
-| `refused` | says the documentation does not cover it, or declines, and states no facts |
+| `refused` | says the documentation does not cover it or that it does not know, or declines, and states no facts |
 
 For an `unanswerable` case, the judge grades an answer that says the documentation of that version
-does not cover it `refused`, and one that answers anyway (from another version, from memory,
-invented) `wrong`. The report counts `refused` as accurate for an `unanswerable` case only: there
-it is the right answer, for any other kind it is a miss. Each question keeps its raw grade.
-`wrong_version` is set when the answer states something true of another version only; the report
-counts those separately (*Wrong for the version*). Its instructions are in
-`agent_bench/judge.py`.
+does not cover it, or that the agent does not know, `refused`, and one that answers anyway (from
+another version, from memory, invented) `wrong`. The report counts `refused` as accurate for an
+`unanswerable` case only: there it is the right answer, for any other kind it is a miss. Each
+question keeps its raw grade. `wrong_version` is set when the answer states something true of
+another version only; the report counts those separately (*Wrong for the version*). Its
+instructions are in `agent_bench/judge.py`.
 
 ### The report
 
 `reports/evals/agent-bench.json` (and `.md` next to it, also appended to `$GITHUB_STEP_SUMMARY`),
-one cell per agent model and retrieval configuration:
+one cell per agent model and arm (and retrieval configuration, for `exactdocs`), every rate and
+mean over the questions without a provider failure (`answered`):
 
-- grades and accuracy (share `correct`, plus `refused` on `unanswerable` cases), overall, per kind
-  and per project; errors;
-- *Wrong for the version*: answers the judge flagged `wrong_version`;
-- *Read the answer*: of the answerable questions, the share where the agent read in full every
-  section the case names (at its version). Search snippets do not count. This is the measure of
-  "the cited chunks contain the required facts": a case's sections are, by construction, where
-  its facts are stated;
-- *Read another version*: questions where the agent read something of the asked library at
-  another version;
-- tool calls, tokens and USD per question, median wall time, and how the searches were answered;
-- the 95% interval of accuracy (overall, per kind and per project), of *Read the answer* and of
-  the means per question (`intervals`, a percentile bootstrap over the questions as in
-  [Intervals and paired tests](#intervals-and-paired-tests));
-- for each retrieval configuration but the run's first, McNemar's test (mid-p) of its accuracy
-  against the first configuration's, for the same agent model and the questions both asked
-  (`reference`, `versus_reference`), shown under *Against the first retrieval configuration*.
-  Put the baseline first (`--retrieval`), e.g. BM25 when comparing models.
+- **Quality**: grades and accuracy (share `correct`, plus `refused` on `unanswerable` cases),
+  overall, per kind and per project; *No answer* and *Errors*; *Wrong for the version* (answers
+  the judge flagged `wrong_version`, and their share); *Refused, answerable* (answerable questions
+  the agent refused: misses); *Correct refusals, unanswerable*; *Read the answer* (of the
+  answerable questions, the share where the agent read in full every part the case names, at its
+  version: a section of each part, or one of its alternatives (#501); search snippets do not
+  count. A case's sections are, by construction, where its facts are stated, so this measures
+  whether the cited text holds the required facts); *Read another version*; tool calls per
+  question;
+- **Cost per question**: wall time (retries left out), input tokens, output tokens with the
+  thinking, thinking tokens on their own (marked *estimated*, or *not returned*), USD, and the
+  provider retries, each as mean with its 95% interval, p50 and p95 (nearest rank);
+- every rate and mean with its 95% interval (`intervals`, a percentile bootstrap over the
+  questions as in [Intervals and paired tests](#intervals-and-paired-tests));
+- **Against the other arms, on the same cases** (`versus`): each arm against `none` (and every arm
+  but these two against `exactdocs` too), for the same agent model and the cases both answered:
+  the accuracy difference by McNemar's test (mid-p), the wall time, output tokens and input tokens
+  by a paired sign-flip permutation test, each with its paired bootstrap interval, and the ratio
+  of the means. This answers "how much longer does the agent take with the tool, and is it worth
+  it";
+- for each retrieval configuration of an arm but its first, McNemar's test of its accuracy
+  against the first one's (`reference`, `versus_reference`), under *Against the first retrieval
+  configuration*. Put the baseline first (`--retrieval`), e.g. BM25 when comparing models;
+- *Runs without an answer*: the `no_answer` and `error` runs and why.
 
 `statistics` records the seed, resamples, confidence and level of the intervals and tests.
-`meta` holds what a rerun needs: the agent models, the judge model, each configuration's
-settings, the limits, the instructions and prompt, the ExactDocs version and repository commit,
-and every imported version with its pinned and recorded commit. `questions` holds every question's
-record (tool calls, chunks read as `<chunk ID>@<version>`, tokens, USD, answer, judge's reason).
+`meta` holds what a rerun needs: the agent models, the judge model, the arms and their
+instructions, each retrieval configuration's settings, the selection of cases, the thinking
+setting, the limits and retries, where the models are served (`providers`: base URLs only), the
+ExactDocs version and repository commit, and every imported version with its pinned and recorded
+commit. `questions` holds every question's record (tool calls, chunks read as
+`<chunk ID>@<version>`, tokens, thinking, wall and retry time, USD, the answer as given, the
+judge's reason).
+
+**No credential is recorded.** A retrieval setting whose name holds `KEY`, `TOKEN`, `SECRET`,
+`PASSWORD`, `AUTH`, `HEADER` and the like is recorded as `<redacted>`, base URLs lose their user,
+password and query, and error messages and the judge's reasons have every secret-named environment
+value and `Bearer <token>` replaced (`agent_bench/redact.py`). The API keys are read from the
+environment only.
 
 ### Running it
 
 ```bash
 just agent-bench run --offline --projects starlette,zod --limit 4   # stand-ins, no provider
-just agent-bench run \
-  --agent-model openai:gpt-5-mini --agent-model anthropic:claude-sonnet-4-5 \
-  --judge-model openai:gpt-5 \
-  --retrieval bm25:mode=bm25 \
-  --retrieval 'hybrid:mode=hybrid,embedding.model=eval:text-embedding-3-small'
+OLLAMA_BASE_URL=https://ollama.com/v1 OLLAMA_API_KEY=... just agent-bench run \
+  --agent-model ollama:gpt-oss:120b --agent-model ollama:kimi-k3 --judge-model ollama:glm-5.3 \
+  --arm none,exactdocs --retrieval bm25:mode=bm25 --thinking medium \
+  --per-stratum 3 --concurrency 3            # 90 cases: 3 per kind and project
+just agent-bench run ... --resume            # ask again what failed on the provider's side
 just agent-bench run --help
 ```
 
 - `--agent-model` (repeat for several) and `--judge-model` are
   [pydantic-ai model names](https://ai.pydantic.dev/models/overview/) (`<provider>:<model>`); the
   provider's usual variables give the key (`OPENAI_API_KEY`, `OPENAI_BASE_URL` for a gateway,
-  `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`). Use a judge from another vendor than the agents where
-  you can.
-- `--retrieval name[:key=value,...]` (repeat for several) names one configuration: each key is
-  an ExactDocs AI setting path set as `EXACTDOCS_AI__<KEY>` (`mode=hybrid` is
-  `EXACTDOCS_AI__MODE=hybrid`, `embedding.model=eval:...` is `EXACTDOCS_AI__EMBEDDING__MODEL`),
-  on top of the environment, for both the import and the server. Profiles (`eval:` above) come
-  from the environment as for any instance (`EXACTDOCS_AI__PROVIDERS__EVAL__...`). The default is
-  `bm25:mode=bm25` and `hybrid:mode=hybrid`; without an embedding model the second falls back to
-  BM25, which the report shows. The configurations of the retrieval benchmark (#347) are written
-  the same way.
-- `--projects`, `--kinds`, `--limit N` (cases per project) pick the cases; `--concurrency`
-  asks several questions at once (wall time then includes contention); `--work-dir` keeps the
-  data directories and each server's log (`server-<configuration>.log`).
+  `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`). `ollama:<model>` is an Ollama model through
+  pydantic-ai's Ollama provider at `OLLAMA_BASE_URL` (`https://ollama.com/v1` for Ollama Cloud)
+  with `OLLAMA_API_KEY`, retried and measured as above. Use a judge from another vendor than the
+  agents where you can.
+- `--arm` (repeat or comma-separate; default `none,exactdocs`) picks the arms.
+- `--thinking on|off|minimal|low|medium|high|xhigh|max` sets the agents' thinking (pydantic-ai's
+  `thinking`, sent to Ollama as `reasoning_effort`); left out, each model keeps its default. The
+  setting is recorded (`meta.thinking`); some models think whatever it says.
+- `--retrieval name[:key=value,...]` (repeat for several) names one configuration of the
+  `exactdocs` arm: each key is an ExactDocs AI setting path set as `EXACTDOCS_AI__<KEY>`
+  (`mode=hybrid` is `EXACTDOCS_AI__MODE=hybrid`, `embedding.model=eval:...` is
+  `EXACTDOCS_AI__EMBEDDING__MODEL`), on top of the environment, for both the import and the
+  server. Profiles (`eval:` above) come from the environment as for any instance
+  (`EXACTDOCS_AI__PROVIDERS__EVAL__...`). The default is `bm25:mode=bm25` and `hybrid:mode=hybrid`;
+  without an embedding model the second falls back to BM25, which the report shows.
+- `--projects`, `--kinds`, `--limit N` (cases per project) pick the cases; `--per-stratum N`
+  (with `--seed`, default 495) takes a stratified random sample of N cases per kind and project,
+  as the golden set's review does; `--concurrency` asks several questions at once (wall time then
+  includes contention); `--work-dir` keeps the data directories and each server's log
+  (`server-<configuration>.log`); `--resume` continues from `<report>.rows.jsonl`.
 - `--offline` uses the stand-ins in `agent_bench/offline.py` (pydantic-ai `FunctionModel`s):
   `offline:search` answers from the search snippets, `offline:read` reads the top section first,
-  and the judge grades by word overlap with the facts. They prove the plumbing, not quality.
+  `offline:think` also returns thinking, and with no tools (`none`) each says it does not know;
+  the judge grades by word overlap with the facts. They prove the plumbing, not quality.
 
 The manual workflow *Agent benchmark (real providers)* (`.github/workflows/agent-bench.yml`,
 `workflow_dispatch` only, environment `eval-providers`) runs the same command. Its inputs are
-`agent_models` (comma-separated), `judge_model`, `retrieval` (configurations separated by spaces)
-and `args` (e.g. `--projects zod --limit 10`). Keys: the secrets `AGENT_BENCH_OPENAI_API_KEY`,
-`AGENT_BENCH_ANTHROPIC_API_KEY`, `AGENT_BENCH_GOOGLE_API_KEY` (and the variable
-`AGENT_BENCH_OPENAI_BASE_URL` for an OpenAI-compatible gateway) for the agents and the judge; the
-`eval` profile of the retrieval workflow (`EVAL_PROVIDER_*`) for the server's models. The report
-is uploaded as the artifact `agent-bench`.
+`agent_models` (comma-separated), `judge_model`, `arms` (default `none,exactdocs`), `thinking`,
+`retrieval` (configurations separated by spaces) and `args` (e.g. `--per-stratum 3`). Keys: the
+secrets `AGENT_BENCH_OPENAI_API_KEY`, `AGENT_BENCH_ANTHROPIC_API_KEY`,
+`AGENT_BENCH_GOOGLE_API_KEY`, `AGENT_BENCH_OLLAMA_API_KEY` (and the variables
+`AGENT_BENCH_OPENAI_BASE_URL` for an OpenAI-compatible gateway and `AGENT_BENCH_OLLAMA_BASE_URL`)
+for the agents and the judge; the `eval` profile of the retrieval workflow (`EVAL_PROVIDER_*`) for
+the server's models. The report is uploaded as the artifact `agent-bench`.
 
 ### Judge agreement
 
@@ -864,14 +1542,17 @@ just agent-bench sample --report reports/evals/agent-bench.json --size 50   # ->
 just agent-bench agreement --report reports/evals/agent-bench.json --labels reports/evals/agent-bench-labels.yaml
 ```
 
-`sample` picks answers reproducibly (`--seed`) and writes each with its question, version, kind,
-reference and facts, and blank labels; the judge's grade is left out so it cannot steer the
-labeller. Label with the judge's grades, which the file's header repeats:
+`sample` picks judged answers reproducibly (`--seed`) and writes each with its question, version,
+kind, reference and facts, and blank labels. The labeller is as blind as the judge: the answer is
+shown as the judge read it (names `[redacted]`), its ID is a hash that names neither the model nor
+the arm, and the judge's grade is left out so it cannot steer the labeller. Label with the judge's
+grades, which the file's header repeats:
 
 - `correct`: states every fact, nothing the reference contradicts;
 - `partially_correct`: states some of the facts, nothing contradicted;
 - `wrong`: states none, contradicts the reference, or invents an API or behaviour;
-- `refused`: says the documentation does not cover it (or declines) and states no facts.
+- `refused`: says the documentation does not cover it or that it does not know (or declines) and
+  states no facts.
 
 For an `unanswerable` case, an answer saying the documentation does not cover it is labelled
 `refused`, not `correct` (the report counts it as right for that kind); answering anyway is
@@ -882,11 +1563,16 @@ not worth labelling.
 
 ### Tests
 
-`tests/evals/test_agent_bench.py`: the recording, grounding, pricing, the stand-in judge, the
-judge evaluator, the report and agreement run in CI. The end-to-end test, marked `eval`
-(`uv run pytest -m eval`), imports a two-version corpus built in a temporary repository, starts
-`exactdocs serve --stdio` on it under two configurations and runs both stand-in agents and the
-stand-in judge through it.
+`tests/evals/test_agent_bench.py` and `tests/evals/test_agent_arms.py` run in CI: the recording,
+grounding, pricing, the arms and their instructions, the blind judge, thinking tokens (reported,
+estimated, not returned), whose side a failure is on, the retry log, the redaction of secrets, the
+report and its paired comparisons, the checkpoint and `--resume`, and agreement. Both arms run end
+to end there with the stand-in models and the stand-in documentation tools of
+`tests/fixtures/agent_bench_stand_ins.py` (an in-process MCP server), as do the scenarios of
+`features/agent_bench.feature`. The end-to-end test, marked `eval` (`uv run pytest -m eval`),
+imports a two-version corpus built in a temporary repository, starts `exactdocs serve --stdio` on
+it under two configurations and runs every stand-in agent with both arms and the stand-in judge
+through it.
 
 ## Tiers
 

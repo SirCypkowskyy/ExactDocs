@@ -70,7 +70,7 @@ async def test_setup_creates_the_admin_and_opens_the_api(client: httpx.AsyncClie
     assert created.status_code == 201
     body = created.json()
     assert (body["username"], body["role"]) == ("ada", "admin")
-    assert set(body) == {"id", "username", "role"}
+    assert set(body) == {"id", "username", "role", "has_password"}
     assert CREDENTIALS["password"] not in created.text
     # Past the setup guard now; the admin still has to sign in (`POST /api/v1/session`).
     refused = await client.get("/api/v1/libraries")

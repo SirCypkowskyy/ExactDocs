@@ -1,23 +1,17 @@
 """#245: the default local models, for real, with sockets blocked.
 
-Runs when ``EXACTDOCS_TEST_MODELS_DIR`` names a directory that ``exactdocs models pull`` filled
-with the defaults (CI's *Retrieval eval (local models)* job, which caches it); the 158 MB of
-models are not fetched by the test suite. ``test_local_models.py`` runs the same path on tiny
-models everywhere.
+An integration test (#507): runs with ``--integration`` when ``EXACTDOCS_TEST_MODELS_DIR`` names
+a directory that ``exactdocs models pull`` filled with the defaults (the release's *Retrieval
+eval* job, which caches it); the 158 MB of models are not fetched by the test suite.
+``test_local_models.py`` runs the same path on tiny models everywhere.
 """
 
-import os
 from pathlib import Path
 
-import pytest
-
+import integration
 from socket_guard import run_guarded
 
-MODELS = os.environ.get("EXACTDOCS_TEST_MODELS_DIR", "")
-
-pytestmark = pytest.mark.skipif(
-    not MODELS, reason="EXACTDOCS_TEST_MODELS_DIR (the pulled default models) is not set"
-)
+pytestmark = integration.LOCAL_MODELS
 
 DEFAULTS = """
 import asyncio

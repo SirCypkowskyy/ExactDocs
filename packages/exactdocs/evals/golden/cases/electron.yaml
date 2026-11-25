@@ -85,6 +85,7 @@ cases:
   expected_output:
     hits:
     - {version: v30.0.0, article: docs/tutorial/sandbox.md, heading_path: [Process Sandboxing, Sandbox behavior in Electron, Preload scripts]}
+    - {version: v30.0.0, article: docs/tutorial/tutorial-3-preload.md, heading_path: [Augmenting the renderer with a preload script], alternative: true}
     reference: >-
       A polyfilled require that loads only the electron module (contextBridge, crashReporter,
       ipcRenderer, nativeImage, webFrame, webUtils) and the events, timers and url built-ins (also as
@@ -398,6 +399,7 @@ cases:
   expected_output:
     hits:
     - {version: v30.0.0, article: docs/tutorial/sandbox.md, heading_path: [Process Sandboxing, Configuring the sandbox, Disabling the sandbox for a single process]}
+    - {version: v30.0.0, article: docs/breaking-changes.md, heading_path: [Breaking Changes, 'Planned Breaking API Changes (20.0)', 'Default Changed: renderers without nodeIntegration: true are sandboxed by default'], alternative: true}
     reference: >-
       Set `sandbox: false` in that BrowserWindow's `webPreferences`; enabling
       `nodeIntegration: true` also disables the sandbox for that renderer.
@@ -549,6 +551,7 @@ cases:
   expected_output:
     hits:
     - {version: v38.0.0, article: docs/tutorial/electron-timelines.md, heading_path: [Electron Releases, Version support policy]}
+    - {version: v38.0.0, article: docs/tutorial/electron-timelines.md, heading_path: [Electron Releases, Timeline], alternative: true}
     reference: >-
       Only the latest three stable majors are supported, and only the latest minor of each. The
       newest stable gets all fixes from main, the one before most of them, and the oldest supported

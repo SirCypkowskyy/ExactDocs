@@ -542,6 +542,7 @@ AI_ROUTES = [
     ("GET", "/api/v1/ai/roles", {}),
     ("GET", "/api/v1/ai/embedding", {}),
     ("GET", "/api/v1/ai/usage", {}),
+    ("GET", "/api/v1/ai/usage/history", {}),
 ]
 
 

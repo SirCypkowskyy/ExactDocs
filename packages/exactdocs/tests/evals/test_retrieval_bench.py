@@ -67,6 +67,26 @@ def test_ndcg_is_binary_over_the_expected_sections(
     assert ndcg_at(expected, hits) == pytest.approx(score)
 
 
+def _alt(hit: Hit) -> Hit:
+    return hit.model_copy(update={"alternative": True})
+
+
+@pytest.mark.parametrize(
+    ("expected", "hits", "score"),
+    [
+        ([A, _alt(B)], [B], 1.0),  # B answers the one part as well as A
+        ([A, _alt(B)], [A, B], 1.0),  # the part counts once, whichever answers it
+        ([A, _alt(B), C], [B, C], 1.0),  # two parts, each found once
+        ([A, _alt(B), C], [C], (1 / 1) / (1 + 1 / math.log2(3))),
+    ],
+    ids=["the alternative", "both", "two parts", "one part of two"],
+)
+def test_ndcg_counts_each_part_once_whichever_alternative_answers_it(
+    expected: list[Hit], hits: list[Hit], score: float
+) -> None:
+    assert ndcg_at(expected, hits) == pytest.approx(score)
+
+
 def test_ndcg_uses_the_match_rule_given() -> None:
     finer = _hit("a.md", "A", "Deeper")
 
@@ -107,6 +127,28 @@ def test_a_row_keeps_the_rank_the_version_and_whether_anything_came_back() -> No
     assert (unanswerable.answerable, unanswerable.empty, unanswerable.rank) == (False, True, None)
 
 
+def test_any_answering_section_is_a_hit() -> None:
+    case = _case(expected=[A, _alt(B)])
+
+    row = row_of(case, Answer(hits=[C, B]))
+
+    assert (row.rank, row.sections, row.section_ranks) == (2, 1, (2,))
+    m = metrics_of([row])
+    assert (m.recall_at_1, m.recall_at_5, m.mrr) == (0, 1, 0.5)
+    assert m.section_recall_at_5 == 1  # the one part is answered
+
+
+def test_a_hit_on_one_part_counts_for_recall_and_section_recall_shows_the_rest() -> None:
+    case = _case("cross-page", expected=[A, C])
+
+    row = row_of(case, Answer(hits=[A]))
+
+    assert (row.rank, row.sections, row.section_ranks) == (1, 2, (1,))
+    m = metrics_of([row])
+    assert m.recall_at_5 == 1
+    assert m.section_recall_at_5 == pytest.approx(0.5)  # C is missing
+
+
 def test_a_cross_page_case_scores_the_share_of_its_sections_found() -> None:
     case = _case("cross-page", expected=[A, B])
     rows = [
@@ -115,9 +157,9 @@ def test_a_cross_page_case_scores_the_share_of_its_sections_found() -> None:
     ]
 
     assert [r.section_ranks for r in rows] == [(1, 6), (2,)]
+    assert [r.rank for r in rows] == [1, 2]  # a hit on any section the case lists (#501)
     m = metrics_of(rows)
-    # recall@k follows the first expected section only (the suite's rule)
-    assert (m.recall_at_5, m.recall_at_10) == (0.5, 0.5)
+    assert (m.recall_at_5, m.recall_at_10) == (1, 1)
     # section recall: the share of the two sections found, averaged over the cases
     assert m.section_recall_at_5 == pytest.approx((1 / 2 + 1 / 2) / 2)
     assert m.section_recall_at_10 == pytest.approx((2 / 2 + 1 / 2) / 2)

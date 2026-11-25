@@ -1,9 +1,11 @@
 import { Navigate, useLocation } from "@tanstack/react-router";
-import { CloudOff } from "lucide-react";
+import { CloudOff, RotateCcw } from "lucide-react";
 import { HttpError } from "@/shared/lib/http";
+import { useMessages } from "@/shared/lib/i18n";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Button } from "@/shared/ui/button";
 import { StatusScreen } from "@/shared/ui/status-screen";
+import { messages } from "../messages";
 
 /**
  * Error screen for every route. A request refused for want of a session (it expired after the
@@ -20,9 +22,10 @@ export function RouteError({
   wide?: boolean;
 }) {
   const href = useLocation({ select: (l) => l.href });
+  const t = useMessages(messages);
   // 4xx details are written for people by the API; everything else gets the fixed sentence.
   const answered = error instanceof HttpError && error.status < 500 && Boolean(error.code);
-  const title = answered ? "Something went wrong" : "Can't reach the server";
+  const title = answered ? t.screens.somethingWrong : t.screens.cantReach;
   const heading = usePageTitle(title);
   if (error instanceof HttpError && error.status === 401) {
     return <Navigate to="/sign-in" search={{ next: href }} replace />;
@@ -30,17 +33,19 @@ export function RouteError({
   if (error instanceof HttpError && error.code === "setup_required") {
     return <Navigate to="/setup" replace />;
   }
-  const detail =
-    error instanceof HttpError && answered
-      ? error.message
-      : "ExactDocs didn't answer. Check that it is running, then try again.";
+  const detail = error instanceof HttpError && answered ? error.message : t.screens.didntAnswer;
   return (
     <StatusScreen
       icon={<CloudOff aria-hidden="true" />}
       title={title}
       headingRef={heading}
       alert
-      actions={<Button onClick={reset}>Try again</Button>}
+      actions={
+        <Button onClick={reset}>
+          <RotateCcw aria-hidden="true" data-icon-motion="refresh" />
+          {t.screens.tryAgain}
+        </Button>
+      }
     >
       <p>{detail}</p>
     </StatusScreen>

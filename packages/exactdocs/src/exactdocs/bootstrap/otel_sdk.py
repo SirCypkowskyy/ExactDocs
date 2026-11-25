@@ -9,12 +9,18 @@ its ``input_value``).
 
 Prometheus: one more metric reader on the same meter provider, which sends nothing; ``/metrics``
 renders what it collects (``exposition``) when Prometheus asks.
+
+The exporters reach the collector through the outbound settings (#538): a ``requests`` session
+that reads no proxy variable, with the outbound proxy unless ``NO_PROXY`` lists the collector,
+and the CA bundle unless ``OTEL_EXPORTER_OTLP_CERTIFICATE`` names another one.
 """
 
 import os
 from collections.abc import Callable, Sequence
+from typing import Any
 from urllib.parse import parse_qsl, urlencode
 
+import requests
 from opentelemetry import metrics, trace
 from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
@@ -29,6 +35,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, REGISTRY, generate_latest
 
 from exactdocs import __version__
 from exactdocs.bootstrap.constants import (
+    CERTIFICATE_VARIABLE,
     EXPORTER_VARIABLE,
     GEN_AI_PREFIX,
     MESSAGES_SUFFIX,
@@ -41,9 +48,16 @@ from exactdocs.bootstrap.constants import (
     SERVICE_NAME,
     URL_QUERY_ATTRIBUTE,
 )
+from exactdocs_kernel import OutboundNetwork
 
 
-def configure_sdk(*, otlp: bool, prometheus: bool, record_query_text: bool) -> bool:
+def configure_sdk(
+    *,
+    otlp: bool,
+    prometheus: bool,
+    record_query_text: bool,
+    network: OutboundNetwork | None = None,
+) -> bool:
     """Set up the global tracer and meter providers, their exporters and readers, once per process.
 
     Args:
@@ -51,6 +65,8 @@ def configure_sdk(*, otlp: bool, prometheus: bool, record_query_text: bool) -> b
         prometheus: Collect metrics for ``/metrics`` with a Prometheus reader.
         record_query_text: Keep query text and exception messages in spans (the operator opted
             in); scrubbed otherwise.
+        network: The outbound proxy, NO_PROXY and CA bundle the exporters use; direct with the
+            system's trust when None.
 
     Returns:
         Whether the providers were set up (``False``: this process already has an SDK tracer or
@@ -65,7 +81,7 @@ def configure_sdk(*, otlp: bool, prometheus: bool, record_query_text: bool) -> b
     if otlp:
         tracer_provider = TracerProvider(resource=resource)
         if exports("TRACES"):
-            exporter = OTLPSpanExporter()
+            exporter = OTLPSpanExporter(**_reach("TRACES", network or OutboundNetwork()))
             tracer_provider.add_span_processor(
                 BatchSpanProcessor(
                     ScrubbingExporter(
@@ -75,12 +91,43 @@ def configure_sdk(*, otlp: bool, prometheus: bool, record_query_text: bool) -> b
             )
         trace.set_tracer_provider(tracer_provider)
         if exports("METRICS"):
-            readers.append(PeriodicExportingMetricReader(OTLPMetricExporter()))
+            metric_exporter = OTLPMetricExporter(**_reach("METRICS", network or OutboundNetwork()))
+            readers.append(PeriodicExportingMetricReader(metric_exporter))
     if prometheus:
         readers.append(PrometheusMetricReader())
     if readers:
         metrics.set_meter_provider(MeterProvider(resource=resource, metric_readers=readers))
     return True
+
+
+def _reach(signal: str, network: OutboundNetwork) -> dict[str, Any]:
+    """How one OTLP exporter reaches its collector: its session, and the CA bundle.
+
+    Args:
+        signal: ``TRACES`` or ``METRICS``, for the signal's own endpoint variable.
+        network: The outbound settings.
+
+    Returns:
+        The exporter's ``session`` (no proxy variable read; the proxy for the collector, if
+        any) and, unless an ``OTEL_EXPORTER_OTLP_*CERTIFICATE`` variable names one, the CA
+        bundle as its ``certificate_file``.
+    """
+    endpoint = (
+        os.environ.get(f"OTEL_EXPORTER_OTLP_{signal}_ENDPOINT")
+        or os.environ.get(OTLP_ENDPOINT_VARIABLE)
+        or ""
+    )
+    session = requests.Session()
+    session.trust_env = False
+    if (proxy := network.proxy_for(endpoint)) is not None:
+        session.proxies = {"http": proxy, "https": proxy}
+    reach: dict[str, Any] = {"session": session}
+    named = os.environ.get(f"OTEL_EXPORTER_OTLP_{signal}_CERTIFICATE") or os.environ.get(
+        CERTIFICATE_VARIABLE
+    )
+    if network.ca_bundle is not None and not named:
+        reach["certificate_file"] = network.ca_bundle
+    return reach
 
 
 def exposition() -> tuple[bytes, str]:

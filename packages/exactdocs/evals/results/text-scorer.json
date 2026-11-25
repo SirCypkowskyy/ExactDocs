@@ -1,0 +1,984 @@
+{
+  "schema_version": 2,
+  "golden": "sha256:a00997851150e3b0",
+  "cases": 321,
+  "projects": [
+    "starlette",
+    "pydantic",
+    "tanstack-query",
+    "zod",
+    "electron"
+  ],
+  "corpus": [
+    {
+      "project": "starlette",
+      "version": "0.27.0",
+      "commit": "0c4b68ac4e179a788e38bac28f299dcad0f36e99"
+    },
+    {
+      "project": "starlette",
+      "version": "0.52.1",
+      "commit": "e5b8a5d200504a2608bed11fe6f66b1d20b9ae2c"
+    },
+    {
+      "project": "starlette",
+      "version": "1.10.0",
+      "commit": "8aa828ceaff764a2e57932fb42fdf105a47c4c83"
+    },
+    {
+      "project": "pydantic",
+      "version": "v1.10.22",
+      "commit": "5e6e87f7da283d8d13965d0186c88acdd531eda9"
+    },
+    {
+      "project": "pydantic",
+      "version": "v2.5.3",
+      "commit": "9f58e785a5f1f2c34437f6e9b6adcd5b969e0df4"
+    },
+    {
+      "project": "pydantic",
+      "version": "v2.14.3",
+      "commit": "ea492e04654ab7f7a1f9287ea912419452ead4dd"
+    },
+    {
+      "project": "tanstack-query",
+      "version": "v4.36.1",
+      "commit": "6532ed3cbe49f04b3cb31f80ea88b5886416d51a"
+    },
+    {
+      "project": "tanstack-query",
+      "version": "v5.0.0",
+      "commit": "3be9b4580ef8face761e354e5dc57bb56c9ff4a1"
+    },
+    {
+      "project": "tanstack-query",
+      "version": "v5.90.3",
+      "commit": "4d8da1e29e97ad5b0c151822d4962849515b4478"
+    },
+    {
+      "project": "zod",
+      "version": "v3.23.8",
+      "commit": "ca42965df46b2f7e2747db29c40a26bcb32a51d5"
+    },
+    {
+      "project": "zod",
+      "version": "v4.0.17",
+      "commit": "cc63f950158db212c5e9b75e7d22faca851ea624"
+    },
+    {
+      "project": "zod",
+      "version": "v4.6.7",
+      "commit": "b500a2ee95134f81d74da7911d7378dd2853d042"
+    },
+    {
+      "project": "electron",
+      "version": "v30.0.0",
+      "commit": "c37c7fd3c48d686e4b98431aaf1a1187f603e758"
+    },
+    {
+      "project": "electron",
+      "version": "v38.0.0",
+      "commit": "79433861fe10e4f7841153461fd3778b400a4c0b"
+    },
+    {
+      "project": "electron",
+      "version": "v45.3.2",
+      "commit": "9ee9e7718172287d068cee397097c2d79a137eec"
+    }
+  ],
+  "environment": {
+    "exactdocs_commit": "8e789e67177adf9514418b566473dca937ca638d",
+    "python": "3.14.6",
+    "platform": "Linux x86_64",
+    "cpus": "4",
+    "exactdocs": "0.0.0.post109.dev0+c85c7b3",
+    "fastembed": "0.9.1",
+    "onnxruntime": "1.31.0",
+    "pydantic-ai-slim": "2.60.0",
+    "pydantic-evals": "2.60.0"
+  },
+  "scorer": {
+    "shingle_words": 5,
+    "threshold": 0.8,
+    "fact_share": 0.75,
+    "min_agreement": 0.98,
+    "gated_chunking": "default"
+  },
+  "calibrations": [
+    {
+      "chunking": "default",
+      "threshold": 0.8,
+      "agreement": {
+        "decisions": 404,
+        "agreed": 403,
+        "rate": 0.9975,
+        "hit_miss_rate": 1.0
+      },
+      "rendered_agreement": {
+        "decisions": 404,
+        "agreed": 403,
+        "rate": 0.9975,
+        "hit_miss_rate": 1.0
+      },
+      "wrong_version_agreement": 1.0,
+      "sweep": [
+        {
+          "threshold": 0.5,
+          "rate": 0.9752,
+          "rendered_rate": 0.9752
+        },
+        {
+          "threshold": 0.6,
+          "rate": 0.9777,
+          "rendered_rate": 0.9777
+        },
+        {
+          "threshold": 0.7,
+          "rate": 0.9876,
+          "rendered_rate": 0.9876
+        },
+        {
+          "threshold": 0.8,
+          "rate": 0.9975,
+          "rendered_rate": 0.9975
+        },
+        {
+          "threshold": 0.9,
+          "rate": 1.0,
+          "rendered_rate": 0.995
+        },
+        {
+          "threshold": 1.0,
+          "rate": 1.0,
+          "rendered_rate": 0.9035
+        }
+      ],
+      "disagreements": [
+        {
+          "case": "tanstack-query v5.90.3: How do I stream useSuspenseQuery results from the server in Next.js without prefetching, and what is the cost?",
+          "section": "v5.90.3 docs/framework/react/guides/suspense.md [Suspense on the Server with streaming]",
+          "chunk_id_rank": 7,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 (v5.90.3 docs/framework/react/guides/advanced-ssr.md [Experimental streaming without prefetching in Next.js]) holds the section's text, but is another article or version"
+        }
+      ],
+      "chunk_id": {
+        "questions": 321,
+        "answerable": 267,
+        "unanswerable": 54,
+        "recall_at_1": 0.588,
+        "recall_at_5": 0.8764,
+        "recall_at_10": 0.9363,
+        "mrr": 0.7109,
+        "ndcg_at_10": 0.7143,
+        "section_recall_at_5": 0.7662,
+        "section_recall_at_10": 0.8661,
+        "wrong_version_rate": 0.0,
+        "unanswerable_clean_rate": 1.0,
+        "no_answer_rate": 0.0,
+        "answerable_empty_rate": 0.0,
+        "latency_p50_ms": 79.285,
+        "latency_p95_ms": 120.812,
+        "tokens_per_question": 0.0,
+        "usd_per_question": 0.0,
+        "intervals": {
+          "recall_at_1": {
+            "low": 0.5281,
+            "high": 0.6479
+          },
+          "recall_at_5": {
+            "low": 0.8352,
+            "high": 0.9139
+          },
+          "recall_at_10": {
+            "low": 0.9064,
+            "high": 0.9625
+          },
+          "mrr": {
+            "low": 0.6658,
+            "high": 0.7544
+          },
+          "ndcg_at_10": {
+            "low": 0.6764,
+            "high": 0.7512
+          },
+          "section_recall_at_5": {
+            "low": 0.7232,
+            "high": 0.8077
+          },
+          "section_recall_at_10": {
+            "low": 0.8315,
+            "high": 0.8989
+          },
+          "wrong_version_rate": {
+            "low": 0.0,
+            "high": 0.0
+          },
+          "unanswerable_clean_rate": {
+            "low": 1.0,
+            "high": 1.0
+          },
+          "no_answer_rate": {
+            "low": 0.0,
+            "high": 0.0
+          },
+          "answerable_empty_rate": {
+            "low": 0.0,
+            "high": 0.0
+          },
+          "tokens_per_question": {
+            "low": 0.0,
+            "high": 0.0
+          },
+          "usd_per_question": {
+            "low": 0.0,
+            "high": 0.0
+          }
+        }
+      },
+      "text": {
+        "metrics": {
+          "questions": 321,
+          "answerable": 267,
+          "unanswerable": 54,
+          "recall_at_1": 0.588,
+          "recall_at_5": 0.8764,
+          "recall_at_10": 0.9363,
+          "mrr": 0.7109,
+          "ndcg_at_10": 0.7143,
+          "section_recall_at_5": 0.7662,
+          "section_recall_at_10": 0.8661,
+          "wrong_version_rate": 0.0,
+          "unanswerable_clean_rate": 1.0,
+          "no_answer_rate": 0.0,
+          "answerable_empty_rate": 0.0,
+          "latency_p50_ms": 79.285,
+          "latency_p95_ms": 120.812,
+          "tokens_per_question": 0.0,
+          "usd_per_question": 0.0,
+          "intervals": {
+            "recall_at_1": {
+              "low": 0.5281,
+              "high": 0.6479
+            },
+            "recall_at_5": {
+              "low": 0.8352,
+              "high": 0.9139
+            },
+            "recall_at_10": {
+              "low": 0.9064,
+              "high": 0.9625
+            },
+            "mrr": {
+              "low": 0.6658,
+              "high": 0.7544
+            },
+            "ndcg_at_10": {
+              "low": 0.6764,
+              "high": 0.7512
+            },
+            "section_recall_at_5": {
+              "low": 0.7232,
+              "high": 0.8077
+            },
+            "section_recall_at_10": {
+              "low": 0.8315,
+              "high": 0.8989
+            },
+            "wrong_version_rate": {
+              "low": 0.0,
+              "high": 0.0
+            },
+            "unanswerable_clean_rate": {
+              "low": 1.0,
+              "high": 1.0
+            },
+            "no_answer_rate": {
+              "low": 0.0,
+              "high": 0.0
+            },
+            "answerable_empty_rate": {
+              "low": 0.0,
+              "high": 0.0
+            },
+            "tokens_per_question": {
+              "low": 0.0,
+              "high": 0.0
+            },
+            "usd_per_question": {
+              "low": 0.0,
+              "high": 0.0
+            }
+          }
+        },
+        "results_per_question": 10.0,
+        "version_neutral_share": 0.7224,
+        "unmatched_share": 0.0,
+        "context_tokens_per_question": 3464.2,
+        "context_tokens_p95": 5945.0,
+        "tokens_to_first_hit": 656.2,
+        "facts_found_rate": 0.8702
+      },
+      "facts_in_expected_sections": 0.8062,
+      "facts_in_other_results": 0.2463
+    },
+    {
+      "chunking": "h6",
+      "threshold": 0.8,
+      "agreement": {
+        "decisions": 404,
+        "agreed": 403,
+        "rate": 0.9975,
+        "hit_miss_rate": 1.0
+      },
+      "rendered_agreement": {
+        "decisions": 404,
+        "agreed": 403,
+        "rate": 0.9975,
+        "hit_miss_rate": 1.0
+      },
+      "wrong_version_agreement": 1.0,
+      "sweep": [
+        {
+          "threshold": 0.5,
+          "rate": 0.9678,
+          "rendered_rate": 0.9678
+        },
+        {
+          "threshold": 0.6,
+          "rate": 0.9703,
+          "rendered_rate": 0.9703
+        },
+        {
+          "threshold": 0.7,
+          "rate": 0.9851,
+          "rendered_rate": 0.9851
+        },
+        {
+          "threshold": 0.8,
+          "rate": 0.9975,
+          "rendered_rate": 0.9975
+        },
+        {
+          "threshold": 0.9,
+          "rate": 1.0,
+          "rendered_rate": 0.9975
+        },
+        {
+          "threshold": 1.0,
+          "rate": 1.0,
+          "rendered_rate": 0.9084
+        }
+      ],
+      "disagreements": [
+        {
+          "case": "tanstack-query v5.90.3: How do I stream useSuspenseQuery results from the server in Next.js without prefetching, and what is the cost?",
+          "section": "v5.90.3 docs/framework/react/guides/suspense.md [Suspense on the Server with streaming]",
+          "chunk_id_rank": 7,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 (v5.90.3 docs/framework/react/guides/advanced-ssr.md [Experimental streaming without prefetching in Next.js]) holds the section's text, but is another article or version"
+        }
+      ],
+      "chunk_id": {
+        "questions": 321,
+        "answerable": 267,
+        "unanswerable": 54,
+        "recall_at_1": 0.5693,
+        "recall_at_5": 0.8577,
+        "recall_at_10": 0.9213,
+        "mrr": 0.6885,
+        "ndcg_at_10": 0.6916,
+        "section_recall_at_5": 0.7531,
+        "section_recall_at_10": 0.8424,
+        "wrong_version_rate": 0.0,
+        "unanswerable_clean_rate": 1.0,
+        "no_answer_rate": 0.0,
+        "answerable_empty_rate": 0.0,
+        "latency_p50_ms": 109.12,
+        "latency_p95_ms": 165.815,
+        "tokens_per_question": 0.0,
+        "usd_per_question": 0.0,
+        "intervals": {
+          "recall_at_1": {
+            "low": 0.5094,
+            "high": 0.6292
+          },
+          "recall_at_5": {
+            "low": 0.8165,
+            "high": 0.8989
+          },
+          "recall_at_10": {
+            "low": 0.8876,
+            "high": 0.9513
+          },
+          "mrr": {
+            "low": 0.6423,
+            "high": 0.7341
+          },
+          "ndcg_at_10": {
+            "low": 0.6518,
+            "high": 0.73
+          },
+          "section_recall_at_5": {
+            "low": 0.7091,
+            "high": 0.7959
+          },
+          "section_recall_at_10": {
+            "low": 0.8059,
+            "high": 0.878
+          },
+          "wrong_version_rate": {
+            "low": 0.0,
+            "high": 0.0
+          },
+          "unanswerable_clean_rate": {
+            "low": 1.0,
+            "high": 1.0
+          },
+          "no_answer_rate": {
+            "low": 0.0,
+            "high": 0.0
+          },
+          "answerable_empty_rate": {
+            "low": 0.0,
+            "high": 0.0
+          },
+          "tokens_per_question": {
+            "low": 0.0,
+            "high": 0.0
+          },
+          "usd_per_question": {
+            "low": 0.0,
+            "high": 0.0
+          }
+        }
+      },
+      "text": {
+        "metrics": {
+          "questions": 321,
+          "answerable": 267,
+          "unanswerable": 54,
+          "recall_at_1": 0.5693,
+          "recall_at_5": 0.8577,
+          "recall_at_10": 0.9213,
+          "mrr": 0.6885,
+          "ndcg_at_10": 0.6916,
+          "section_recall_at_5": 0.7531,
+          "section_recall_at_10": 0.8424,
+          "wrong_version_rate": 0.0,
+          "unanswerable_clean_rate": 1.0,
+          "no_answer_rate": 0.0,
+          "answerable_empty_rate": 0.0,
+          "latency_p50_ms": 109.12,
+          "latency_p95_ms": 165.815,
+          "tokens_per_question": 0.0,
+          "usd_per_question": 0.0,
+          "intervals": {
+            "recall_at_1": {
+              "low": 0.5094,
+              "high": 0.6292
+            },
+            "recall_at_5": {
+              "low": 0.8165,
+              "high": 0.8989
+            },
+            "recall_at_10": {
+              "low": 0.8876,
+              "high": 0.9513
+            },
+            "mrr": {
+              "low": 0.6423,
+              "high": 0.7341
+            },
+            "ndcg_at_10": {
+              "low": 0.6518,
+              "high": 0.73
+            },
+            "section_recall_at_5": {
+              "low": 0.7091,
+              "high": 0.7959
+            },
+            "section_recall_at_10": {
+              "low": 0.8059,
+              "high": 0.878
+            },
+            "wrong_version_rate": {
+              "low": 0.0,
+              "high": 0.0
+            },
+            "unanswerable_clean_rate": {
+              "low": 1.0,
+              "high": 1.0
+            },
+            "no_answer_rate": {
+              "low": 0.0,
+              "high": 0.0
+            },
+            "answerable_empty_rate": {
+              "low": 0.0,
+              "high": 0.0
+            },
+            "tokens_per_question": {
+              "low": 0.0,
+              "high": 0.0
+            },
+            "usd_per_question": {
+              "low": 0.0,
+              "high": 0.0
+            }
+          }
+        },
+        "results_per_question": 10.0,
+        "version_neutral_share": 0.7215,
+        "unmatched_share": 0.0,
+        "context_tokens_per_question": 2875.7,
+        "context_tokens_p95": 5345.0,
+        "tokens_to_first_hit": 583.1,
+        "facts_found_rate": 0.8424
+      },
+      "facts_in_expected_sections": 0.8062,
+      "facts_in_other_results": 0.2125
+    },
+    {
+      "chunking": "h2",
+      "threshold": 0.8,
+      "agreement": {
+        "decisions": 404,
+        "agreed": 403,
+        "rate": 0.9975,
+        "hit_miss_rate": 1.0
+      },
+      "rendered_agreement": {
+        "decisions": 404,
+        "agreed": 402,
+        "rate": 0.995,
+        "hit_miss_rate": 0.9975
+      },
+      "wrong_version_agreement": 1.0,
+      "sweep": [
+        {
+          "threshold": 0.5,
+          "rate": 0.9802,
+          "rendered_rate": 0.9802
+        },
+        {
+          "threshold": 0.6,
+          "rate": 0.9851,
+          "rendered_rate": 0.9851
+        },
+        {
+          "threshold": 0.7,
+          "rate": 0.9901,
+          "rendered_rate": 0.9901
+        },
+        {
+          "threshold": 0.8,
+          "rate": 0.9975,
+          "rendered_rate": 0.995
+        },
+        {
+          "threshold": 0.9,
+          "rate": 1.0,
+          "rendered_rate": 0.9876
+        },
+        {
+          "threshold": 1.0,
+          "rate": 1.0,
+          "rendered_rate": 0.8812
+        }
+      ],
+      "disagreements": [
+        {
+          "case": "tanstack-query v5.90.3: How do I stream useSuspenseQuery results from the server in Next.js without prefetching, and what is the cost?",
+          "section": "v5.90.3 docs/framework/react/guides/suspense.md [Suspense on the Server with streaming]",
+          "chunk_id_rank": 7,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 (v5.90.3 docs/framework/react/guides/advanced-ssr.md [Experimental streaming without prefetching in Next.js]) holds the section's text, but is another article or version"
+        }
+      ],
+      "chunk_id": {
+        "questions": 321,
+        "answerable": 267,
+        "unanswerable": 54,
+        "recall_at_1": 0.618,
+        "recall_at_5": 0.8914,
+        "recall_at_10": 0.9401,
+        "mrr": 0.7365,
+        "ndcg_at_10": 0.7241,
+        "section_recall_at_5": 0.774,
+        "section_recall_at_10": 0.8533,
+        "wrong_version_rate": 0.0,
+        "unanswerable_clean_rate": 1.0,
+        "no_answer_rate": 0.0,
+        "answerable_empty_rate": 0.0,
+        "latency_p50_ms": 46.493,
+        "latency_p95_ms": 76.233,
+        "tokens_per_question": 0.0,
+        "usd_per_question": 0.0,
+        "intervals": {
+          "recall_at_1": {
+            "low": 0.5581,
+            "high": 0.6779
+          },
+          "recall_at_5": {
+            "low": 0.8539,
+            "high": 0.9251
+          },
+          "recall_at_10": {
+            "low": 0.9101,
+            "high": 0.9663
+          },
+          "mrr": {
+            "low": 0.6928,
+            "high": 0.7791
+          },
+          "ndcg_at_10": {
+            "low": 0.6865,
+            "high": 0.7615
+          },
+          "section_recall_at_5": {
+            "low": 0.7316,
+            "high": 0.8152
+          },
+          "section_recall_at_10": {
+            "low": 0.8177,
+            "high": 0.887
+          },
+          "wrong_version_rate": {
+            "low": 0.0,
+            "high": 0.0
+          },
+          "unanswerable_clean_rate": {
+            "low": 1.0,
+            "high": 1.0
+          },
+          "no_answer_rate": {
+            "low": 0.0,
+            "high": 0.0
+          },
+          "answerable_empty_rate": {
+            "low": 0.0,
+            "high": 0.0
+          },
+          "tokens_per_question": {
+            "low": 0.0,
+            "high": 0.0
+          },
+          "usd_per_question": {
+            "low": 0.0,
+            "high": 0.0
+          }
+        }
+      },
+      "text": {
+        "metrics": {
+          "questions": 321,
+          "answerable": 267,
+          "unanswerable": 54,
+          "recall_at_1": 0.618,
+          "recall_at_5": 0.8914,
+          "recall_at_10": 0.9401,
+          "mrr": 0.7365,
+          "ndcg_at_10": 0.7241,
+          "section_recall_at_5": 0.774,
+          "section_recall_at_10": 0.8533,
+          "wrong_version_rate": 0.0,
+          "unanswerable_clean_rate": 1.0,
+          "no_answer_rate": 0.0,
+          "answerable_empty_rate": 0.0,
+          "latency_p50_ms": 46.493,
+          "latency_p95_ms": 76.233,
+          "tokens_per_question": 0.0,
+          "usd_per_question": 0.0,
+          "intervals": {
+            "recall_at_1": {
+              "low": 0.5581,
+              "high": 0.6779
+            },
+            "recall_at_5": {
+              "low": 0.8539,
+              "high": 0.9251
+            },
+            "recall_at_10": {
+              "low": 0.9101,
+              "high": 0.9663
+            },
+            "mrr": {
+              "low": 0.6928,
+              "high": 0.7791
+            },
+            "ndcg_at_10": {
+              "low": 0.6865,
+              "high": 0.7615
+            },
+            "section_recall_at_5": {
+              "low": 0.7316,
+              "high": 0.8152
+            },
+            "section_recall_at_10": {
+              "low": 0.8177,
+              "high": 0.887
+            },
+            "wrong_version_rate": {
+              "low": 0.0,
+              "high": 0.0
+            },
+            "unanswerable_clean_rate": {
+              "low": 1.0,
+              "high": 1.0
+            },
+            "no_answer_rate": {
+              "low": 0.0,
+              "high": 0.0
+            },
+            "answerable_empty_rate": {
+              "low": 0.0,
+              "high": 0.0
+            },
+            "tokens_per_question": {
+              "low": 0.0,
+              "high": 0.0
+            },
+            "usd_per_question": {
+              "low": 0.0,
+              "high": 0.0
+            }
+          }
+        },
+        "results_per_question": 10.0,
+        "version_neutral_share": 0.7548,
+        "unmatched_share": 0.0,
+        "context_tokens_per_question": 7065.0,
+        "context_tokens_p95": 11346.0,
+        "tokens_to_first_hit": 1366.2,
+        "facts_found_rate": 0.9282
+      },
+      "facts_in_expected_sections": 0.8062,
+      "facts_in_other_results": 0.4179
+    },
+    {
+      "chunking": "merge-400",
+      "threshold": 0.8,
+      "agreement": {
+        "decisions": 404,
+        "agreed": 402,
+        "rate": 0.995,
+        "hit_miss_rate": 0.9975
+      },
+      "rendered_agreement": {
+        "decisions": 404,
+        "agreed": 402,
+        "rate": 0.995,
+        "hit_miss_rate": 0.9975
+      },
+      "wrong_version_agreement": 1.0,
+      "sweep": [
+        {
+          "threshold": 0.5,
+          "rate": 0.9752,
+          "rendered_rate": 0.9752
+        },
+        {
+          "threshold": 0.6,
+          "rate": 0.9827,
+          "rendered_rate": 0.9827
+        },
+        {
+          "threshold": 0.7,
+          "rate": 0.9851,
+          "rendered_rate": 0.9851
+        },
+        {
+          "threshold": 0.8,
+          "rate": 0.995,
+          "rendered_rate": 0.995
+        },
+        {
+          "threshold": 0.9,
+          "rate": 0.9975,
+          "rendered_rate": 0.9926
+        },
+        {
+          "threshold": 1.0,
+          "rate": 0.9975,
+          "rendered_rate": 0.8861
+        }
+      ],
+      "disagreements": [
+        {
+          "case": "electron v30.0.0: What do I need on the signing side before autoUpdater can update my Mac app?",
+          "section": "v30.0.0 docs/tutorial/code-signing.md [Signing & notarizing macOS builds]",
+          "chunk_id_rank": 10,
+          "text_rank": null,
+          "why": "the chunk at rank 10 (v30.0.0 docs/tutorial/code-signing.md [Signing & notarizing macOS builds > Signing Mac App Store applications]) holds less than the threshold of the section's text"
+        },
+        {
+          "case": "tanstack-query v5.90.3: How do I stream useSuspenseQuery results from the server in Next.js without prefetching, and what is the cost?",
+          "section": "v5.90.3 docs/framework/react/guides/suspense.md [Suspense on the Server with streaming]",
+          "chunk_id_rank": 7,
+          "text_rank": 1,
+          "why": "the chunk at rank 1 (v5.90.3 docs/framework/react/guides/advanced-ssr.md [Experimental streaming without prefetching in Next.js]) holds the section's text, but is another article or version"
+        }
+      ],
+      "chunk_id": {
+        "questions": 321,
+        "answerable": 267,
+        "unanswerable": 54,
+        "recall_at_1": 0.5955,
+        "recall_at_5": 0.8764,
+        "recall_at_10": 0.9326,
+        "mrr": 0.7152,
+        "ndcg_at_10": 0.7201,
+        "section_recall_at_5": 0.7728,
+        "section_recall_at_10": 0.8667,
+        "wrong_version_rate": 0.0,
+        "unanswerable_clean_rate": 1.0,
+        "no_answer_rate": 0.0,
+        "answerable_empty_rate": 0.0,
+        "latency_p50_ms": 74.262,
+        "latency_p95_ms": 99.014,
+        "tokens_per_question": 0.0,
+        "usd_per_question": 0.0,
+        "intervals": {
+          "recall_at_1": {
+            "low": 0.5356,
+            "high": 0.6554
+          },
+          "recall_at_5": {
+            "low": 0.8352,
+            "high": 0.9139
+          },
+          "recall_at_10": {
+            "low": 0.9026,
+            "high": 0.9588
+          },
+          "mrr": {
+            "low": 0.6714,
+            "high": 0.7588
+          },
+          "ndcg_at_10": {
+            "low": 0.6821,
+            "high": 0.7565
+          },
+          "section_recall_at_5": {
+            "low": 0.7297,
+            "high": 0.8134
+          },
+          "section_recall_at_10": {
+            "low": 0.8321,
+            "high": 0.9001
+          },
+          "wrong_version_rate": {
+            "low": 0.0,
+            "high": 0.0
+          },
+          "unanswerable_clean_rate": {
+            "low": 1.0,
+            "high": 1.0
+          },
+          "no_answer_rate": {
+            "low": 0.0,
+            "high": 0.0
+          },
+          "answerable_empty_rate": {
+            "low": 0.0,
+            "high": 0.0
+          },
+          "tokens_per_question": {
+            "low": 0.0,
+            "high": 0.0
+          },
+          "usd_per_question": {
+            "low": 0.0,
+            "high": 0.0
+          }
+        }
+      },
+      "text": {
+        "metrics": {
+          "questions": 321,
+          "answerable": 267,
+          "unanswerable": 54,
+          "recall_at_1": 0.5955,
+          "recall_at_5": 0.8764,
+          "recall_at_10": 0.9326,
+          "mrr": 0.7152,
+          "ndcg_at_10": 0.7194,
+          "section_recall_at_5": 0.7728,
+          "section_recall_at_10": 0.8649,
+          "wrong_version_rate": 0.0,
+          "unanswerable_clean_rate": 1.0,
+          "no_answer_rate": 0.0,
+          "answerable_empty_rate": 0.0,
+          "latency_p50_ms": 74.262,
+          "latency_p95_ms": 99.014,
+          "tokens_per_question": 0.0,
+          "usd_per_question": 0.0,
+          "intervals": {
+            "recall_at_1": {
+              "low": 0.5356,
+              "high": 0.6554
+            },
+            "recall_at_5": {
+              "low": 0.8352,
+              "high": 0.9139
+            },
+            "recall_at_10": {
+              "low": 0.9026,
+              "high": 0.9588
+            },
+            "mrr": {
+              "low": 0.6714,
+              "high": 0.7588
+            },
+            "ndcg_at_10": {
+              "low": 0.6815,
+              "high": 0.7556
+            },
+            "section_recall_at_5": {
+              "low": 0.7297,
+              "high": 0.8134
+            },
+            "section_recall_at_10": {
+              "low": 0.8302,
+              "high": 0.8983
+            },
+            "wrong_version_rate": {
+              "low": 0.0,
+              "high": 0.0
+            },
+            "unanswerable_clean_rate": {
+              "low": 1.0,
+              "high": 1.0
+            },
+            "no_answer_rate": {
+              "low": 0.0,
+              "high": 0.0
+            },
+            "answerable_empty_rate": {
+              "low": 0.0,
+              "high": 0.0
+            },
+            "tokens_per_question": {
+              "low": 0.0,
+              "high": 0.0
+            },
+            "usd_per_question": {
+              "low": 0.0,
+              "high": 0.0
+            }
+          }
+        },
+        "results_per_question": 10.0,
+        "version_neutral_share": 0.733,
+        "unmatched_share": 0.0,
+        "context_tokens_per_question": 3534.0,
+        "context_tokens_p95": 5957.0,
+        "tokens_to_first_hit": 656.2,
+        "facts_found_rate": 0.8714
+      },
+      "facts_in_expected_sections": 0.8062,
+      "facts_in_other_results": 0.2622
+    }
+  ]
+}

@@ -52,6 +52,16 @@ revoked. Create, list and revoke them on the **Account** page of the web UI, wit
 `exactdocs token`, or over the REST API with a signed-in session. The token routes do not accept a
 token, so a leaked token cannot mint successors.
 
+<figure class="xd-shot" markdown>
+
+![The Account page on its API tokens tab: one token for every library the account can read, with the start of the token; below it, the MCP client config to paste, with the server's /mcp URL and a placeholder where the token goes.](assets/screenshots/connect-light.webp#only-light){ loading=lazy }
+![The Account page on its API tokens tab: one token for every library the account can read, with the start of the token; below it, the MCP client config to paste, with the server's /mcp URL and a placeholder where the token goes.](assets/screenshots/connect-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>The <strong>Account</strong> page: the tokens, and the config for this server with a
+placeholder for the token.</figcaption>
+
+</figure>
+
 ```bash
 curl -c jar.txt -H 'content-type: application/json' http://localhost:3000/api/v1/session \
   -d '{"username": "ada", "password": "a long passphrase"}'
@@ -106,6 +116,11 @@ to it, so the CLI and coding agents are unaffected.
   request; `github` reads the current user and applies the same organization/team checks and
   app-approval/SSO refusals as browser sign-in. Lost membership is refused at the next MCP request.
   Both use FastMCP `OAuthProxy` with the configured endpoints; OIDC/ADFS uses `OIDCProxy`.
+  The presets follow their protocol: `discord` is OAuth2, `google` and `microsoft` are OIDC (a
+  multi-tenant Microsoft provider checks each token against its own tenant's issuer). A provider
+  that creates no accounts (`auto_create_users = false`, the presets' default) refuses a person
+  whose identity no account has linked; a linked identity acts as its account, with the
+  account's own role and groups.
   GitHub `base_url`/`api_url` support GitHub.com, Enterprise Server and `*.ghe.com`, as in
   [GitHub setup](configuration.md#github-and-github-enterprise-sign-in). GitHub OAuth Apps accept
   one callback URL: use a separate OAuth App/provider for MCP with `/auth/callback` as its

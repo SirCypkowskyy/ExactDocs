@@ -24,7 +24,14 @@ for i in $runners; do
       ./svc.sh stop || true; ./svc.sh uninstall || true
       sudo -u runner ./config.sh remove --token '$token'"
   else
+    # Every job starts on a clean Docker (job-started.sh).
+    sudo lxc file push --create-dirs --mode 0755 "$(dirname "$0")/job-started.sh" \
+      "$vm/opt/actions-runner/hooks/job-started.sh"
     sudo lxc exec "$vm" -- bash -ec "cd /opt/actions-runner
+      chown -R runner: hooks && chmod 0755 hooks
+      grep -q '^ACTIONS_RUNNER_HOOK_JOB_STARTED=' .env 2>/dev/null ||
+        echo ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/actions-runner/hooks/job-started.sh >> .env
+      chown runner: .env
       sudo -u runner ./config.sh --unattended --replace --url 'https://github.com/$repo' \
         --token '$token' --name '$vm' --labels exactdocs --work _work
       ./svc.sh install runner && ./svc.sh start"

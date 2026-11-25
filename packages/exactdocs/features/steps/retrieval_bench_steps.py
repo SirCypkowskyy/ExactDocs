@@ -6,14 +6,17 @@ configurations are reported as unavailable.
 """
 
 import asyncio
+import math
 import shutil
 import tempfile
 from pathlib import Path
 
 from behave import given, then, when
 from behave.runner import Context
+from pydantic_evals import Case
 
 from retrieval_bench_stand_ins import HOSTED, stand_in_container, tiny_corpus
+from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question
 from retrieval_eval.golden import fetch, load_corpus, load_golden
 from retrieval_eval.ingestion_cli import CONFIGURATIONS
 from retrieval_eval.retrieval_bench import (
@@ -21,8 +24,10 @@ from retrieval_eval.retrieval_bench import (
     ConfigResult,
     Row,
     markdown,
+    metrics_of,
     paired_tests,
     recommend,
+    row_of,
 )
 from retrieval_eval.retrieval_bench_cli import bench, matrix
 from retrieval_eval.stats import ALPHA
@@ -63,6 +68,65 @@ def step_run(context: Context) -> None:
         )
     )
     context.ran = [r for r in context.report.results if r.metrics is not None]
+
+
+# ---------------------------------------------------------------- held sections (#503)
+
+# The guide's and "Configure"'s texts are long enough to be chunks of their own; "Install" is
+# under 400 characters, so merge-400 merges the sections after it into its chunk, which keeps
+# the heading path Guide > Install and holds "Upgrade".
+SIBLINGS = (
+    "# Guide\n\n" + "The demo package reads its settings from one file. " * 10 + "\n\n"
+    "## Install\n\nRun pip to install the demo package.\n\n"
+    "## Upgrade\n\nPass --upgrade to pip to move to the latest release.\n\n"
+    "## Configure\n\n" + "Set the timeout option in the settings file. " * 10 + "\n"
+)
+
+
+@given(
+    "a golden case whose expected section a chunking merges into the chunk of the section before it"
+)
+def step_held_corpus(context: Context) -> None:
+    tmp = Path(tempfile.mkdtemp(prefix="exactdocs-retrieval-bench-"))
+    context.add_cleanup(shutil.rmtree, tmp, ignore_errors=True)
+    upgrade = {"version": "v1", "article": "docs/guide.md", "heading_path": ["Guide", "Upgrade"]}
+    case = {
+        "name": "demo v1: How do I upgrade the demo package?",
+        "inputs": {"query": "upgrade latest release", "version": "v1", "project": "demo"},
+        "metadata": {"kind": "how-to"},
+        "expected_output": {"hits": [upgrade], "reference": "--upgrade.", "facts": ["upgrade"]},
+    }
+    tiny_corpus(tmp, guide=SIBLINGS, cases=[case])
+    context.bench_dir = tmp
+    context.chunking = next(c for c in CONFIGURATIONS if c.name == "merge-400")
+
+
+@when("the retrieval benchmark runs BM25 at that chunking")
+def step_run_bm25(context: Context) -> None:
+    tmp = context.bench_dir
+    corpus = load_corpus(tmp / "corpus.yaml")
+    repos = {p.id: fetch(p, tmp / "cache", offline=False) for p in corpus.projects}
+    report = asyncio.run(
+        bench(
+            corpus.projects,
+            repos,
+            load_golden(tmp / "cases"),
+            [context.chunking],
+            matrix([]),
+            hosted=context.hosted,
+            models_dir=tmp / "models",
+            only=["bm25"],
+        )
+    )
+    (context.result,) = report.results
+
+
+@then("the case counts as a hit at the rank of that chunk")
+def step_held_hit(context: Context) -> None:
+    (row,) = context.result.rows
+    assert row.rank == 1, row  # the chunk Guide > Install, which holds Upgrade
+    assert context.result.metrics.recall_at_1 == 1
+    assert row.section_ranks == (1,)
 
 
 @then(
@@ -231,3 +295,61 @@ def step_stays(context: Context) -> None:
     local = next(p for p in context.picks if p.budget is Budget.LOCAL)
     assert local.configuration == "A", local
     assert "the difference is not significant" in " ".join(local.reasons), local.reasons
+
+
+# ---------------------------------------------------------------- any answering section (#501)
+
+
+def _section(article: str, heading: str, *, alternative: bool = False) -> Hit:
+    return Hit(version="v1", article=article, heading_path=[heading], alternative=alternative)
+
+
+def _golden_case(kind: str, sections: list[Hit]) -> Case[Question, Answer, CaseInfo]:
+    return Case(
+        name=f"demo v1: a {kind} question",
+        inputs=Question(query="q", version="v1", project="demo"),
+        metadata=CaseInfo.model_validate({"kind": kind}),
+        expected_output=Answer(hits=sections, reference="r", facts=["f"]),
+    )
+
+
+@given("a case whose answer is in section A or, equally, in section B")
+def step_alternatives(context: Context) -> None:
+    context.a = _section("guide.md", "A")
+    context.b = _section("reference.md", "B", alternative=True)
+    context.case = _golden_case("how-to", [context.a, context.b])
+
+
+@when("a tool returns B in its top 5 and not A")
+def step_returns_b(context: Context) -> None:
+    other = _section("other.md", "X")
+    context.returned = [other, other, context.b.model_copy(update={"alternative": False})]
+    context.row = row_of(context.case, Answer(hits=context.returned))
+
+
+@then("the case counts as a hit for recall@5")
+def step_hit_at_5(context: Context) -> None:
+    assert context.row.rank == len(context.returned), context.row  # B, last
+    metrics = metrics_of([context.row])
+    assert metrics.recall_at_5 == 1
+    assert metrics.section_recall_at_5 == 1  # B answers the case's one part
+
+
+@given("a cross-page case that needs sections A and C")
+def step_two_parts(context: Context) -> None:
+    context.a = _section("guide.md", "A")
+    context.c = _section("api.md", "C")
+    context.case = _golden_case("cross-page", [context.a, context.c])
+
+
+@when("a tool returns only A")
+def step_returns_a(context: Context) -> None:
+    context.row = row_of(context.case, Answer(hits=[context.a]))
+
+
+@then("recall@5 counts the case, and section recall shows that C is missing")
+def step_one_part_of_two(context: Context) -> None:
+    metrics = metrics_of([context.row])
+    assert metrics.recall_at_5 == 1
+    assert (context.row.sections, context.row.section_ranks) == (2, (1,))  # A found, C not
+    assert math.isclose(metrics.section_recall_at_5, 1 / 2)

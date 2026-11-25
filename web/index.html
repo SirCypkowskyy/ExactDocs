@@ -5,16 +5,25 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>ExactDocs</title>
-    <!-- The theme is set before first paint, so a dark page never flashes light (src/shared/lib/theme.ts). -->
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="theme-color" content="#F3F2EF" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0E0E10" media="(prefers-color-scheme: dark)" />
+    <!-- Interface preferences are applied before first paint, so a dark or enlarged page never
+         flashes (src/shared/lib/preferences.ts: keep the two in step). -->
     <script>
       (() => {
-        let theme = "system";
+        let p = {};
         try {
-          const stored = localStorage.getItem("exactdocs-theme");
-          if (stored === "light" || stored === "dark" || stored === "system") theme = stored;
+          const stored = localStorage.getItem("exactdocs-preferences");
+          if (stored) p = JSON.parse(stored) || {};
+          else p = { theme: localStorage.getItem("exactdocs-theme") };
         } catch {
-          // Storage blocked: follow the system.
+          // Storage blocked: the defaults.
         }
+        const theme = ["light", "dark", "system"].includes(p.theme) ? p.theme : "system";
         const dark =
           theme === "dark" ||
           (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -22,6 +31,28 @@
         if (dark) root.classList.add("dark");
         root.style.colorScheme = dark ? "dark" : "light";
         root.dataset.theme = theme;
+        if ([90, 110, 125, 150].includes(p.text_scale)) root.style.fontSize = `${p.text_scale}%`;
+        if (p.contrast === "more") root.dataset.contrast = "more";
+        if (p.text_spacing === "wide") root.dataset.spacing = "wide";
+        if (p.motion === "reduced" || p.motion === "full") root.dataset.motion = p.motion;
+        const reduce =
+          p.motion === "reduced" ||
+          (p.motion !== "full" && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+        if (reduce) root.dataset.reduceMotion = "";
+        if (["hyperlegible", "dyslexic", "system"].includes(p.font)) root.dataset.font = p.font;
+        if (p.underline_links === true) root.dataset.links = "underline";
+        if (p.large_targets === true) root.dataset.targets = "large";
+        const tags =
+          p.language === "en" || p.language === "pl"
+            ? [p.language]
+            : navigator.languages || [navigator.language];
+        for (const tag of tags) {
+          const base = String(tag).toLowerCase().split("-")[0];
+          if (base === "pl" || base === "en") {
+            root.lang = base;
+            break;
+          }
+        }
       })();
     </script>
   </head>

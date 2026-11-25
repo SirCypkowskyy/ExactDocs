@@ -49,7 +49,7 @@ from exactdocs.retrieval.models import (
 )
 from exactdocs.retrieval.ports import ChunkRepository, StoredVectors, VectorIndex
 from exactdocs.retrieval.use_cases import ExternalIndexes, ExternalVectorIndex
-from index_backends import VECTOR_BACKEND_CASES
+from index_backends import VECTOR_BACKEND_CASES, params
 
 T0 = datetime(2026, 11, 7, 12, 0, tzinfo=UTC)
 SMALL = EmbeddingSpec(profile_kind="openai", model="a", dimensions=3)
@@ -127,9 +127,7 @@ class World:
         return list(await self.vectors.nearest(space.id, manifest_id, query, tag_filter, limit))
 
 
-@pytest.fixture(
-    params=["memory", *SQL_BACKENDS, *(f"external:{name}" for name in VECTOR_BACKEND_CASES)]
-)
+@pytest.fixture(params=["memory", *SQL_BACKENDS, *params(VECTOR_BACKEND_CASES, "external:")])
 async def world(request: pytest.FixtureRequest) -> AsyncIterator[World]:
     if request.param.startswith("external:"):
         # The domain's ExternalVectorIndex, as RetrievalModule wires it: the in-memory store

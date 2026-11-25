@@ -10,17 +10,22 @@ from typing import Self
 from exactdocs.catalog.constants import SCAN_PAGE
 from exactdocs.catalog.models import (
     Access,
+    LibraryId,
+    LibraryLogo,
     ManifestEntry,
     ManifestId,
     ManifestInstruction,
     TagSelection,
+    VersionRef,
 )
 from exactdocs.catalog.ports.driven import (
     AccessPolicy,
+    ArticleCounts,
     ArticleTitleFinder,
     EntrySearch,
     ImportedTagWriter,
     InstructionFileReader,
+    LibraryLogos,
     LibraryRepository,
     ManifestCopier,
     ManifestRepository,
@@ -28,6 +33,7 @@ from exactdocs.catalog.ports.driven import (
 )
 from exactdocs.catalog.ports.driving import (
     ActivateManifest,
+    ApplyLogo,
     ApplyManualTags,
     ApplyReadme,
     CollectGarbage,
@@ -42,6 +48,7 @@ from exactdocs.catalog.ports.driving import (
     GetAsset,
     GetInstructionFiles,
     GetLibrary,
+    GetLogo,
     GetManifestStates,
     GetVersionTags,
     IsLibraryIdTaken,
@@ -65,6 +72,7 @@ from exactdocs.catalog.ports.driving import (
 )
 from exactdocs.catalog.use_cases import (
     ActivateManifestUseCase,
+    ApplyLogoUseCase,
     ApplyManualTagsUseCase,
     ApplyReadmeUseCase,
     CollectGarbageUseCase,
@@ -79,6 +87,7 @@ from exactdocs.catalog.use_cases import (
     GetAssetUseCase,
     GetInstructionFilesUseCase,
     GetLibraryUseCase,
+    GetLogoUseCase,
     GetManifestStatesUseCase,
     GetVersionTagsUseCase,
     IsLibraryIdTakenUseCase,
@@ -118,6 +127,39 @@ class _NoInstructions:
         """
         del manifest_id
         return ()
+
+
+class _NoLogos:
+    """The default ``logos`` of ``build``: no library keeps a logo."""
+
+    async def get(self, library_id: LibraryId) -> LibraryLogo | None:
+        """Have none.
+
+        Args:
+            library_id: The library.
+
+        Returns:
+            Nothing.
+        """
+        del library_id
+        return None
+
+    async def put(self, library_id: LibraryId, logo: LibraryLogo) -> None:
+        """Keep nothing.
+
+        Args:
+            library_id: The library.
+            logo: The logo offered.
+        """
+        del library_id, logo
+
+    async def remove(self, library_id: LibraryId) -> None:
+        """Forget nothing: nothing was kept.
+
+        Args:
+            library_id: The library.
+        """
+        del library_id
 
 
 class _EveryoneMayDoAnything:
@@ -177,6 +219,33 @@ class _EveryoneMayDoAnything:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
+class _ScannedArticleCounts:
+    """The default ``article_counts`` of ``build``: reads each version's entries (for tests)."""
+
+    manifests: ManifestRepository
+    """Where the entries are read from."""
+
+    async def count_articles(
+        self, versions: Sequence[tuple[LibraryId, VersionRef]]
+    ) -> Mapping[tuple[LibraryId, VersionRef], int]:
+        """Count the entries of these versions' active manifests, one version at a time.
+
+        Args:
+            versions: The versions, as ``(library, ref)``.
+
+        Returns:
+            The number of entries of each version's active manifest.
+        """
+        found: dict[tuple[LibraryId, VersionRef], int] = {}
+        entries = _ScannedEntries(manifests=self.manifests)
+        for version, manifest in (await self.manifests.get_active_many(versions)).items():
+            found[version] = await entries.count(
+                manifest.id, prefix="", tags=TagSelection(), text=None
+            )
+        return found
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _ScannedEntries:
     """The default ``entry_search`` of ``build``: reads every entry and sorts them in memory."""
 
@@ -221,6 +290,7 @@ class _ScannedEntries:
         sort: Sort,
         after: tuple[SortValue, str] | None,
         limit: int,
+        offset: int = 0,
     ) -> Sequence[ManifestEntry]:
         """Return up to ``limit`` filtered entries in ``sort`` order, after the ``after`` key.
 
@@ -232,6 +302,7 @@ class _ScannedEntries:
             sort: The order.
             after: The sort value and path of the last entry of the previous page.
             limit: The most entries returned.
+            offset: How many of the entries in order (after ``after``) to skip first.
 
         Returns:
             The entries in order.
@@ -257,7 +328,7 @@ class _ScannedEntries:
         )
         if after is not None:
             ordered = [e for e in ordered if is_after((value(e), e.path), after, sort=sort)]
-        return ordered[:limit]
+        return ordered[offset : offset + limit]
 
     async def count(
         self, manifest_id: ManifestId, *, prefix: str, tags: TagSelection, text: str | None
@@ -347,6 +418,10 @@ class CatalogModule:
     """Pin the library's default version to an imported one, or unpin it (LIB-10)."""
     apply_readme: ApplyReadme
     """Take title and description from the README of a just-imported version."""
+    apply_logo: ApplyLogo
+    """Keep the logo of a just-imported default version, or remove the library's (#504)."""
+    get_logo: GetLogo
+    """Read a library's logo (#504)."""
     remove_version: RemoveVersion
     """Remove a version: it and its manifests are gone at once, in one transaction."""
     remove_library: RemoveLibrary
@@ -382,6 +457,8 @@ class CatalogModule:
         instruction_files: InstructionFileReader | None = None,
         access: AccessPolicy | None = None,
         entry_search: EntrySearch | None = None,
+        logos: LibraryLogos | None = None,
+        article_counts: ArticleCounts | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -404,6 +481,10 @@ class CatalogModule:
             access: Library roles: what the caller may do with a library; everything without it.
             entry_search: Filters, sorts and pages entries in the store; without it every entry is
                 read through ``manifests`` and sorted in memory (for tests).
+            logos: Keeps each library's logo (shares its data with ``repository``, which reads
+                ``Library.logo`` from it); without it no library has one.
+            article_counts: Counts many versions' articles at once; without it each version's
+                entries are read through ``manifests`` (for tests).
 
         Returns:
             The module, every driving port wired.
@@ -412,8 +493,11 @@ class CatalogModule:
         access = access or _EveryoneMayDoAnything()
         titles = article_titles or _NoTitles()
         tagger = ManualTagger(repository=repository, manifests=manifests)
+        counts = article_counts or _ScannedArticleCounts(manifests=manifests)
         return cls(
-            list_libraries=ListLibrariesUseCase(repository=repository, access=access),
+            list_libraries=ListLibrariesUseCase(
+                repository=repository, articles=counts, access=access
+            ),
             create_library=CreateLibraryUseCase(repository=repository, access=access),
             discard_library=DiscardLibraryUseCase(repository=repository, access=access),
             is_library_id_taken=IsLibraryIdTakenUseCase(repository=repository, access=access),
@@ -434,7 +518,9 @@ class CatalogModule:
             activate_manifest=ActivateManifestUseCase(
                 repository=repository, manifests=manifests, clock=clock
             ),
-            list_versions=ListVersionsUseCase(repository=repository, access=access),
+            list_versions=ListVersionsUseCase(
+                repository=repository, articles=counts, access=access
+            ),
             list_articles=ListArticlesUseCase(
                 repository=repository,
                 manifests=manifests,
@@ -464,6 +550,10 @@ class CatalogModule:
             update_library=UpdateLibraryUseCase(repository=repository, access=access),
             pin_default_version=PinDefaultVersionUseCase(repository=repository, access=access),
             apply_readme=ApplyReadmeUseCase(repository=repository),
+            apply_logo=ApplyLogoUseCase(repository=repository, logos=logos or _NoLogos()),
+            get_logo=GetLogoUseCase(
+                repository=repository, logos=logos or _NoLogos(), access=access
+            ),
             remove_version=RemoveVersionUseCase(
                 repository=repository, manifests=manifests, access=access
             ),

@@ -1,119 +1,181 @@
-import { useState } from "react";
-import { type ProblemSummary, type SkipGroup, skippedLabel } from "../model/add-library";
+import { CircleSlash, Copy, FileWarning, Info } from "lucide-react";
+import { useMemo } from "react";
+import { toast } from "sonner";
+import { useMessages } from "@/shared/lib/i18n";
+import { Badge } from "@/shared/ui/badge";
+import { StateBadge } from "@/shared/ui/data-table/cells";
+import { DataTable } from "@/shared/ui/data-table/data-table";
+import type { ColumnDef } from "@/shared/ui/data-table/features";
+import { DataTablePagination } from "@/shared/ui/data-table/pagination";
+import type { RowAction } from "@/shared/ui/data-table/row-actions";
+import type { TableConfig } from "@/shared/ui/data-table/table-search";
+import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
+import { type TableFilter, useLocalDataTable } from "@/shared/ui/data-table/use-data-table";
 
-const SHOWN = 8;
-/** Past this many files the list folds away, so a huge skip never pushes the buttons off screen. */
-const FOLD_FROM = 30;
+import { progressMessages } from "../messages/progress";
+import { type ProblemSummary, skippedLabel } from "../model/add-library";
 
-function Group({ group }: { group: SkipGroup }) {
-  const [all, setAll] = useState(false);
-  const files = all ? group.files : group.files.slice(0, SHOWN);
-  const rest = group.files.length - SHOWN;
-  return (
-    <li>
-      <h4 className="text-body font-semibold">
-        {group.label}{" "}
-        <span className="font-normal text-muted-foreground tabular-nums">
-          ({group.files.length})
+/*
+ * The files a finished job left out or kept with a note (blocks-map §2.3, "Job problems"): one
+ * client table of up to 1,000 skips and 200 notes, sorted, filtered and paged in the browser. Its
+ * view stays in the component: the page around it owns the URL.
+ */
+
+type Messages = (typeof progressMessages)["en"]["skipped"];
+
+const RESULTS = ["skipped", "noted"] as const;
+
+interface ProblemRow {
+  path: string;
+  code: string;
+  reason: string;
+  result: (typeof RESULTS)[number];
+}
+
+const PROBLEMS_TABLE: TableConfig = {
+  id: "job-problems",
+  sortFields: ["path", "code"],
+  maxRows: 1200,
+};
+
+const rowsOf = (summary: ProblemSummary): ProblemRow[] => [
+  ...summary.skipGroups.flatMap((g) =>
+    g.files.map((f) => ({
+      path: f.path,
+      code: f.code,
+      reason: f.reason,
+      result: "skipped" as const,
+    })),
+  ),
+  ...summary.notes.map((n) => ({
+    path: n.path,
+    code: n.code,
+    reason: n.reason,
+    result: "noted" as const,
+  })),
+];
+
+const columnsOf = (t: Messages): ColumnDef<ProblemRow>[] => [
+  {
+    accessorKey: "path",
+    header: t.columns.path,
+    enableHiding: false,
+    meta: { priority: 1, skeleton: "mono" },
+    cell: ({ row }) => (
+      <span className="font-mono text-mono [overflow-wrap:anywhere]">{row.original.path}</span>
+    ),
+  },
+  {
+    accessorKey: "code",
+    header: t.columns.problem,
+    meta: { priority: 2, skeleton: "pill" },
+    cell: ({ row }) => (
+      <span className="flex min-w-0 flex-col items-start gap-1">
+        <Badge className="font-mono">{row.original.code}</Badge>
+        <span className="text-muted-foreground [overflow-wrap:anywhere]">
+          {row.original.reason}
         </span>
-      </h4>
-      <ul className="mt-1.5 space-y-1">
-        {files.map((f) => (
-          <li key={`${f.code}:${f.path}`} className="text-body [overflow-wrap:anywhere]">
-            <span className="font-mono text-mono">{f.path}</span>
-            {!group.known && (
-              <span className="text-muted-foreground max-sm:mt-0.5 max-sm:block sm:ml-2">
-                {f.reason}
-              </span>
-            )}
-          </li>
-        ))}
-      </ul>
-      {!all && rest > 0 && (
-        <button
-          type="button"
-          onClick={() => setAll(true)}
-          className="mt-1 min-h-11 rounded text-body text-muted-foreground underline underline-offset-2 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:min-h-8"
-        >
-          Show {rest} more
-        </button>
-      )}
-    </li>
-  );
-}
-
-function Skipped({ summary }: { summary: ProblemSummary }) {
-  const { skipGroups, skipped, truncated } = summary;
-  return (
-    <>
-      <p className="mt-1 text-body text-muted-foreground">
-        These were left out of the version. The rest was imported.
-      </p>
-      <ul className="mt-4 space-y-5">
-        {skipGroups.map((g) => (
-          <Group key={g.code} group={g} />
-        ))}
-      </ul>
-      {truncated && (
-        <p className="mt-4 text-body text-muted-foreground">
-          Showing the first {skipped} skipped files. More were skipped for the same kinds of
-          reasons.
-        </p>
-      )}
-    </>
-  );
-}
-
-/** The files an import left out, grouped by why, plus files it kept with a note. */
-export function SkippedList({ summary }: { summary: ProblemSummary }) {
-  const { skipped, notes, truncated } = summary;
-  if (skipped === 0 && notes.length === 0 && !truncated) return null;
-  const fold = skipped >= FOLD_FROM;
-  const title = (
-    <>
-      Skipped files{" "}
-      <span className="font-normal text-muted-foreground tabular-nums">
-        ({skippedLabel(summary)})
       </span>
-    </>
+    ),
+  },
+  {
+    accessorKey: "result",
+    header: t.columns.result,
+    enableSorting: false,
+    meta: { priority: 3, skeleton: "pill" },
+    cell: ({ row }) =>
+      row.original.result === "skipped" ? (
+        <StateBadge state="skipped" label={t.results.skipped} />
+      ) : (
+        <Badge>
+          <Info aria-hidden="true" className="size-3" />
+          {t.notes}
+        </Badge>
+      ),
+  },
+];
+
+/** The files an import left out, and the files it kept with a note, in one table. */
+export function SkippedList({ summary }: { summary: ProblemSummary }) {
+  const t = useMessages(progressMessages).skipped;
+  const { skipped, notes, truncated } = summary;
+  const rows = useMemo(() => rowsOf(summary), [summary]);
+  const columns = useMemo(() => columnsOf(t), [t]);
+  const filters = useMemo<TableFilter[]>(
+    () => [
+      {
+        id: "code",
+        title: t.columns.problem,
+        options: [
+          ...summary.skipGroups.map((g) => ({ value: g.code, label: g.known ? g.label : g.code })),
+          ...[...new Set(summary.notes.map((n) => n.code))].map((code) => ({
+            value: code,
+            label: code,
+          })),
+        ],
+      },
+      {
+        id: "result",
+        title: t.columns.result,
+        options: [
+          { value: "skipped", label: t.results.skipped, icon: CircleSlash },
+          { value: "noted", label: t.notes, icon: Info },
+        ],
+      },
+    ],
+    [summary, t],
   );
+  const model = useLocalDataTable({
+    config: PROBLEMS_TABLE,
+    rows,
+    columns,
+    getRowId: (row) => `${row.result}:${row.code}:${row.path}`,
+    filters,
+  });
+  if (skipped === 0 && notes.length === 0 && !truncated) return null;
+  const actions = (row: ProblemRow): RowAction<ProblemRow>[] => [
+    {
+      id: "copy",
+      label: t.copyPath,
+      icon: Copy,
+      motion: "pop",
+      onSelect: () => {
+        void navigator.clipboard?.writeText(row.path).then(
+          () => toast.success(t.pathCopied),
+          () => {},
+        );
+      },
+    },
+  ];
+  const leftOut = skipped > 0 || truncated;
   return (
-    <div className="fade-in mt-8 space-y-8">
-      {(skipped > 0 || truncated) &&
-        (fold ? (
-          <details aria-labelledby="skipped-title">
-            <summary
-              id="skipped-title"
-              className="min-h-11 cursor-pointer text-section font-semibold outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {title}
-            </summary>
-            <Skipped summary={summary} />
-          </details>
-        ) : (
-          <section aria-labelledby="skipped-title">
-            <h3 id="skipped-title" className="text-section font-semibold">
-              {title}
-            </h3>
-            <Skipped summary={summary} />
-          </section>
-        ))}
-      {notes.length > 0 && (
-        <section aria-labelledby="notes-title">
-          <h3 id="notes-title" className="text-section font-semibold">
-            Imported with a note{" "}
-            <span className="font-normal text-muted-foreground tabular-nums">({notes.length})</span>
-          </h3>
-          <ul className="mt-3 space-y-2">
-            {notes.map((n) => (
-              <li key={`${n.code}:${n.path}`} className="text-body [overflow-wrap:anywhere]">
-                <span className="font-mono text-mono">{n.path}</span>
-                <span className="mt-0.5 block text-muted-foreground">{n.reason}</span>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-    </div>
+    <section aria-labelledby="skipped-title" className="fade-in mt-8">
+      <h3 id="skipped-title" className="flex items-center gap-2 text-section font-semibold">
+        <FileWarning aria-hidden="true" className="size-4 text-muted-foreground" />
+        <span>
+          {leftOut ? t.title : t.notes}{" "}
+          <span className="font-normal text-muted-foreground tabular-nums">
+            ({leftOut ? skippedLabel(summary) : notes.length})
+          </span>
+        </span>
+      </h3>
+      {leftOut && <p className="mt-1 text-body text-muted-foreground">{t.leftOut}</p>}
+      <div className="mt-4">
+        <DataTableToolbar
+          model={model}
+          search={{ label: t.find, placeholder: t.findPlaceholder }}
+          columns={false}
+        />
+        <DataTable
+          model={model}
+          label={leftOut ? t.title : t.notes}
+          rowActions={actions}
+          rowLabel={(row) => row.path}
+          noMatch={{ title: t.noMatch }}
+        />
+        <DataTablePagination model={model} />
+      </div>
+      {truncated && <p className="mt-4 text-body text-muted-foreground">{t.firstOnly(skipped)}</p>}
+    </section>
   );
 }

@@ -27,7 +27,7 @@ from exactdocs.ingestion.models import parse_article
 from exactdocs.retrieval.adapters.driven.sqlite import chunks, indexed_manifests, manifest_chunks
 from exactdocs.retrieval.constants import CHARS_PER_TOKEN
 from fixture_repo import git_bytes
-from retrieval_eval.dataset import Hit, RetrievalDataset, fingerprint
+from retrieval_eval.dataset import RetrievalDataset, fingerprint
 from retrieval_eval.fixture import model_free_container
 from retrieval_eval.golden import (
     CASES_DIR,
@@ -41,7 +41,7 @@ from retrieval_eval.golden import (
     load_golden,
 )
 from retrieval_eval.golden_cli import import_corpus, selected
-from retrieval_eval.golden_run import golden_retriever, nested_match, run_golden
+from retrieval_eval.golden_run import golden_retriever, held_match, run_golden
 from retrieval_eval.ingestion import (
     MIN_USEFUL_TOKENS,
     Article,
@@ -121,8 +121,8 @@ class Bm25Result(_Model):
     """Cases whose version has an answer (recall and MRR are over these)."""
     recall_at_1: float
     recall_at_5: float
-    """The share of answerable cases whose expected section is in the top 5, by the nested rule
-    (``golden_run.nested_match``)."""
+    """The share of answerable cases whose expected section is in the top 5, by the held match
+    rule (``golden_run.held_match``)."""
     recall_at_10: float
     mrr: float
     recall_at_5_exact: float
@@ -130,7 +130,7 @@ class Bm25Result(_Model):
     wrong_version_rate: float
     """Share of cases with a result of another version; must be 0."""
     misses: int
-    """Answerable cases whose section is not in the top 10 (nested rule)."""
+    """Answerable cases whose section is not in the top 10 (held match rule)."""
     errors: list[str]
     """Cases whose search raised."""
 
@@ -175,12 +175,48 @@ class IngestionReport(_Model):
     configurations: list[ConfigurationResult]
 
 
+def article_files(repo: Path, commit: str, project: Project) -> dict[str, bytes | None]:
+    """Read every file a project selects at a commit, byte for byte, as the repository has it.
+
+    A symlink is followed one hop to a file of the same commit (what a reader of the repository
+    sees); one that leads anywhere else is unreadable.
+
+    Args:
+        repo: The cached repository.
+        commit: The pinned commit.
+        project: The project (its docs paths).
+
+    Returns:
+        Each selected path's content, or ``None`` when it cannot be read.
+    """
+    listing = git_bytes("ls-tree", "-r", "-z", commit, cwd=repo).split(b"\0")
+    entries: dict[str, tuple[str, str]] = {}
+    for line in filter(None, listing):
+        meta, _, path = line.partition(b"\t")
+        mode, _, sha = meta.decode().split(" ")
+        entries[path.decode(errors="replace")] = (mode, sha)
+    selection = project.selection
+    files: dict[str, bytes | None] = {}
+    for path, (mode, blob) in entries.items():
+        if not selection.selects(path):
+            continue
+        sha = blob
+        if mode == _LINK_MODE:
+            target = git_bytes("cat-file", "blob", blob, cwd=repo).decode(errors="replace")
+            found = entries.get(posixpath.normpath(posixpath.join(posixpath.dirname(path), target)))
+            if found is None or found[0] == _LINK_MODE:
+                files[path] = None
+                continue
+            sha = found[1]
+        files[path] = git_bytes("cat-file", "blob", sha, cwd=repo)
+    return files
+
+
 def article_sources(repo: Path, commit: str, project: Project) -> dict[str, str | None]:
     """Read the body of every file a project selects at a commit, as the repository has it.
 
-    A symlink is followed one hop to a file of the same commit (what a reader of the repository
-    sees); one that leads anywhere else is unreadable. The front matter is left out the way
-    ``parse_article`` leaves it out, so a body is what the chunks of the article should add up to.
+    The files are ``article_files``'; the front matter is left out the way ``parse_article``
+    leaves it out, so a body is what the chunks of the article should add up to.
 
     Args:
         repo: The cached repository.
@@ -190,28 +226,12 @@ def article_sources(repo: Path, commit: str, project: Project) -> dict[str, str 
     Returns:
         Each selected path's body, or ``None`` when it cannot be read.
     """
-    listing = git_bytes("ls-tree", "-r", "-z", commit, cwd=repo).split(b"\0")
-    entries: dict[str, tuple[str, str]] = {}
-    for line in filter(None, listing):
-        meta, _, path = line.partition(b"\t")
-        mode, _, sha = meta.decode().split(" ")
-        entries[path.decode(errors="replace")] = (mode, sha)
-    selection = project.selection
-    bodies: dict[str, str | None] = {}
-    for path, (mode, blob) in entries.items():
-        if not selection.selects(path):
-            continue
-        sha = blob
-        if mode == _LINK_MODE:
-            target = git_bytes("cat-file", "blob", blob, cwd=repo).decode(errors="replace")
-            found = entries.get(posixpath.normpath(posixpath.join(posixpath.dirname(path), target)))
-            if found is None or found[0] == _LINK_MODE:
-                bodies[path] = None
-                continue
-            sha = found[1]
-        text = git_bytes("cat-file", "blob", sha, cwd=repo).decode("utf-8-sig", errors="replace")
-        bodies[path] = parse_article(path, text).body
-    return bodies
+    return {
+        path: None
+        if data is None
+        else parse_article(path, data.decode("utf-8-sig", errors="replace")).body
+        for path, data in article_files(repo, commit, project).items()
+    }
 
 
 async def stored_chunks(engine: AsyncEngine, library: str, version: str) -> dict[str, list[Chunk]]:
@@ -237,6 +257,7 @@ async def stored_chunks(engine: AsyncEngine, library: str, version: str) -> dict
     statement = (
         select(
             manifest_chunks.c.article_path,
+            manifest_chunks.c.chunk_id,
             chunks.c.heading_path,
             chunks.c.content,
             chunks.c.headings,
@@ -254,15 +275,47 @@ async def stored_chunks(engine: AsyncEngine, library: str, version: str) -> dict
     )
     found: dict[str, list[Chunk]] = {}
     async with engine.connect() as connection:
-        for path, heading_path, content, headings in await connection.execute(statement):
+        for path, chunk_id, heading_path, content, headings in await connection.execute(statement):
             found.setdefault(path, []).append(
                 Chunk(
                     heading_path=tuple(json.loads(heading_path)),
                     content=content,
                     headings=tuple(tuple(h[0]) for h in json.loads(headings or "[]")),
+                    chunk_id=chunk_id,
                 )
             )
     return found
+
+
+def chunk_headings(stored: Mapping[str, Sequence[Chunk]]) -> dict[str, frozenset[tuple[str, ...]]]:
+    """The headings each stored chunk holds, by chunk ID, for ``golden_run.held_match``.
+
+    Args:
+        stored: A version's chunks by article (``stored_chunks``).
+
+    Returns:
+        The heading path of every heading each chunk holds.
+    """
+    return {chunk.chunk_id: frozenset(chunk.headings) for cut in stored.values() for chunk in cut}
+
+
+async def held_headings(
+    engine: AsyncEngine, projects: Sequence[Project]
+) -> dict[str, frozenset[tuple[str, ...]]]:
+    """Read the headings every stored chunk of the corpus holds, for ``golden_run.held_match``.
+
+    Args:
+        engine: The instance's database, with the corpus imported.
+        projects: The projects.
+
+    Returns:
+        The heading path of every heading each chunk holds, by chunk ID.
+    """
+    held: dict[str, frozenset[tuple[str, ...]]] = {}
+    for project in projects:
+        for pinned in project.versions:
+            held.update(chunk_headings(await stored_chunks(engine, project.library, pinned.name)))
+    return held
 
 
 def article_key(project: str, version: str, path: str) -> str:
@@ -295,11 +348,11 @@ def expected_sections(dataset: RetrievalDataset) -> list[Section]:
     ]
 
 
-def bm25_result(nested: ModeOutcome, exact: ModeOutcome) -> Bm25Result:
+def bm25_result(matched: ModeOutcome, exact: ModeOutcome) -> Bm25Result:
     """Keep what the report shows of two BM25 runs.
 
     Args:
-        nested: The run scored by the nested rule.
+        matched: The run scored by the held match rule.
         exact: The run scored by the exact heading path.
 
     Returns:
@@ -308,7 +361,7 @@ def bm25_result(nested: ModeOutcome, exact: ModeOutcome) -> Bm25Result:
     Raises:
         ValueError: A run has no metrics (it did not run).
     """
-    m, e = nested.metrics, exact.metrics
+    m, e = matched.metrics, exact.metrics
     if m is None or e is None:
         message = "a golden run that ran has metrics"
         raise ValueError(message)
@@ -320,13 +373,9 @@ def bm25_result(nested: ModeOutcome, exact: ModeOutcome) -> Bm25Result:
         mrr=m.mrr,
         recall_at_5_exact=e.recall_at_5,
         wrong_version_rate=m.wrong_version_rate,
-        misses=len(nested.misses),
-        errors=nested.errors,
+        misses=len(matched.misses),
+        errors=matched.errors,
     )
-
-
-type _Held = dict[tuple[str, str, tuple[str, ...]], set[tuple[str, ...]]]
-"""The heading paths each ``(commit, article, heading path)``'s chunks hold."""
 
 
 async def _measure_version(
@@ -335,7 +384,7 @@ async def _measure_version(
     pinned: PinnedVersion,
     bodies: Mapping[str, str | None],
     expected: Sequence[Section],
-    held: _Held,
+    held: dict[str, frozenset[tuple[str, ...]]],
 ) -> tuple[VersionResult, list[Article]]:
     """Read a version's stored chunks and measure them.
 
@@ -345,7 +394,7 @@ async def _measure_version(
         pinned: The version.
         bodies: Its articles' bodies (``article_sources``).
         expected: Every expected section (those of other versions are left out).
-        held: Gets the heading paths each of its chunks holds, for ``nested_match``.
+        held: Gets the headings each of its chunks holds, by chunk ID, for ``held_match``.
 
     Returns:
         The version's result, and its articles.
@@ -359,10 +408,7 @@ async def _measure_version(
         )
         for path in sorted(set(bodies) | set(stored))
     ]
-    for path, cut in stored.items():
-        for chunk in cut:
-            key = (pinned.commit, path, chunk.heading_path)
-            held.setdefault(key, set()).update((chunk.heading_path, *chunk.headings))
+    held.update(chunk_headings(stored))
     keys = {a.key for a in articles}
     result = VersionResult(
         project=project.id,
@@ -408,7 +454,7 @@ async def run_configuration(
             raise RuntimeError(msg)
         versions: list[VersionResult] = []
         everything: list[Article] = []
-        held: _Held = {}
+        held: dict[str, frozenset[tuple[str, ...]]] = {}
         for project in projects:
             for pinned in project.versions:
                 result, articles = await _measure_version(
@@ -421,29 +467,15 @@ async def run_configuration(
                 )
                 versions.append(result)
                 everything.extend(articles)
-
-        def holds(hit: Hit) -> frozenset[tuple[str, ...]]:
-            """The heading paths a hit's chunk holds.
-
-            Args:
-                hit: A returned hit.
-
-            Returns:
-                Every heading path of the chunks with its commit, article and heading path.
-            """
-            return frozenset(
-                held.get((hit.commit_sha or "", hit.article, tuple(hit.heading_path)), ())
-            )
-
         retriever = golden_retriever(container.retrieval, Corpus(projects=list(projects)), "bm25")
-        nested = await run_golden(dataset, retriever, matches=nested_match(holds))
+        matched = await run_golden(dataset, retriever, matches=held_match(held))
         exact = await run_golden(dataset, retriever)
     return ConfigurationResult(
         name=configuration.name,
         about=configuration.about,
         chunking=configuration.chunking.model_dump(),
         totals=measure(everything, expected),
-        bm25=bm25_result(nested, exact),
+        bm25=bm25_result(matched, exact),
         versions=versions,
     )
 

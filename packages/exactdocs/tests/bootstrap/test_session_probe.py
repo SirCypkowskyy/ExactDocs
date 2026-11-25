@@ -2,7 +2,7 @@
 
 The direct-connection cases need ``EXACTDOCS_TEST_POSTGRES_URL``; the pooler cases also need
 ``EXACTDOCS_TEST_PGBOUNCER_URL`` (PgBouncer in transaction mode, ``databases.PGBOUNCER_URL``).
-CI runs both; without them those cases are skipped.
+They are integration tests (#507): CI's integration job runs both.
 """
 
 import logging
@@ -17,7 +17,8 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.pool import QueuePool
 
-from databases import ADMIN_URL, PGBOUNCER_URL, SECRET_KEY, postgres_database, through_pgbouncer
+import integration
+from databases import SECRET_KEY, postgres_database, through_pgbouncer
 from exactdocs.bootstrap import database
 from exactdocs.bootstrap.constants import SESSION_PROBE
 from exactdocs.bootstrap.database import (
@@ -28,13 +29,8 @@ from exactdocs.bootstrap.database import (
 )
 from exactdocs.bootstrap.settings import Settings
 
-needs_postgres = pytest.mark.skipif(
-    ADMIN_URL is None, reason="needs a PostgreSQL server (EXACTDOCS_TEST_POSTGRES_URL)"
-)
-needs_pgbouncer = pytest.mark.skipif(
-    ADMIN_URL is None or PGBOUNCER_URL is None,
-    reason="needs PgBouncer in transaction mode (EXACTDOCS_TEST_PGBOUNCER_URL)",
-)
+needs_postgres = integration.POSTGRES
+needs_pgbouncer = integration.PGBOUNCER
 PROBE_BUDGET_SECONDS = 0.2
 """A bound for the probe on a direct connection. It is two round trips on a pooled connection,
 a few milliseconds on a local server; the margin is for a busy shared CI runner, so the test

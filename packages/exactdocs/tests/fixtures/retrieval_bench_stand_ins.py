@@ -40,8 +40,13 @@ Set the timeout option in the settings file.
 """
 
 
-def tiny_corpus(root: Path) -> list[str]:
+def tiny_corpus(root: Path, *, guide: str = GUIDE, cases: list[dict] | None = None) -> list[str]:
     """Write the corpus, its cases and an upstream repository under ``root``.
+
+    Args:
+        root: Where to write them.
+        guide: The text of ``docs/guide.md``, the corpus's only article.
+        cases: The golden cases; the default how-to and unanswerable ones when None.
 
     Returns:
         The benchmark's arguments that point at them (corpus, cases, cache, an empty models dir).
@@ -49,7 +54,7 @@ def tiny_corpus(root: Path) -> list[str]:
     repo = root / "upstream"
     git("init", "-q", "-b", "main", "--template=", str(repo))
     (repo / "docs").mkdir(parents=True)
-    (repo / "docs" / "guide.md").write_text(GUIDE, encoding="utf-8")
+    (repo / "docs" / "guide.md").write_text(guide, encoding="utf-8")
     git("add", "-A", cwd=repo)
     git(
         "commit", "-q", "--no-verify", "-m", "v1", cwd=repo,
@@ -67,20 +72,24 @@ def tiny_corpus(root: Path) -> list[str]:
     }
     (root / "corpus.yaml").write_text(yaml.safe_dump({"projects": [project]}), "utf-8")
     install = {"version": "v1", "article": "docs/guide.md", "heading_path": ["Guide", "Install"]}
-    cases = [
-        {
-            "name": "demo v1: How do I install the demo package?",
-            "inputs": {"query": "install demo package pip", "version": "v1", "project": "demo"},
-            "metadata": {"kind": "how-to"},
-            "expected_output": {"hits": [install], "reference": "pip.", "facts": ["pip"]},
-        },
-        {
-            "name": "demo v1: Does it support Kubernetes operators?",
-            "inputs": {"query": "kubernetes operator crd", "version": "v1", "project": "demo"},
-            "metadata": {"kind": "unanswerable"},
-            "expected_output": {"hits": [], "reference": "It does not say."},
-        },
-    ]
+    cases = (
+        cases
+        if cases is not None
+        else [
+            {
+                "name": "demo v1: How do I install the demo package?",
+                "inputs": {"query": "install demo package pip", "version": "v1", "project": "demo"},
+                "metadata": {"kind": "how-to"},
+                "expected_output": {"hits": [install], "reference": "pip.", "facts": ["pip"]},
+            },
+            {
+                "name": "demo v1: Does it support Kubernetes operators?",
+                "inputs": {"query": "kubernetes operator crd", "version": "v1", "project": "demo"},
+                "metadata": {"kind": "unanswerable"},
+                "expected_output": {"hits": [], "reference": "It does not say."},
+            },
+        ]
+    )
     (root / "cases").mkdir()
     (root / "cases" / "demo.yaml").write_text(
         yaml.safe_dump({"name": "demo", "cases": cases}), "utf-8"
