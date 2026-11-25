@@ -62,6 +62,14 @@ MiniLM's `a0914435`), so a pull, and the `-local` image, are reproducible. The m
 commit of every model. A default model pulled at another commit is refused at start (pull it
 again); other models are pulled at whatever commit `main` points to at the time.
 
+## What the pull asks the Hub
+
+Only what the download needs: the model's commit and file list, and its files, from the Hub that
+`HF_ENDPOINT` names, through the proxy when one is set. huggingface_hub's own telemetry is off for
+the pull (`HF_HUB_DISABLE_TELEMETRY`), so its user agent names no AI agent, and it does not fetch
+the Hub's list of agent harnesses (`/api/agent-harnesses`), which it would otherwise fetch once a
+day and keep in `HF_HOME`.
+
 ## Never downloaded at run time
 
 Models load from that folder only (fastembed's
