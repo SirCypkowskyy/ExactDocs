@@ -207,8 +207,8 @@ The command exits with 1 (`problems`) when:
 
 ## When it runs
 
-By hand, or with the manual workflow `.github/workflows/grounded-bench.yml` on the self-hosted
-runner (input `args`, e.g. `--configs full-text`; the report is the `grounded-bench` artifact).
+By hand, or with the manual workflow `.github/workflows/grounded-bench.yml` on `ubuntu-24.04`
+(input `args`, e.g. `--configs full-text`; the report is the `grounded-bench` artifact).
 Never in pull request CI.
 
 Pull request CI runs the quick tests (`tests/evals/test_grounded_docs.py`,

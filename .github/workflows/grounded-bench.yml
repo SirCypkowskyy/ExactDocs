@@ -25,12 +25,12 @@ permissions:
 env:
   FORCE_COLOR: "1"
 
-# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing/runners.md "CI/CD and
-# runners"); it uses none of the GitHub-hosted minutes.
+# Runner: GitHub-hosted amd64, the platform of the recorded run (docs/releasing/runners.md "CI/CD and
+# runners").
 jobs:
   bench:
     name: Grounded Docs on the golden set
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
       EXACTDOCS_MODELS_DIR: ${{ github.workspace }}/.models
