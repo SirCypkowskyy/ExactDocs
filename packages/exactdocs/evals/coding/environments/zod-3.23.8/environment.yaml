@@ -27,7 +27,7 @@ forbidden:
   pattern: '\bz\.looseObject\('
   reason: added in Zod 4.0; 3.23 has `.passthrough()`
 - api: z.function({ input, output })
-  pattern: '\bz\.function\(\s*\{'
+  pattern: '\.function\(\s*\{'
   reason: the object form is Zod 4.0's; 3.23 has `z.function().args(...).returns(...)`
 - api: the `error` parameter
   pattern: '[(,]\s*\{\s*error\s*:'

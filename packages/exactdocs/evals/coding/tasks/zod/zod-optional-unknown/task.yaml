@@ -1,0 +1,24 @@
+title: A field that may hold anything or be absent
+project: zod
+version: v4.6.7
+environment: zod-4.6.7
+other_version: v4.0.17
+other_environment: zod-4.0.17
+api_since:
+  version: 4.4.0
+  released: '2026-04-29'
+files:
+- src/webhook.ts
+prompt: |
+  In `src/webhook.ts`, export `Envelope`, a schema for a webhook delivery: `type` is a
+  non-empty string; `payload` may hold any value, `null` included, or be absent
+  altogether. Export `parseEnvelope(input: unknown)`, which validates with it and
+  throws on an invalid delivery.
+forbidden:
+- api: a z.unknown() / z.any() key that may be absent, without .optional()
+  pattern: payload\s*:\s*z\.(unknown|any)\(\)\s*[,}\n]
+  reason: since Zod 4.4.0 (2026-04-29) a `z.unknown()` or `z.any()` key is required at parse time; 4.0-4.3
+    accepted it missing. Mark it `.optional()`
+notes: |
+  Zod 4.0-4.3 (like Zod 3) accepted a missing `z.unknown()` key; 4.4 requires it at
+  parse time, as its inferred type always said: an absent-able key needs `.optional()`.

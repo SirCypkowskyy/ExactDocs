@@ -12,7 +12,7 @@ forbidden:
   pattern: '\b(required_error|invalid_type_error|errorMap)\b'
   reason: dropped in Zod 4.0; customize messages with the `error` parameter
 - api: .deepPartial()
-  pattern: '\.deepPartial\('
+  pattern: '(?<!\bz)\.deepPartial\('
   reason: the method was removed in Zod 4.0
 - api: z.function().args() / .returns()
   pattern: '\.(args|returns)\('
