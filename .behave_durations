@@ -2,6 +2,7 @@
   "packages/exactdocs/features/access_log.feature": 8.23,
   "packages/exactdocs/features/add_library.feature": 16.288,
   "packages/exactdocs/features/add_version.feature": 18.121,
+  "packages/exactdocs/features/agent_bench.feature": 3.0,
   "packages/exactdocs/features/agentic_answer.feature": 22.848,
   "packages/exactdocs/features/agentic_cache.feature": 13.271,
   "packages/exactdocs/features/agentic_search.feature": 13.301,

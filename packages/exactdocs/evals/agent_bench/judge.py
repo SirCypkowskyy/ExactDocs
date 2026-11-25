@@ -2,7 +2,12 @@
 
 The judge is a pydantic-ai agent with a typed output (``Verdict``), run as a Pydantic Evals
 evaluator. It sees the question, the version, the kind, the reference answer, the facts and the
-answer, as JSON; never the documentation itself, so it grades against the golden case only.
+answer, as JSON; never the documentation itself, so it grades against the golden case only. It is
+blind to the arm (#495): the answer it reads has every arm's product and tool names removed
+(``arms.blind``), and nothing else of the run reaches it.
+
+A run that ended without an answer is not judged: ``no_answer`` when the agent failed (it counts
+as a miss), ``error`` when the provider did (it is left out of the rates and can be run again).
 """
 
 import json
@@ -14,14 +19,19 @@ from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from pydantic_evals.evaluators import EvaluationReason, Evaluator, EvaluatorContext
 
+from agent_bench.arms import blind
 from agent_bench.harness import AgentRun, BenchInfo
 from retrieval_eval.dataset import Question
 
 type Grade = Literal["correct", "partially_correct", "wrong", "refused"]
-"""A judged answer: ``refused`` says the documentation does not cover the question (or declines)
-without stating facts."""
+"""A judged answer: ``refused`` says the documentation does not cover the question, or that the
+agent does not know (or declines), without stating facts."""
 GRADES: Final[tuple[str, ...]] = get_args(Grade.__value__)
 """Every grade, best first."""
+NO_ANSWER: Final[str] = "no_answer"
+"""The grade of a run that ended without an answer on the agent's side (a miss, not judged)."""
+ERROR: Final[str] = "error"
+"""The grade of a question the provider or the judge failed on: left out of the rates."""
 GRADE: Final[str] = "grade"
 """The label holding the grade."""
 WRONG_VERSION: Final[str] = "wrong_version"
@@ -40,13 +50,15 @@ contradicts.
 - partially_correct: it states some of the required facts and nothing the reference contradicts.
 - wrong: it states none of them, or states something the reference contradicts, or invents an \
 API, an option or a behaviour.
-- refused: it says the documentation does not cover the question, or declines, and states no \
-facts.
+- refused: it says the documentation does not cover the question, or that it does not know, or \
+declines, and states no facts.
 
 A question of kind "unanswerable" has no facts: this version's documentation does not answer it. \
-Grade an answer that says the documentation does not cover it refused (the benchmark counts that \
-as the right answer for such a question), and an answer that answers anyway (from another \
-version, from memory, or invented) wrong.
+Grade an answer that says the documentation does not cover it, or that it does not know, refused \
+(the benchmark counts that as the right answer for such a question), and an answer that answers \
+anyway (from another version, from memory, or invented) wrong.
+
+Parts of the answer may read [redacted]: names were removed from it. Ignore them.
 
 Set wrong_version to true when the answer states something that holds for another version of \
 the library but not for this one, for example an option this version renamed or removed.
@@ -90,7 +102,8 @@ def judge_prompt(question: Question, info: BenchInfo, answer: str) -> str:
         answer: The agent's answer.
 
     Returns:
-        ``PROMPT_HEAD`` and the case as JSON.
+        ``PROMPT_HEAD`` and the case as JSON, the answer with every arm's product and tool names
+        removed.
     """
     case = {
         "library": info.title,
@@ -99,7 +112,7 @@ def judge_prompt(question: Question, info: BenchInfo, answer: str) -> str:
         "question": question.query,
         "reference": info.reference,
         "facts": info.facts,
-        "answer": answer,
+        "answer": blind(answer),
     }
     return PROMPT_HEAD + json.dumps(case, ensure_ascii=False, indent=2)
 
@@ -114,13 +127,14 @@ class AnswerJudge(Evaluator[Question, AgentRun, BenchInfo]):
     async def evaluate(
         self, ctx: EvaluatorContext[Question, AgentRun, BenchInfo]
     ) -> dict[str, EvaluationReason]:
-        """Grade one answer; a run that ended without an answer is wrong, unjudged.
+        """Grade one answer; a run that ended without an answer is not judged.
 
         Args:
             ctx: The question, the agent's run and the case's expectations.
 
         Returns:
-            ``grade`` (a label) and ``wrong_version`` (an assertion), each with the reason.
+            ``grade`` (a label: a judge's grade, or ``no_answer`` / ``error`` for a run without
+            an answer) and ``wrong_version`` (an assertion), each with the reason.
 
         Raises:
             ValueError: The case has no metadata.
@@ -130,10 +144,14 @@ class AnswerJudge(Evaluator[Question, AgentRun, BenchInfo]):
             raise ValueError(message)
         run = ctx.output
         if run.error and not run.answer:
-            verdict = Verdict(grade="wrong", wrong_version=False, reason=f"no answer: {run.error}")
-        else:
-            prompt = judge_prompt(ctx.inputs, ctx.metadata, run.answer)
-            verdict = (await self.judge.run(prompt)).output
+            grade = ERROR if run.failure == "provider" else NO_ANSWER
+            reason = f"no answer: {run.error}"
+            return {
+                GRADE: EvaluationReason(value=grade, reason=reason),
+                WRONG_VERSION: EvaluationReason(value=False, reason=reason),
+            }
+        prompt = judge_prompt(ctx.inputs, ctx.metadata, run.answer)
+        verdict = (await self.judge.run(prompt)).output
         return {
             GRADE: EvaluationReason(value=verdict.grade, reason=verdict.reason),
             WRONG_VERSION: EvaluationReason(value=verdict.wrong_version, reason=verdict.reason),

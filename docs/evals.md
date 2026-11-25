@@ -1137,135 +1137,209 @@ configurations, the ExactDocs baseline included).
 
 ## The agent benchmark
 
-Retrieval numbers do not show that a coding agent reaches the right answer. The agent benchmark
-(#348) measures that: a [pydantic-ai](https://ai.pydantic.dev/) agent whose only documentation
-is ExactDocs answers the golden-set questions, and an LLM judge grades each answer against the
-case's reference answer and facts. It lives in
+Retrieval numbers do not show that a coding agent reaches the right answer, nor that it reaches it
+more often with ExactDocs than without. The agent benchmark (#348, #495) measures both: a
+[pydantic-ai](https://ai.pydantic.dev/) agent answers the golden-set questions with each
+**documentation arm**, and an LLM judge, blind to the arm, grades each answer against the case's
+reference answer and facts. It lives in
 [`packages/exactdocs/evals/agent_bench/`](https://github.com/SirCypkowskyy/ExactDocs/tree/develop/packages/exactdocs/evals/agent_bench)
 and never runs in CI with a model: locally, or from the manual *Agent benchmark (real providers)*
-workflow.
+workflow. The recorded runs and their caveats are on [Agent results](benchmark/agent.md).
+
+### The arms
+
+| Arm | The agent's tools | Status |
+|---|---|---|
+| `none` | none: it answers from what it knows of that version, or says it does not know | built |
+| `exactdocs` | only the ExactDocs MCP tools, `exactdocs serve --stdio`, under each retrieval configuration | built |
+| `context7` | the official Context7 MCP server at a pinned version | #493 |
+| `grounded-docs` | Grounded Docs' MCP server over its own index | #492 |
+
+Every arm gets the same prompt, the same usage limits (`--max-requests`) and only its own tools.
+The instructions are the same for every arm and model apart from one sentence: an arm with a tool
+is told its only source of documentation is *that tool's* tools (only the name differs between
+`exactdocs`, `context7` and `grounded-docs`), to search exactly the version the project uses,
+read what it needs, answer from what it read and say when that version's documentation does not
+cover the question; `none` is told it has no tools and to answer from what it knows about that
+version or say that it does not know. Both end with "answer briefly; do not answer from another
+version". The arms are declared in `agent_bench/arms.py`; an arm whose toolset is not built yet is
+refused on the command line with its issue, and building one only adds its server to
+`ArmServers.tools` (`agent_bench/harness.py`).
 
 ### How a run works
 
-For each retrieval configuration, the projects of the asked cases are imported with the real
-importer at their pinned commits (as `golden-import` does), and embedded when the configuration
-names an embedding model. Configurations that share an embedding model share one import. Then
-ExactDocs is started **as shipped**, `exactdocs serve --stdio` on that data directory with the
-configuration's settings, and each agent model answers every case through a pydantic-ai
-`MCPToolset` on that server. The agent has no other tool.
+For the `exactdocs` arm and each retrieval configuration, the projects of the asked cases are
+imported with the real importer at their pinned commits (as `golden-import` does), and embedded
+when the configuration names an embedding model. Configurations that share an embedding model
+share one import. Then ExactDocs is started **as shipped**, `exactdocs serve --stdio` on that data
+directory with the configuration's settings (and none of the agents' API keys), and the agent
+reaches it through a pydantic-ai `MCPToolset`. The `none` arm has no toolset.
+
+The questions are interleaved: each case is asked of every agent model with every arm before the
+next case, `--concurrency` at a time, so a slow hour of the provider weighs on every arm alike.
+Each finished question is appended to `<report>.rows.jsonl` next to the report; `--resume` keeps
+the questions a previous run of the same command answered and asks only the others and those the
+provider failed on, so a long run survives a restart or a rate limit.
 
 What the agent is told is what a coding agent knows from a project, never the answer:
 
-- the instructions, the same for every model: its only documentation source is the ExactDocs
-  tools; find the library, search exactly the version the project uses, read what it needs, answer
-  briefly from what it read, and say so when that version's documentation does not cover the
-  question instead of answering from memory or another version;
+- the instructions of its arm (above);
 - the prompt: `My project uses <project title> at version <version>.` and the question. The
   ExactDocs library ID is not given: finding it (`list_libraries`, `resolve-library-id`) is part
   of the task.
 
-Both are recorded in the report (`meta.agent_instructions`, `meta.prompt`).
+Both are recorded in the report (`meta.agent_instructions` per arm, `meta.prompt`).
 
 A `process_tool_call` hook records, per question: every tool call (name, arguments cut to 200
 characters, time, error), the sections read in full (`read_chunk`, the chunks `query-docs`
 returned, whole articles from `read_article`) with their version, and how each search was
-answered (`bm25`, or `bm25 (mode_unavailable)` when the server fell back). The run also records
-the input and output tokens over every model request, the USD from ExactDocs' own price list
-(`GenaiPrices`, the bundled `genai-prices` data; `unpriced` when the model is not in it, as for
-the stand-ins), and the wall time. A run that hits the request limit (`--max-requests`, default
-20) or a provider error keeps its record with the error and is graded wrong.
+answered (`bm25`, or `bm25 (mode_unavailable)` when the server fell back). The run also records,
+over every model request:
+
+- **input tokens** and **output tokens**, as the provider reports them; the output includes the
+  thinking (Ollama counts the `reasoning` text inside `completion_tokens`);
+- **thinking tokens on their own**: the provider's count where its usage reports one (OpenAI's
+  `reasoning_tokens`); otherwise, where the model returns its thinking as text (Ollama's
+  `reasoning` field, a pydantic-ai `ThinkingPart`), an **estimate**: each response's reported
+  output tokens times the thinking's share of the characters that response produced (thinking,
+  text and tool-call arguments). It assumes the thinking costs as many tokens per character as the
+  rest, so it never exceeds the output. A model that returns no thinking and whose provider
+  reports none is recorded as *not returned* (`null`), not 0;
+- **wall time**, and of it the time lost to provider retries (`retry_seconds`, with
+  `provider_retries`): an Ollama model's client retries a 408, 409, 429 or 5xx with backoff up to
+  `--max-retries` times (default 6, `Retry-After` honoured), and the client's event hooks add up,
+  per run, the time from each failed request to its retry. The report's wall time leaves it out;
+- **USD** from ExactDocs' own price list (`GenaiPrices`, the bundled `genai-prices` data),
+  `null` (shown *unpriced*) when the model is not in it, as for Ollama Cloud and the stand-ins;
+  never 0 for an unpriced model.
+
+A run that ends without an answer is not judged. On the agent's side (the request limit, a tool
+call or output it never got right, a request the provider refused for its content: 400, 413) it
+is graded `no_answer` and counts as a miss. On the provider's side (rate limited, a server error,
+a lost connection, after the retries) it is graded `error`: a failure, never a wrong answer. It is
+left out of every rate, mean and paired test, counted in *Errors*, listed under *Runs without an
+answer*, and `--resume` asks it again.
 
 ### The judge
 
 The judge is a pydantic-ai agent with a typed output (grade, `wrong_version`, reason), run as a
-Pydantic Evals evaluator. It gets the question, the version, the kind, the reference answer, the
-facts and the answer as JSON, not the documentation, and grades:
+Pydantic Evals evaluator. It gets the question, the library and version, the kind, the reference
+answer, the facts and the answer as JSON, not the documentation, and nothing of the run: no model,
+no arm, no tool call. It is **blind to the arm**: before it reads an answer, every arm's product
+and tool names (`ExactDocs`, `search_docs`, `read_chunk`, `Context7`, `get-library-docs`,
+`Grounded Docs`, ... as whole words, ignoring case) are replaced by `[redacted]`, the same names
+for every arm (`arms.blind`). It grades:
 
 | Grade | When |
 |---|---|
 | `correct` | every required fact, in any wording, and nothing the reference contradicts |
 | `partially_correct` | some of the facts, nothing contradicted |
 | `wrong` | none of them, something the reference contradicts, or an invented API or behaviour |
-| `refused` | says the documentation does not cover it, or declines, and states no facts |
+| `refused` | says the documentation does not cover it or that it does not know, or declines, and states no facts |
 
 For an `unanswerable` case, the judge grades an answer that says the documentation of that version
-does not cover it `refused`, and one that answers anyway (from another version, from memory,
-invented) `wrong`. The report counts `refused` as accurate for an `unanswerable` case only: there
-it is the right answer, for any other kind it is a miss. Each question keeps its raw grade.
-`wrong_version` is set when the answer states something true of another version only; the report
-counts those separately (*Wrong for the version*). Its instructions are in
-`agent_bench/judge.py`.
+does not cover it, or that the agent does not know, `refused`, and one that answers anyway (from
+another version, from memory, invented) `wrong`. The report counts `refused` as accurate for an
+`unanswerable` case only: there it is the right answer, for any other kind it is a miss. Each
+question keeps its raw grade. `wrong_version` is set when the answer states something true of
+another version only; the report counts those separately (*Wrong for the version*). Its
+instructions are in `agent_bench/judge.py`.
 
 ### The report
 
 `reports/evals/agent-bench.json` (and `.md` next to it, also appended to `$GITHUB_STEP_SUMMARY`),
-one cell per agent model and retrieval configuration:
+one cell per agent model and arm (and retrieval configuration, for `exactdocs`), every rate and
+mean over the questions without a provider failure (`answered`):
 
-- grades and accuracy (share `correct`, plus `refused` on `unanswerable` cases), overall, per kind
-  and per project; errors;
-- *Wrong for the version*: answers the judge flagged `wrong_version`;
-- *Read the answer*: of the answerable questions, the share where the agent read in full every
-  part the case names (at its version): a section of each part, or one of its alternatives
-  (#501). Search snippets do not count. This is the measure of
-  "the cited chunks contain the required facts": a case's sections are, by construction, where
-  its facts are stated;
-- *Read another version*: questions where the agent read something of the asked library at
-  another version;
-- tool calls, tokens and USD per question, median wall time, and how the searches were answered;
-- the 95% interval of accuracy (overall, per kind and per project), of *Read the answer* and of
-  the means per question (`intervals`, a percentile bootstrap over the questions as in
-  [Intervals and paired tests](#intervals-and-paired-tests));
-- for each retrieval configuration but the run's first, McNemar's test (mid-p) of its accuracy
-  against the first configuration's, for the same agent model and the questions both asked
-  (`reference`, `versus_reference`), shown under *Against the first retrieval configuration*.
-  Put the baseline first (`--retrieval`), e.g. BM25 when comparing models.
+- **Quality**: grades and accuracy (share `correct`, plus `refused` on `unanswerable` cases),
+  overall, per kind and per project; *No answer* and *Errors*; *Wrong for the version* (answers
+  the judge flagged `wrong_version`, and their share); *Refused, answerable* (answerable questions
+  the agent refused: misses); *Correct refusals, unanswerable*; *Read the answer* (of the
+  answerable questions, the share where the agent read in full every part the case names, at its
+  version: a section of each part, or one of its alternatives (#501); search snippets do not
+  count. A case's sections are, by construction, where its facts are stated, so this measures
+  whether the cited text holds the required facts); *Read another version*; tool calls per
+  question;
+- **Cost per question**: wall time (retries left out), input tokens, output tokens with the
+  thinking, thinking tokens on their own (marked *estimated*, or *not returned*), USD, and the
+  provider retries, each as mean with its 95% interval, p50 and p95 (nearest rank);
+- every rate and mean with its 95% interval (`intervals`, a percentile bootstrap over the
+  questions as in [Intervals and paired tests](#intervals-and-paired-tests));
+- **Against the other arms, on the same cases** (`versus`): each arm against `none` (and every arm
+  but these two against `exactdocs` too), for the same agent model and the cases both answered:
+  the accuracy difference by McNemar's test (mid-p), the wall time, output tokens and input tokens
+  by a paired sign-flip permutation test, each with its paired bootstrap interval, and the ratio
+  of the means. This answers "how much longer does the agent take with the tool, and is it worth
+  it";
+- for each retrieval configuration of an arm but its first, McNemar's test of its accuracy
+  against the first one's (`reference`, `versus_reference`), under *Against the first retrieval
+  configuration*. Put the baseline first (`--retrieval`), e.g. BM25 when comparing models;
+- *Runs without an answer*: the `no_answer` and `error` runs and why.
 
 `statistics` records the seed, resamples, confidence and level of the intervals and tests.
-`meta` holds what a rerun needs: the agent models, the judge model, each configuration's
-settings, the limits, the instructions and prompt, the ExactDocs version and repository commit,
-and every imported version with its pinned and recorded commit. `questions` holds every question's
-record (tool calls, chunks read as `<chunk ID>@<version>`, tokens, USD, answer, judge's reason).
+`meta` holds what a rerun needs: the agent models, the judge model, the arms and their
+instructions, each retrieval configuration's settings, the selection of cases, the thinking
+setting, the limits and retries, where the models are served (`providers`: base URLs only), the
+ExactDocs version and repository commit, and every imported version with its pinned and recorded
+commit. `questions` holds every question's record (tool calls, chunks read as
+`<chunk ID>@<version>`, tokens, thinking, wall and retry time, USD, the answer as given, the
+judge's reason).
+
+**No credential is recorded.** A retrieval setting whose name holds `KEY`, `TOKEN`, `SECRET`,
+`PASSWORD`, `AUTH`, `HEADER` and the like is recorded as `<redacted>`, base URLs lose their user,
+password and query, and error messages and the judge's reasons have every secret-named environment
+value and `Bearer <token>` replaced (`agent_bench/redact.py`). The API keys are read from the
+environment only.
 
 ### Running it
 
 ```bash
 just agent-bench run --offline --projects starlette,zod --limit 4   # stand-ins, no provider
-just agent-bench run \
-  --agent-model openai:gpt-5-mini --agent-model anthropic:claude-sonnet-4-5 \
-  --judge-model openai:gpt-5 \
-  --retrieval bm25:mode=bm25 \
-  --retrieval 'hybrid:mode=hybrid,embedding.model=eval:text-embedding-3-small'
+OLLAMA_BASE_URL=https://ollama.com/v1 OLLAMA_API_KEY=... just agent-bench run \
+  --agent-model ollama:gpt-oss:120b --agent-model ollama:kimi-k3 --judge-model ollama:glm-5.3 \
+  --arm none,exactdocs --retrieval bm25:mode=bm25 --thinking medium \
+  --per-stratum 3 --concurrency 3            # 90 cases: 3 per kind and project
+just agent-bench run ... --resume            # ask again what failed on the provider's side
 just agent-bench run --help
 ```
 
 - `--agent-model` (repeat for several) and `--judge-model` are
   [pydantic-ai model names](https://ai.pydantic.dev/models/overview/) (`<provider>:<model>`); the
   provider's usual variables give the key (`OPENAI_API_KEY`, `OPENAI_BASE_URL` for a gateway,
-  `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`). Use a judge from another vendor than the agents where
-  you can.
-- `--retrieval name[:key=value,...]` (repeat for several) names one configuration: each key is
-  an ExactDocs AI setting path set as `EXACTDOCS_AI__<KEY>` (`mode=hybrid` is
-  `EXACTDOCS_AI__MODE=hybrid`, `embedding.model=eval:...` is `EXACTDOCS_AI__EMBEDDING__MODEL`),
-  on top of the environment, for both the import and the server. Profiles (`eval:` above) come
-  from the environment as for any instance (`EXACTDOCS_AI__PROVIDERS__EVAL__...`). The default is
-  `bm25:mode=bm25` and `hybrid:mode=hybrid`; without an embedding model the second falls back to
-  BM25, which the report shows. The configurations of the retrieval benchmark (#347) are written
-  the same way.
-- `--projects`, `--kinds`, `--limit N` (cases per project) pick the cases; `--concurrency`
-  asks several questions at once (wall time then includes contention); `--work-dir` keeps the
-  data directories and each server's log (`server-<configuration>.log`).
+  `ANTHROPIC_API_KEY`, `GOOGLE_API_KEY`). `ollama:<model>` is an Ollama model through
+  pydantic-ai's Ollama provider at `OLLAMA_BASE_URL` (`https://ollama.com/v1` for Ollama Cloud)
+  with `OLLAMA_API_KEY`, retried and measured as above. Use a judge from another vendor than the
+  agents where you can.
+- `--arm` (repeat or comma-separate; default `none,exactdocs`) picks the arms.
+- `--thinking on|off|minimal|low|medium|high|xhigh|max` sets the agents' thinking (pydantic-ai's
+  `thinking`, sent to Ollama as `reasoning_effort`); left out, each model keeps its default. The
+  setting is recorded (`meta.thinking`); some models think whatever it says.
+- `--retrieval name[:key=value,...]` (repeat for several) names one configuration of the
+  `exactdocs` arm: each key is an ExactDocs AI setting path set as `EXACTDOCS_AI__<KEY>`
+  (`mode=hybrid` is `EXACTDOCS_AI__MODE=hybrid`, `embedding.model=eval:...` is
+  `EXACTDOCS_AI__EMBEDDING__MODEL`), on top of the environment, for both the import and the
+  server. Profiles (`eval:` above) come from the environment as for any instance
+  (`EXACTDOCS_AI__PROVIDERS__EVAL__...`). The default is `bm25:mode=bm25` and `hybrid:mode=hybrid`;
+  without an embedding model the second falls back to BM25, which the report shows.
+- `--projects`, `--kinds`, `--limit N` (cases per project) pick the cases; `--per-stratum N`
+  (with `--seed`, default 495) takes a stratified random sample of N cases per kind and project,
+  as the golden set's review does; `--concurrency` asks several questions at once (wall time then
+  includes contention); `--work-dir` keeps the data directories and each server's log
+  (`server-<configuration>.log`); `--resume` continues from `<report>.rows.jsonl`.
 - `--offline` uses the stand-ins in `agent_bench/offline.py` (pydantic-ai `FunctionModel`s):
   `offline:search` answers from the search snippets, `offline:read` reads the top section first,
-  and the judge grades by word overlap with the facts. They prove the plumbing, not quality.
+  `offline:think` also returns thinking, and with no tools (`none`) each says it does not know;
+  the judge grades by word overlap with the facts. They prove the plumbing, not quality.
 
 The manual workflow *Agent benchmark (real providers)* (`.github/workflows/agent-bench.yml`,
 `workflow_dispatch` only, environment `eval-providers`) runs the same command. Its inputs are
-`agent_models` (comma-separated), `judge_model`, `retrieval` (configurations separated by spaces)
-and `args` (e.g. `--projects zod --limit 10`). Keys: the secrets `AGENT_BENCH_OPENAI_API_KEY`,
-`AGENT_BENCH_ANTHROPIC_API_KEY`, `AGENT_BENCH_GOOGLE_API_KEY` (and the variable
-`AGENT_BENCH_OPENAI_BASE_URL` for an OpenAI-compatible gateway) for the agents and the judge; the
-`eval` profile of the retrieval workflow (`EVAL_PROVIDER_*`) for the server's models. The report
-is uploaded as the artifact `agent-bench`.
+`agent_models` (comma-separated), `judge_model`, `arms` (default `none,exactdocs`), `thinking`,
+`retrieval` (configurations separated by spaces) and `args` (e.g. `--per-stratum 3`). Keys: the
+secrets `AGENT_BENCH_OPENAI_API_KEY`, `AGENT_BENCH_ANTHROPIC_API_KEY`,
+`AGENT_BENCH_GOOGLE_API_KEY`, `AGENT_BENCH_OLLAMA_API_KEY` (and the variables
+`AGENT_BENCH_OPENAI_BASE_URL` for an OpenAI-compatible gateway and `AGENT_BENCH_OLLAMA_BASE_URL`)
+for the agents and the judge; the `eval` profile of the retrieval workflow (`EVAL_PROVIDER_*`) for
+the server's models. The report is uploaded as the artifact `agent-bench`.
 
 ### Judge agreement
 
@@ -1278,14 +1352,17 @@ just agent-bench sample --report reports/evals/agent-bench.json --size 50   # ->
 just agent-bench agreement --report reports/evals/agent-bench.json --labels reports/evals/agent-bench-labels.yaml
 ```
 
-`sample` picks answers reproducibly (`--seed`) and writes each with its question, version, kind,
-reference and facts, and blank labels; the judge's grade is left out so it cannot steer the
-labeller. Label with the judge's grades, which the file's header repeats:
+`sample` picks judged answers reproducibly (`--seed`) and writes each with its question, version,
+kind, reference and facts, and blank labels. The labeller is as blind as the judge: the answer is
+shown as the judge read it (names `[redacted]`), its ID is a hash that names neither the model nor
+the arm, and the judge's grade is left out so it cannot steer the labeller. Label with the judge's
+grades, which the file's header repeats:
 
 - `correct`: states every fact, nothing the reference contradicts;
 - `partially_correct`: states some of the facts, nothing contradicted;
 - `wrong`: states none, contradicts the reference, or invents an API or behaviour;
-- `refused`: says the documentation does not cover it (or declines) and states no facts.
+- `refused`: says the documentation does not cover it or that it does not know (or declines) and
+  states no facts.
 
 For an `unanswerable` case, an answer saying the documentation does not cover it is labelled
 `refused`, not `correct` (the report counts it as right for that kind); answering anyway is
@@ -1296,11 +1373,16 @@ not worth labelling.
 
 ### Tests
 
-`tests/evals/test_agent_bench.py`: the recording, grounding, pricing, the stand-in judge, the
-judge evaluator, the report and agreement run in CI. The end-to-end test, marked `eval`
-(`uv run pytest -m eval`), imports a two-version corpus built in a temporary repository, starts
-`exactdocs serve --stdio` on it under two configurations and runs both stand-in agents and the
-stand-in judge through it.
+`tests/evals/test_agent_bench.py` and `tests/evals/test_agent_arms.py` run in CI: the recording,
+grounding, pricing, the arms and their instructions, the blind judge, thinking tokens (reported,
+estimated, not returned), whose side a failure is on, the retry log, the redaction of secrets, the
+report and its paired comparisons, the checkpoint and `--resume`, and agreement. Both arms run end
+to end there with the stand-in models and the stand-in documentation tools of
+`tests/fixtures/agent_bench_stand_ins.py` (an in-process MCP server), as do the scenarios of
+`features/agent_bench.feature`. The end-to-end test, marked `eval` (`uv run pytest -m eval`),
+imports a two-version corpus built in a temporary repository, starts `exactdocs serve --stdio` on
+it under two configurations and runs every stand-in agent with both arms and the stand-in judge
+through it.
 
 ## Tiers
 

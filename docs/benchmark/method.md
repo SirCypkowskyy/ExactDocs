@@ -134,19 +134,37 @@ MkDocs-specific losses. The definitions are in
 
 ## Agent metrics and the judge
 
+The same agent model answers each case with each **documentation arm** (#495): `none` (no tools:
+it answers from what it knows of that version or says it does not know) and `exactdocs` (only the
+ExactDocs MCP tools); `context7` (#493) and `grounded-docs` (#492) are to follow. The arms get the
+same prompt, the same request limit and the same instructions apart from the sentence about the
+documentation tool.
+
 The judge is an LLM given the question, version, kind, reference answer, facts and the agent's
-answer (not the docs). It grades `correct` (every fact, nothing contradicted),
-`partially_correct` (some facts, nothing contradicted), `wrong` (no fact, a contradiction or an
-invented API) or `refused` (says the docs do not cover it). Accuracy is the share `correct`,
-plus `refused` on `unanswerable` cases, where refusing is the right answer. The report also
-counts answers true only of another version, how often the agent read every part the case
-names in full (a section of each, or one of its alternatives), and whether it read another version, with tool calls, tokens, USD and wall time
-per question.
+answer (not the docs, not the arm: every arm's product and tool names are removed from the answer
+first). It grades `correct` (every fact, nothing contradicted), `partially_correct` (some facts,
+nothing contradicted), `wrong` (no fact, a contradiction or an invented API) or `refused` (says
+the docs do not cover it, or that it does not know). Accuracy is the share `correct`, plus
+`refused` on `unanswerable` cases, where refusing is the right answer. The report also counts
+answers true only of another version, refusals on answerable cases, correct refusals on
+`unanswerable` ones, how often the agent read every part the case names in full (a section of
+each, or one of its alternatives), whether it read another version, and tool calls. A run the
+provider failed on (rate limit, server error, after the retries) is an `error`, left out of every
+rate and test; one where the agent gave no answer (the request limit) is a miss.
+
+Cost per question, each as mean with a 95% interval, p50 and p95: wall time (the time lost to
+provider retries left out), input tokens, output tokens with the thinking, thinking tokens on
+their own (the provider's count where it reports one; otherwise estimated from the thinking text
+the model returns, as the thinking's share of each response's characters times its output tokens;
+*not returned* when there is neither) and USD (*unpriced* when the model has no price, never 0).
+Each arm is compared with `none` on the same cases: accuracy by McNemar's test (mid-p), wall time
+and tokens by a paired sign-flip permutation test, with the ratio of the means.
 
 **Judge agreement with hand labels: not measured yet.** The judge is checked by labelling at
 least 50 answers of a real-model run by hand and comparing (`just agent-bench sample`, then
-`just agent-bench agreement`; see [Judge agreement](../evals.md#judge-agreement)). No real-model
-run exists yet, so neither does the agreement rate.
+`just agent-bench agreement`; see [Judge agreement](../evals.md#judge-agreement)). The first
+real-model run ([Agent results](agent.md)) is not labelled yet, so its accuracies rest on an
+unchecked judge.
 
 ## How a default is chosen
 
@@ -182,8 +200,9 @@ budgets; between chunkings of one budget the best one wins outright.
 | retrieval benchmark with local models | by hand (`just retrieval-bench --offline`) | local, pulled with `exactdocs models pull` |
 | retrieval benchmark, hosted configurations | by hand: the manual *Retrieval eval (real providers)* workflow (`eval-providers.yml`) with the `benchmark` input ticked | hosted |
 | text scorer calibration | by hand (`just text-bench --offline`), when the matcher or the chunker changes | none |
+| agent benchmark, quick tests of every arm | every pull request (`uv run pytest`, `uv run behave`) | stand-ins, stand-in documentation tools |
 | Grounded Docs on the golden set | by hand (`just grounded-bench --offline`), or the manual *Grounded Docs benchmark* workflow (`grounded-bench.yml`); quick tests replay recorded responses on every pull request | local, `BAAI/bge-small-en-v1.5` pulled with `exactdocs models pull` |
-| agent benchmark | by hand: the manual *Agent benchmark (real providers)* workflow (`agent-bench.yml`), or `just agent-bench run` locally | hosted |
+| agent benchmark | by hand: the manual *Agent benchmark (real providers)* workflow (`agent-bench.yml`), or `just agent-bench run` locally | hosted (Ollama Cloud for the recorded run) |
 
 No CI or release run calls a hosted model or needs a secret.
 
@@ -209,8 +228,9 @@ The second is the recorded retrieval run ([The recorded run](../evals.md#the-rec
 
 The tables on the benchmark pages are not typed by hand. Each page holds generated blocks between
 `<!-- bench:<name> -->` and `<!-- /bench -->` markers, and `just bench-pages` refills them from
-`packages/exactdocs/evals/results/ingestion.json`, `retrieval.json`, `grounded-docs.json` and the
-golden set, with the benchmarks' own Markdown renderers. Everything outside the markers is prose.
+`packages/exactdocs/evals/results/ingestion.json`, `retrieval.json`, `agent.json`,
+`grounded-docs.json` and the golden set, with the benchmarks' own Markdown renderers. Everything
+outside the markers is prose.
 
 ```bash
 just bench-pages            # rewrite the blocks after a new recorded run

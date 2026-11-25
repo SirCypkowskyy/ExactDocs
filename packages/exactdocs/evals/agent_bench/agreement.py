@@ -11,8 +11,12 @@ from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict
 
+from agent_bench.arms import blind
 from agent_bench.judge import GRADES
-from agent_bench.report import BenchReport, QuestionResult
+from agent_bench.report import BenchReport, QuestionResult, counted
+
+ID_DIGITS: Final[int] = 12
+"""Hex digits of an answer's ID."""
 
 SAMPLE_SIZE: Final[int] = 50
 """Answers in a labelling sample by default (the issue asks for at least 50)."""
@@ -21,9 +25,11 @@ LABELLING_HEADER: Final[str] = """\
 #   correct            states every fact, nothing the reference contradicts
 #   partially_correct  states some of the facts, nothing contradicted
 #   wrong              states none, contradicts the reference, or invents an API or behaviour
-#   refused            says the documentation does not cover it (or declines), states no facts
+#   refused            says the documentation does not cover it or that it does not know (or
+#                      declines), states no facts
 # For an `unanswerable` case, an answer saying the documentation does not cover it is
 # `refused`, not `correct` (the report counts it as right there); answering anyway is `wrong`.
+# Names of documentation tools are replaced by [redacted], as the judge read them.
 # Set `wrong_version` to true when the answer states something true of another version only,
 # else false. Leave `grade` blank to skip an answer. Then run `just agent-bench agreement`.
 """
@@ -31,15 +37,17 @@ LABELLING_HEADER: Final[str] = """\
 
 
 def answer_id(row: QuestionResult) -> str:
-    """Identify one answer across the report and the labels.
+    """Identify one answer across the report and the labels, without telling its model or arm.
 
     Args:
         row: The question record.
 
     Returns:
-        ``<agent model> | <retrieval> | <case>``.
+        12 hex digits of a hash of the agent model, arm, retrieval configuration and case, so the
+        labeller, like the judge, does not learn which arm answered.
     """
-    return f"{row.agent_model} | {row.retrieval} | {row.case}"
+    key = f"{row.agent_model} | {row.arm} | {row.retrieval} | {row.case}"
+    return hashlib.sha256(key.encode()).hexdigest()[:ID_DIGITS]
 
 
 def sample(report: BenchReport, size: int, seed: int) -> list[dict[str, Any]]:
@@ -51,8 +59,9 @@ def sample(report: BenchReport, size: int, seed: int) -> list[dict[str, Any]]:
         seed: The random seed.
 
     Returns:
-        One entry per answer, in report order: the case, its reference and facts, and the
-        answer, with ``grade`` and ``wrong_version`` blank for the labeller.
+        One entry per judged answer (runs without an answer have none to label), in report order:
+        the case, its reference and facts, and the answer with the arms' names removed as the
+        judge read it, with ``grade`` and ``wrong_version`` blank for the labeller.
     """
 
     def draw(row: QuestionResult) -> str:
@@ -66,7 +75,8 @@ def sample(report: BenchReport, size: int, seed: int) -> list[dict[str, Any]]:
         """
         return hashlib.sha256(f"{seed}:{answer_id(row)}".encode()).hexdigest()
 
-    picked = {answer_id(row) for row in sorted(report.questions, key=draw)[:size]}
+    judged = [row for row in report.questions if counted(row) and row.answer]
+    picked = {answer_id(row) for row in sorted(judged, key=draw)[:size]}
     return [
         {
             "id": answer_id(row),
@@ -76,11 +86,11 @@ def sample(report: BenchReport, size: int, seed: int) -> list[dict[str, Any]]:
             "question": row.question,
             "reference": row.reference,
             "facts": row.facts,
-            "answer": row.answer,
+            "answer": blind(row.answer),
             "grade": "",
             "wrong_version": "",
         }
-        for row in report.questions
+        for row in judged
         if answer_id(row) in picked
     ]
 
