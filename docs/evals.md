@@ -1717,6 +1717,20 @@ stand-in documentation tools, and check the real tasks statically: they load, th
 their versions, every reference uses no forbidden API and every other-version solution uses one.
 The tests that install real environments or need Docker are marked `integration`.
 
+### A first run
+
+One small run is recorded in `packages/exactdocs/evals/results/coding-tasks.json` (and `.md`):
+2026-11-25, `ollama:gpt-oss:120b` (Ollama Cloud, its default thinking), arms `none` and
+`exactdocs` (BM25), the Docker sandbox, 20 requests a task, on six tasks that all pin a version
+released after the model's cutoff (`pydantic-class-model-fields`, `starlette-startup-shutdown`,
+`starlette-template-response-v1`, `zod-error-messages-v4`, `zod-optional-unknown`,
+`query-gc-time-v5`). Without documentation it passed 2 of 6 and used a forbidden API in 3
+(`self.model_fields`, Zod 3's `required_error`, the name-first `TemplateResponse`); with ExactDocs
+it passed 4 of 6 and used one (the `TemplateResponse` task, where it searched nothing). Both arms
+failed the Starlette lifespan task the same way: they connected the database lazily in the
+endpoint and never disconnected it at shutdown. Against `none`: 2 gained, 0 lost, p = 0.25 (McNemar,
+mid-p), not significant: six tasks show the plumbing works on a real model, not an effect size.
+
 ### Adding a task
 
 Write the task directory with a reference that passes on the pinned version and an other-version
