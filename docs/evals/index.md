@@ -49,3 +49,4 @@ they recommend in the [Benchmark](../benchmark/index.md) section.
 | [Context7](context7.md) | which pinned versions Context7 serves, and its answers | `just context7-bench` | by hand |
 | [Agent benchmark](agent-bench.md) | an agent answering the golden set with each documentation arm | `just agent-bench run` | by hand |
 | [Running the agent benchmark](agent-bench-running.md) | flags, the manual workflow, judge agreement, tests | `just agent-bench` | by hand |
+| [Version-pinned coding tasks](coding-tasks.md) | whether an agent's code runs against the version the project pins, per documentation arm | `just coding-tasks check`, `just coding-tasks run` | `check` on every pull request (no model); `run` by hand |

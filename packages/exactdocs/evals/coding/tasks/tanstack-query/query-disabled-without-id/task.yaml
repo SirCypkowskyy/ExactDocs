@@ -1,0 +1,19 @@
+title: A query that does not run until its input exists
+project: tanstack-query
+version: v5.0.0
+environment: query-core-5.0.0
+other_version: v5.90.3
+other_environment: query-core-5.90.3
+api_since:
+  version: 5.25.0
+  released: '2024-03-05'
+files:
+- src/user.ts
+prompt: |
+  The project uses `@tanstack/query-core` (TanStack Query's framework-agnostic core). Implement `userOptions(fetchUser, userId)` in
+  `src/user.ts`: the options of a query (key `["user", userId]`) that runs
+  `fetchUser(userId)`, and that does not run at all while `userId` is `undefined` (an
+  observer of it stays pending without fetching).
+notes: |
+  TanStack Query 5.25 added `skipToken` (`queryFn: userId === undefined ? skipToken :
+  ...`); 5.0.0 does not export it and disables a query with `enabled: false`.

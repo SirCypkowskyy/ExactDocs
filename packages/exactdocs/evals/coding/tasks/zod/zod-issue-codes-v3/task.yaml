@@ -1,0 +1,21 @@
+title: Classify validation issues by their code
+project: zod
+version: v3.23.8
+environment: zod-3.23.8
+pair: zod-issue-codes
+other_version: v4.6.7
+other_from: zod-issue-codes-v4
+api_since:
+  version: 4.0.0
+  released: '2025-07-09'
+files:
+- src/contact.ts
+prompt: |
+  Implement `summarize(input)` in `src/contact.ts`: validate the input with `Contact`
+  and turn each issue into `<field>: <kind>`, where kind is `missing` (the field is
+  absent), `empty` (a string shorter than its minimum), `bad-email` (a string that is
+  not an email address) or `wrong-type` (anything else). Classify by the issues' codes
+  and details, not by their messages. A valid input gives an empty list.
+notes: |
+  Zod 3 reports a failed string format as code `invalid_string` with `validation:
+  "email"`; Zod 4 as `invalid_format` with `format: "email"`.

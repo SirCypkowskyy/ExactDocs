@@ -1,0 +1,20 @@
+title: Validate an IPv4 address and a port
+project: zod
+version: v4.0.17
+environment: zod-4.0.17
+pair: zod-ipv4
+other_version: v3.23.8
+other_from: zod-ipv4-v3
+api_since:
+  version: 4.0.0
+  released: '2025-07-09'
+files:
+- src/config.ts
+prompt: |
+  In `src/config.ts`, add two fields to the `ServerConfig` schema: `host`, which must be
+  an IPv4 address (an IPv6 address or a host name is rejected), and `port`, an integer
+  from 1 to 65535. Export `parseConfig(input: unknown): ServerConfig`, which validates
+  the input with the schema and throws on an invalid one.
+notes: |
+  Zod 3 checks an IP address with `z.string().ip({ version: "v4" })`; Zod 4 removed
+  `.ip()` for the top-level `z.ipv4()`, which Zod 3 does not have.

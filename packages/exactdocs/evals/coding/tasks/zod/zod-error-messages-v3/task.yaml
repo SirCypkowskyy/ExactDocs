@@ -1,0 +1,20 @@
+title: Custom messages for a missing and a mistyped field
+project: zod
+version: v3.23.8
+environment: zod-3.23.8
+pair: zod-error-messages
+other_version: v4.6.7
+other_from: zod-error-messages-v4
+api_since:
+  version: 4.0.0
+  released: '2025-07-09'
+files:
+- src/signup.ts
+prompt: |
+  In `src/signup.ts`, give `username` its own error messages: "Username is required"
+  when it is missing, and "Username must be text" when it is present but not a string.
+  Set them on the schema; `problems` stays as it is.
+notes: |
+  Zod 3 takes `required_error` and `invalid_type_error`; Zod 4 dropped them (and
+  `errorMap`) for one `error` parameter, a string or a function of the issue, which
+  Zod 3 ignores.

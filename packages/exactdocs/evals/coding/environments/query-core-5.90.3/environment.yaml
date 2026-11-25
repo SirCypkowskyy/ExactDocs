@@ -1,0 +1,25 @@
+# @tanstack/query-core 5.90.3 (npm, 2025-10-13), the framework-agnostic core of TanStack Query v5,
+# with TypeScript 5.9.3; package-lock.json from `npm install --package-lock-only`.
+ecosystem: node
+package: "@tanstack/query-core"
+version: 5.90.3
+released: 2025-10-13
+forbidden:
+- api: cacheTime
+  pattern: '\bcacheTime\b'
+  reason: renamed to `gcTime` in 5.0.0; v5 ignores `cacheTime`
+- api: hashQueryKey
+  pattern: '\bhashQueryKey\b'
+  reason: renamed to `hashKey` in 5.0.0
+- api: keepPreviousData option
+  pattern: '\bkeepPreviousData\s*:'
+  reason: 'the option was removed in 5.0.0; use `placeholderData: keepPreviousData`'
+- api: status 'loading'
+  pattern: '["'']loading["'']'
+  reason: renamed to `pending` in 5.0.0
+- api: useErrorBoundary
+  pattern: '\buseErrorBoundary\b'
+  reason: renamed to `throwOnError` in 5.0.0
+- api: positional query keys in QueryClient methods
+  pattern: '\b(fetchQuery|prefetchQuery|fetchInfiniteQuery|prefetchInfiniteQuery|invalidateQueries|refetchQueries|removeQueries|resetQueries|cancelQueries|isFetching|getQueriesData|setQueriesData)\(\s*\['
+  reason: the overloads were removed in 5.0.0; every method takes one object (`{ queryKey, ... }`)

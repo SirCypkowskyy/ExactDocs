@@ -1,0 +1,1412 @@
+{
+  "meta": {
+    "started_at": "2026-11-25T10:30:00+00:00",
+    "exactdocs_version": "0.0.0.post139.dev0+124ff7da",
+    "git_commit": "650a9e818e05924983caff3ec376d342883b3052",
+    "agent_models": [
+      "ollama:gpt-oss:120b"
+    ],
+    "arms": [
+      "none",
+      "exactdocs"
+    ],
+    "retrieval": {
+      "bm25": {
+        "EXACTDOCS_AI__MODE": "bm25"
+      }
+    },
+    "tasks": 6,
+    "selection": "tasks starlette-startup-shutdown,starlette-template-response-v1,zod-error-messages-v4,zod-optional-unknown,pydantic-class-model-fields,query-gc-time-v5",
+    "cutoff": "2024-06-30",
+    "max_requests": 20,
+    "concurrency": 2,
+    "thinking": "model default",
+    "max_retries": 6,
+    "providers": {
+      "ollama": "https://ollama.com/v1"
+    },
+    "instructions": {
+      "none": "You are a coding agent working in a project's workspace. You have no documentation tools: rely on what you know about the version of the library the project uses.\n\nComplete the task by changing the workspace's files with the workspace tools: list_files, read_file, write_file (a whole file at a time) and run_tests (the project's own tests, in a sandbox). The project's dependencies are pinned in its lockfile and already installed: nothing can be installed and the lockfile cannot be changed. Write code for exactly the version of the library the project uses, run the tests before you finish, and end with a short summary of what you changed.",
+      "exactdocs": "You are a coding agent working in a project's workspace. To look up the library's API, your only source of documentation is the ExactDocs tools: find the library, search the documentation of exactly the version the project uses, and read the sections you need. Do not rely on what you remember of other versions.\n\nComplete the task by changing the workspace's files with the workspace tools: list_files, read_file, write_file (a whole file at a time) and run_tests (the project's own tests, in a sandbox). The project's dependencies are pinned in its lockfile and already installed: nothing can be installed and the lockfile cannot be changed. Write code for exactly the version of the library the project uses, run the tests before you finish, and end with a short summary of what you changed."
+    },
+    "prompt": "My project uses {title} at version {version}.\n\n{query}",
+    "isolation": {
+      "sandbox": "docker",
+      "network": "none: --network none",
+      "cpu": "--cpus and --ulimit cpu",
+      "memory": "--memory, swap included (cgroup)",
+      "time": "wall limit; the container is killed",
+      "filesystem": "read-only root; only the workspace writable; environment read-only"
+    }
+  },
+  "cells": [
+    {
+      "agent_model": "ollama:gpt-oss:120b",
+      "arm": "none",
+      "retrieval": "",
+      "tasks": 6,
+      "errors": 0,
+      "passed": {
+        "count": 6,
+        "rate": 0.3333,
+        "interval": {
+          "low": 0.0,
+          "high": 0.6667
+        }
+      },
+      "by_project": {
+        "pydantic": {
+          "count": 1,
+          "rate": 0.0,
+          "interval": {
+            "low": 0.0,
+            "high": 0.0
+          }
+        },
+        "starlette": {
+          "count": 2,
+          "rate": 0.0,
+          "interval": {
+            "low": 0.0,
+            "high": 0.0
+          }
+        },
+        "tanstack-query": {
+          "count": 1,
+          "rate": 1.0,
+          "interval": {
+            "low": 1.0,
+            "high": 1.0
+          }
+        },
+        "zod": {
+          "count": 2,
+          "rate": 0.5,
+          "interval": {
+            "low": 0.0,
+            "high": 1.0
+          }
+        }
+      },
+      "post_cutoff": {
+        "count": 6,
+        "rate": 0.3333,
+        "interval": {
+          "low": 0.0,
+          "high": 0.6667
+        }
+      },
+      "forbidden": {
+        "count": 6,
+        "rate": 0.5,
+        "interval": {
+          "low": 0.1667,
+          "high": 0.8333
+        }
+      },
+      "forbidden_apis": {
+        "TemplateResponse(name, context)": 1,
+        "model_fields on an instance": 1,
+        "required_error / invalid_type_error / errorMap": 1
+      },
+      "files_changed": {
+        "questions": 6,
+        "mean": 1.0,
+        "interval": {
+          "low": 1.0,
+          "high": 1.0
+        },
+        "p50": 1.0,
+        "p95": 1.0
+      },
+      "seconds": {
+        "questions": 6,
+        "mean": 9.508,
+        "interval": {
+          "low": 6.183,
+          "high": 15.334
+        },
+        "p50": 6.552,
+        "p95": 23.973
+      },
+      "input_tokens": {
+        "questions": 6,
+        "mean": 21841.667,
+        "interval": {
+          "low": 6145.5,
+          "high": 44261.0
+        },
+        "p50": 6419.0,
+        "p95": 74051.0
+      },
+      "output_tokens": {
+        "questions": 6,
+        "mean": 1474.333,
+        "interval": {
+          "low": 698.833,
+          "high": 2902.167
+        },
+        "p50": 812.0,
+        "p95": 5007.0
+      },
+      "tool_calls": {
+        "questions": 6,
+        "mean": 8.5,
+        "interval": {
+          "low": 5.667,
+          "high": 12.833
+        },
+        "p50": 6.0,
+        "p95": 19.0
+      },
+      "docs_calls": {
+        "questions": 6,
+        "mean": 0.0,
+        "interval": {
+          "low": 0.0,
+          "high": 0.0
+        },
+        "p50": 0.0,
+        "p95": 0.0
+      },
+      "usd": null,
+      "versus_none": null
+    },
+    {
+      "agent_model": "ollama:gpt-oss:120b",
+      "arm": "exactdocs",
+      "retrieval": "bm25",
+      "tasks": 6,
+      "errors": 0,
+      "passed": {
+        "count": 6,
+        "rate": 0.6667,
+        "interval": {
+          "low": 0.3333,
+          "high": 1.0
+        }
+      },
+      "by_project": {
+        "pydantic": {
+          "count": 1,
+          "rate": 1.0,
+          "interval": {
+            "low": 1.0,
+            "high": 1.0
+          }
+        },
+        "starlette": {
+          "count": 2,
+          "rate": 0.0,
+          "interval": {
+            "low": 0.0,
+            "high": 0.0
+          }
+        },
+        "tanstack-query": {
+          "count": 1,
+          "rate": 1.0,
+          "interval": {
+            "low": 1.0,
+            "high": 1.0
+          }
+        },
+        "zod": {
+          "count": 2,
+          "rate": 1.0,
+          "interval": {
+            "low": 1.0,
+            "high": 1.0
+          }
+        }
+      },
+      "post_cutoff": {
+        "count": 6,
+        "rate": 0.6667,
+        "interval": {
+          "low": 0.3333,
+          "high": 1.0
+        }
+      },
+      "forbidden": {
+        "count": 6,
+        "rate": 0.1667,
+        "interval": {
+          "low": 0.0,
+          "high": 0.5
+        }
+      },
+      "forbidden_apis": {
+        "TemplateResponse(name, context)": 1
+      },
+      "files_changed": {
+        "questions": 6,
+        "mean": 1.0,
+        "interval": {
+          "low": 1.0,
+          "high": 1.0
+        },
+        "p50": 1.0,
+        "p95": 1.0
+      },
+      "seconds": {
+        "questions": 6,
+        "mean": 10.518,
+        "interval": {
+          "low": 8.209,
+          "high": 13.401
+        },
+        "p50": 9.41,
+        "p95": 17.065
+      },
+      "input_tokens": {
+        "questions": 6,
+        "mean": 44654.667,
+        "interval": {
+          "low": 32857.833,
+          "high": 57397.167
+        },
+        "p50": 32788.0,
+        "p95": 68322.0
+      },
+      "output_tokens": {
+        "questions": 6,
+        "mean": 1227.333,
+        "interval": {
+          "low": 884.667,
+          "high": 1706.504
+        },
+        "p50": 888.0,
+        "p95": 2341.0
+      },
+      "tool_calls": {
+        "questions": 6,
+        "mean": 9.333,
+        "interval": {
+          "low": 7.5,
+          "high": 11.833
+        },
+        "p50": 8.0,
+        "p95": 15.0
+      },
+      "docs_calls": {
+        "questions": 6,
+        "mean": 2.0,
+        "interval": {
+          "low": 0.5,
+          "high": 3.833
+        },
+        "p50": 1.0,
+        "p95": 6.0
+      },
+      "usd": null,
+      "versus_none": {
+        "test": "mcnemar-mid-p",
+        "cases": 6,
+        "difference": 0.3333,
+        "interval": {
+          "low": 0.0,
+          "high": 0.6667
+        },
+        "p_value": 0.25,
+        "significant": false,
+        "gained": 2,
+        "lost": 0
+      }
+    }
+  ],
+  "results": [
+    {
+      "agent_model": "ollama:gpt-oss:120b",
+      "arm": "none",
+      "retrieval": "",
+      "task": "pydantic-class-model-fields",
+      "project": "pydantic",
+      "version": "v2.14.3",
+      "pair": null,
+      "post_cutoff": true,
+      "outcome": "failed",
+      "installed": "2.14.3",
+      "tests": 3,
+      "failures": [
+        "hidden_tests.test_changed_fields::test_the_changed_fields_in_declaration_order",
+        "hidden_tests.test_changed_fields::test_nothing_changed",
+        "hidden_tests.test_changed_fields::test_a_subclass_s_fields_count_too"
+      ],
+      "typecheck": null,
+      "forbidden": [
+        "model_fields on an instance"
+      ],
+      "forbidden_reasons": [
+        "reading `model_fields` from an instance is deprecated since 2.11 (2025-03-27); read it from the class"
+      ],
+      "files_changed": 1,
+      "changed": [
+        "app/profile.py"
+      ],
+      "unexpected": [],
+      "tool_calls": [
+        {
+          "name": "list_files",
+          "args": "{}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"app/profile.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"tests/test_profile.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "list_files",
+          "args": "{}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"app/__init__.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"pyproject.toml\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"requirements.txt\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"\\\"\\\"\\\"User profiles.\\\"\\\"\\\"\\n\\nfrom pydantic import BaseModel\\n\\n\\nclass Profile(BaseModel):\\n    \\\"\\\"\\\"A public profile.\\\"\\\"\\\"\\n\\n    name: str\\n    bio: str = \\\"\\\"\\n    website: str | No",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 1.263,
+          "error": null
+        }
+      ],
+      "read": [],
+      "input_tokens": 31487,
+      "output_tokens": 864,
+      "thinking_tokens": 452,
+      "usd": null,
+      "seconds": 7.976,
+      "provider_retries": 0,
+      "retry_seconds": 0.0,
+      "answer": "Implemented `changed_fields` in `app/profile.py`:\n\n- Added type checking for the `other` object.\n- Dynamically iterates over `self.model_fields` to compare field values, preserving declaration order.\n- Returns a list of field names where values differ.\n- Updated docstring for clarity and subclass compatibility.\n\nAll tests now pass.",
+      "error": null
+    },
+    {
+      "agent_model": "ollama:gpt-oss:120b",
+      "arm": "exactdocs",
+      "retrieval": "bm25",
+      "task": "pydantic-class-model-fields",
+      "project": "pydantic",
+      "version": "v2.14.3",
+      "pair": null,
+      "post_cutoff": true,
+      "outcome": "passed",
+      "installed": "2.14.3",
+      "tests": 3,
+      "failures": [],
+      "typecheck": null,
+      "forbidden": [],
+      "forbidden_reasons": [],
+      "files_changed": 1,
+      "changed": [
+        "app/profile.py"
+      ],
+      "unexpected": [],
+      "tool_calls": [
+        {
+          "name": "list_files",
+          "args": "{}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"app/profile.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"tests/test_profile.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"tests/test_profile.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"\\\"\\\"\\\"User profiles.\\\"\\\"\\\"\\n\\nfrom pydantic import BaseModel\\n\\n\\nclass Profile(BaseModel):\\n    \\\"\\\"\\\"A public profile.\\\"\\\"\\\"\\n\\n    name: str\\n    bio: str = \\\"\\\"\\n    website: str | No",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 1.128,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"\\\"\\\"\\\"User profiles.\\\"\\\"\\\"\\n\\nfrom pydantic import BaseModel\\n\\n\\nclass Profile(BaseModel):\\n    \\\"\\\"\\\"A public profile.\\\"\\\"\\\"\\n\\n    name: str\\n    bio: str = \\\"\\\"\\n    website: str | No",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 1.214,
+          "error": null
+        }
+      ],
+      "read": [],
+      "input_tokens": 32605,
+      "output_tokens": 1270,
+      "thinking_tokens": 599,
+      "usd": null,
+      "seconds": 9.794,
+      "provider_retries": 0,
+      "retry_seconds": 0.0,
+      "answer": "Implemented `changed_fields` in `app/profile.py`:\n\n- Utilizes Pydantic's `model_fields` to maintain declaration order.\n- Compares field values between `self` and `other`, handling cases where `other` may lack certain fields (e.g., subclass differences).\n- Returns a list of differing field names.\n\nAll tests now pass.",
+      "error": null
+    },
+    {
+      "agent_model": "ollama:gpt-oss:120b",
+      "arm": "none",
+      "retrieval": "",
+      "task": "starlette-startup-shutdown",
+      "project": "starlette",
+      "version": "1.10.0",
+      "pair": null,
+      "post_cutoff": true,
+      "outcome": "failed",
+      "installed": "1.10.0",
+      "tests": 2,
+      "failures": [
+        "hidden_tests.test_lifespan::test_the_database_is_connected_while_the_app_runs"
+      ],
+      "typecheck": null,
+      "forbidden": [],
+      "forbidden_reasons": [],
+      "files_changed": 1,
+      "changed": [
+        "app/main.py"
+      ],
+      "unexpected": [],
+      "tool_calls": [
+        {
+          "name": "list_files",
+          "args": "{}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"app/db.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"app/main.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"tests/test_main.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"\\\"\\\"\\\"The web app.\\\"\\\"\\\"\\n\\nfrom starlette.applications import Starlette\\nfrom starlette.requests import Request\\nfrom starlette.responses import JSONResponse\\nfrom starlette.routing impo",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"\\\"\\\"\\\"The web app.\\\"\\\"\\\"\\n\\nfrom starlette.applications import Starlette\\nfrom starlette.requests import Request\\nfrom starlette.responses import JSONResponse\\nfrom starlette.routing impo",
+          "seconds": 0.006,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"\\\"\\\"\\\"The web app.\\\"\\\"\\\"\\n\\nfrom starlette.applications import Starlette\\nfrom starlette.requests import Request\\nfrom starlette.responses import JSONResponse\\nfrom starlette.routing impo",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"\\\"\\\"\\\"The web app.\\\"\\\"\\\"\\n\\nfrom starlette.applications import Starlette\\nfrom starlette.requests import Request\\nfrom starlette.responses import JSONResponse\\nfrom starlette.routing impo",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"app/main.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 1.18,
+          "error": null
+        },
+        {
+          "name": "list_files",
+          "args": "{}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"\\\"\\\"\\\"The web app.\\\"\\\"\\\"\\n\\nfrom starlette.applications import Starlette\\nfrom starlette.requests import Request\\nfrom starlette.responses import JSONResponse\\nfrom starlette.routing impo",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"app/main.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 1.167,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"\\\"\\\"\\\"The web app.\\\"\\\"\\\"\\n\\nfrom starlette.applications import Starlette\\nfrom starlette.requests import Request\\nfrom starlette.responses import JSONResponse\\nfrom starlette.routing impo",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"app/main.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 1.089,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"requirements.txt\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"\\\"\\\"\\\"The web app.\\\"\\\"\\\"\\n\\nfrom starlette.applications import Starlette\\nfrom starlette.requests import Request\\nfrom starlette.responses import JSONResponse\\nfrom starlette.routing impo",
+          "seconds": 0.001,
+          "error": null
+        }
+      ],
+      "read": [],
+      "input_tokens": 74051,
+      "output_tokens": 5007,
+      "thinking_tokens": 2820,
+      "usd": null,
+      "seconds": 23.973,
+      "provider_retries": 0,
+      "retry_seconds": 0.0,
+      "answer": "",
+      "error": "UsageLimitExceeded: The next request would exceed the request_limit of 20. Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits"
+    },
+    {
+      "agent_model": "ollama:gpt-oss:120b",
+      "arm": "exactdocs",
+      "retrieval": "bm25",
+      "task": "starlette-startup-shutdown",
+      "project": "starlette",
+      "version": "1.10.0",
+      "pair": null,
+      "post_cutoff": true,
+      "outcome": "failed",
+      "installed": "1.10.0",
+      "tests": 2,
+      "failures": [
+        "hidden_tests.test_lifespan::test_the_database_is_connected_while_the_app_runs"
+      ],
+      "typecheck": null,
+      "forbidden": [],
+      "forbidden_reasons": [],
+      "files_changed": 1,
+      "changed": [
+        "app/main.py"
+      ],
+      "unexpected": [],
+      "tool_calls": [
+        {
+          "name": "list_files",
+          "args": "{}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"app/db.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"app/main.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"tests/test_main.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"tests/__init__.py\"}",
+          "seconds": 0.0,
+          "error": "there is no file tests/__init__.py; `list_files` lists them"
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"\\\"\\\"\\\"The web app.\\\"\\\"\\\"\\n\\nfrom starlette.applications import Starlette\\nfrom starlette.requests import Request\\nfrom starlette.responses import JSONResponse\\nfrom starlette.routing impo",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 1.115,
+          "error": null
+        },
+        {
+          "name": "search_docs",
+          "args": "{\"library\": \"/starlette/starlette\", \"limit\": 5, \"query\": \"on_startup\", \"ref\": \"1.10.0\", \"tags\": null, \"tags_match\": \"any\"}",
+          "seconds": 0.27,
+          "error": "not_found: no index for /starlette/starlette@1.10.0"
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"\\\"\\\"\\\"The web app.\\\"\\\"\\\"\\n\\nfrom starlette.applications import Starlette\\nfrom starlette.requests import Request\\nfrom starlette.responses import JSONResponse\\nfrom starlette.routing impo",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 1.075,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"\\\"\\\"\\\"The web app.\\\"\\\"\\\"\\n\\nfrom starlette.applications import Starlette\\nfrom starlette.requests import Request\\nfrom starlette.responses import JSONResponse\\nfrom starlette.routing impo",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"\\\"\\\"\\\"The web app.\\\"\\\"\\\"\\n\\nfrom starlette.applications import Starlette\\nfrom starlette.requests import Request\\nfrom starlette.responses import JSONResponse\\nfrom starlette.routing impo",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 1.178,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"\\\"\\\"\\\"The web app.\\\"\\\"\\\"\\n\\nfrom starlette.applications import Starlette\\nfrom starlette.requests import Request\\nfrom starlette.responses import JSONResponse\\nfrom starlette.routing impo",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 1.05,
+          "error": null
+        }
+      ],
+      "read": [],
+      "input_tokens": 68322,
+      "output_tokens": 2341,
+      "thinking_tokens": 1048,
+      "usd": null,
+      "seconds": 17.065,
+      "provider_retries": 0,
+      "retry_seconds": 0.0,
+      "answer": "Implemented a functional `GET /count` endpoint:\n\n- Created a singleton `Database` instance.\n- Added lazy connection handling within the `count` route.\n- Returned the database row count as JSON.\n- Simplified lifecycle management to ensure compatibility with Starlette 1.10.0.\n\nAll tests now pass.",
+      "error": null
+    },
+    {
+      "agent_model": "ollama:gpt-oss:120b",
+      "arm": "none",
+      "retrieval": "",
+      "task": "starlette-template-response-v1",
+      "project": "starlette",
+      "version": "1.10.0",
+      "pair": "starlette-template-response",
+      "post_cutoff": true,
+      "outcome": "failed",
+      "installed": "1.10.0",
+      "tests": 2,
+      "failures": [
+        "hidden_tests.test_greeting::test_the_greeting_is_rendered",
+        "hidden_tests.test_greeting::test_the_name_is_escaped"
+      ],
+      "typecheck": null,
+      "forbidden": [
+        "TemplateResponse(name, context)"
+      ],
+      "forbidden_reasons": [
+        "the name-first signature was removed in 1.0.0 (2026-03-22); use `TemplateResponse(request, name, context)`"
+      ],
+      "files_changed": 1,
+      "changed": [
+        "app/main.py"
+      ],
+      "unexpected": [],
+      "tool_calls": [
+        {
+          "name": "list_files",
+          "args": "{}",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"app/main.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"app/templates/greeting.html\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"tests/test_main.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"\\\"\\\"\\\"The web app.\\\"\\\"\\\"\\n\\nfrom pathlib import Path\\n\\nfrom starlette.applications import Starlette\\nfrom starlette.requests import Request\\nfrom starlette.routing import Route\\nfrom sta",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 1.061,
+          "error": null
+        }
+      ],
+      "read": [],
+      "input_tokens": 7896,
+      "output_tokens": 892,
+      "thinking_tokens": 490,
+      "usd": null,
+      "seconds": 6.592,
+      "provider_retries": 0,
+      "retry_seconds": 0.0,
+      "answer": "Implemented a new GET route `\"/hello/{name}\"` named **greet** in `app/main.py`. Added an async handler that extracts the `name` path parameter, renders the `greeting.html` template via Jinja2, and passes the request and name to the template. Updated the Starlette app initialization to include this route. All tests now pass.",
+      "error": null
+    },
+    {
+      "agent_model": "ollama:gpt-oss:120b",
+      "arm": "exactdocs",
+      "retrieval": "bm25",
+      "task": "starlette-template-response-v1",
+      "project": "starlette",
+      "version": "1.10.0",
+      "pair": "starlette-template-response",
+      "post_cutoff": true,
+      "outcome": "failed",
+      "installed": "1.10.0",
+      "tests": 2,
+      "failures": [
+        "hidden_tests.test_greeting::test_the_greeting_is_rendered",
+        "hidden_tests.test_greeting::test_the_name_is_escaped"
+      ],
+      "typecheck": null,
+      "forbidden": [
+        "TemplateResponse(name, context)"
+      ],
+      "forbidden_reasons": [
+        "the name-first signature was removed in 1.0.0 (2026-03-22); use `TemplateResponse(request, name, context)`"
+      ],
+      "files_changed": 1,
+      "changed": [
+        "app/main.py"
+      ],
+      "unexpected": [],
+      "tool_calls": [
+        {
+          "name": "list_files",
+          "args": "{}",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"app/main.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"app/templates/greeting.html\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"tests/test_main.py\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "list_files",
+          "args": "{}",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"\\\"\\\"\\\"The web app.\\\"\\\"\\\"\\n\\nfrom pathlib import Path\\n\\nfrom starlette.applications import Starlette\\nfrom starlette.requests import Request\\nfrom starlette.routing import Route\\nfrom sta",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 1.009,
+          "error": null
+        }
+      ],
+      "read": [],
+      "input_tokens": 27584,
+      "output_tokens": 757,
+      "thinking_tokens": 385,
+      "usd": null,
+      "seconds": 6.466,
+      "provider_retries": 0,
+      "retry_seconds": 0.0,
+      "answer": "Implemented a new `GET /hello/{name}` route in **app/main.py**:\n\n- Added `greet` async handler to render `greeting.html` with the provided `name`.\n- Configured the Starlette app to include this route, named **greet**.\n- Updated documentation/comments for clarity.\n\nAll project tests now pass (`1 passed`).",
+      "error": null
+    },
+    {
+      "agent_model": "ollama:gpt-oss:120b",
+      "arm": "none",
+      "retrieval": "",
+      "task": "query-gc-time-v5",
+      "project": "tanstack-query",
+      "version": "v5.90.3",
+      "pair": "query-gc-time",
+      "post_cutoff": true,
+      "outcome": "passed",
+      "installed": "5.90.3",
+      "tests": 2,
+      "failures": [],
+      "typecheck": true,
+      "forbidden": [],
+      "forbidden_reasons": [],
+      "files_changed": 1,
+      "changed": [
+        "src/client.ts"
+      ],
+      "unexpected": [],
+      "tool_calls": [
+        {
+          "name": "list_files",
+          "args": "{}",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"src/client.ts\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"tests/client.test.ts\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"import { QueryClient } from \\\"@tanstack/query-core\\\";\\n\\n/** The app's query client. */\\nexport function createClient(): QueryClient {\\n  return new QueryClient({\\n    defaultOptions: {\\n",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 1.89,
+          "error": null
+        }
+      ],
+      "read": [],
+      "input_tokens": 5234,
+      "output_tokens": 583,
+      "thinking_tokens": 358,
+      "usd": null,
+      "seconds": 5.519,
+      "provider_retries": 0,
+      "retry_seconds": 0.0,
+      "answer": "Implemented custom defaults for `QueryClient` in `src/client.ts`:\n\n- Set `staleTime` to **30 seconds** so query data remains fresh longer.\n- Set `gcTime` to **100 ms** to quickly remove unused queries from the cache.\n\nAll tests continue to pass.",
+      "error": null
+    },
+    {
+      "agent_model": "ollama:gpt-oss:120b",
+      "arm": "exactdocs",
+      "retrieval": "bm25",
+      "task": "query-gc-time-v5",
+      "project": "tanstack-query",
+      "version": "v5.90.3",
+      "pair": "query-gc-time",
+      "post_cutoff": true,
+      "outcome": "passed",
+      "installed": "5.90.3",
+      "tests": 2,
+      "failures": [],
+      "typecheck": true,
+      "forbidden": [],
+      "forbidden_reasons": [],
+      "files_changed": 1,
+      "changed": [
+        "src/client.ts"
+      ],
+      "unexpected": [],
+      "tool_calls": [
+        {
+          "name": "list_files",
+          "args": "{}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"src/client.ts\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "search_docs",
+          "args": "{\"library\": \"/tanstack/query-core\", \"limit\": 5, \"query\": \"QueryClient\", \"ref\": \"v5.90.3\", \"tags\": null, \"tags_match\": \"any\"}",
+          "seconds": 0.196,
+          "error": "not_found: no index for /tanstack/query-core@v5.90.3"
+        },
+        {
+          "name": "resolve-library-id",
+          "args": "{\"libraryName\": \"@tanstack/query-core\", \"query\": \"QueryClient\"}",
+          "seconds": 0.014,
+          "error": null
+        },
+        {
+          "name": "resolve-library-id",
+          "args": "{\"libraryName\": \"tanstack/query-core\", \"query\": \"QueryClient\"}",
+          "seconds": 0.009,
+          "error": null
+        },
+        {
+          "name": "resolve-library-id",
+          "args": "{\"libraryName\": \"/tanstack/query-core\", \"query\": \"QueryClient\"}",
+          "seconds": 0.011,
+          "error": null
+        },
+        {
+          "name": "search_all_docs",
+          "args": "{\"library\": null, \"limit\": 5, \"query\": \"QueryClient @tanstack/query-core\", \"tags\": null, \"tags_match\": \"any\"}",
+          "seconds": 0.129,
+          "error": null
+        },
+        {
+          "name": "search_docs",
+          "args": "{\"library\": \"/tanstack/query\", \"limit\": 20, \"query\": \"defaultOptions queries staleTime\", \"ref\": \"v5.90.3\", \"tags\": null, \"tags_match\": \"any\"}",
+          "seconds": 0.064,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"import { QueryClient } from \\\"@tanstack/query-core\\\";\\n\\n/** The app's query client. */\\nexport function createClient(): QueryClient {\\n  return new QueryClient({\\n    defaultOptions: {\\n",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 1.803,
+          "error": null
+        }
+      ],
+      "read": [],
+      "input_tokens": 62648,
+      "output_tokens": 879,
+      "thinking_tokens": 477,
+      "usd": null,
+      "seconds": 9.41,
+      "provider_retries": 0,
+      "retry_seconds": 0.0,
+      "answer": "Implemented custom default options for TanStack Query client:\n\n- Set `staleTime` to 30 seconds to keep query data fresh.\n- Set `gcTime` to 100 ms to quickly remove unused queries from the cache.\n\nAll tests now pass.",
+      "error": null
+    },
+    {
+      "agent_model": "ollama:gpt-oss:120b",
+      "arm": "none",
+      "retrieval": "",
+      "task": "zod-error-messages-v4",
+      "project": "zod",
+      "version": "v4.6.7",
+      "pair": "zod-error-messages",
+      "post_cutoff": true,
+      "outcome": "failed",
+      "installed": "4.6.7",
+      "tests": 3,
+      "failures": [
+        "test::a missing username says it is required",
+        "test::a username of another type says it must be text"
+      ],
+      "typecheck": false,
+      "forbidden": [
+        "required_error / invalid_type_error / errorMap"
+      ],
+      "forbidden_reasons": [
+        "dropped in Zod 4.0; customize messages with the `error` parameter"
+      ],
+      "files_changed": 1,
+      "changed": [
+        "src/signup.ts"
+      ],
+      "unexpected": [],
+      "tool_calls": [
+        {
+          "name": "list_files",
+          "args": "{}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"src/signup.ts\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"import { z } from \\\"zod\\\";\\n\\n/** A sign-up form. */\\nexport const SignUp = z.object({\\n  username: z.string({\\n    required_error: \\\"Username is required\\\",\\n    invalid_type_error: \\\"Us",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 2.013,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"node_modules/.pnpm/zod@4.6.7/node_modules/zod/lib/index.d.ts\"}",
+          "seconds": 0.0,
+          "error": "'node_modules/.pnpm/zod@4.6.7/node_modules/zod/lib/index.d.ts' is not a file inside the workspace"
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"src\"}",
+          "seconds": 0.0,
+          "error": "there is no file src; `list_files` lists them"
+        }
+      ],
+      "read": [],
+      "input_tokens": 5963,
+      "output_tokens": 812,
+      "thinking_tokens": 619,
+      "usd": null,
+      "seconds": 6.552,
+      "provider_retries": 0,
+      "retry_seconds": 0.0,
+      "answer": "",
+      "error": "UnexpectedModelBehavior: Tool 'read_file' exceeded max retries count of 1. Consider raising the retry limit, or see the docs on tool retries: https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-retries"
+    },
+    {
+      "agent_model": "ollama:gpt-oss:120b",
+      "arm": "exactdocs",
+      "retrieval": "bm25",
+      "task": "zod-error-messages-v4",
+      "project": "zod",
+      "version": "v4.6.7",
+      "pair": "zod-error-messages",
+      "post_cutoff": true,
+      "outcome": "passed",
+      "installed": "4.6.7",
+      "tests": 3,
+      "failures": [],
+      "typecheck": true,
+      "forbidden": [],
+      "forbidden_reasons": [],
+      "files_changed": 1,
+      "changed": [
+        "src/signup.ts"
+      ],
+      "unexpected": [],
+      "tool_calls": [
+        {
+          "name": "list_files",
+          "args": "{}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"src/signup.ts\"}",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"import { z } from \\\"zod\\\";\\n\\n/** A sign-up form. */\\nexport const SignUp = z.object({\\n  username: z.string({\\n    required_error: \\\"Username is required\\\",\\n    invalid_type_error: \\\"Us",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 2.053,
+          "error": null
+        },
+        {
+          "name": "search_docs",
+          "args": "{\"library\": \"/zod/zod\", \"limit\": 5, \"path_prefix\": \"\", \"query\": \"required_error\", \"ref\": \"v4.6.7\", \"tags\": null, \"tags_match\": \"any\"}",
+          "seconds": 0.007,
+          "error": "1 validation error for call[search_docs_tool]\npath_prefix\n  Unexpected keyword argument [type=unexpected_keyword_argument, input_value='', input_type=str]\n    For further information visit https://errors.pydantic.dev/2.14/v/unexpected_keyword_argument"
+        },
+        {
+          "name": "resolve-library-id",
+          "args": "{\"libraryName\": \"Zod\", \"query\": \"required_error\"}",
+          "seconds": 0.029,
+          "error": null
+        },
+        {
+          "name": "search_docs",
+          "args": "{\"library\": \"/colinhacks/zod\", \"limit\": 5, \"query\": \"required_error\", \"ref\": \"v4.6.7\", \"tags\": null, \"tags_match\": \"any\"}",
+          "seconds": 0.033,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"import { z } from \\\"zod\\\";\\n\\n/** A sign-up form. */\\nexport const SignUp = z.object({\\n  username: z.string({\\n    error: (issue) =>\\n      issue.input === undefined ? \\\"Username is requ",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 2.055,
+          "error": null
+        }
+      ],
+      "read": [],
+      "input_tokens": 43981,
+      "output_tokens": 1229,
+      "thinking_tokens": 731,
+      "usd": null,
+      "seconds": 11.528,
+      "provider_retries": 0,
+      "retry_seconds": 0.0,
+      "answer": "Implemented custom error messages for the `username` field in `src/signup.ts` using Zod v4's `error` callback:\n\n- Returns **\"Username is required\"** when the field is missing.\n- Returns **\"Username must be text\"** when the field is present but not a string.\n\nAll tests now pass.",
+      "error": null
+    },
+    {
+      "agent_model": "ollama:gpt-oss:120b",
+      "arm": "none",
+      "retrieval": "",
+      "task": "zod-optional-unknown",
+      "project": "zod",
+      "version": "v4.6.7",
+      "pair": null,
+      "post_cutoff": true,
+      "outcome": "passed",
+      "installed": "4.6.7",
+      "tests": 3,
+      "failures": [],
+      "typecheck": true,
+      "forbidden": [],
+      "forbidden_reasons": [],
+      "files_changed": 1,
+      "changed": [
+        "src/webhook.ts"
+      ],
+      "unexpected": [],
+      "tool_calls": [
+        {
+          "name": "list_files",
+          "args": "{}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"src/webhook.ts\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"tests/webhook.test.ts\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"package.json\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"import { z } from \\\"zod\\\";\\n\\n/**\\n * A webhook delivery: its type and, optionally, a payload.\\n *\\n * - `type` must be a non‑empty string.\\n * - `payload` may be any value (including `nu",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 2.058,
+          "error": null
+        }
+      ],
+      "read": [],
+      "input_tokens": 6419,
+      "output_tokens": 688,
+      "thinking_tokens": 364,
+      "usd": null,
+      "seconds": 6.439,
+      "provider_retries": 0,
+      "retry_seconds": 0.0,
+      "answer": "Implemented the `Envelope` schema and `parseEnvelope` function in **src/webhook.ts**:\n\n- Defined `Envelope` using Zod to require a non‑empty string `type` and an optional, nullable `payload`.\n- Added `parseEnvelope` to validate inputs against the schema, throwing on errors.\n- Updated module exports accordingly.\n\nAll tests now pass.",
+      "error": null
+    },
+    {
+      "agent_model": "ollama:gpt-oss:120b",
+      "arm": "exactdocs",
+      "retrieval": "bm25",
+      "task": "zod-optional-unknown",
+      "project": "zod",
+      "version": "v4.6.7",
+      "pair": null,
+      "post_cutoff": true,
+      "outcome": "passed",
+      "installed": "4.6.7",
+      "tests": 3,
+      "failures": [],
+      "typecheck": true,
+      "forbidden": [],
+      "forbidden_reasons": [],
+      "files_changed": 1,
+      "changed": [
+        "src/webhook.ts"
+      ],
+      "unexpected": [],
+      "tool_calls": [
+        {
+          "name": "list_files",
+          "args": "{}",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"src/webhook.ts\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "search_docs",
+          "args": "{\"library\": \"/zod/zod\", \"limit\": 5, \"query\": \"string nonempty\", \"ref\": \"v4.6.7\", \"tags\": null, \"tags_match\": \"any\"}",
+          "seconds": 0.272,
+          "error": "not_found: no index for /zod/zod@v4.6.7"
+        },
+        {
+          "name": "resolve-library-id",
+          "args": "{\"libraryName\": \"zod\", \"query\": \"non empty string\"}",
+          "seconds": 0.032,
+          "error": null
+        },
+        {
+          "name": "read_file",
+          "args": "{\"path\": \"tests/webhook.test.ts\"}",
+          "seconds": 0.0,
+          "error": null
+        },
+        {
+          "name": "write_file",
+          "args": "{\"content\": \"import { z } from \\\"zod\\\";\\n\\n/** A webhook delivery: its type and, for some types, a payload. */\\nexport const Envelope = z.object({\\n  /** Non-empty string indicating the webhook type *",
+          "seconds": 0.001,
+          "error": null
+        },
+        {
+          "name": "run_tests",
+          "args": "{}",
+          "seconds": 2.178,
+          "error": null
+        }
+      ],
+      "read": [],
+      "input_tokens": 32788,
+      "output_tokens": 888,
+      "thinking_tokens": 452,
+      "usd": null,
+      "seconds": 8.842,
+      "provider_retries": 0,
+      "retry_seconds": 0.0,
+      "answer": "Implemented `Envelope` schema and `parseEnvelope` function in `src/webhook.ts`:\n\n- Added Zod object schema with a non‑empty `type` string and optional `payload` allowing any value (including `null`).\n- Exported `Envelope` and `parseEnvelope` for validation.\n- Updated file with comprehensive documentation comments.\n\nAll tests now pass (`1 passed`).",
+      "error": null
+    }
+  ],
+  "statistics": {
+    "seed": 489,
+    "resamples": 10000,
+    "confidence": 0.95,
+    "alpha": 0.05,
+    "interval": "percentile bootstrap over cases, paired",
+    "binary_test": "McNemar, mid-p",
+    "graded_test": "paired sign-flip permutation"
+  }
+}

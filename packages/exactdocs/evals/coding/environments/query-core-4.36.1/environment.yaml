@@ -1,0 +1,31 @@
+# @tanstack/query-core 4.36.1 (npm, 2023-10-07), the framework-agnostic core of TanStack Query v4,
+# with TypeScript 5.9.3; package-lock.json from `npm install --package-lock-only`.
+ecosystem: node
+package: "@tanstack/query-core"
+version: 4.36.1
+released: 2023-10-07
+forbidden:
+- api: gcTime
+  pattern: '\bgcTime\b'
+  reason: the v5 name (5.0.0, 2023-10-17); v4 calls it `cacheTime` and ignores `gcTime`
+- api: isPending / status 'pending'
+  pattern: '\bisPending\b|["'']pending["'']'
+  reason: v5 renamed the `loading` status to `pending` (5.0.0); v4 has `status === "loading"` and `isLoading`
+- api: initialPageParam
+  pattern: '\binitialPageParam\b'
+  reason: added in 5.0.0; v4 ignores it and gives the first page `pageParam` undefined (default it in `queryFn`)
+- api: keepPreviousData (the v5 function)
+  pattern: 'placeholderData\s*:\s*keepPreviousData|import\s*\{[^}]*\bkeepPreviousData\b'
+  reason: 'the helper was added in 5.0.0; v4 has the option `keepPreviousData: true`'
+- api: hashKey
+  pattern: '\bhashKey\b'
+  reason: the v5 name (5.0.0); v4 exports `hashQueryKey`
+- api: maxPages
+  pattern: '\bmaxPages\b'
+  reason: added in 5.0.0; v4 ignores it
+- api: throwOnError
+  pattern: '\bthrowOnError\b'
+  reason: the v5 name (5.0.0); v4 has `useErrorBoundary`
+- api: skipToken
+  pattern: '\bskipToken\b'
+  reason: added in 5.25.0 (2024-03-05)

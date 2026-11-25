@@ -1,0 +1,23 @@
+title: Answer with the right status codes
+project: starlette
+version: 0.27.0
+environment: starlette-0.27.0
+pair: starlette-status-names
+other_version: 1.10.0
+other_from: starlette-status-names-v1
+api_since:
+  version: 0.48.0
+  released: '2025-09-13'
+files:
+- app/main.py
+prompt: |
+  Implement `create_item` in `app/main.py` (`POST /items`): a JSON body with a non-empty
+  string `name` answers 201 with `{"name": <name>}`; a body that is not JSON, or whose
+  `name` is missing, empty or not a string, answers 422 with
+  `{"error": "name is required"}`; a body longer than `LIMIT` bytes answers 413 with
+  `{"error": "too large"}`. Use the constants of `starlette.status` for every status
+  code, not bare numbers.
+notes: |
+  Starlette 0.48 renamed the 413 and 422 constants to their RFC 9110 names
+  (`HTTP_413_CONTENT_TOO_LARGE`, `HTTP_422_UNPROCESSABLE_CONTENT`) and deprecated the
+  old ones (a warning, an error here); 0.27 has only the old names.
