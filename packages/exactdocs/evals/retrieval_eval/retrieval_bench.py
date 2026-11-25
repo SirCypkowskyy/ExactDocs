@@ -472,6 +472,10 @@ class ConfigResult(_Model):
     recorded run that kept no rows, completed by a re-run whose recall, MRR, nDCG and rates
     matched it exactly): that run's commit and machine. Its ``search_ms`` are that run's, not
     the recorded latencies. None: the rows are this run's."""
+    recorded_by: dict[str, str] | None = None
+    """Set when the whole result comes from another run than the report's (#575: the search
+    changed, and only some configurations were run again): that run's ``exactdocs_commit``,
+    ``platform``, ``cpus`` and ``date``. None: the report's own run."""
     versus_default: Versus | None = None
     """Paired tests against its budget's default; None for the default itself, for a budget
     with no default, and when either has no rows."""
@@ -993,6 +997,16 @@ def _notes(report: RetrievalBenchReport, ran: Sequence[ConfigResult]) -> list[st
             models.setdefault(info.model, f"- {info.role}: `{info.model}`{revision}")
     if models:
         lines.extend(["", "## Models", "", *models.values()])
+    others = [
+        f"- `{r.configuration}` at `{r.chunking}`: ExactDocs "
+        f"`{(r.recorded_by or {}).get('exactdocs_commit', '?')}`, "
+        f"{(r.recorded_by or {}).get('platform', '?')}, "
+        f"{(r.recorded_by or {}).get('cpus', '?')} CPUs, {(r.recorded_by or {}).get('date', '?')}"
+        for r in ran
+        if r.recorded_by
+    ]
+    if others:
+        lines.extend(["", "## Recorded by another run", "", *others])
     return lines
 
 

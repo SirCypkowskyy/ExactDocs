@@ -345,6 +345,17 @@ def test_the_summary_shows_recall_within_each_budget_with_its_test() -> None:
     assert "## Within a token budget" not in markdown(old)
 
 
+def test_a_result_recorded_by_another_run_says_which() -> None:
+    other = {"exactdocs_commit": "abc", "platform": "Linux x86_64", "cpus": "4", "date": "today"}
+    result = _result("bm25", Budget.NONE).model_copy(update={"recorded_by": other})
+
+    text = markdown(_report(result))
+
+    assert "## Recorded by another run" in text
+    assert "- `bm25` at `default`: ExactDocs `abc`, Linux x86_64, 4 CPUs, today" in text
+    assert "## Recorded by another run" not in markdown(_report(_result("bm25", Budget.NONE)))
+
+
 # ---------------------------------------------------------------- results, recommendation
 
 
