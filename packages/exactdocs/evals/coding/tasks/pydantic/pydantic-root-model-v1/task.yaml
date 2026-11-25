@@ -1,0 +1,22 @@
+title: A model whose JSON is a bare list
+project: pydantic
+version: v1.10.22
+environment: pydantic-1.10.22
+pair: pydantic-root-model
+other_version: v2.14.3
+other_from: pydantic-root-model-v2
+api_since:
+  version: 2.0.0
+  released: '2023-06-30'
+files:
+- app/tags.py
+prompt: |
+  In `app/tags.py`, define a Pydantic model `Tags` whose JSON form is a bare list of
+  strings such as `["python", "web"]`, not an object. Validation lowercases every tag
+  and drops repeats, keeping the order of first appearance. Add
+  `parse_tags(text: str) -> Tags`, which validates a JSON string, and
+  `dump_tags(tags: Tags) -> str`, which returns the model's JSON (a bare list).
+notes: |
+  Pydantic 1 declares a custom root type with a `__root__` field (`tags.__root__`);
+  Pydantic 2 removed it for `RootModel[list[str]]` (`tags.root`): a `__root__` field
+  raises at class creation.

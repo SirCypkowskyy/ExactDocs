@@ -1,0 +1,42 @@
+# Pydantic 1.10.22 (PyPI, 2025-04-24), the last 1.x release; requirements.txt compiled from
+# requirements.in with `uv pip compile --python-version 3.12 --exclude-newer 2025-05-31
+# --generate-hashes`.
+ecosystem: python
+package: pydantic
+version: 1.10.22
+released: 2025-04-24
+python: "3.12"
+forbidden:
+- api: field_validator
+  pattern: '\bfield_validator\b'
+  reason: added in Pydantic 2.0; 1.10 validates a field with `@validator`
+- api: model_validator
+  pattern: '\bmodel_validator\b'
+  reason: added in Pydantic 2.0; 1.10 validates a whole model with `@root_validator`
+- api: ConfigDict / model_config
+  pattern: '\bConfigDict\b|\bmodel_config\s*='
+  reason: Pydantic 2's configuration; 1.10 ignores a `model_config` attribute and configures a model with an inner `class Config`
+- api: model_dump / model_dump_json
+  pattern: '\.model_dump(_json)?\('
+  reason: added in Pydantic 2.0; 1.10 has `.dict()` and `.json()`
+- api: model_validate / model_validate_json
+  pattern: '\.model_validate(_json)?\('
+  reason: added in Pydantic 2.0; 1.10 has `parse_obj()` and `parse_raw()`
+- api: model_copy
+  pattern: '\.model_copy\('
+  reason: added in Pydantic 2.0; 1.10 has `.copy()`
+- api: RootModel
+  pattern: '\bRootModel\b'
+  reason: added in Pydantic 2.0; 1.10 declares a custom root type with a `__root__` field
+- api: TypeAdapter
+  pattern: '\bTypeAdapter\b'
+  reason: added in Pydantic 2.0; 1.10 has `parse_obj_as()`
+- api: field_serializer / model_serializer
+  pattern: '\b(field|model)_serializer\b'
+  reason: added in Pydantic 2.0; 1.10 customizes JSON with `json_encoders` in `class Config`
+- api: from_attributes
+  pattern: '\bfrom_attributes\b'
+  reason: added in Pydantic 2.0; 1.10 reads attributes with `orm_mode = True` and `from_orm()`
+- api: computed_field
+  pattern: '\bcomputed_field\b'
+  reason: added in Pydantic 2.0

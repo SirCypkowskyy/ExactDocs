@@ -1,0 +1,4 @@
+starlette==1.10.0
+httpx2
+jinja2
+pytest

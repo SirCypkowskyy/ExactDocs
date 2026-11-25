@@ -1,5 +1,5 @@
 # Golden-set cases for TanStack Query (corpus.yaml: tanstack-query). Format and rules:
-# docs/evals.md#the-golden-set. Check with `just golden-validate --projects tanstack-query`.
+# docs/evals/golden-set.md. Check with `just golden-validate --projects tanstack-query`.
 # Name the React page: the other frameworks' pages hold only code that replaces the React page's
 # examples on the website (front matter `ref:`), not the prose.
 name: tanstack-query

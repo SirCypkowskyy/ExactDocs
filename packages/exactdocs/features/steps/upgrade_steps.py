@@ -30,10 +30,10 @@ from steps.http_steps import DEMO_COOKIE, OfflineGit, store_demo_catalog
 from steps.search_steps import LIBRARY, import_versions
 
 # The newest stable release and the schema revision it ships (its Alembic head). Move both on when
-# a release is tagged (docs/releasing.md). CI also runs that release itself from PyPI on a data
-# directory and starts this build on it (deploy/upgrade_check.py); this scenario is the in-process
-# half: the data is written now, then the schema is taken back to that revision.
-PREVIOUS_RELEASE, PREVIOUS_REVISION = "v0.2.0", "a1c9e4d7b352"
+# a release is tagged (docs/releasing/upgrades.md). CI also runs that release itself from PyPI
+# on a data directory and starts this build on it (deploy/upgrade_check.py); this scenario is the
+# in-process half: the data is written now, then the schema is taken back to that revision.
+PREVIOUS_RELEASE, PREVIOUS_REVISION = "v0.6.0", "b5e8c2d4f7a1"
 CLI = "from exactdocs.bootstrap.cli import main; main()"
 QUERY = "retry_policy"
 
@@ -103,7 +103,8 @@ def step_new_release(context: Context) -> None:
 def step_migrated(context: Context) -> None:
     head = ScriptDirectory.from_config(alembic_config()).get_current_head()
     health = context.client.get("/api/health").json()
-    assert health["schema_revision"] == head != PREVIOUS_REVISION, health
+    # Right after a release the head can still be the release's own, so there is nothing to migrate.
+    assert health["schema_revision"] == head, health
     assert not health["reindex_required"], health
     assert _served(context.client) == context.served_before
 

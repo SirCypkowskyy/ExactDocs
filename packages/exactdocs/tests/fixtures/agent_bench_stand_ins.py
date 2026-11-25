@@ -11,6 +11,7 @@ import contextlib
 import re
 from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Final
 
 from fastmcp import FastMCP
@@ -22,10 +23,11 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_evals import Case
 
-from agent_bench.arms import NONE, Arm
-from agent_bench.harness import Recorder, RetrievalConfig, record_tool_call
+from agent_bench.arms import CONTEXT7, GROUNDED_DOCS, NONE, Arm
+from agent_bench.harness import Recorder, RetrievalConfig, record_tool_call, recorded_call
 from agent_bench.models import chat_model
 from agent_bench.offline import OFFLINE_JUDGE
+from agent_bench.servers import grounded_docs_hook
 from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question
 from retrieval_eval.golden import Corpus, GoldenCase, PinnedVersion, Project
 
@@ -91,24 +93,159 @@ def docs_server() -> FastMCP:
     return server
 
 
+def _matching(query: str, version: str | None) -> list[dict[str, Any]]:
+    """The sections of a version (every version for ``None``) that share a word with the query.
+
+    Args:
+        query: The question.
+        version: The version.
+
+    Returns:
+        The sections, in order.
+    """
+    return [
+        c
+        for c in CHUNKS
+        if (version is None or c["version"] == version) and _words(query) & _words(c["content"])
+    ]
+
+
+def context7_server() -> FastMCP:
+    """A stand-in for the official Context7 MCP server: its two tools, in its text format.
+
+    ``resolve-library-id`` lists the library with its versions; ``query-docs`` answers a
+    ``/acme/demo/<version>`` ID from that version and an unpinned one from the latest, as
+    Context7 serves its current docs there.
+
+    Returns:
+        A FastMCP server with ``resolve-library-id`` and ``query-docs``.
+    """
+    server = FastMCP("stand-in context7")
+
+    @server.tool(name="resolve-library-id")
+    def resolve(query: str, libraryName: str) -> str:  # ruff: ignore[invalid-argument-name] - its argument names
+        """Resolve a library name to Context7's library ID."""
+        del query
+        if libraryName.casefold() != "demo":
+            return "No documentation libraries found matching your query."
+        return (
+            "Available Libraries:\n\n- Title: Demo\n"
+            f"- Context7-compatible library ID: {LIBRARY}\n- Description: The demo package.\n"
+            "- Code Snippets: 2\n- Source Reputation: High\n- Versions: v1, v2"
+        )
+
+    @server.tool(name="query-docs")
+    def query_docs(libraryId: str, query: str, language: str | None = None) -> str:  # ruff: ignore[invalid-argument-name] - its argument names
+        """Query a library's documentation."""
+        del language
+        library, _, version = libraryId.removeprefix(LIBRARY).partition("/")
+        if library:
+            return "Library not found."
+        found = _matching(query, version or CHUNKS[-1]["version"])
+        return "\n\n--------------------------------\n\n".join(
+            f"### {' > '.join(c['heading_path'])}\nSource: https://example.com/{c['article_path']}"
+            f"\n\n{c['content']}"
+            for c in found
+        )
+
+    return server
+
+
+GROUNDED_CORPUS: Final[Path] = Path("/stand-in/grounded-docs/corpus")
+"""Where the stand-in Grounded Docs says it indexed each version from."""
+GROUNDED_LIBRARY: Final[str] = "demo"
+"""The stand-in library's name in Grounded Docs: the project's ID."""
+
+
+def _page_url(chunk: dict[str, Any]) -> str:
+    return (GROUNDED_CORPUS / GROUNDED_LIBRARY / chunk["version"] / chunk["article_path"]).as_uri()
+
+
+def grounded_docs_server() -> FastMCP:
+    """A stand-in for Grounded Docs' MCP server, in its text formats, with every tool it lists.
+
+    Its web and indexing tools (``fetch_url``, ``scrape_docs``) are there so that a test can show
+    the agent never gets them.
+
+    Returns:
+        A FastMCP server with Grounded Docs' read-only tools, ``fetch_url`` and ``scrape_docs``.
+    """
+    server = FastMCP("stand-in grounded docs")
+
+    @server.tool
+    def list_libraries() -> str:
+        """List the indexed libraries."""
+        return f"Indexed libraries:\n\n- {GROUNDED_LIBRARY}"
+
+    @server.tool
+    def find_version(library: str, targetVersion: str | None = None) -> str:  # ruff: ignore[invalid-argument-name] - its argument names
+        """Find the best matching version."""
+        del library
+        return f"Best match: {targetVersion or CHUNKS[-1]['version']}."
+
+    @server.tool
+    def search_docs(library: str, query: str, version: str | None = None, limit: int = 5) -> str:
+        """Search one library."""
+        found = _matching(query, version) if library == GROUNDED_LIBRARY else []
+        if not found:
+            return f"No results found for '{query}' in {library}."
+        return "".join(
+            f"\n{'-' * 60}\nResult {n}: {_page_url(c)}\n\n{c['content']}\n"
+            for n, c in enumerate(found[:limit], start=1)
+        )
+
+    @server.tool
+    def read_page(library: str, pathOrUrl: str, version: str | None = None) -> str:  # ruff: ignore[invalid-argument-name] - its argument names
+        """Read one page in full."""
+        del library, version
+        page = next(c for c in CHUNKS if _page_url(c).endswith(pathOrUrl))
+        return f"> Source: {_page_url(page)}\n\n# {page['heading_path'][-1]}\n{page['content']}"
+
+    @server.tool
+    def list_pages(library: str, version: str | None = None) -> str:
+        """List a version's pages."""
+        del library
+        return "\n".join(f"- {_page_url(c)}" for c in CHUNKS if c["version"] == version)
+
+    @server.tool
+    def fetch_url(url: str) -> str:
+        """Fetch any web page (never offered to the agent)."""
+        return f"the page at {url}"
+
+    @server.tool
+    def scrape_docs(library: str, url: str) -> str:
+        """Index a library (never offered to the agent)."""
+        return f"indexing {library} from {url}"
+
+    return server
+
+
 @contextlib.asynccontextmanager
 async def stand_in_tools(
     arm: Arm, config: RetrievalConfig | None
 ) -> AsyncGenerator[Sequence[AbstractToolset[Recorder]]]:
-    """Give an arm its stand-in tools: none for ``none``, the stand-in server for any other.
+    """Give an arm its stand-in tools, with the hook its real server's toolset has.
 
     Args:
         arm: The arm.
-        config: Its retrieval configuration (unused: the stand-in has one).
+        config: Its configuration (unused: each stand-in has one).
 
     Yields:
-        The toolsets.
+        The toolsets: none for ``none``.
     """
     del config
     if arm.name == NONE:
         yield []
         return
-    async with MCPToolset(docs_server(), process_tool_call=record_tool_call, id=arm.name) as tools:
+    servers = {
+        CONTEXT7: (context7_server, recorded_call),
+        GROUNDED_DOCS: (
+            grounded_docs_server,
+            grounded_docs_hook(GROUNDED_CORPUS, {GROUNDED_LIBRARY: LIBRARY}),
+        ),
+    }
+    server, hook = servers.get(arm.name, (docs_server, record_tool_call))
+    async with MCPToolset(server(), process_tool_call=hook, id=arm.name) as tools:
         yield [tools]
 
 

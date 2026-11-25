@@ -62,12 +62,14 @@ function Choice<T extends string | number>({
           const match = options.find((o) => String(o.value) === v);
           if (match) onChange(match.value);
         }}
+        // Up to --cols columns, but never narrower than 5.25rem a tile: a single word ("Compact",
+        // "Hyperlegible") can't wrap, so a large text size drops a column instead of spilling (#576).
         className={cn(
-          "grid gap-2",
-          columns === 2 && "grid-cols-2",
-          columns === 3 && "grid-cols-2 sm:grid-cols-3",
-          columns === 4 && "grid-cols-2 sm:grid-cols-4",
-          columns === 5 && "grid-cols-3 sm:grid-cols-5",
+          "grid grid-cols-[repeat(auto-fit,minmax(max(5.25rem,calc((100%_-_(var(--cols)_-_1)_*_0.5rem)_/_var(--cols))),1fr))] gap-2",
+          columns === 2 && "[--cols:2]",
+          columns === 3 && "[--cols:2] sm:[--cols:3]",
+          columns === 4 && "[--cols:2] sm:[--cols:4]",
+          columns === 5 && "[--cols:3] sm:[--cols:5]",
         )}
       >
         {options.map((option) => (

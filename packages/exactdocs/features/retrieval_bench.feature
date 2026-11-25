@@ -29,6 +29,12 @@ Feature: A retrieval benchmark compares modes, models and chunking on the golden
     When a tool returns only A
     Then recall@5 counts the case, and section recall shows that C is missing
 
+  Scenario: Recall within a token budget of the text returned
+    When the retrieval benchmark runs every configuration at two chunking configurations
+    Then each configuration that ran reports the context it returned per question and recall within the first 1,000, 2,000 and 4,000 tokens of it
+    And each is tested against its budget's default
+    And the summary shows recall within each budget
+
   Scenario: The benchmark names the best default for each budget
     When the retrieval benchmark runs every configuration at two chunking configurations
     Then the summary names the best configuration with no models, with local models only and with hosted models

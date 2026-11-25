@@ -111,7 +111,7 @@ Rules for content:
     delete the key when the issue is fixed.
 - Add the same case to the retrieval eval dataset
   (`packages/exactdocs/evals/retrieval_eval/dataset.yaml`, `kind: identifier`); a test fails until
-  the two agree. See [docs/evals.md](../../../../../docs/evals.md).
+  the two agree. See [docs/evals/suite.md](../../../../../docs/evals/suite.md#the-dataset).
 - Versions are `v1.3.0`, `v1.4.0` and `next`. `test_fixture_repo.py` checks that every entry
   points at a heading that exists and contains the query, so a typo fails fast. Whether the
   section really ranks first is asserted by the ranking suite, not here.

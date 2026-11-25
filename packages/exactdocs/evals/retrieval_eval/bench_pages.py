@@ -15,11 +15,14 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Final, get_args
 
+from agent_bench.arms import CONTEXT7, GROUNDED_DOCS
 from agent_bench.report import BenchReport
 from agent_bench.report import markdown as agent_markdown
 from retrieval_eval.dataset import GoldenKind
 from retrieval_eval.golden import load_cases, load_corpus
 from retrieval_eval.golden_review import load_review, review_block
+from retrieval_eval.grid_cli import GridReport
+from retrieval_eval.grid_cli import page_block as grid_block
 from retrieval_eval.grounded_docs import GroundedDocsReport, page_blocks
 from retrieval_eval.ingestion_cli import IngestionReport
 from retrieval_eval.ingestion_cli import markdown as ingestion_markdown
@@ -28,6 +31,10 @@ from retrieval_eval.retrieval_bench import markdown as retrieval_markdown
 
 RESULTS: Final[Path] = Path(__file__).parents[1] / "results"
 PAGES: Final[Path] = Path(__file__).parents[4] / "docs" / "benchmark"
+GRID_RESULTS: Final[str] = "retrieval-grid-rank1.json"
+"""The recorded run of the grid's rank-1 cells (#575), in ``RESULTS``."""
+GRID_GROUPED: Final[str] = "retrieval-grid-grouped.json"
+"""The recorded run of the grid's app cells grouped by article and not (#575), in ``RESULTS``."""
 BLOCK: Final[re.Pattern[str]] = re.compile(
     r"(<!-- bench:(?P<name>[a-z-]+) -->\n)(?:(?!<!-- bench:).)*?(^<!-- /bench -->)",
     re.DOTALL | re.MULTILINE,
@@ -147,20 +154,36 @@ def agent_blocks(report: BenchReport) -> dict[str, str]:
 
     Returns:
         The Markdown of the blocks ``agent-run`` and ``agent``.
+
+    Raises:
+        ValueError: The run has a ``context7`` arm: no Context7 number is published until Upstash
+            permits it (docs/evals/context7.md#terms-of-service).
     """
     meta = report.meta
+    if CONTEXT7 in meta.arms:
+        message = "agent.json has a context7 arm: Context7's terms forbid publishing it"
+        raise ValueError(message)
     served = ", ".join(f"{name} at `{url}`" for name, url in meta.providers.items())
     agents = ", ".join(f"`{m}`" for m in meta.agent_models)
     arms = ", ".join(f"`{a}`" for a in meta.arms)
     retrieval = ", ".join(f"`{name}`" for name in meta.retrieval) or "none"
+    grounded = sorted({c.retrieval for c in report.cells if c.arm == GROUNDED_DOCS})
+    others = "".join(f"; of `grounded-docs`: `{name}`" for name in grounded)
+    resumed = (
+        f" {meta.resumed} of the answers were kept from an earlier run of the same command "
+        "(`--resume`), at its commit and time."
+        if meta.resumed
+        else ""
+    )
     run = [
         (
             f"- Started {meta.started_at}; ExactDocs `{meta.exactdocs_version}` at "
-            f"`{meta.git_commit[:12]}`."
+            f"`{meta.git_commit[:12]}`.{resumed}"
         ),
         f"- Agents: {agents}; judge `{meta.judge_model}`"
         + (f"; served by {served}." if served else "."),
-        f"- Arms: {arms}; retrieval configurations of `exactdocs`: {retrieval}.",
+        f"- Arms: {arms}; configurations of `exactdocs`: {retrieval}{others}.",
+        *(f"- `{name}`: {about.get('server', '?')}." for name, about in meta.servers.items()),
         (
             f"- Cases: {meta.cases} ({meta.selection}); at most {meta.max_requests} model "
             f"requests per question; thinking: {meta.thinking}; {meta.concurrency} questions at "
@@ -187,6 +210,12 @@ def blocks(results: Path = RESULTS) -> dict[str, str]:
         if grounded.exists()
         else {}
     )
+    grids = {"retrieval-grid": GRID_RESULTS, "retrieval-grouping": GRID_GROUPED}
+    rank_one = {
+        name: grid_block(GridReport.model_validate_json((results / file).read_text("utf-8")))
+        for name, file in grids.items()
+        if (results / file).exists()
+    }
     return {
         "golden": golden_block(),
         "golden-review": review_block(load_review()),
@@ -194,6 +223,7 @@ def blocks(results: Path = RESULTS) -> dict[str, str]:
         **retrieval_blocks(retrieval),
         **agent_blocks(agent),
         **competitors,
+        **rank_one,
     }
 
 

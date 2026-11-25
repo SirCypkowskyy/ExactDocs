@@ -30,7 +30,7 @@ just bdd-integration --tags=@integration      # behave: only the @integration sc
 ```
 
 Each one runs when its service's `EXACTDOCS_TEST_<NAME>_URL` is set and is skipped, naming the
-variable, when it is not; [docs/releasing.md](docs/releasing.md#fast-and-integration-tests) lists
+variable, when it is not; [docs/releasing/tests.md](docs/releasing/tests.md) lists
 them and the helper scripts that start the servers. Pull request CI runs the fast checks only.
 In GitHub Actions the integration and end-to-end jobs run only when a maintainer starts them by
 hand, never on a pull request, a push or a tag: *Actions → CI → Run workflow* with `integration`,
@@ -53,5 +53,5 @@ never ASCII art; `just docs-build` parses every one (`deploy/mermaid-check`) and
 strict mode, as CI does. The check is a syntax gate (the site pins the same mermaid version through
 `extra_javascript`), so look at a new diagram in `just docs` too.
 
-Read [docs/architecture.md](docs/architecture.md) before adding a domain, port or adapter, and
-[docs/releasing.md](docs/releasing.md) for versions and tags.
+Read [docs/architecture/](docs/architecture/index.md) before adding a domain, port or adapter, and
+[docs/releasing/](docs/releasing/index.md) for versions and tags.

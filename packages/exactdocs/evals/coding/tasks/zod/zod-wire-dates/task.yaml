@@ -1,0 +1,21 @@
+title: Convert a field between its wire form and the app's
+project: zod
+version: v4.0.17
+environment: zod-4.0.17
+other_version: v4.6.7
+other_environment: zod-4.6.7
+api_since:
+  version: 4.1.0
+  released: '2025-08-23'
+files:
+- src/event.ts
+prompt: |
+  In `src/event.ts`, export `decodeEvent(wire: unknown): AppEvent`, which validates an
+  event as the API sends it (`name` a string, `at` an ISO 8601 date-time string with a
+  time zone) and turns `at` into a `Date`, throwing on an invalid event; and
+  `encodeEvent(event: AppEvent): WireEvent`, which turns it back into the wire form
+  (`at` as `Date.toISOString()` gives it). Use Zod for the validation.
+notes: |
+  Zod 4.1 added codecs (`z.codec(...)`, `z.decode()`, `z.encode()`), which convert in
+  both directions; 4.0.17 does not have them, so it validates the wire form and converts
+  by hand.

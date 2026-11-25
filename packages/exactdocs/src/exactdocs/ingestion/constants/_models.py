@@ -15,7 +15,7 @@ PARSER_VERSION: Final[int] = 3
 """Bump on any change to the sanitizer or the parser. It feeds the chunking-config hash (E4-02), so
 a fix here re-chunks stored articles instead of reusing stale chunk sets.
 """
-CHUNKER_VERSION: Final[int] = 1
+CHUNKER_VERSION: Final[int] = 2
 """Bump on any change to how a chunker cuts articles. Like PARSER_VERSION it feeds the config hash.
 """
 MERGED_HEADINGS_VERSION: Final[int] = 1

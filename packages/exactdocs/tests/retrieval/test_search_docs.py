@@ -20,10 +20,12 @@ from exactdocs.retrieval.errors import (
 from exactdocs.retrieval.models import (
     DocTarget,
     ManifestStatus,
+    ResultGrouping,
     RetrievalMode,
     SearchableVersion,
     SourceHost,
     TagMatch,
+    article_groups,
 )
 from exactdocs.retrieval.module import RetrievalModule
 
@@ -343,3 +345,106 @@ async def test_an_unavailable_mode_is_refused_and_the_error_lists_the_available_
 ) -> None:
     with pytest.raises(UnavailableModeError, match="available modes: bm25"):
         await retrieval.search_docs(SearchDocsQuery(library=LIB, query="token", mode="hybrid"))
+
+
+async def test_a_path_prefix_keeps_the_chunks_of_that_directory_only(
+    retrieval: RetrievalModule,
+) -> None:
+    # #573: an agent narrows a search the way it narrows list_articles.
+    everywhere = await retrieval.search_docs(SearchDocsQuery(library=LIB, query="token"))
+    api = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, query="token", path_prefix="./docs/api//")
+    )
+    guide = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, query="token", path_prefix="docs/guide")
+    )
+
+    assert {r.article_path for r in everywhere.results} == {
+        "docs/api/auth.md",
+        "docs/api/client.md",
+    }
+    assert {r.article_path for r in api.results} == {"docs/api/auth.md", "docs/api/client.md"}
+    assert (api.coverage.candidates, api.coverage.complete) == (2, True)
+    assert guide.results == []
+    assert guide.coverage.complete  # nothing under the prefix matches: the version has no match
+
+
+async def test_a_path_prefix_is_matched_by_whole_directory_names(
+    retrieval: RetrievalModule,
+) -> None:
+    partial = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, query="token", path_prefix="docs/ap")
+    )
+    article = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, query="token", path_prefix="docs/api/auth.md")
+    )
+
+    assert partial.results == []
+    assert [r.article_path for r in article.results] == ["docs/api/auth.md"]
+
+
+async def test_a_path_prefix_fills_the_limit_from_a_deeper_ranking(
+    retrieval: RetrievalModule,
+) -> None:
+    # With limit 1 the best chunk is in the guide; under docs/api the prefix still finds one.
+    best = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, query="retry_policy token", limit=1)
+    )
+    narrowed = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, query="retry_policy token", path_prefix="docs/api", limit=1)
+    )
+
+    assert best.results[0].article_path == "docs/guide/resilience.md"
+    assert len(narrowed.results) == 1
+    assert narrowed.results[0].article_path.startswith("docs/api/")
+    assert narrowed.coverage.complete is False  # the other docs/api article matched too
+
+
+async def test_a_path_prefix_never_reads_another_version(retrieval: RetrievalModule) -> None:
+    result = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, ref="v1.3.0", query="token", path_prefix="docs/api")
+    )
+
+    assert result.results == []
+    assert result.version == "v1.3.0"
+
+
+@pytest.mark.parametrize("prefix", ["../docs", "docs/../../etc", "docs\\api"])
+def test_a_path_prefix_that_leaves_the_tree_is_refused(prefix: str) -> None:
+    with pytest.raises(ValidationError):
+        SearchDocsQuery(library=LIB, query="x", path_prefix=prefix)
+
+
+# ---------------------------------------------------------------- grouped by article (#575)
+
+
+async def test_results_are_grouped_by_article_the_best_article_first(
+    retrieval: RetrievalModule,
+) -> None:
+    query = "retry_policy max_retries token client"
+    ranked = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, query=query, limit=10, group_by=ResultGrouping.CHUNK)
+    )
+    grouped = await retrieval.search_docs(SearchDocsQuery(library=LIB, query=query, limit=10))
+
+    # the same results, the first one included; only their order changes
+    assert {r.chunk_id for r in grouped.results} == {r.chunk_id for r in ranked.results}
+    assert grouped.results[0].chunk_id == ranked.results[0].chunk_id
+    # every article's results together, in the order of its best result, each best first
+    articles = list(dict.fromkeys(r.article_path for r in ranked.results))
+    assert list(dict.fromkeys(r.article_path for r in grouped.results)) == articles
+    for article in articles:
+        own = [r.chunk_id for r in ranked.results if r.article_path == article]
+        assert [r.chunk_id for r in grouped.results if r.article_path == article] == own
+        assert {r.group for r in grouped.results if r.article_path == article} == {
+            articles.index(article) + 1
+        }
+    groups = [r.group or 0 for r in grouped.results]
+    assert groups == sorted(groups)
+    assert len(articles) < len(ranked.results)  # some article answered more than once
+    assert all(r.group is None for r in ranked.results)
+
+
+def test_article_groups_keep_each_results_place_in_its_group() -> None:
+    assert article_groups(["a", "b", "a", "c", "b"]) == [(0, 1), (2, 1), (1, 2), (4, 2), (3, 3)]
+    assert article_groups([]) == []

@@ -28,14 +28,21 @@ export function TabsContent({ className, ...props }: ComponentProps<typeof T.Con
 
 export function TabsList({ className, children, ...props }: ComponentProps<typeof T.List>) {
   const ref = useRef<HTMLDivElement>(null);
-  const [bar, setBar] = useState<{ x: number; w: number } | null>(null);
+  const [bar, setBar] = useState<{ x: number; y: number; w: number } | null>(null);
 
   useLayoutEffect(() => {
     const list = ref.current;
     if (!list) return;
     const measure = () => {
       const active = list.querySelector<HTMLElement>('[role="tab"][data-state="active"]');
-      if (active) setBar({ x: active.offsetLeft, w: active.offsetWidth });
+      // Under the active tab, on its row: the tabs wrap when they don't fit (#576).
+      if (active) {
+        setBar({
+          x: active.offsetLeft,
+          y: active.offsetTop + active.offsetHeight,
+          w: active.offsetWidth,
+        });
+      }
     };
     measure();
     const observer = new MutationObserver(measure);
@@ -51,15 +58,15 @@ export function TabsList({ className, children, ...props }: ComponentProps<typeo
   return (
     <T.List
       ref={ref}
-      className={cn("relative flex gap-1 border-b border-border", className)}
+      className={cn("relative flex flex-wrap gap-1 border-b border-border", className)}
       {...props}
     >
       {children}
       {bar && (
         <span
           aria-hidden="true"
-          className="pointer-events-none absolute -bottom-px left-0 h-0.5 w-px origin-left rounded-full bg-route transition-transform duration-(--dur) ease-(--ease-out) motion-reduce:transition-none"
-          style={{ transform: `translateX(${bar.x}px) scaleX(${bar.w})` }}
+          className="pointer-events-none absolute top-0 left-0 h-0.5 w-px origin-left rounded-full bg-route transition-transform duration-(--dur) ease-(--ease-out) motion-reduce:transition-none"
+          style={{ transform: `translate(${bar.x}px, ${bar.y - 1}px) scaleX(${bar.w})` }}
         />
       )}
     </T.List>

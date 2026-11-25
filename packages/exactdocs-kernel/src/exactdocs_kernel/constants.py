@@ -1,6 +1,6 @@
 """Constants of ``exactdocs_kernel``: every fixed value its modules share.
 
-Each is ``Final`` and documented; see *Python conventions* in docs/architecture.md.
+Each is ``Final`` and documented; see docs/architecture/conventions.md.
 """
 
 import re
@@ -25,6 +25,13 @@ TOOL_HINTS: Final[dict[str, bool]] = {
 """Hints every ExactDocs MCP tool states. Open world on purpose: the content is external and
 untrusted, and clients may gate on that even though the catalogue itself is local.
 """
+LIBRARY_ARGUMENT: Final[str] = (
+    "Library ID, e.g. '/facebook/react'. A library name ('React') is resolved to its ID when "
+    "exactly one library matches it; otherwise the error lists the candidate IDs"
+)
+"""What an MCP tool's ``library`` argument takes (#573): an ID, or a name the server resolves."""
+CLAMPED: Final[str] = "a value outside is clamped to the range, and the result's notes say so"
+"""How an MCP tool treats a number outside its range (#573), for the argument's description."""
 
 # ---------------------------------------------------------------- notice
 NOTICE: Final[str] = (

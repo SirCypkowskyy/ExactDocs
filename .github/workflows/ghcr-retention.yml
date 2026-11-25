@@ -3,7 +3,7 @@
 # that one release's three images do not push out older releases of another variant. Multi-arch
 # indexes, their platform images, cosign signatures and SBOM/provenance attestations are removed
 # together; untagged leftovers are deleted.
-# See docs/releasing.md.
+# See docs/releasing/images.md#image-retention.
 name: GHCR retention
 
 on:
@@ -31,7 +31,7 @@ env:
   KEEP_DEV: 5
   KEEP_STABLE: 10
 
-# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing.md "CI/CD and
+# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing/runners.md "CI/CD and
 # runners"); it uses none of the GitHub-hosted minutes.
 jobs:
   # One pass per variant and channel. `exclude-tags` keeps everything outside the pass out of it

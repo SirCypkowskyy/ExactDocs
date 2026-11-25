@@ -72,7 +72,7 @@ export function McpConfig({ className }: { className?: string }) {
         tabIndex={0}
         className="mt-3 overflow-x-auto rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
-        <pre className={cn(codeWell, "whitespace-pre")}>
+        <pre className={cn(codeWell, "w-max min-w-full whitespace-pre")}>
           <code>{config}</code>
         </pre>
       </section>

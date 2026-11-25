@@ -1,4 +1,6 @@
-"""Calibrate the text scorer on ExactDocs' own results: ``just text-bench`` (docs/evals.md).
+"""Calibrate the text scorer on ExactDocs' own results: ``just text-bench``.
+
+See docs/evals/text-scoring.md.
 
 As in ``run_retrieval_eval.py``, the test-support directory (the importer wiring) is put on the
 path before the CLI is imported.

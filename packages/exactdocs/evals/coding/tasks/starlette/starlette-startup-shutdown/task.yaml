@@ -1,0 +1,17 @@
+title: Open a resource at startup and close it at shutdown
+project: starlette
+version: 1.10.0
+environment: starlette-1.10.0
+other_version: 0.27.0
+api_since:
+  version: 1.0.0
+  released: '2026-03-22'
+files:
+- app/main.py
+prompt: |
+  Wire a `Database` (from `app/db.py`) into the app in `app/main.py`: connect one when
+  the application starts, disconnect it when the application shuts down, and make
+  `GET /count` answer `{"count": <the database's count()>}` from that database.
+notes: |
+  Starlette 0.x code passes `on_startup` / `on_shutdown` handlers (deprecated since
+  0.26, still working up to 0.52); Starlette 1.0 removed them: only `lifespan` remains.

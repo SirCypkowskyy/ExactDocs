@@ -50,10 +50,39 @@ class Hit(_Model):
     """An expected section only: it answers the same part of the case as the section listed
     before it, as well as that one does, so either is enough (#501). False: a part a complete
     answer needs, with the alternatives listed after it."""
+    tokens: int | None = None
+    """A returned hit only: the estimated tokens (characters / 4) of the text it stands for,
+    the chunk's content, when the retriever read it back (#575): the context a caller gets."""
+    group: int | None = None
+    """A returned hit only: the rank of its article's group when the search grouped its results
+    by article (#575). Hits of one group are one result, scored at the group's rank
+    (``results_of``); None: the hit is a result of its own."""
 
 
 type Part = tuple[Hit, ...]
 """One part of a complete answer: a section, and the alternatives that answer it as well."""
+
+
+def results_of(hits: Sequence[Hit]) -> list[tuple[Hit, ...]]:
+    """Split what a search returned into its results, best first (#575).
+
+    A search that groups its results by article returns the hits of a group together, each with
+    the group's rank: the group is one result, ranked as the group, as a tool that returns a
+    page's sections in one result is scored. A hit without a group is a result of its own.
+
+    Args:
+        hits: The hits, in the order returned.
+
+    Returns:
+        The results, each the hits it holds.
+    """
+    results: list[list[Hit]] = []
+    for hit in hits:
+        if hit.group is not None and results and results[-1][-1].group == hit.group:
+            results[-1].append(hit)
+        else:
+            results.append([hit])
+    return [tuple(r) for r in results]
 
 
 def parts_of(expected: Sequence[Hit]) -> list[Part]:
@@ -142,7 +171,7 @@ class Answer(_Model):
 type GoldenKind = Literal[
     "identifier-lookup", "how-to", "conceptual", "version-change", "cross-page", "unanswerable"
 ]
-"""What a golden-set case asks (docs/evals.md#the-golden-set); ``unanswerable``: the pinned
+"""What a golden-set case asks (docs/evals/golden-set.md); ``unanswerable``: the pinned
 version does not answer it, so it expects no section."""
 GOLDEN_KINDS: Final[frozenset[str]] = frozenset(get_args(GoldenKind.__value__))
 """Every golden-set kind."""
@@ -179,7 +208,7 @@ def fingerprint(dataset: RetrievalDataset) -> str:
     article, heading path, in order, and whether each is an alternative) count: renaming,
     reordering or commenting cases keeps the fingerprint, and so does a field added to the
     models with a default. Adding, removing or changing a question or an expected section
-    changes it (and resets the baseline, docs/evals.md).
+    changes it (and resets the baseline, docs/evals/gates.md#changing-the-dataset).
 
     Args:
         dataset: The cases.

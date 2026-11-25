@@ -1,0 +1,20 @@
+title: Default freshness and garbage-collection times
+project: tanstack-query
+version: v4.36.1
+environment: query-core-4.36.1
+pair: query-gc-time
+other_version: v5.90.3
+other_from: query-gc-time-v5
+api_since:
+  version: 5.0.0
+  released: '2023-10-17'
+files:
+- src/client.ts
+prompt: |
+  The project uses `@tanstack/query-core` (TanStack Query's framework-agnostic core). Change `createClient` in `src/client.ts` so that, by
+  default, a query's data stays fresh for 30 seconds, and a query nobody uses any more
+  (no observer) is removed from the cache 100 ms later instead of after the default
+  five minutes.
+notes: |
+  TanStack Query 4 calls the time unused data stays cached `cacheTime`; v5 renamed it
+  `gcTime`. Each ignores the other's name (and its types reject it).

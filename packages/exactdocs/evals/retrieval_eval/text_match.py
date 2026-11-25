@@ -15,7 +15,7 @@ rendered as plain text still matches. A result answers a section when it holds a
 or when at least ``MATCH_THRESHOLD`` of the result's shingles lie in the section with its
 subsections (a finer result: it is a part of the section). These are the text forms of the
 match rule of chunk-ID scoring (``golden_run.held_match``). See
-docs/evals.md#scoring-text-results.
+docs/evals/text-scoring.md.
 """
 
 import html
@@ -37,7 +37,7 @@ SHINGLE_WORDS: Final[int] = 5
 """Words per shingle. A text of fewer words is one shingle of all of them."""
 MATCH_THRESHOLD: Final[float] = 0.8
 """The share of shingles that must agree for a result to answer a section (calibrated against
-chunk-ID scoring, docs/evals.md#calibration)."""
+chunk-ID scoring, docs/evals/text-scoring.md#calibration)."""
 SECTION_CHUNKING: Final[ChunkingConfig] = ChunkingConfig(max_section_chars=None)
 """How the corpus is cut into sections: every heading, no merging, no bound (the golden set's
 ``h6``; ``golden.article_sections`` cuts the same headings)."""

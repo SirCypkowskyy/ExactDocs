@@ -427,6 +427,30 @@ def test_the_markdown_report_shows_each_cell_and_the_breakdowns() -> None:
     assert "`EXACTDOCS_AI__MODE=bm25`; searches answered by no search" in text
 
 
+def test_a_cell_counts_its_tool_errors_per_run_and_per_tool() -> None:
+    # #573: each failed call costs a turn; the page shows them per arm and agent model.
+    def calls(*errors: str | None) -> list[ToolCall]:
+        return [
+            ToolCall(name=f"tool{i % 2}", args="{}", seconds=0.1, error=e)
+            for i, e in enumerate(errors)
+        ]
+
+    rows = [
+        _row("a").model_copy(update={"tool_calls": calls(None, "bad", "bad")}),
+        _row("b").model_copy(update={"tool_calls": calls("bad")}),
+        _row("c").model_copy(update={"tool_calls": calls(None, None)}),
+        _row("d", grade="error").model_copy(update={"tool_calls": calls("bad")}),  # not answered
+    ]
+
+    cell = summarize("m1", "bm25", rows)
+    text = markdown(_report(rows[:3]))
+
+    assert (cell.runs_with_tool_errors, cell.tool_errors) == (2, 3)
+    assert cell.tool_errors_by_tool == {"tool0": 2, "tool1": 1}
+    assert "## Tool errors" in text
+    assert "| `m1` | exactdocs (bm25) | 2 of 3 | 3 | `tool0` 2, `tool1` 1 |" in text
+
+
 # ---------------------------------------------------------------------- intervals, tests (#489)
 
 
@@ -544,10 +568,9 @@ def test_the_cli_exports_a_sample_and_reads_the_labels_back(
         (["run", "--offline", "--projects", "nope"], "no case matches"),
         (["run", "--offline", "--arm", "web"], "unknown arm 'web'"),
         (
-            ["run", "--offline", "--arm", "none,context7"],
-            "the context7 arm is not built yet (#493)",
+            ["run", "--offline", "--arm", "grounded-docs", "--grounded-docs", "vectors"],
+            "unknown Grounded Docs configuration 'vectors'",
         ),
-        (["run", "--offline", "--arm", "grounded-docs"], "not built yet (#492)"),
         (["run", "--offline", "--thinking", "loud"], "thinking 'loud' is not on, off or one of"),
     ],
 )

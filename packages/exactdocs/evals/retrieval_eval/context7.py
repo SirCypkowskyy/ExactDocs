@@ -8,7 +8,7 @@ note whether the version is served, and scores the text it returns with the text
 next to ExactDocs (#489's intervals and paired tests). Questions of a version it does not serve
 are asked unpinned and reported apart, as "latest only". This module holds what needs no
 network: reading a response, coverage, the budget, the report and the Markdown. See
-docs/evals.md#context7.
+docs/evals/context7.md.
 """
 
 import json
@@ -223,7 +223,7 @@ class Group(_Model):
 
 
 class Context7Report(_Model):
-    """The run's JSON report (``context7.json``), documented in docs/evals.md."""
+    """The run's JSON report (``context7.json``), documented in docs/evals/context7.md."""
 
     schema_version: int = SCHEMA_VERSION
     golden: str
@@ -391,7 +391,7 @@ def markdown(report: Context7Report) -> str:
             "what ExactDocs' `query-docs` returns. Context7's index changes over time: these "
             "numbers hold for this date only. Golden set "
             f"{report.cases} cases (`{report.golden}`), ExactDocs commit "
-            f"`{env.get('exactdocs_commit', '?')}`. Definitions: docs/evals.md#context7."
+            f"`{env.get('exactdocs_commit', '?')}`. Definitions: docs/evals/context7.md."
         ),
         "",
         "## Coverage of the pinned versions",

@@ -206,7 +206,9 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
                 rel="noopener noreferrer"
                 className="inline-flex min-h-8 max-w-full items-center gap-1 rounded outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <span className="truncate">{web.replace(/^https?:\/\//, "")}</span>
+                <span title={web} className="truncate">
+                  {web.replace(/^https?:\/\//, "")}
+                </span>
                 <ArrowUpRight
                   aria-hidden="true"
                   data-icon-motion="out"

@@ -1,0 +1,132 @@
+name: Harness benchmark (real providers)
+
+# Manual only: it calls hosted models with the repository's keys, so it never runs on a push or a
+# pull request. It runs the harness benchmark (docs/evals/harnesses.md, `just harness-bench run`):
+# coding-agent CLIs (Claude Code, Codex CLI, Gemini CLI, OpenCode; each a pinned npm release)
+# run headless, each run in its own container on an internal Docker network whose only way out
+# is the gate (the model provider's host, and the arm's MCP server), on the version-pinned coding
+# tasks and, if asked, the golden questions, with each documentation arm (`none`, `exactdocs`,
+# `context7`, `grounded-docs`).
+#
+# Models are `<provider>:<model>` (anthropic, openai, google, ollama); a harness runs only the
+# models of the providers it supports. Every CLI runs with an API key, never a subscription login:
+#
+#   repository secrets     HARNESS_BENCH_ANTHROPIC_API_KEY, HARNESS_BENCH_OPENAI_API_KEY,
+#                          HARNESS_BENCH_GEMINI_API_KEY, AGENT_BENCH_OLLAMA_API_KEY (each optional)
+#   repository variables   AGENT_BENCH_OLLAMA_BASE_URL (https://ollama.com/v1 for Ollama Cloud)
+#
+# The golden questions' judge (`--jobs questions --judge-model ...`, in `args`) is a pydantic-ai
+# model, as in the agent benchmark (agent-bench.yml), with the same keys. The `context7` arm needs
+# the repository secret CONTEXT7_API_KEY; no Context7 number is published until Upstash permits it
+# (docs/evals/context7.md#terms-of-service). Blank values count as unset.
+
+on:
+  workflow_dispatch:
+    inputs:
+      harnesses:
+        description: Harnesses, comma-separated (claude-code, codex, gemini-cli, opencode)
+        required: true
+        default: "opencode"
+      models:
+        description: Models, comma-separated (e.g. anthropic:claude-sonnet-4-5,ollama:gpt-oss:120b)
+        required: true
+      arms:
+        description: Documentation arms, comma-separated (none, exactdocs, context7, grounded-docs)
+        required: false
+        default: "none,exactdocs"
+      thinking:
+        description: The models' thinking (minimal, low, medium, high, xhigh, max; blank for the default)
+        required: false
+        default: ""
+      args:
+        description: Extra arguments (e.g. --post-cutoff --limit 3, --jobs tasks,questions --judge-model openai:gpt-5)
+        required: false
+        default: "--post-cutoff --limit 3"
+
+concurrency:
+  group: harness-bench
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_COLOR: "1"
+  PYDANTIC_AI_NO_BANNER: "1"
+
+# Runner: the self-hosted ARM64 runner (docs/releasing/runners.md "CI/CD and runners"), with
+# Docker; it uses none of the GitHub-hosted minutes.
+jobs:
+  bench:
+    name: Harness benchmark with real providers
+    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    timeout-minutes: 360
+    environment: eval-providers # its protection rules decide who may spend the keys
+    env:
+      OLLAMA_BASE_URL: ${{ vars.AGENT_BENCH_OLLAMA_BASE_URL }}
+      HARNESSES: ${{ inputs.harnesses }}
+      MODELS: ${{ inputs.models }}
+      ARMS: ${{ inputs.arms }}
+      THINKING: ${{ inputs.thinking }}
+      EXTRA_ARGS: ${{ inputs.args }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          enable-cache: true
+      # The CLIs, the coding tasks' Node environments and the context7 and grounded-docs servers
+      # run on Node.js 22.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - name: Install
+        run: uv sync --locked
+      # The keys are given to this step only, not to `uv sync` (third-party build backends) or the
+      # other steps of this persistent runner. Each CLI's container gets only its provider's key,
+      # passed by name.
+      - name: Harness benchmark (just harness-bench run)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.HARNESS_BENCH_ANTHROPIC_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.HARNESS_BENCH_OPENAI_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.HARNESS_BENCH_GEMINI_API_KEY }}
+          OLLAMA_API_KEY: ${{ secrets.AGENT_BENCH_OLLAMA_API_KEY }}
+          CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
+        run: |
+          # A blank variable is unset: the CLIs would take an empty base URL or key.
+          for name in OLLAMA_BASE_URL ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY \
+            OLLAMA_API_KEY CONTEXT7_API_KEY; do
+            if [ -z "${!name}" ]; then unset "$name"; fi
+          done
+          docker info --format 'Docker {{.ServerVersion}}'
+          # The CLIs and Grounded Docs live in the runner's temporary folder, installed per run.
+          args=(--harness "$HARNESSES" --arm "${ARMS:-none,exactdocs}"
+            --harnesses-home "$RUNNER_TEMP/harnesses"
+            --grounded-docs-home "$RUNNER_TEMP/grounded-docs"
+            --work-dir "$RUNNER_TEMP/harness-bench"
+            --baseline-tasks packages/exactdocs/evals/results/coding-tasks.json)
+          if [ -n "$THINKING" ]; then args+=(--thinking "$THINKING"); fi
+          IFS=',' read -ra models <<< "$MODELS"
+          for model in "${models[@]}"; do args+=(--model "$model"); done
+          # shellcheck disable=SC2086 # EXTRA_ARGS is a list of arguments
+          uv run python packages/exactdocs/evals/run_harness_bench.py run "${args[@]}" $EXTRA_ARGS
+      - name: Keep the transcripts
+        if: ${{ !cancelled() }}
+        run: |
+          mkdir -p reports/evals/harness-bench-runs
+          if [ -d "$RUNNER_TEMP/harness-bench/runs" ]; then
+            find "$RUNNER_TEMP/harness-bench/runs" -maxdepth 2 \
+              \( -name transcript.jsonl -o -name stderr.txt \) -print0 |
+              while IFS= read -r -d '' file; do
+                run=$(basename "$(dirname "$file")")
+                mkdir -p "reports/evals/harness-bench-runs/$run"
+                cp "$file" "reports/evals/harness-bench-runs/$run/"
+              done
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: harness-bench
+          path: reports/evals/
+          retention-days: 30

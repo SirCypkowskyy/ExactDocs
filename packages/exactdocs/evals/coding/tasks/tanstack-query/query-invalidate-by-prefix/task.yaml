@@ -1,0 +1,19 @@
+title: Invalidate the queries under one key
+project: tanstack-query
+version: v5.90.3
+environment: query-core-5.90.3
+other_version: v4.36.1
+other_environment: query-core-4.36.1
+api_since:
+  version: 5.0.0
+  released: '2023-10-17'
+files:
+- src/todos.ts
+prompt: |
+  The project uses `@tanstack/query-core` (TanStack Query's framework-agnostic core). Implement `onTodoAdded(client)` in `src/todos.ts`: after a
+  todo is added, mark every cached query whose key starts with `"todos"` as invalid
+  (the active ones refetch); queries under other keys, such as `["users"]`, are left as
+  they are.
+notes: |
+  TanStack Query 4 takes a bare key, `invalidateQueries(["todos"])`; v5 removed the
+  overloads: an array is read as filters without a key, so every query is invalidated.

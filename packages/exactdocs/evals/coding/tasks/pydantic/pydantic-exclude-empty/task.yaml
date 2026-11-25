@@ -1,0 +1,19 @@
+title: Leave empty values out of a model's dumps
+project: pydantic
+version: v2.5.3
+environment: pydantic-2.5.3
+other_version: v2.14.3
+other_environment: pydantic-2.14.3
+api_since:
+  version: 2.12.0
+  released: '2025-10-07'
+files:
+- app/patch.py
+prompt: |
+  When a `ContactPatch` (in `app/patch.py`) is dumped with `model_dump()` or
+  `model_dump_json()` called without arguments, leave out `email` and `phone` when they
+  are `None` and `nickname` when it is the empty string; every other value is kept.
+  Validation does not change.
+notes: |
+  Pydantic 2.12 added `Field(exclude_if=...)`; 2.5 does not know it (an unknown `Field`
+  argument warns, an error here), so 2.5 needs a wrap model serializer.

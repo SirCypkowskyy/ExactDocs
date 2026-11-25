@@ -2,7 +2,7 @@
 # The scan already skips vulnerabilities that have no fix yet; list here only a fixable
 # CRITICAL/HIGH finding that does not apply to us. One ID per line, and above it the reason,
 # the date and who accepted it. Remove the entry once a fixed version is in the image.
-# How to add one: docs/releasing.md, "Image scan".
+# How to add one: docs/releasing/image-scan.md.
 #
 # Example (not active):
 #   # CVE-2099-0001: only exploitable with the X feature, which ExactDocs never enables.

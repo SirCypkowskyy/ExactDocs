@@ -29,6 +29,19 @@ uvx exactdocs serve
 
 </div>
 
+<div class="xd-prose" markdown>
+
+!!! abstract "TL;DR"
+    - ExactDocs is a self-hosted MCP server: point it at a git repository and agents get its docs
+      verbatim, pinned to the tag, branch or commit you imported.
+    - The version is a hard filter, and every chunk names its file, heading and commit.
+    - `resolve-library-id` and `query-docs` match context7's, so a context7 client needs only a new
+      URL.
+    - The standard image runs BM25 on SQLite with no model; AI retrieval is optional.
+    - Start with `docker run` or `uvx exactdocs serve`, then follow [Getting started](getting-started/index.md).
+
+</div>
+
 <figure class="xd-figure" markdown>
 
 ![Two query-docs calls over MCP with the same question, How do I start the sandbox with Docker, one for /acme/payments/v1.3.0 and one for v1.4.0. The first chunk of each reply is shown verbatim, and the lines that differ are highlighted: docs/guide/setup.md and acme/payments:1.3 in v1.3.0, docs/guide/install.md and acme/payments:1.4 in v1.4.0.](assets/screenshots/mcp-light.webp#only-light)
@@ -89,7 +102,7 @@ a new URL. More tools list, browse, read and search one version. See [MCP](mcp.m
 
 The standard image runs BM25 on SQLite with no model. Hybrid search, rerankers, HyDE and an
 agentic mode are optional, on hosted models or on your CPU. See
-[Search and AI models](search.md).
+[Search and AI models](search/index.md).
 
 </div>
 
@@ -159,9 +172,9 @@ result's BM25 and vector rank.</figcaption>
 
 The [golden set](benchmark/golden-set.md) is 321 questions about the docs of Starlette, Pydantic,
 TanStack Query, Zod and Electron, at three pinned versions each. With no model at all, BM25 puts
-a section that answers in the top 5 for 87.6% of the 267 answerable questions, at 52 ms p95.
-Hybrid search on a small local embedding model reaches up to 91.0%. Hosted models have not run
-yet. [Recommended defaults](benchmark/defaults.md) has the numbers and the known weak spots.
+a section that answers first for 70.4% of the 267 answerable questions and in the top 5 for
+91.0%, at 133 ms p95 on 4 shared CPUs. Hybrid search on a small local embedding model reaches
+76.0% and 92.5%. Hosted models have not run yet. [Recommended defaults](benchmark/defaults.md) has the numbers and the known weak spots.
 
 </div>
 
@@ -169,30 +182,30 @@ yet. [Recommended defaults](benchmark/defaults.md) has the numbers and the known
 
 | Page | What is in it |
 |---|---|
-| [Getting started](getting-started.md) | Start the server, create the admin, import a library, use the CLI, private repositories, the sources file, webhooks, accounts, sign-in through an identity provider |
+| [Getting started](getting-started/index.md) | Start the server, create the admin, import a library<br/>use the CLI, private repositories, the sources file, webhooks<br/>accounts, sign-in through an identity provider |
 | [MCP](mcp.md) | Connecting Claude, Cursor, VS Code and Codex; tokens; stdio; every tool and resource; context7 over REST |
 | [Sources file](sources.md) | Declaring libraries in `exactdocs.sources.yaml`, with `sources plan` and `sources apply` |
-| [Configuration](configuration.md) | Every environment variable, the TOML file, sign-in providers and the secret key |
-| [Search and AI models](search.md) | Retrieval modes, chunking and tags, AI providers, reranking, agentic search, local models, budgets |
-| [Deployment](deployment.md) | Image variants, hardened Docker, reverse proxies, health checks, upgrades, backups, PostgreSQL, Supabase, observability |
+| [Configuration](configuration/index.md) | Every environment variable, the TOML file, sign-in providers and the secret key |
+| [Search and AI models](search/index.md) | Retrieval modes, chunking and tags, AI providers, reranking, agentic search, local models, budgets |
+| [Deployment](deployment/index.md) | Image variants, hardened Docker, reverse proxies, health checks, upgrades, backups, PostgreSQL, Supabase, observability |
 
 ## How it is built
 
 | Page | What is in it |
 |---|---|
-| [Architecture](architecture.md) | The system at a glance, then the modular monolith: domains, ports and adapters, the data model, background jobs, vertical slices, and the tests that enforce them |
-| [Flows](flows.md) | Import, re-sync, query, retrieval modes and authentication as diagrams |
-| [REST API](rest-api.md) | Conventions, authentication, errors, and the library, version, sync and job endpoints |
-| [Retrieval evals](evals.md) | The eval suite that compares retrieval modes |
+| [Architecture](architecture/index.md) | The system at a glance, then the modular monolith<br/>domains, ports and adapters, the data model, background jobs, vertical slices<br/>the tests that enforce them |
+| [Flows](flows/index.md) | Import, re-sync, query, retrieval modes and authentication as diagrams |
+| [REST API](rest-api/index.md) | Conventions, authentication, errors, and the library, version, sync and job endpoints |
+| [Retrieval evals](evals/index.md) | The eval suite that compares retrieval modes |
 | [Benchmark](benchmark/index.md) | The golden set, method, results and recommended defaults |
-| [Branching and releases](releasing.md) | `main` and `develop`, SemVer and PEP 440 versions, tag-driven releases to PyPI and ghcr.io, CI runners, size budgets |
+| [Branching and releases](releasing/index.md) | `main` and `develop`, SemVer and PEP 440 versions<br/>tag-driven releases to PyPI and ghcr.io<br/>CI runners, size budgets |
 
 ## Where the project is going
 
 | Page | What is in it |
 |---|---|
 | [User stories](user-stories.md) | The main use case (git repository to Markdown to browsing) as user stories, plus what comes next and later |
-| [Delivery plan](plan.md) | The issues behind the user stories, by epic and milestone |
+| [Delivery plan](plan/index.md) | The issues behind the user stories, by epic and milestone |
 | [AI retrieval decisions](decisions/ai-retrieval.md) | Why the AI retrieval modes are built the way they are |
 
 <div class="xd-prose" markdown>
@@ -202,9 +215,11 @@ yet. [Recommended defaults](benchmark/defaults.md) has the numbers and the known
     built yet is marked *planned*. The screenshots are taken from the `develop` branch by
     `just screenshots`, with the test fixture libraries and a stand-in embedding model.
 
-The diagrams are [Mermaid](https://mermaid.js.org), and CI parses every one of them. This site
-loads Mermaid from unpkg, pinned to 12.3.0 (the version CI checks with). That request is made by
-the documentation site only, never by the running app.
+About the diagrams:
+
+- They are [Mermaid](https://mermaid.js.org), and CI parses every one of them.
+- This site loads Mermaid from unpkg, pinned to 12.3.0 (the version CI checks with).
+- That request is made by the documentation site only, never by the running app.
 
 The README, the contributing guide and the agent skills live in the
 [repository](https://github.com/SirCypkowskyy/ExactDocs).

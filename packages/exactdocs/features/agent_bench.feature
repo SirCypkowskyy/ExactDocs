@@ -1,21 +1,21 @@
 Feature: The agent benchmark compares documentation arms
   As a maintainer telling users whether a documentation tool helps their coding agent
-  I want the same model to answer the golden set with no documentation and with ExactDocs
-  So that the gain in accuracy is weighed against the time and tokens it costs
+  I want the same model to answer the golden set with no documentation, with ExactDocs, with Context7 and with Grounded Docs
+  So that the gain in accuracy is weighed against the time and tokens it costs, tool against tool
 
   Background:
     Given a golden set with answerable and unanswerable questions
     And scripted agent models, one of them thinking, and a scripted judge
 
   Scenario: The same model answers the golden set with each documentation arm
-    When the agent benchmark runs the arms "none" and "exactdocs"
+    When the agent benchmark runs the arms "none", "exactdocs", "context7" and "grounded-docs"
     Then each arm gets the same prompt, the same usage limits and only its own tools
     And the instructions of the arms differ only in the sentence about the documentation tool
     And the report gives accuracy per arm, question kind and project, with intervals
-    And the "exactdocs" arm is compared with "none" by a paired test
+    And each arm is compared with "none" and with "exactdocs" by a paired test
 
   Scenario: The cost of each arm is measured
-    When the agent benchmark runs the arms "none" and "exactdocs"
+    When the agent benchmark runs the arms "none", "exactdocs", "context7" and "grounded-docs"
     Then the report gives, per arm, the wall time per question, the input tokens and the output tokens including thinking, each as mean, p50 and p95 with an interval
     And the thinking tokens on their own where the model returns its thinking, marked estimated, and as not returned where it does not
     And a model without a price costs nothing known rather than zero

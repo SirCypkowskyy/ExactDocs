@@ -4,7 +4,7 @@ Every configuration of the matrix (``retrieval_bench_cli``) answers the golden s
 chunking configuration; each answer becomes a ``Row``, and the rows give the metrics overall, by
 question kind and by project, each with its 95% interval, and the paired tests of a result
 against its budget's default (#489, ``stats``). Definitions are in
-docs/evals.md#the-retrieval-benchmark.
+docs/evals/retrieval-benchmark.md.
 """
 
 import math
@@ -16,7 +16,7 @@ from typing import Any, Final, Literal, Self
 from pydantic import BaseModel, ConfigDict
 from pydantic_evals import Case
 
-from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question, parts_of
+from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question, parts_of, results_of
 from retrieval_eval.evaluators import SectionMatch, first_rank, same_section, wrong_version_hits
 from retrieval_eval.stats import DEFAULT as DEFAULT_STATS
 from retrieval_eval.stats import (
@@ -41,6 +41,16 @@ _EPSILON: Final[float] = 1e-9
 """Float noise tolerated when comparing points."""
 NOT_MEASURED: Final[str] = "not measured yet: needs a real-providers run"
 """What the summary says of the hosted budget until a real-providers run measured it."""
+TOKEN_BUDGETS: Final[dict[str, int]] = {
+    "recall_at_1k_tokens": 1000,
+    "recall_at_2k_tokens": 2000,
+    "recall_at_4k_tokens": 4000,
+}
+"""The token budgets recall is measured within (#575), by metric: a case counts when the result
+that first answers it ends within the first that many estimated tokens of the text returned."""
+CUT_BUDGETS: Final[dict[str, int]] = {f"{name}_cut": n for name, n in TOKEN_BUDGETS.items()}
+"""The same budgets with the text cut at the budget (scored from text only): a case counts also
+when the result the budget cuts answers it from the part of it within the budget."""
 
 
 class Budget(StrEnum):
@@ -90,16 +100,43 @@ class Row(_Model):
     """Model tokens it cost."""
     usd: float
     """What it cost in USD."""
+    context_tokens: int | None = None
+    """Estimated tokens (characters / 4, as ``CHARS_PER_TOKEN``) of all the text it returned:
+    each chunk's content, or each text result (#575). None in a row recorded without it."""
+    tokens_to_hit: int | None = None
+    """Estimated tokens of the results up to and including the first that answers a section the
+    case lists (``rank``), read in order; None when none is in the top 10, or without
+    ``context_tokens``."""
+    cut_hits: dict[str, bool] | None = None
+    """Scored from text only, by metric of ``CUT_BUDGETS``: whether the text returned, cut at the
+    budget, answers the case: a result within the budget answers it, or the result the budget
+    cuts answers it from its part within the budget (#575). None when scored by chunk ID."""
+
+
+def sized(rank: int | None, sizes: Sequence[int] | None) -> tuple[int | None, int | None]:
+    """The context a case's results hold, and how much of it comes up to its first hit.
+
+    Args:
+        rank: The rank of the first hit (``Row.rank``).
+        sizes: The estimated tokens of each result's text, best first; None when unknown.
+
+    Returns:
+        ``(context_tokens, tokens_to_hit)`` as ``Row`` keeps them.
+    """
+    if sizes is None:
+        return None, None
+    return sum(sizes), (sum(sizes[:rank]) if rank else None)
 
 
 def section_ranks(
     expected: Sequence[Hit], hits: Sequence[Hit], matches: SectionMatch = same_section
 ) -> tuple[int, ...]:
-    """The ranks, in the top 10, of the hits that answer a part of the case.
+    """The ranks, in the top 10, of the results that answer a part of the case.
 
-    A hit counts when it answers a part no earlier hit answered: one of the part's sections or
-    of its alternatives (#501). So a part found twice, or through two of its alternatives,
-    counts once.
+    A result counts when it answers a part no earlier result answered: one of the part's
+    sections or of its alternatives (#501). So a part found twice, or through two of its
+    alternatives, counts once. A result is a hit, or the hits of one article group (#575,
+    ``results_of``), which answers one part, as a text result does (``text_bench``).
 
     Args:
         expected: The sections the case lists (``parts_of`` groups them).
@@ -111,8 +148,10 @@ def section_ranks(
     """
     left = parts_of(expected)
     ranks = []
-    for rank, hit in enumerate(hits[:NDCG_AT], start=1):
-        found = next((part for part in left if any(matches(e, hit) for e in part)), None)
+    for rank, result in enumerate(results_of(hits)[:NDCG_AT], start=1):
+        found = next(
+            (part for part in left if any(matches(e, hit) for e in part for hit in result)), None
+        )
         if found is not None:
             left.remove(found)
             ranks.append(rank)
@@ -155,12 +194,17 @@ def row_of(
         The row.
     """
     expected = case.expected_output.hits if case.expected_output else []
+    rank = first_rank(expected, answer, matches) if expected else None
+    results = results_of(answer.hits)
+    known = all(h.tokens is not None for h in answer.hits)
+    sizes = [sum(h.tokens or 0 for h in r) for r in results] if known else None
+    context, to_hit = sized(rank, sizes)
     return Row(
         case=case.name or "",
         kind=case.metadata.kind if case.metadata else "",
         project=case.inputs.project or "",
         answerable=bool(expected),
-        rank=first_rank(expected, answer, matches) if expected else None,
+        rank=rank,
         ndcg=ndcg_at(expected, answer.hits, matches),
         sections=len(parts_of(expected)),
         section_ranks=section_ranks(expected, answer.hits, matches),
@@ -169,6 +213,8 @@ def row_of(
         search_ms=answer.search_ms or 0.0,
         tokens=answer.tokens,
         usd=answer.usd,
+        context_tokens=context,
+        tokens_to_hit=to_hit,
     )
 
 
@@ -204,6 +250,23 @@ class BenchMetrics(_Model):
     """Nearest-rank percentiles of the search time, one question at a time."""
     tokens_per_question: float
     usd_per_question: float
+    context_tokens_per_question: float | None = None
+    """Over every case: estimated tokens of all the text returned (#575); None when the rows
+    did not keep it."""
+    tokens_to_first_hit: float | None = None
+    """Over answerable cases with a hit in the top 10: estimated tokens of the results up to and
+    including the first that answers."""
+    recall_at_1k_tokens: float | None = None
+    recall_at_2k_tokens: float | None = None
+    recall_at_4k_tokens: float | None = None
+    """Over answerable cases: the result that first answers the case ends within the first 1,000,
+    2,000 or 4,000 estimated tokens of the text returned, the results read whole and in order
+    (``TOKEN_BUDGETS``, #575); None when the rows did not keep the context."""
+    recall_at_1k_tokens_cut: float | None = None
+    recall_at_2k_tokens_cut: float | None = None
+    recall_at_4k_tokens_cut: float | None = None
+    """Over answerable cases, scored from text only: the text returned, cut at 1,000, 2,000 or
+    4,000 estimated tokens, answers the case (``Row.cut_hits``); None when scored by chunk ID."""
     intervals: dict[str, Interval] = {}
     """The 95% interval of each rate and mean above, by field name (#489): a percentile bootstrap
     over the cases (``stats``). Empty in a result recorded without its rows."""
@@ -228,6 +291,9 @@ def columns_of(rows: Sequence[Row]) -> dict[str, list[float]]:
     """
     answerable = [r for r in rows if r.answerable]
     unanswerable = [r for r in rows if not r.answerable]
+    sized_rows = rows if all(r.context_tokens is not None for r in rows) else []
+    sized_answerable = [r for r in sized_rows if r.answerable]
+    cut = answerable if all(r.cut_hits is not None for r in rows) else []
     return {
         "recall_at_1": [_hit(r, 1) for r in answerable],
         "recall_at_5": [_hit(r, 5) for r in answerable],
@@ -242,10 +308,28 @@ def columns_of(rows: Sequence[Row]) -> dict[str, list[float]]:
         "answerable_empty_rate": [float(r.empty) for r in answerable],
         "tokens_per_question": [float(r.tokens) for r in rows],
         "usd_per_question": [r.usd for r in rows],
+        "context_tokens_per_question": [float(r.context_tokens or 0) for r in sized_rows],
+        "tokens_to_first_hit": [
+            float(r.tokens_to_hit) for r in sized_answerable if r.tokens_to_hit is not None
+        ],
+        **{
+            name: [_within(r, budget) for r in sized_answerable]
+            for name, budget in TOKEN_BUDGETS.items()
+        },
+        **{name: [float((r.cut_hits or {}).get(name, False)) for r in cut] for name in CUT_BUDGETS},
     }
 
 
-_ROUNDING: Final[dict[str, int]] = {"tokens_per_question": 1, "usd_per_question": _USD_DIGITS}
+def _within(row: Row, budget: int) -> float:
+    return 1.0 if row.tokens_to_hit is not None and row.tokens_to_hit <= budget else 0.0
+
+
+_ROUNDING: Final[dict[str, int]] = {
+    "tokens_per_question": 1,
+    "usd_per_question": _USD_DIGITS,
+    "context_tokens_per_question": 1,
+    "tokens_to_first_hit": 1,
+}
 """Decimals of the means that are not rounded to ``_DIGITS``."""
 
 
@@ -300,6 +384,14 @@ def metrics_of(rows: Sequence[Row], method: StatsMethod = DEFAULT_STATS) -> Benc
         latency_p95_ms=round(percentile(latencies, 0.95), 3),
         tokens_per_question=mean("tokens_per_question") or 0.0,
         usd_per_question=mean("usd_per_question") or 0.0,
+        context_tokens_per_question=mean("context_tokens_per_question"),
+        tokens_to_first_hit=mean("tokens_to_first_hit"),
+        recall_at_1k_tokens=mean("recall_at_1k_tokens"),
+        recall_at_2k_tokens=mean("recall_at_2k_tokens"),
+        recall_at_4k_tokens=mean("recall_at_4k_tokens"),
+        recall_at_1k_tokens_cut=mean("recall_at_1k_tokens_cut"),
+        recall_at_2k_tokens_cut=mean("recall_at_2k_tokens_cut"),
+        recall_at_4k_tokens_cut=mean("recall_at_4k_tokens_cut"),
         intervals=spread,
     )
 
@@ -380,6 +472,10 @@ class ConfigResult(_Model):
     recorded run that kept no rows, completed by a re-run whose recall, MRR, nDCG and rates
     matched it exactly): that run's commit and machine. Its ``search_ms`` are that run's, not
     the recorded latencies. None: the rows are this run's."""
+    recorded_by: dict[str, str] | None = None
+    """Set when the whole result comes from another run than the report's (#575: the search
+    changed, and only some configurations were run again): that run's ``exactdocs_commit``,
+    ``platform``, ``cpus`` and ``date``. None: the report's own run."""
     versus_default: Versus | None = None
     """Paired tests against its budget's default; None for the default itself, for a budget
     with no default, and when either has no rows."""
@@ -433,7 +529,7 @@ class Recommendation(_Model):
 
 
 class RetrievalBenchReport(_Model):
-    """The benchmark's JSON report (``retrieval.json``), documented in docs/evals.md."""
+    """The benchmark's JSON report (``retrieval.json``), see docs/evals/retrieval-runs.md."""
 
     schema_version: int = SCHEMA_VERSION
     golden: str
@@ -491,6 +587,10 @@ BINARY_TESTS: Final[tuple[str, ...]] = ("recall_at_1", "recall_at_5", "recall_at
 """The hit-or-miss metrics a result is tested on against another (McNemar, mid-p)."""
 GRADED_TESTS: Final[tuple[str, ...]] = ("mrr", "ndcg_at_10")
 """The graded metrics a result is tested on against another (sign-flip permutation)."""
+BUDGET_TESTS: Final[tuple[str, ...]] = (*TOKEN_BUDGETS, *CUT_BUDGETS)
+"""The recall within a token budget a result is tested on against another (McNemar, mid-p),
+when both kept the context of every case (#575); cut at the budget when both were scored from
+their text."""
 
 
 def paired_tests(
@@ -504,8 +604,9 @@ def paired_tests(
         method: The seed, resamples, confidence and significance level.
 
     Returns:
-        A test per metric of ``BINARY_TESTS`` and ``GRADED_TESTS``; empty when the two share no
-        answerable case with a name (a result recorded without its rows).
+        A test per metric of ``BINARY_TESTS`` and ``GRADED_TESTS``, and of ``BUDGET_TESTS`` when
+        both kept every case's context; empty when the two share no answerable case with a name
+        (a result recorded without its rows).
     """
     theirs = {r.case: r for r in a.rows if r.answerable and r.case}
     mine = {r.case: r for r in b.rows if r.answerable and r.case}
@@ -513,7 +614,9 @@ def paired_tests(
     before = columns_of([theirs[c] for c in common])
     after = columns_of([mine[c] for c in common])
     tests: dict[str, PairedTest | None] = {}
-    for name in BINARY_TESTS:
+    for name in BINARY_TESTS + BUDGET_TESTS:
+        if len(before[name]) != len(after[name]):  # one of them did not keep the context
+            continue
         hits = [v > 0 for v in before[name]], [v > 0 for v in after[name]]
         tests[name] = paired_binary(*hits, method)
     for name in GRADED_TESTS:
@@ -697,7 +800,7 @@ def check(report: RetrievalBenchReport, recorded: RetrievalBenchReport) -> list[
             (
                 f"the recorded report measured golden set {recorded.golden} on "
                 f"{', '.join(recorded.projects)}, this run {report.golden} on "
-                f"{', '.join(report.projects)}: record this run (docs/evals.md)"
+                f"{', '.join(report.projects)}: record this run (docs/evals/retrieval-benchmark.md)"
             )
         ]
     before = {(r.configuration, r.chunking): r.metrics for r in recorded.results}
@@ -798,7 +901,7 @@ def markdown(report: RetrievalBenchReport) -> str:
             f"ExactDocs `{env.get('exactdocs_commit', '?')}`, {env.get('platform', '?')}. "
             "Recall, MRR and nDCG over answerable cases; unanswerable cases scored on returning "
             "nothing of another version (clean) and on coming back empty (no answer). "
-            "Definitions: docs/evals.md#the-retrieval-benchmark."
+            "Definitions: docs/evals/retrieval-benchmark.md."
         ),
         "",
         "## Recommended defaults",
@@ -830,6 +933,7 @@ def markdown(report: RetrievalBenchReport) -> str:
     lines.extend(_result_line(r) for r in ran)
     lines.extend(_intervals_note(report))
     lines.extend(_tests_section(report, ran))
+    lines.extend(budget_section(ran))
     lines.extend(_breakdown("By question kind", ran, "by_kind"))
     lines.extend(_breakdown("By project", ran, "by_project"))
     lines.extend(_notes(report, ran))
@@ -893,6 +997,16 @@ def _notes(report: RetrievalBenchReport, ran: Sequence[ConfigResult]) -> list[st
             models.setdefault(info.model, f"- {info.role}: `{info.model}`{revision}")
     if models:
         lines.extend(["", "## Models", "", *models.values()])
+    others = [
+        f"- `{r.configuration}` at `{r.chunking}`: ExactDocs "
+        f"`{(r.recorded_by or {}).get('exactdocs_commit', '?')}`, "
+        f"{(r.recorded_by or {}).get('platform', '?')}, "
+        f"{(r.recorded_by or {}).get('cpus', '?')} CPUs, {(r.recorded_by or {}).get('date', '?')}"
+        for r in ran
+        if r.recorded_by
+    ]
+    if others:
+        lines.extend(["", "## Recorded by another run", "", *others])
     return lines
 
 
@@ -937,7 +1051,7 @@ def _intervals_note(report: RetrievalBenchReport) -> list[str]:
     return ["", note]
 
 
-def _test_cell(test: PairedTest | None, *, points: bool) -> str:
+def paired_cell(test: PairedTest | None, *, points: bool) -> str:
     """One paired test: the difference, its interval and the p-value; bold when significant.
 
     Args:
@@ -991,11 +1105,99 @@ def _tests_section(report: RetrievalBenchReport, ran: Sequence[ConfigResult]) ->
         "|---|---|---|---|" + "---|" * len(metrics),
     ]
     for r, versus in tested:
-        cells = [_test_cell(versus.tests.get(m), points=m in BINARY_TESTS) for m in metrics]
+        cells = [paired_cell(versus.tests.get(m), points=m in BINARY_TESTS) for m in metrics]
         lines.append(
             f"| `{r.configuration}` | `{r.chunking}` | {r.budget} "
             f"| `{versus.configuration}` at `{versus.chunking}` | " + " | ".join(cells) + " |"
         )
     if untested:
         lines += ["", f"Not tested, recorded without per-case outcomes: {', '.join(untested)}."]
+    return lines
+
+
+def _tokens(m: BenchMetrics, name: str) -> str:
+    """A mean of estimated tokens, followed by its interval when it has one.
+
+    Args:
+        m: The metrics.
+        name: The field.
+
+    Returns:
+        ``3,464 [3,320, 3,614]``, the mean alone, or ``-``.
+    """
+    value: float | None = getattr(m, name)
+    if value is None:
+        return "-"
+    spread = m.intervals.get(name)
+    shown = f"{value:,.0f}"
+    return f"{shown} [{spread.low:,.0f}, {spread.high:,.0f}]" if spread else shown
+
+
+def budget_section(ran: Sequence[ConfigResult]) -> list[str]:
+    """Recall within a token budget, and the context returned, of every result that kept it.
+
+    Args:
+        ran: The results that ran.
+
+    Returns:
+        The lines; none when no result kept its context (a report recorded before #575).
+    """
+    sized = [r for r in ran if r.metrics is not None and r.metrics.recall_at_1k_tokens is not None]
+    if not sized:
+        return []
+    budgets = [f"{budget:,}" for budget in TOKEN_BUDGETS.values()]
+    cut = any(
+        r.metrics is not None and r.metrics.recall_at_1k_tokens_cut is not None for r in sized
+    )
+    shown = (*TOKEN_BUDGETS, *(CUT_BUDGETS if cut else ()))
+    lines = [
+        "",
+        "## Within a token budget",
+        "",
+        (
+            f"Recall within the first {', '.join(budgets[:-1])} and {budgets[-1]} estimated tokens "
+            "(characters / 4) of the text returned, the results read whole and in order: a case "
+            "counts when the result that first answers it ends within the budget (#575)."
+            + (
+                " Cut: scored from the text only, the text cut at the budget, so the result the "
+                "budget cuts counts when its part within the budget answers."
+                if cut
+                else ""
+            )
+            + " Context: the estimated tokens of all the text returned per question (each "
+            "chunk's content); to the first hit: up to and including the first result that "
+            "answers. In brackets: the 95% interval. Against: the budget's default, the "
+            "difference in points and the p-value of McNemar's test (mid-p), **bold** when "
+            "significant."
+        ),
+        "",
+        (
+            "| configuration | chunking | context tokens / q | tokens to first hit | "
+            + " | ".join(f"within {b}" for b in budgets)
+            + "".join(f" | cut at {b}" for b in budgets if cut)
+            + " | against | "
+            + " | ".join(budgets)
+            + " |"
+        ),
+        "|---|---|---|---|" + "---|" * (len(shown) + len(budgets) + 1),
+    ]
+    for r in sized:
+        m = r.metrics
+        if m is None:  # pragma: no cover -- filtered above
+            continue
+        versus = r.versus_default
+        tests = [
+            paired_cell(versus.tests.get(name) if versus else None, points=True)
+            for name in TOKEN_BUDGETS
+        ]
+        against = f"`{versus.configuration}` at `{versus.chunking}`" if versus else "-"
+        lines.append(
+            f"| `{r.configuration}` | `{r.chunking}` "
+            f"| {_tokens(m, 'context_tokens_per_question')} "
+            f"| {_tokens(m, 'tokens_to_first_hit')} | "
+            + " | ".join(_with_ci(m, name) for name in shown)
+            + f" | {against} | "
+            + " | ".join(tests)
+            + " |"
+        )
     return lines

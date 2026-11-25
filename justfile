@@ -61,7 +61,7 @@ lint:
 test *args:
     uv run pytest {{ args }}
 
-# Python tests with the integration tests too: they need PostgreSQL, a search or vector server, Docker or the network, each named by an EXACTDOCS_TEST_<NAME>_URL (docs/releasing.md); `just test-integration -m integration`: only them
+# Python tests with the integration tests too: they need PostgreSQL, a search or vector server, Docker or the network, each named by an EXACTDOCS_TEST_<NAME>_URL (docs/releasing/tests.md); `just test-integration -m integration`: only them
 test-integration *args:
     uv run pytest --integration {{ args }}
 
@@ -83,15 +83,15 @@ bdd-durations:
     uv run behave --format=progress --junit --junit-directory=reports/behave-durations
     uv run python deploy/behave_shards.py --store reports/behave-durations
 
-# Acceptance scenarios with the @integration ones too (their services: docs/releasing.md); `just bdd-integration --tags=@integration`: only them
+# Acceptance scenarios with the @integration ones too (their services: docs/releasing/tests.md); `just bdd-integration --tags=@integration`: only them
 bdd-integration *args:
     EXACTDOCS_INTEGRATION=1 uv run behave {{ args }}
 
-# Retrieval eval suite (runs on releases, not in CI): modes compared on the fixture docs repository (docs/evals.md); `just eval --help`
+# Retrieval eval suite (runs on releases, not in CI): modes compared on the fixture docs repository (docs/evals/suite.md); `just eval --help`
 eval *args:
     uv run python packages/exactdocs/evals/run_retrieval_eval.py {{ args }}
 
-# Golden set: fetch the pinned corpus and check every case's sections exist (docs/evals.md)
+# Golden set: fetch the pinned corpus and check every case's sections exist (docs/evals/golden-set.md)
 golden-validate *args:
     uv run python packages/exactdocs/evals/run_golden.py validate {{ args }}
 
@@ -99,37 +99,45 @@ golden-validate *args:
 golden-import *args:
     uv run python packages/exactdocs/evals/run_golden.py import {{ args }}
 
-# Golden set review: `sample` draws the seeded review sample and its sheet, `checks` measures the whole set's wording, `summary` (docs/evals.md)
+# Golden set review: `sample` draws the seeded review sample and its sheet, `checks` measures the whole set's wording, `summary` (docs/evals/golden-set.md)
 golden-review *args:
     uv run python packages/exactdocs/evals/run_golden_review.py {{ args }}
 
-# Ingestion benchmark: chunking configurations measured on the golden corpus, with BM25 recall (docs/evals.md)
+# Ingestion benchmark: chunking configurations measured on the golden corpus, with BM25 recall (docs/evals/ingestion.md)
 ingestion-bench *args:
     uv run python packages/exactdocs/evals/run_ingestion_bench.py {{ args }}
 
-# Retrieval benchmark: modes, models, rerankers and chunking measured on the golden set (docs/evals.md)
+# Retrieval benchmark: modes, models, rerankers and chunking measured on the golden set (docs/evals/retrieval-benchmark.md)
 retrieval-bench *args:
     uv run python packages/exactdocs/evals/run_retrieval_bench.py {{ args }}
 
-# Retrieval grid: chunking, context and embedding variants and plain baselines on the golden set, resumable (docs/evals.md)
+# Retrieval grid: chunking, context and embedding variants and plain baselines on the golden set, resumable (docs/evals/retrieval-grid.md)
 retrieval-grid *args:
     uv run python packages/exactdocs/evals/run_retrieval_grid.py {{ args }}
 
-# Text scorer: calibrate scoring from a result's text against chunk-ID scoring on BM25 (docs/evals.md)
+# Text scorer: calibrate scoring from a result's text against chunk-ID scoring on BM25 (docs/evals/text-scoring.md)
 text-bench *args:
     uv run python packages/exactdocs/evals/run_text_bench.py {{ args }}
 
-# Grounded Docs (never in CI): a pinned docs-mcp-server indexes the golden corpus, answers the golden set, scored next to ExactDocs' BM25 (docs/evals.md); needs Node.js 22
+# Grounded Docs (never in CI): a pinned docs-mcp-server indexes the golden corpus, answers the golden set, scored next to ExactDocs' BM25 (docs/evals/grounded-docs.md); needs Node.js 22
 grounded-bench *args:
     uv run python packages/exactdocs/evals/run_grounded_bench.py {{ args }}
 
-# Context7 (never in CI): its REST API answers the golden set where it serves the pinned versions, scored next to ExactDocs' BM25 (docs/evals.md); needs CONTEXT7_API_KEY, or --from-cache
+# Context7 (never in CI): its REST API answers the golden set where it serves the pinned versions, scored next to ExactDocs' BM25 (docs/evals/context7.md); needs CONTEXT7_API_KEY, or --from-cache
 context7-bench *args:
     uv run python packages/exactdocs/evals/run_context7_bench.py {{ args }}
 
-# Agent benchmark (never in CI): an agent with only the ExactDocs MCP tools answers the golden set (docs/evals.md); `just agent-bench run --offline`
+# Agent benchmark (never in CI): an agent with no docs, or with only the MCP tools of ExactDocs, Context7 or Grounded Docs, answers the golden set (docs/evals/agent-bench.md); `just agent-bench run --offline`
 agent-bench *args:
     uv run python packages/exactdocs/evals/run_agent_bench.py {{ args }}
+
+# Version-pinned coding tasks (docs/evals/coding-tasks.md): `list`, `prepare`, `check` (CI: every reference passes, every other-version solution fails; no model), `run` (agents, never in CI)
+coding-tasks *args:
+    uv run python packages/exactdocs/evals/run_coding_tasks.py {{ args }}
+
+# Coding-agent CLIs (never in CI): Claude Code, Codex, Gemini CLI and OpenCode run headless in containers on the coding tasks and golden questions, with and without a docs MCP server (docs/evals/harnesses.md); needs Docker
+harness-bench *args:
+    uv run python packages/exactdocs/evals/run_harness_bench.py {{ args }}
 
 # Benchmark pages (docs/benchmark/): refill their tables from evals/results/*.json and the golden set; `--check` fails when one is out of date
 bench-pages *args:
@@ -168,7 +176,7 @@ docker-build version="0.0.0.dev0" variant="base":
     docker build -f deploy/Dockerfile --target {{ variant }} --build-arg VERSION={{ version }} \
       -t {{ image }}{{ if variant == "base" { "" } else { "-" + variant } }} .
 
-# Check a built variant's size budget, packages and models, as CI does (docs/releasing.md)
+# Check a built variant's size budget, packages and models, as CI does (docs/releasing/images.md)
 docker-check variant="base":
     python3 deploy/check_artifacts.py image {{ image }}{{ if variant == "base" { "" } else { "-" + variant } }} {{ variant }}
 

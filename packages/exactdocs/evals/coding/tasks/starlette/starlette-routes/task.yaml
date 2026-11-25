@@ -1,0 +1,18 @@
+title: Add endpoints to an application
+project: starlette
+version: 1.10.0
+environment: starlette-1.10.0
+other_version: 0.27.0
+api_since:
+  version: 1.0.0
+  released: '2026-03-22'
+files:
+- app/main.py
+prompt: |
+  Add two endpoints to the app in `app/main.py`: `GET /health` answers
+  `{"status": "ok"}`, and `GET /items/{item_id}` takes an integer `item_id` and answers
+  `{"id": <item_id>}` (a path that is not an integer is not found). Any other method on
+  these paths answers 405.
+notes: |
+  Starlette 0.x code registers endpoints with `@app.route(...)` (deprecated since 0.23);
+  Starlette 1.0 removed the decorator: routes are passed as `routes=[Route(...)]`.

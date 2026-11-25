@@ -5,7 +5,7 @@ description: Use when cutting an ExactDocs release or dev build, choosing the ne
 
 # Releasing
 
-Full policy: `docs/releasing.md`. Only do this when a human asked for a release.
+Full policy: `docs/releasing/` (start at `docs/releasing/index.md`). Only do this when a human asked for a release.
 
 ## Pick the version
 
@@ -35,12 +35,14 @@ Watch it: `gh run watch $(gh run list --workflow release.yml --limit 1 --json da
 `gh workflow run release.yml --ref develop` runs everything but the publishing (version
 `0.0.0.dev<run number>`; no PyPI, no ghcr.io push, no GitHub Release). Do it before tagging when the
 release workflow, the Dockerfile, the eval or a dependency changed: the eval and the arm64 size
-budgets and scans do not run on pull requests. It leaves out the integration and end-to-end jobs
+budgets and scans do not run on pull requests. The release runs only the model-free eval gates;
+before a release that touches retrieval or chunking, run the full eval with
+`gh workflow run eval.yml --ref develop`. It leaves out the integration and end-to-end jobs
 unless started with `-f integration=true`, which only a maintainer does, never an agent (#554).
 
 ## Runners
 
-`RUNNER_MODE` (repository variable) decides where jobs run (docs/releasing.md, *CI/CD and
+`RUNNER_MODE` (repository variable) decides where jobs run (docs/releasing/runners.md, *CI/CD and
 runners*). `hybrid` (default, or unset): the release's eval, web, Python and arm64 image jobs on the
 self-hosted ARM64 runner `[self-hosted, linux, ARM64, exactdocs]`, its amd64 image jobs and the
 publishing jobs on `ubuntu-24.04`; CI and docs on `ubuntu-24.04`. `self-hosted`: everything on
@@ -57,5 +59,5 @@ increased"*, and that they flip it in *Settings → Secrets and variables → Ac
   Delete it (`git push origin :refs/tags/vX` and `git tag -d vX`) and tag the right commit.
   Never delete a tag whose packages already reached PyPI; PyPI versions are immutable. Bump instead.
 - **PyPI 403 / invalid-publisher**: the trusted publisher on PyPI or the `pypi` / `pypi-exactdocs` environment is
-  missing (see docs/releasing.md, one-time setup).
+  missing (see docs/releasing/release-workflow.md, one-time setup).
 - Re-run only failed jobs: `gh run rerun <id> --failed`.
