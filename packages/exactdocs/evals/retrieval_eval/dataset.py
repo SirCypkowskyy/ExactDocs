@@ -142,7 +142,7 @@ class Answer(_Model):
 type GoldenKind = Literal[
     "identifier-lookup", "how-to", "conceptual", "version-change", "cross-page", "unanswerable"
 ]
-"""What a golden-set case asks (docs/evals.md#the-golden-set); ``unanswerable``: the pinned
+"""What a golden-set case asks (docs/evals/golden-set.md); ``unanswerable``: the pinned
 version does not answer it, so it expects no section."""
 GOLDEN_KINDS: Final[frozenset[str]] = frozenset(get_args(GoldenKind.__value__))
 """Every golden-set kind."""
@@ -179,7 +179,7 @@ def fingerprint(dataset: RetrievalDataset) -> str:
     article, heading path, in order, and whether each is an alternative) count: renaming,
     reordering or commenting cases keeps the fingerprint, and so does a field added to the
     models with a default. Adding, removing or changing a question or an expected section
-    changes it (and resets the baseline, docs/evals.md).
+    changes it (and resets the baseline, docs/evals/gates.md#changing-the-dataset).
 
     Args:
         dataset: The cases.

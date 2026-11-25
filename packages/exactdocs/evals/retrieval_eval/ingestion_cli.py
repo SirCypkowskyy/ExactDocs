@@ -4,7 +4,7 @@ Each configuration imports every pinned version with the real importer into its 
 instance, then the benchmark reads back the chunks it stored, measures them against the source
 at the pinned commit (``ingestion.measure``) and runs the golden set through BM25
 (``golden_run``). It writes a JSON report and a Markdown summary, and with ``--check`` fails when
-a configuration got worse than a recorded report. See docs/evals.md#the-ingestion-benchmark.
+a configuration got worse than a recorded report. See docs/evals/ingestion.md.
 """
 
 import argparse
@@ -161,7 +161,7 @@ class ConfigurationResult(_Model):
 
 
 class IngestionReport(_Model):
-    """The benchmark's JSON report (``ingestion.json``), documented in docs/evals.md."""
+    """The benchmark's JSON report (``ingestion.json``), documented in docs/evals/ingestion.md."""
 
     schema_version: int = SCHEMA_VERSION
     golden: str
@@ -513,7 +513,7 @@ def check(report: IngestionReport, recorded: IngestionReport) -> list[str]:
             (
                 f"the recorded report measured golden set {recorded.golden} on "
                 f"{', '.join(recorded.projects)}, this run {report.golden} on "
-                f"{', '.join(report.projects)}: record this run (docs/evals.md)"
+                f"{', '.join(report.projects)}: record this run (docs/evals/ingestion.md)"
             )
         ]
     before = {c.name: c for c in recorded.configurations}
@@ -563,7 +563,7 @@ def markdown(report: IngestionReport) -> str:
             f"each chunking configuration; BM25 over the golden set's {report.cases} cases "
             f"(`{report.golden}`). Tokens are estimated at {report.chars_per_token} characters; "
             f"a small chunk is under {report.min_useful_tokens} tokens. Definitions: "
-            "docs/evals.md#the-ingestion-benchmark."
+            "docs/evals/ingestion.md."
         ),
         "",
         (
@@ -631,7 +631,9 @@ def _parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="ingestion-bench",
-        description="Chunking configurations measured on the golden corpus (docs/evals.md).",
+        description=(
+            "Chunking configurations measured on the golden corpus (docs/evals/ingestion.md)."
+        ),
     )
     parser.add_argument(
         "--cache-dir",

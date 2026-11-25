@@ -1,7 +1,7 @@
 name: Image vulnerability gate
 description: >
   Scans a local Docker image with Trivy and fails on a fixable CRITICAL or HIGH vulnerability.
-  Accepted findings are listed in .trivyignore (see docs/releasing.md). Trivy runs from its
+  Accepted findings are listed in .trivyignore (see docs/releasing/image-scan.md). Trivy runs from its
   official container image, pinned by digest, on a `docker save` copy of the image: no third-party
   action, no Docker socket in the container.
 inputs:

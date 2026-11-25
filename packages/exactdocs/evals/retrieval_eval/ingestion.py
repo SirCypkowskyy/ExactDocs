@@ -3,8 +3,8 @@
 Every metric reads the chunks the importer stored next to the source they were cut from, and
 judges the cut with its own small line reader (fences, tables, lists, headings), not with the
 importer's parser: a block structure the parser gets wrong (an MDX fence it pairs differently)
-then shows as a disagreement instead of agreeing with itself. See docs/evals.md#the-ingestion-
-benchmark for each definition.
+then shows as a disagreement instead of agreeing with itself. See docs/evals/ingestion.md
+ for each definition.
 """
 
 import itertools
@@ -474,7 +474,7 @@ def measure(articles: Sequence[Article], expected: Iterable[Section]) -> Ingesti
         expected: The sections the golden set expects in them.
 
     Returns:
-        The metrics (docs/evals.md#the-ingestion-benchmark).
+        The metrics (docs/evals/ingestion.md).
     """
     chunks = [chunk for article in articles for chunk in article.chunks]
     sizes = [tokens(chunk.content) for chunk in chunks]

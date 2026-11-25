@@ -74,7 +74,8 @@ def step_imported(context: Context, first: str, second: str) -> None:
 def step_embedding(context: Context, mode: str) -> None:
     stack = ExitStack()
     context.add_cleanup(stack.close)
-    # Hybrid is no default (docs/evals.md): the instance chooses it, so skipping it is reported.
+    # Hybrid is no default (docs/evals/gates.md): the instance chooses it, so skipping it is
+    # reported.
     ai = AiSettings(mode=RetrievalMode(mode))
     container = Container.build(
         context.settings.model_copy(update={"ai": ai}),

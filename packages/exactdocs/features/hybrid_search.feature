@@ -4,7 +4,7 @@ Feature: Search is hybrid: BM25 and vectors fused with reciprocal rank fusion
   So that "how do I retry failed calls" finds RetryPolicy, and exact identifiers still come first
 
   Hybrid is chosen by the operator here: it becomes a default only once the eval suite shows it
-  beats BM25 (docs/evals.md). The embedding endpoint is a fake gateway that hashes terms.
+  beats BM25 (docs/evals/gates.md#becoming-a-default). The embedding endpoint is a fake gateway that hashes terms.
 
   Background:
     Given ExactDocs is running with the fixture docs repository imported at "v1.3.0" and "v1.4.0"

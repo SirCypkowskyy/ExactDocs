@@ -1,4 +1,4 @@
-"""The ingestion benchmark: ``just ingestion-bench`` (docs/evals.md#the-ingestion-benchmark).
+"""The ingestion benchmark: ``just ingestion-bench`` (docs/evals/ingestion.md).
 
 As in ``run_golden.py``, the test-support directory (the importer wiring) is put on the path
 before the CLI is imported.

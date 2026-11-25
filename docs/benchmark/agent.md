@@ -186,7 +186,7 @@ A run with real models, by hand:
 
 The recorded run is `packages/exactdocs/evals/results/agent.json` (and `agent.md`); `just
 bench-pages` fills this page's tables from it. The flags, the keys the workflow reads and the
-labelling rules are in [The agent benchmark](../evals.md#the-agent-benchmark).
+labelling rules are in [The agent benchmark](../evals/agent-bench.md).
 
 The stand-in run (`just agent-bench run --offline`) uses scripted models to check the plumbing.
 Its numbers say nothing about an agent and are not published.

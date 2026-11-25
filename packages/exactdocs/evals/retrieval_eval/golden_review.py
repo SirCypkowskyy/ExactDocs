@@ -10,7 +10,8 @@ The whole-set checks read every section of every pinned version, cut as the impo
 measure how the questions are worded against the docs: how much of a question's vocabulary its
 expected section holds against the best other section of that version (a question that copies its
 section's words favours keyword search), near-duplicate questions, and where the vocabulary of
-each ``unanswerable`` case occurs in its version. See docs/evals.md#reviewing-the-golden-set.
+each ``unanswerable`` case occurs in its version. See
+docs/evals/golden-set.md#reviewing-the-golden-set.
 """
 
 import datetime as dt
@@ -64,7 +65,7 @@ type Problem = Literal[
     "ambiguous",
     "duplicate",
 ]
-"""Why a case was wrong (docs/evals.md#reviewing-the-golden-set):
+"""Why a case was wrong (docs/evals/golden-set.md#reviewing-the-golden-set):
 
 - ``unsupported-fact``: a fact the expected sections do not state at that version (or only imply);
 - ``wrong-reference``: the reference answer is wrong or incomplete for that version;

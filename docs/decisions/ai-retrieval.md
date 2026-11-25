@@ -17,7 +17,7 @@ issue of the milestone points here instead of deciding these again. The short fo
 
 - ExactDocs is a BM25 search server by default and must stay one: a 384 MB image within a 400 MB
   budget, a model-free wheel and image checked by CI (RUN-02, [Size and model-free
-  budgets](../releasing.md#size-and-model-free-budgets)), and no outbound connection but git.
+  budgets](../releasing/images.md#size-and-model-free-budgets)), and no outbound connection but git.
 - The owner decided: **databases** are local SQLite with vector search inside SQLite, PostgreSQL
   with pgvector, and Supabase (managed PostgreSQL with pgvector); **LLM providers** are a custom
   OpenAI-compatible API (base URL plus an optional key), OpenAI, OpenRouter, Anthropic, Azure
@@ -194,7 +194,7 @@ Measured on 2026-11-07 (Python 3.14, x86_64, site-packages with bytecode, which 
 - CI builds the three targets of one Dockerfile and checks each budget (#246). CI (arm64,
   PR #285) measured **387.1**, **520.4** and **866.5 MB** (amd64: 353.0, 492.0 and 847.9 MB), so
   the budgets stay as set: 7.1 % of headroom for `-ai`, and 8.8 % for `-local`, kept on purpose as
-  room for a default-model update. `docs/releasing.md`, *Size and model-free budgets*, has the
+  room for a default-model update. `docs/releasing/images.md`, *Size and model-free budgets*, has the
   reasoning. The `-local` models are baked in at build time (pulled at their pinned revisions,
   their ONNX files checked against pinned sha256 digests), not pulled at first start: the image
   must work with `--network none`. Their licenses (MIT for bge-small, Apache-2.0 for the
@@ -477,7 +477,7 @@ setting `trusted` is admin-only; `notes` and `off` are too, for now.
 - **Gates.** Wrong-version rate must be 0 for every mode; recall@5 may not drop more than 2 points
   below the baseline. A mode becomes a default only when it beats BM25 recall@5 by at least
   5 points with wrong-version rate 0. Agentic runs are also checked from their traces (#99).
-- How to run it, the dataset and the tiers as built: [Retrieval evals](../evals.md).
+- How to run it, the dataset and the tiers as built: [Retrieval evals](../evals/index.md).
 
 ## Where the code lives
 

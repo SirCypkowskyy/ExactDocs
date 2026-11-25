@@ -236,7 +236,7 @@ pythonpath = [
 ]
 addopts = [
     "-ra", "--strict-markers", "--strict-config", "--import-mode=importlib",
-    "-m", "not eval",  # docs/evals.md: the release runs them; `uv run pytest -m eval` locally
+    "-m", "not eval",  # docs/evals/suite.md: the release runs them; `uv run pytest -m eval` locally
     # The `integration` tests are deselected too, by tests/fixtures/integration.py (#507), unless
     # `--integration` or EXACTDOCS_INTEGRATION=1 asks for them: the summary says how many.
 ]

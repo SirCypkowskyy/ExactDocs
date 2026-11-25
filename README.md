@@ -242,7 +242,7 @@ just check        # everything CI runs
 | `.agents/skills/` | how agents work on issues, test and release |
 
 Read [Architecture](docs/architecture/index.md) (modular monolith, ports and adapters) and
-[Branching and releases](docs/releasing.md) before contributing.
+[Branching and releases](docs/releasing/index.md) before contributing.
 
 ## Contributing
 

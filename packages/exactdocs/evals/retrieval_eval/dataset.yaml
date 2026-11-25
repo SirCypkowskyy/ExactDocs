@@ -7,7 +7,7 @@
 #   kind: question    a natural-language question, the way an agent asks
 # expected_output.hits holds the expected section (version, article path, heading path from the
 # H1); an empty list means the version has no answer, so any hit must still be of that version.
-# See docs/evals.md for how to add a case.
+# See docs/evals/suite.md#the-dataset for how to add a case.
 name: retrieval
 cases:
 - name: 'v1.3.0: snake_case'

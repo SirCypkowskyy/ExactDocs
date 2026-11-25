@@ -51,7 +51,7 @@ flowchart TD
     can -- no --> next["The next mode answers,<br/>with fallback_reason: mode_unavailable"]
 ```
 
-A mode becomes a default only once the [eval suite](evals.md) shows that it beats BM25. None has
+A mode becomes a default only once the [eval suite](evals/index.md) shows that it beats BM25. None has
 yet, so BM25 is the default: set `EXACTDOCS_AI__MODE=hybrid`, or a library's mode, to use hybrid
 search. A library's mode is set with `PUT /api/v1/libraries/{owner}/{repo}/retrieval`, and setting
 one whose model is not configured is refused.

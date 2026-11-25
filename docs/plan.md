@@ -195,7 +195,7 @@ What MVP-1 turned out differently from the issues as first written (source: the 
 | Plan | As built | Why |
 |---|---|---|
 | Chunker: Chonkie's Markdown recipe | `markdown-it-py` behind the `Chunker` port (#27) | Chonkie's recipe downloads rules from the Hugging Face Hub (network), and its `MarkdownChef` mis-detects fences in block quotes |
-| Image budget 300 MB | 375 MB, measured 339 MB (#55); 400 MB since DBOS (#65), measured 374.5 MB | The floor is the Python base image, git and ssh, and 57 MB of `.pyc` that keeps read-only containers from recompiling; see [Size and model-free budgets](releasing.md#size-and-model-free-budgets) |
+| Image budget 300 MB | 375 MB, measured 339 MB (#55); 400 MB since DBOS (#65), measured 374.5 MB | The floor is the Python base image, git and ssh, and 57 MB of `.pyc` that keeps read-only containers from recompiling; see [Size and model-free budgets](releasing/images.md#size-and-model-free-budgets) |
 | MCP tools take `version` | `list_articles`, `read_article` and `search_docs` take `ref` (#38) | Matches `search_docs` and the REST `?ref=`; the context7 tools keep their own names |
 | `LibrarySummary.versions` (ref strings) | `refs` (kind, commit SHA, default flag; at most 50) plus `version_count` (#38) | Agents need the kind and commit SHA per version |
 | No tags endpoint | `GET /libraries/{owner}/{repo}/tags` lists a version's tags with counts (#50) | The UI's tag filter needs them |
@@ -2171,7 +2171,7 @@ Scenario: The release artifacts contain no models
 
 **Criteria of success**
 
-- [ ] CI check: no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt` in wheel or image; size budgets reported and enforced: wheel ≤ 5 MB (without `[ai]`), image ≤ 375 MB uncompressed (300 MB first planned; the floor is the `python:3.14-slim` base, git/ssh and the 167 MB virtualenv, and dropping 57 MB of `.pyc` would slow every start of a read-only container; see docs/releasing.md)
+- [ ] CI check: no `*.safetensors`, `*.bin`, `*.onnx`, `*.gguf`, `*.pt` in wheel or image; size budgets reported and enforced: wheel ≤ 5 MB (without `[ai]`), image ≤ 375 MB uncompressed (300 MB first planned; the floor is the `python:3.14-slim` base, git/ssh and the 167 MB virtualenv, and dropping 57 MB of `.pyc` would slow every start of a read-only container; see docs/releasing/images.md)
 - [ ] test: after app start, `sys.modules` has no `torch`, `transformers`, `sentence_transformers`, `pydantic_ai`
 - [ ] dependency review: Chonkie dropped in #27 (needs HF Hub/network); `ML_PACKAGES` in `deploy/check_artifacts.py` lists what must stay out of the default install
 
@@ -2237,7 +2237,7 @@ Scenario: The whole loop in a real browser
 - [ ] caching: `VERSION` below the dependency layers; dependency layer built only from `uv.lock` (`uv export --frozen`); only `packages/*/src` + metadata copied (no tests); pnpm pinned and installed before any `COPY`, `pnpm fetch` then `install --offline`; source-only changes show dependency layers `CACHED`
 - [ ] hardening: base images pinned by digest (Dependabot), runtime with only `git`, `openssh-client`, `ca-certificates`, `tini` (PID 1), no pip/setuptools, no setuid bits, read-only app files, only `/data` and `/tmp` writable; amd64 apt layer built under QEMU for that stage only
 - [ ] CI: hadolint, Trivy/Grype gate on fixable CRITICAL/HIGH, smoke test with `--read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges` incl. a `file://` import; size budget kept
-- [ ] docs: hardened compose example in README; scan gate in `docs/releasing.md`
+- [ ] docs: hardened compose example in README; scan gate in `docs/releasing/image-scan.md`
 
 #### E10 · MVP-2
 
@@ -2260,7 +2260,7 @@ Scenario: Re-indexing while serving
 
 - [ ] CI upgrade test: data dir from the previous release tag → current release
 - [ ] index format version stored; `exactdocs reindex` (local) rebuilds and swaps
-- [ ] release notes template has a "requires reindex" section (`docs/releasing.md`)
+- [ ] release notes template has a "requires reindex" section (`docs/releasing/release-notes.md`)
 
 ### E10-09 · docs: project docs describe MVP-1 as built, with all diagrams in Mermaid
 

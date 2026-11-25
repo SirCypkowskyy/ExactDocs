@@ -2,7 +2,7 @@
 
 ExactDocs next to other documentation tools, on the same [golden set](golden-set.md): the same
 questions about the same projects at the same pinned versions, every tool's results scored from
-their text with the [text scorer](../evals.md#scoring-text-results), so each is measured with the
+their text with the [text scorer](../evals/text-scoring.md), so each is measured with the
 retrieval benchmark's own metrics, intervals and paired tests ([Method](method.md)). Every number
 records the tool's version, its settings and the date it was measured. The tools run as their
 documentation sets them up; nothing is tuned for the golden set.
@@ -13,7 +13,7 @@ documentation sets them up; nothing is tuned for the golden set.
 the closest open-source alternative: a self-hosted MCP server that indexes each library version
 separately and searches it with full-text search, and with vector search when an embedding model
 is configured. It ran on this machine, so it indexed exactly what ExactDocs imports. How the run
-works, and how to repeat it: [Grounded Docs](../evals.md#grounded-docs) in the evals reference.
+works, and how to repeat it: [Grounded Docs](../evals/grounded-docs.md) in the evals reference.
 
 The run of 24 November 2026 (Grounded Docs 3.4.1, both configurations, the whole golden set),
 next to ExactDocs' BM25 at `default` asked and scored the same way. A hit is a result that answers

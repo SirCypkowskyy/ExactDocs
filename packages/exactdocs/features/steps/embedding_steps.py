@@ -3,7 +3,7 @@
 A fake gateway on loopback (``fake_llm``) is the embedding endpoint: it answers every text with
 the same small vector and records what it was sent. The hybrid pipeline is a stand-in (the real
 one is in ``hybrid_search_steps``): it answers ``hybrid`` with no hits, so a scenario sees which
-mode a search ran in. The instance's mode is ``hybrid``: it is not a default (docs/evals.md).
+mode a search ran in. The instance's mode is ``hybrid``: it is not a default (docs/evals/gates.md).
 """
 
 import asyncio
