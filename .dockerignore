@@ -13,7 +13,6 @@ packages/exactdocs/src/exactdocs/_web
 .agents
 .claude
 docs
-deploy/runners
 reports
 *.md
 !packages/*/README.md

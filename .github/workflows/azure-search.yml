@@ -36,12 +36,11 @@ permissions:
 env:
   FORCE_COLOR: "1"
 
-# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing/runners.md "CI/CD and
-# runners"); it uses none of the GitHub-hosted minutes.
+# Runner: GitHub-hosted ubuntu-24.04 (docs/releasing/runners.md "CI/CD and runners").
 jobs:
   contract:
     name: Contract suites against Azure AI Search
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     environment: azure-search # its protection rules decide who may use the service's key
     steps:
@@ -72,7 +71,7 @@ jobs:
             echo "AZURE_CLIENT_ID=$AZURE_CLIENT_ID"
             echo "AZURE_TENANT_ID=$AZURE_TENANT_ID"
           } >> "$GITHUB_ENV"
-      # The key is given to this step only, not to `uv sync` or the other steps of the runner.
+      # The key is given to this step only, not to `uv sync` or the other steps.
       - name: Contract suites (search index, vector index, backend ports)
         env:
           EXACTDOCS_TEST_AZURE_SEARCH_URL: ${{ vars.AZURE_SEARCH_ENDPOINT }}

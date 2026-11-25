@@ -61,12 +61,11 @@ env:
   FORCE_COLOR: "1"
   PYDANTIC_AI_NO_BANNER: "1"
 
-# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing/runners.md "CI/CD and
-# runners"); it uses none of the GitHub-hosted minutes.
+# Runner: GitHub-hosted ubuntu-24.04 (docs/releasing/runners.md "CI/CD and runners").
 jobs:
   bench:
     name: Agent benchmark with real providers
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
     environment: eval-providers # its protection rules decide who may spend the keys
     env:
@@ -95,7 +94,7 @@ jobs:
       - name: Install
         run: uv sync --locked
       # The keys are given to this step only, not to `uv sync` (third-party build backends) or the
-      # other steps of this persistent runner.
+      # other steps.
       - name: Agent benchmark (just agent-bench run)
         env:
           EXACTDOCS_AI__PROVIDERS__EVAL__API_KEY: ${{ secrets.EVAL_PROVIDER_API_KEY }}

@@ -67,14 +67,15 @@ env:
   EVAL_LLM_MODEL: ${{ vars.EVAL_LLM_MODEL }}
   EVAL_JUDGE_MODEL: ${{ vars.EVAL_JUDGE_MODEL }}
 
-# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing/runners.md "CI/CD and
-# runners"); it uses none of the GitHub-hosted minutes.
+# Runners (docs/releasing/runners.md "CI/CD and runners"): GitHub-hosted. The eval on ubuntu-24.04; the
+# benchmark on ubuntu-24.04-arm, the platform of the recorded runs in evals/results/ (Linux
+# aarch64, 4 CPUs), so its latencies compare with theirs. A hosted job stops after 6 hours.
 jobs:
   eval:
     name: Retrieval eval with real providers
     # Nothing to measure without a provider (a local-models benchmark run leaves it unset).
     if: ${{ vars.EVAL_PROVIDER_KIND != '' }}
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     environment: eval-providers # its protection rules decide who may spend the keys
     env:
@@ -99,7 +100,7 @@ jobs:
             fi
           done
       # The key is given to the two steps that call the provider only, not to `uv sync`
-      # (third-party build backends) or the other steps of this persistent runner.
+      # (third-party build backends) or the other steps.
       - name: Check the roles reach the provider (exactdocs ai check)
         env:
           EXACTDOCS_AI__PROVIDERS__EVAL__API_KEY: ${{ secrets.EVAL_PROVIDER_API_KEY }}
@@ -128,11 +129,12 @@ jobs:
   # judge over every base, HyDE and agentic, at every chunking configuration, next to BM25 so the
   # summary's recommendation compares them. The `+ce` and local `+judge` configurations need the
   # local models too, pulled as in the release's eval job. Several hours on the runner's CPU with
-  # every chunking; narrow it with benchmark_args (e.g. --chunkings default).
+  # every chunking, and a hosted job stops at 6 hours (the timeout below), artifacts lost: narrow
+  # it with benchmark_configs or benchmark_args (e.g. --chunkings default) and run it in parts.
   benchmark:
     name: Retrieval benchmark with real providers
     if: ${{ inputs.benchmark }}
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 360
     environment: eval-providers # its protection rules decide who may spend the keys
     env:

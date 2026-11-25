@@ -31,8 +31,7 @@ env:
   KEEP_DEV: 5
   KEEP_STABLE: 10
 
-# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing/runners.md "CI/CD and
-# runners"); it uses none of the GitHub-hosted minutes.
+# Runner: GitHub-hosted ubuntu-24.04 (docs/releasing/runners.md "CI/CD and runners").
 jobs:
   # One pass per variant and channel. `exclude-tags` keeps everything outside the pass out of it
   # (JavaScript regular expressions): the base passes exclude every -ai/-local tag, a variant's
@@ -47,7 +46,7 @@ jobs:
     if: >-
       github.event_name != 'workflow_run' ||
       (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success')
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: ubuntu-24.04
     strategy:
       max-parallel: 1 # one deletion at a time on the same package
       matrix:
@@ -84,7 +83,7 @@ jobs:
 
   leftovers:
     needs: cleanup
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: ubuntu-24.04
     steps:
       # A running Release pushes its platform images by digest (untagged) and tags them into
       # multi-arch indexes later, in image-publish; re-running only image-publish reuses them.

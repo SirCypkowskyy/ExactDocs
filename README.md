@@ -238,7 +238,7 @@ just check        # everything CI runs
 | `packages/exactdocs/` | the app: one folder per domain, plus `bootstrap` (the composition root) |
 | `packages/exactdocs-kernel/` | the shared kernel every domain uses |
 | `web/` | the React UI (TanStack Router and Query, shadcn/ui), in vertical slices |
-| `deploy/` | Dockerfile, smoke test, size budgets, self-hosted runner scripts |
+| `deploy/` | Dockerfile, smoke test, size budgets, CI helper scripts |
 | `docs/` | the documentation site (Zensical) |
 | `.agents/skills/` | how agents work on issues, test and release |
 

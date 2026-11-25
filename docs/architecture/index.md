@@ -73,7 +73,7 @@ flowchart TD
 | `packages/exactdocs/tests/`<br/>`packages/exactdocs/features/` | pytest (unit, integration, architecture) and<br/>behave (Gherkin acceptance scenarios) |
 | `packages/exactdocs/evals/` | the retrieval eval suite (Pydantic Evals), not shipped;<br/>see [Retrieval evals](../evals/index.md) |
 | `web/` | React client (Vite, TanStack Router and Query, shadcn);<br/>see [web/README.md](https://github.com/SirCypkowskyy/ExactDocs/blob/develop/web/README.md) |
-| `deploy/` | Dockerfile, smoke test, size-budget check, Mermaid check, scripts for the<br/>self-hosted runners of the release and the manual workflows |
+| `deploy/` | Dockerfile, smoke test, size-budget check, Mermaid check, the test servers and<br/>helper scripts of CI and the release |
 | `e2e/` | the Playwright test of the whole loop in a browser |
 | `docs/` | this site (Zensical) |
 

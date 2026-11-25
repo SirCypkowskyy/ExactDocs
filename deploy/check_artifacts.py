@@ -5,8 +5,9 @@
     check_artifacts.py image <image-ref> [base|ai|local]      size, installed packages, model
                       [--no-python]                           files (needs docker)
 
-`--no-python` checks an image whose Python cannot run here: a linux/amd64 image cross-built on an
-ARM64 runner, whose Python 3.14 crashes under QEMU (deploy/Dockerfile). Only `du` and `find` run
+`--no-python` checks an image whose Python cannot run here: another platform's image built on
+this machine (say, linux/amd64 on an ARM64 laptop), whose Python 3.14 crashes under QEMU
+(deploy/Dockerfile). CI never needs it: each release leg is built natively. Only `du` and `find` run
 in it: the distributions are read from their `.dist-info` directories, and the `-local` default
 models' check (ExactDocs' own code) is skipped. The models are pulled on the build platform, so
 the native image of the same build checks the same files.
