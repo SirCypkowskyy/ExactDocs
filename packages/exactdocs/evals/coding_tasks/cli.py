@@ -220,13 +220,15 @@ def inventory(tasks: Sequence[CodingTask], cutoff: date) -> str:
         )
     projects = sorted({t.spec.project for t in tasks})
     paired = sum(t.spec.pair is not None for t in tasks)
+    both = sum(t.post_cutoff(cutoff) and t.api_post_cutoff(cutoff) for t in tasks)
     lines += [
         "",
         (
             f"{len(tasks)} tasks over {len(projects)} projects ({', '.join(projects)}); "
             f"{paired} in version pairs; {sum(t.post_cutoff(cutoff) for t in tasks)} pin a "
-            f"version released after {cutoff}, {sum(t.api_post_cutoff(cutoff) for t in tasks)} "
-            "of them also hinge on a change released after it."
+            f"version released after {cutoff}, {both} of them also hinge on a change released "
+            f"after it; {sum(t.api_post_cutoff(cutoff) for t in tasks)} in all hinge on such a "
+            "change."
         ),
     ]
     return "\n".join(lines) + "\n"

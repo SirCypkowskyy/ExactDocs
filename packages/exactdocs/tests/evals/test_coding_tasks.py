@@ -69,7 +69,7 @@ def test_the_task_set_covers_four_projects_mostly_in_version_pairs(real_tasks) -
     assert projects == {"pydantic", "starlette", "zod", "tanstack-query"}
     assert len(paired) > len(real_tasks) / 2
     assert sum(t.post_cutoff(DEFAULT_CUTOFF) for t in real_tasks) >= 10
-    assert sum(t.api_post_cutoff(DEFAULT_CUTOFF) for t in real_tasks) >= 10
+    assert sum(t.post_cutoff() and t.api_post_cutoff() for t in real_tasks) >= 10
     for project in projects:
         assert sum(t.spec.project == project for t in real_tasks) >= 8, project
 
