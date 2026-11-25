@@ -23,7 +23,7 @@ forbidden:
   pattern: '@\w+\.middleware\('
   reason: the decorator was removed in 1.0.0 (2026-03-22); pass `middleware=[Middleware(...)]`
 - api: TemplateResponse(name, context)
-  pattern: 'TemplateResponse\(\s*["''\w]+\s*,\s*\{[^}]*["'']request["'']'
+  pattern: 'TemplateResponse\(\s*f?["'']'
   reason: the name-first signature was removed in 1.0.0 (2026-03-22); use `TemplateResponse(request, name, context)`
 - api: pre-RFC 9110 status names
   pattern: '\bHTTP_(413_REQUEST_ENTITY_TOO_LARGE|416_REQUESTED_RANGE_NOT_SATISFIABLE|422_UNPROCESSABLE_ENTITY)\b'
