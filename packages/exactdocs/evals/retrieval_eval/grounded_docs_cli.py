@@ -1125,12 +1125,18 @@ async def run_configuration(
 
 
 async def exactdocs_baseline(
-    plan: Plan, indexes: Mapping[str, SectionIndex], data_dir: Path
+    projects: Sequence[Project],
+    repos: Mapping[str, Path],
+    dataset: RetrievalDataset,
+    indexes: Mapping[str, SectionIndex],
+    data_dir: Path,
 ) -> list[TextRow]:
     """Ask every question with ExactDocs' BM25 at ``default``, and score it from its text.
 
     Args:
-        plan: The run.
+        projects: The projects.
+        repos: The cached repository of each.
+        dataset: The golden set, restricted to ``projects``.
         indexes: Each project's sections.
         data_dir: An empty data directory.
 
@@ -1143,12 +1149,12 @@ async def exactdocs_baseline(
     chunking = next(c for c in CHUNKINGS if c.name == RECORDED_CHUNKING)
     container = model_free_container(data_dir)
     async with container.running(jobs=False):
-        records = await import_corpus(container, plan.projects, dict(plan.repos), chunking.chunking)
+        records = await import_corpus(container, projects, dict(repos), chunking.chunking)
         if wrong := [r for r in records if r.imported_commit != r.pinned_commit]:
             names = ", ".join(f"{r.project} {r.version}" for r in wrong)
             message = f"not imported at the pinned commit: {names}"
             raise RuntimeError(message)
-        found = await bm25_results(container, plan.projects, plan.dataset)
+        found = await bm25_results(container, projects, dataset)
     return [
         text_row(
             c,
@@ -1157,7 +1163,7 @@ async def exactdocs_baseline(
             ),
             indexes[c.inputs.project or ""],
         )
-        for c in plan.dataset.cases
+        for c in dataset.cases
     ]
 
 
@@ -1231,7 +1237,9 @@ async def bench(
     indexes = {p.id: SectionIndex.of_project(p, plan.repos[p.id]) for p in plan.projects}
     with tempfile.TemporaryDirectory(prefix="exactdocs-grounded-bench-") as tmp:
         started = time.perf_counter()
-        base_rows = await exactdocs_baseline(plan, indexes, Path(tmp) / "data")
+        base_rows = await exactdocs_baseline(
+            plan.projects, plan.repos, plan.dataset, indexes, Path(tmp) / "data"
+        )
         sys.stderr.write(f"{TEXT_BASELINE}: {time.perf_counter() - started:.0f} s\n")
     golden = fingerprint(plan.dataset)
     recorded = recorded_results(recorded_path, golden, [p.id for p in plan.projects])
