@@ -106,6 +106,37 @@ any section the case lists, a part or one of its alternatives, as in
   search only (a 29.9 MB database) and 27 minutes with the embedding model on 4 shared CPUs
   (80.6 MB), almost all of it embedding 2.5 million tokens.
 
+### Before and after grouping by article
+
+ExactDocs' search returned one chunk per result until #575; it now groups them by article
+([Retrieval results](retrieval.md#grouped-by-article-575)). The grid ran it both ways on the same
+code and machine on 25 November, scored by chunk ID, and Grounded Docs with `bge-small-en-v1.5`
+is tested against each on the same cases:
+
+| Grounded Docs minus ExactDocs | BM25, one chunk per result | BM25, grouped | hybrid, one chunk per result | hybrid, grouped |
+|---|---|---|---|---|
+| recall@1 | **+12.7** (p 0.0005) | +0.8 (p 0.82) | **+7.1** (p 0.0495) | -4.9 (p 0.12) |
+| recall@5 | -1.9 (p 0.44) | **-5.6** (p 0.014) | -4.1 (p 0.081) | **-7.1** (p 0.0022) |
+| recall@10 | **-4.5** (p 0.03) | **-4.5** (p 0.03) | **-4.5** (p 0.041) | **-4.5** (p 0.041) |
+| MRR | **+0.074** (p 0.005) | -0.011 (p 0.64) | +0.030 (p 0.26) | **-0.050** (p 0.032) |
+| within 1,000 tokens | **-43.8** | **-8.6** (p 0.014) | **-46.4** | **-8.2** (p 0.012) |
+| within 2,000 tokens | **-30.0** | **-12.7** | **-30.3** | **-15.0** |
+| within 4,000 tokens | **-18.0** | **-13.9** | **-18.0** | **-15.0** |
+
+Points of recall (MRR as a score), Grounded Docs' minus ExactDocs': a positive number is Grounded
+Docs ahead. **Bold**: significant at 5% (McNemar's test, mid-p, or a permutation test for MRR); a
+p-value not shown is under 0.001. Within a budget: whole results, read in order.
+
+- Before grouping, Grounded Docs put a section that answers first significantly more often than
+  either ExactDocs search. Grouped, neither difference is significant, and ExactDocs leads at
+  recall@5 with both searches and at MRR with hybrid search.
+- Grouping costs ExactDocs part of its lead within a token budget, which stays significant at
+  every budget.
+- With the text cut at the budget (BM25, scored from its text), ExactDocs found the answer within
+  1,000, 2,000 and 4,000 tokens in 83.5%, 90.3% and 93.6% of the cases before grouping (the run
+  of #586, before #571) and in 80.2%, 88.4% and 92.9% grouped, against Grounded Docs' 58.1%,
+  72.7% and 82.0%.
+
 ### How it was measured
 
 - **Same documentation.** Every pinned version of every project was indexed from the files the

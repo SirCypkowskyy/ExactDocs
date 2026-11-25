@@ -340,9 +340,10 @@ Every response says which version answered.
 **`search_docs` results** come grouped by article (#575). The article of the best result comes
 first, with all of its results, best first; then the next article. Each result's `group` is its
 article's rank. The results are the same as in plain rank order; only the order changes, so the
-first result is still the best one. On the golden set this puts a section that answers in the
-first article 12 points more often ([Retrieval results](benchmark/retrieval.md)). Each result
-carries:
+first result is still the best one. On the golden set the first article holds a section that
+answers 12 points more often than the first result did, with BM25 and with hybrid search; an
+answer in an article's second or third result then sits further into the text
+([Retrieval results](benchmark/retrieval.md#grouped-by-article-575)). Each result carries:
 
 - its location and its neighbours (`prev_chunk_id`, `next_chunk_id`);
 - `group`;
