@@ -1,0 +1,44 @@
+# Pydantic 2.14.3 (PyPI, 2026-11-05); requirements.txt compiled from requirements.in with
+# `uv pip compile --python-version 3.12 --exclude-newer 2026-11-20 --generate-hashes`.
+ecosystem: python
+package: pydantic
+version: 2.14.3
+released: 2026-11-05
+python: "3.12"
+forbidden:
+- api: '@validator'
+  pattern: '@validator\b'
+  reason: the Pydantic 1 decorator, deprecated in 2.0 (PydanticDeprecatedSince20); use `@field_validator`
+- api: '@root_validator'
+  pattern: '@root_validator\b'
+  reason: the Pydantic 1 decorator, deprecated in 2.0; use `@model_validator`
+- api: class Config
+  pattern: '^\s+class Config\b'
+  reason: class-based config is deprecated in 2.0; use `model_config = ConfigDict(...)`
+- api: .dict() / .json()
+  pattern: '\.(dict|json)\('
+  reason: the Pydantic 1 methods, deprecated in 2.0; use `model_dump()` / `model_dump_json()`
+- api: parse_obj / parse_raw / parse_obj_as
+  pattern: '\bparse_(obj|raw|obj_as)\b'
+  reason: the Pydantic 1 parsers, deprecated in 2.0; use `model_validate()`, `model_validate_json()`, `TypeAdapter`
+- api: from_orm / orm_mode
+  pattern: '\b(from_orm|orm_mode)\b'
+  reason: Pydantic 1's attribute reading, deprecated in 2.0; use `from_attributes=True` and `model_validate()`
+- api: __root__
+  pattern: '\b__root__\b'
+  reason: custom root types are removed in 2.0; use `RootModel`
+- api: json_encoders
+  pattern: '\bjson_encoders\b'
+  reason: deprecated in 2.0; use `@field_serializer`
+- api: Pydantic 1 config keys
+  pattern: '\b(allow_population_by_field_name|allow_mutation|anystr_strip_whitespace|anystr_lower|min_anystr_length|max_anystr_length)\b'
+  reason: renamed in 2.0 (`populate_by_name`, `frozen`, `str_strip_whitespace`, ...); the old keys only warn
+- api: min_items / max_items
+  pattern: '\b(min|max)_items\b'
+  reason: renamed in 2.0 to `min_length` / `max_length`
+- api: model_fields on an instance
+  pattern: '\bself\.model_(computed_)?fields\b'
+  reason: reading `model_fields` from an instance is deprecated since 2.11 (2025-03-27); read it from the class
+- api: pydantic.experimental.missing_sentinel
+  pattern: '\bexperimental\.missing_sentinel\b'
+  reason: '`MISSING` is stable since 2.14 (2026-10-08): import it from `pydantic`; the experimental path warns'

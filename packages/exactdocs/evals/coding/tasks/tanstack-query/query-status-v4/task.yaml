@@ -1,0 +1,19 @@
+title: Map a query's status to a badge
+project: tanstack-query
+version: v4.36.1
+environment: query-core-4.36.1
+pair: query-status
+other_version: v5.90.3
+other_from: query-status-v5
+api_since:
+  version: 5.0.0
+  released: '2023-10-17'
+files:
+- src/badge.ts
+prompt: |
+  The project uses `@tanstack/query-core` (TanStack Query's framework-agnostic core). Implement `badge(result)` in `src/badge.ts` from the query
+  result's `status`: `waiting` while the query has no data yet (whether or not it is
+  fetching), `failed` when it errored, `ok` when it succeeded.
+notes: |
+  TanStack Query 4 calls the status of a query without data `loading`; v5 renamed it
+  `pending` (and `isLoading` now means pending and fetching).

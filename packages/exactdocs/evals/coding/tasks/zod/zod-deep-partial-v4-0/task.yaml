@@ -1,0 +1,18 @@
+title: Make every field optional at every level
+project: zod
+version: v4.0.17
+environment: zod-4.0.17
+other_version: v4.6.7
+other_environment: zod-4.6.7
+api_since:
+  version: 4.5.0
+  released: '2026-08-28'
+files:
+- src/settings.ts
+prompt: |
+  In `src/settings.ts`, export `SettingsPatch`: the shape of `Settings` with every field
+  optional at every level of nesting (a patch may set only `editor.tabs.size`), still validating
+  the type of every field it does set.
+notes: |
+  Zod 4.0 has no deep partial at all (the method was removed); 4.5 added the function
+  `z.deepPartial(schema)`, which 4.0.17 does not have.

@@ -1,0 +1,19 @@
+title: Limit the size of request bodies
+project: starlette
+version: 0.52.1
+environment: starlette-0.52.1
+other_version: 1.10.0
+other_environment: starlette-1.10.0
+api_since:
+  version: 1.6.0
+  released: '2026-08-08'
+files:
+- app/main.py
+prompt: |
+  Reject request bodies longer than `LIMIT` (1024) bytes on every route of the app in
+  `app/main.py` with status 413, including bodies sent in chunks without a
+  `Content-Length` header; a body of at most `LIMIT` bytes reaches the endpoint
+  unchanged.
+notes: |
+  Starlette 1.6 added `max_body_size` to `Starlette` and the routes; 0.52 does not have
+  it (an unexpected argument), so a 0.52 app limits bodies with its own ASGI middleware.

@@ -1,0 +1,25 @@
+title: A defaulted query parameter that is converted to a number
+project: zod
+version: v4.0.17
+environment: zod-4.0.17
+pair: zod-default-after-transform
+other_version: v3.23.8
+other_from: zod-default-after-transform-v3
+api_since:
+  version: 4.0.0
+  released: '2025-07-09'
+files:
+- src/query.ts
+prompt: |
+  Add `pageSize` to `ListQuery` in `src/query.ts`: the query parameter arrives as a
+  string of digits and must come out as a number; when it is absent it is 20 (a number).
+  A string that is not all digits is rejected.
+forbidden:
+- api: an input-typed .default() after .transform()
+  pattern: pageSize\s*:[^}]*?\.default\(\s*[\"']
+  reason: since Zod 4.0 `.default()` takes the output type and skips the transform; a string default stays
+    a string (`.prefault()` takes an input value)
+notes: |
+  Zod 3's `.default()` on a transformed schema takes the input (`.default("20")`, then
+  transformed); Zod 4's takes the output and short-circuits (`.default(20)`). Each
+  fails on the other version, at the type check and at run time.

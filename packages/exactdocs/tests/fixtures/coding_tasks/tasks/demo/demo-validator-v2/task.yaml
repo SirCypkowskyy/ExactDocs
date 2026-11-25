@@ -1,0 +1,17 @@
+title: A model with a custom validator (stand-in)
+project: demo
+version: v2
+environment: demo-v2
+pair: demo-validator
+other_version: v1
+other_from: demo-validator-v1
+api_since:
+  version: '2.0'
+  released: '2025-02-20'
+files:
+- app/models.py
+prompt: |
+  Add a validator to `SignUp` in `app/models.py` that strips and lowercases `username`.
+notes: |
+  demo 1.0 has `@validator`; demo 2.0 renamed it `@field_validator` and deprecated the
+  old name (a warning, an error here), the way Pydantic 2 did.
