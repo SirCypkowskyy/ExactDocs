@@ -5,7 +5,7 @@ with no reranking, the local cross-encoder and the LLM judge. Each chunking conf
 ingestion benchmark imports the corpus once into its own data directory; every configuration then
 runs on it in a container of its own, built with only the model roles it needs, so local and
 hosted runs differ by nothing else. Hosted configurations run only with ``--allow-providers``
-(the manual real-providers workflow), never in CI. See docs/evals.md#the-retrieval-benchmark.
+(the manual real-providers workflow), never in CI. See docs/evals/retrieval-benchmark.md.
 """
 
 import argparse
@@ -603,7 +603,10 @@ def _parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="retrieval-bench",
-        description="Retrieval configurations measured on the golden set (docs/evals.md).",
+        description=(
+            "Retrieval configurations measured on the golden set"
+            " (docs/evals/retrieval-benchmark.md)."
+        ),
     )
     parser.add_argument(
         "--cache-dir",

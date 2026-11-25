@@ -1,4 +1,4 @@
-"""Run the retrieval eval suite: ``just eval [--help]`` (docs/evals.md).
+"""Run the retrieval eval suite: ``just eval [--help]`` (docs/evals/suite.md).
 
 The fixture builder is test support, not part of the package: its directory is put on the path
 here, then the suite is imported (``import_module`` keeps the path change before the import).

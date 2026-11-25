@@ -4,7 +4,7 @@ Feature: An LLM endpoint enables HyDE for hybrid search
   So that a question in my words finds the section written in the docs' words, in the pinned version
 
   HyDE is chosen by the operator here: it becomes a default only once the eval suite shows it
-  beats BM25 with a real model (docs/evals.md). The LLM is a fake OpenAI-compatible gateway on
+  beats BM25 with a real model (docs/evals/gates.md#becoming-a-default). The LLM is a fake OpenAI-compatible gateway on
   loopback, called through pydantic-ai; the embedding model is an in-process stand-in that hashes
   terms (free, so a budget stops the LLM step only).
 

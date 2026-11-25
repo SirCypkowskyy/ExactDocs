@@ -1,7 +1,8 @@
 """The retrieval eval suite: its dataset, its metrics, its gates, and BM25 on the real import.
 
 Tests that import the fixture and run the suite end to end are marked ``eval``: the default run
-skips them, the release runs them, and ``uv run pytest -m eval`` runs them locally (docs/evals.md).
+skips them, the release runs them, and ``uv run pytest -m eval`` runs them locally
+(docs/evals/suite.md).
 """
 
 import json

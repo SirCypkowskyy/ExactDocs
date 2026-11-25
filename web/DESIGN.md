@@ -652,7 +652,7 @@ shadcn/ui's data-table guide) is the one way to show a list with many rows.
   route parses its view with `parseTableSearch` and `parseFacet` in `validateSearch`; the app
   router's `stringifySearch` writes a validated list back as `a,b`.
 - **Server mode** (`source`): the API sorts, filters and pages. Every list of the app pages by
-  offset (`paging: "offset"`, docs/rest-api.md "Jumping to a page"): page *n* is one request of
+  offset (`paging: "offset"`, docs/rest-api/pagination.md "Jumping to a page"): page *n* is one request of
   `limit = size` and `offset = (n - 1) × size`, never with a cursor, so numbered jumps, Last and a
   link to page *n* each cost one request (and the pages on either side are fetched ahead).
   The API's offset stops at 10,000: a page past it is reached with Next or Previous, which go on

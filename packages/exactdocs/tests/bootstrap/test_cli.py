@@ -137,7 +137,7 @@ def test_serve_without_git_fails_fast_with_a_clear_message(
 def test_serve_runs_one_process_even_when_web_concurrency_asks_for_more(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Jobs, their recovery and the tag lock assume one process (docs/architecture.md)."""
+    """Jobs, their recovery and the tag lock assume one process (docs/architecture/jobs.md)."""
     started: dict[str, object] = {}
     monkeypatch.setenv("WEB_CONCURRENCY", "4")
     monkeypatch.setattr(cli, "_check_startup", lambda _settings: None)

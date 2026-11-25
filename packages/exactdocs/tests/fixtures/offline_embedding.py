@@ -5,7 +5,7 @@ Shared by the ranking suite (``tests/retrieval/ranking``) and the retrieval eval
 (``HashEmbeddingModels(by_terms=True)``): each term of a text is hashed into one dimension, so
 texts sharing terms are near. It checks hybrid's plumbing, its fusion and its wrong-version
 guarantee; it finds no paraphrase a real model would, so its recall says nothing about whether
-hybrid should become a default (docs/evals.md). No provider is ever called: the profile's
+hybrid should become a default (docs/evals/gates.md). No provider is ever called: the profile's
 endpoint is a closed loopback port and the model factory never builds a client.
 
 ``offline_hyde_container`` adds an ``llm`` role answered by a pydantic-ai stand-in

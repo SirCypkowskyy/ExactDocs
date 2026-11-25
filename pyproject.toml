@@ -196,8 +196,8 @@ convention = "google"
 ban-relative-imports = "all"
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
-"abc.ABC".msg = "Use typing.Protocol for ports; no nominal inheritance (see docs/architecture.md)."
-"abc.ABCMeta".msg = "Use typing.Protocol for ports; no nominal inheritance (see docs/architecture.md)."
+"abc.ABC".msg = "Use typing.Protocol for ports; no nominal inheritance (see docs/architecture/domains.md)."
+"abc.ABCMeta".msg = "Use typing.Protocol for ports; no nominal inheritance (see docs/architecture/domains.md)."
 
 [tool.ruff.lint.isort]
 known-first-party = ["exactdocs", "exactdocs_kernel"]
@@ -236,7 +236,7 @@ pythonpath = [
 ]
 addopts = [
     "-ra", "--strict-markers", "--strict-config", "--import-mode=importlib",
-    "-m", "not eval",  # docs/evals.md: the release runs them; `uv run pytest -m eval` locally
+    "-m", "not eval",  # docs/evals/suite.md: the release runs them; `uv run pytest -m eval` locally
     # The `integration` tests are deselected too, by tests/fixtures/integration.py (#507), unless
     # `--integration` or EXACTDOCS_INTEGRATION=1 asks for them: the summary says how many.
 ]

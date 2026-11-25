@@ -6,7 +6,7 @@ tool that returns text is measured exactly as ExactDocs is, and adds what only t
 share of version-neutral and unmatched results, the tokens of context returned per question, and
 the share of the case's facts the returned text holds. The calibration scores ExactDocs' own BM25
 results both ways, by chunk ID and by text, and records how often they agree. See
-docs/evals.md#scoring-text-results.
+docs/evals/text-scoring.md.
 """
 
 import html
@@ -710,7 +710,7 @@ def _facts_bounds(
 
 
 class TextScorerReport(_Model):
-    """The calibration's JSON report (``text-scorer.json``), documented in docs/evals.md."""
+    """The calibration's JSON report (``text-scorer.json``), see docs/evals/text-scoring.md."""
 
     schema_version: int = SCHEMA_VERSION
     golden: str
@@ -824,7 +824,7 @@ def markdown(report: TextScorerReport) -> str:
             "where an expected section is in the top 10 (its rank), or that it is not; the "
             f"criterion is {_pct(s['min_agreement'])} agreement at `{s['gated_chunking']}`. "
             f"ExactDocs `{report.environment.get('exactdocs_commit', '?')}`. "
-            "Definitions: docs/evals.md#scoring-text-results."
+            "Definitions: docs/evals/text-scoring.md."
         ),
         "",
         "## Agreement with chunk-ID scoring",

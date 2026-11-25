@@ -349,10 +349,9 @@ async def test_an_empty_catalog_says_how_to_add(
 ROOT = Path(__file__).parents[4]
 EXAMPLE_PAGES = (
     ROOT / "README.md",
-    *(
-        ROOT / "docs" / f"{name}.md"
-        for name in ("index", "getting-started", "mcp", "deployment", "sources")
-    ),
+    *(ROOT / "docs" / f"{name}.md" for name in ("index", "mcp", "sources")),
+    *sorted((ROOT / "docs" / "getting-started").glob("*.md")),
+    *sorted((ROOT / "docs" / "deployment").glob("*.md")),
 )
 
 

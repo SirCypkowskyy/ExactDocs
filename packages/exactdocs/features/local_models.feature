@@ -9,7 +9,7 @@ Feature: Local models: hybrid search and reranking with no network at all
   directory, exactly as `exactdocs models pull` leaves models there. The defaults
   (BAAI/bge-small-en-v1.5 and Xenova/ms-marco-MiniLM-L-6-v2) run in CI's local-models eval job
   and in tests/bootstrap/test_local_models_real.py.
-  Hybrid is chosen by the operator: it is no default until the eval suite says so (docs/evals.md).
+  Hybrid is chosen by the operator: it is no default until the eval suite says so (docs/evals/gates.md#becoming-a-default).
 
   Background:
     Given ExactDocs is running with the fixture docs repository imported at "v1.3.0" and "v1.4.0"
