@@ -121,6 +121,7 @@ def handler(hub: FakeHub) -> type[BaseHTTPRequestHandler]:
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
+        disable_nagle_algorithm = True  # a kept connection: head and body without a 40 ms wait
 
         def _serve(self) -> None:
             hub.seen.append((self.command, self.path, self.headers.get("Host", "")))

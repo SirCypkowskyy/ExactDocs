@@ -268,6 +268,7 @@ def _handler(proxy: ForwardProxy) -> type[socketserver.BaseRequestHandler]:
 
     class Handler(socketserver.BaseRequestHandler):
         def handle(self) -> None:
+            self.request.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)  # kept open
             client = _Stream(self.request)
             while (request := _read_head(client)) is not None:
                 proxy.seen.append(f"{request.method} {request.target}")
