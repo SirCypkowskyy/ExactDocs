@@ -19,7 +19,13 @@ site_dir = "site"
 nav = [
   { "Home" = "index.md" },
   { "Guide" = [
-    { "Getting started" = "getting-started.md" },
+    { "Getting started" = [
+      "getting-started/index.md",
+      { "Command line" = "getting-started/cli.md" },
+      { "Private repositories" = "getting-started/private-repositories.md" },
+      { "Declare and sync libraries" = "getting-started/sync.md" },
+      { "Accounts and sign-in" = "getting-started/accounts.md" },
+    ] },
     { "MCP" = "mcp.md" },
     { "Sources file" = "sources.md" },
     { "Configuration" = [
@@ -82,7 +88,25 @@ nav = [
   ] },
   { "Product" = [
     { "User stories" = "user-stories.md" },
-    { "Delivery plan" = "plan.md" },
+    { "Delivery plan" = [
+      "plan/index.md",
+      { "Filing" = "plan/filing.md" },
+      { "Deviations from the plan" = "plan/deviations.md" },
+      { "MVP-1 build order" = "plan/build-order.md" },
+      { "E1 Foundation & data model" = "plan/e1-foundation.md" },
+      { "E2 Accounts & tokens" = "plan/e2-accounts.md" },
+      { "E3 Git import" = "plan/e3-git-import.md" },
+      { "E4 Parsing, chunking & tags" = "plan/e4-parsing.md" },
+      { "E5 Search" = "plan/e5-search.md" },
+      { "E6 REST API & CLI" = "plan/e6-rest-cli.md" },
+      { "E7 MCP & context7 parity" = "plan/e7-mcp.md" },
+      { "E8 Web UI" = "plan/e8-web-ui.md" },
+      { "E9 Sync & lifecycle" = "plan/e9-sync.md" },
+      { "E10 Run & operations" = "plan/e10-operations.md" },
+      { "E11 AI retrieval" = "plan/e11-ai-retrieval.md" },
+      { "E12 Teams & integrations" = "plan/e12-teams.md" },
+      { "Coverage matrix" = "plan/coverage.md" },
+    ] },
     { "AI retrieval decisions" = "decisions/ai-retrieval.md" },
   ] },
   { "Engineering" = [
