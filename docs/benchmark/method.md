@@ -268,8 +268,8 @@ budgets; between chunkings of one budget the best one wins outright.
 |---|---|---|
 | quick tests of all three benchmarks and the text scorer | every pull request (`uv run pytest`, `uv run behave`) | stand-ins only, tiny local corpora |
 | `just golden-validate` rules | every pull request (pytest) | none |
-| ingestion benchmark `--check` | every release, *Retrieval eval* job | none |
-| retrieval benchmark, BM25 at `default`, `--check` | every release, *Retrieval eval* job | none |
+| ingestion benchmark `--check` | by hand: the manual *Eval* workflow (`eval.yml`) | none |
+| retrieval benchmark, BM25 at `default`, `--check` | by hand: the manual *Eval* workflow (`eval.yml`) | none |
 | retrieval benchmark with local models | by hand (`just retrieval-bench --offline`) | local, pulled with `exactdocs models pull` |
 | retrieval benchmark, hosted configurations | by hand: the manual *Retrieval eval (real providers)* workflow (`eval-providers.yml`),<br/>with the `benchmark` input ticked | hosted |
 | text scorer calibration | by hand (`just text-bench --offline`), when the matcher or the chunker changes | none |

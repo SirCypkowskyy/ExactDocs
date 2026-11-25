@@ -8,7 +8,8 @@
     - Updating never means importing everything again: the database migrates on start, and a
       search-index format change is rebuilt with `exactdocs reindex`.
     - Pull requests run the fast checks only. The integration tests run when started by hand, and
-      the release runs the eval, the size budgets and the image scans before it publishes.
+      the release runs the model-free eval gates, the size budgets and the image scans before it
+      publishes. The full eval runs by hand (`eval.yml`).
 
 ## Pages
 

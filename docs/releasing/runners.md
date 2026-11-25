@@ -5,7 +5,7 @@
       the self-hosted runner on the maintainer's Dell Pro Max GB10 (ARM64, no minutes).
     - One repository variable, `RUNNER_MODE`, decides which job runs where. `hybrid` is the
       default; `self-hosted` is the fallback.
-    - In `hybrid` the heavy release jobs (eval, web, Python) stay on the self-hosted runner, and the
+    - In `hybrid` the release's eval, web and Python jobs stay on the self-hosted runner, and the
       short publishing jobs run on fresh GitHub-hosted VMs.
     - When the free minutes run out, set `RUNNER_MODE` to `self-hosted` by hand and re-run the
       failed workflows; set it back when the minutes reset.
@@ -40,12 +40,13 @@ fallback.
 | Release: **image-scan**, **image**, arm64 legs | self-hosted, native | self-hosted, native |
 | Release: **image-scan**, **image**, amd64 legs | `ubuntu-24.04`, native | self-hosted, cross-built ([below](#self-hosted-mode-what-changes)) |
 | Release: **meta**, **pypi-kernel**, **pypi**, **image-publish** (index, tags, cosign), **github-release** | `ubuntu-24.04` | self-hosted |
-| GHCR retention<br/>`eval-providers.yml`, `agent-bench.yml`<br/>`azure-search.yml`, `pinecone.yml` | self-hosted | self-hosted |
+| GHCR retention<br/>`eval.yml`, `eval-providers.yml`, `agent-bench.yml`<br/>`azure-search.yml`, `pinecone.yml` | self-hosted | self-hosted |
 
 ### Why the release is split that way in `hybrid`
 
-- The eval is the heaviest job (up to 75 minutes) and needs nothing of x86, so it and the web and
-  Python builds stay off the minutes.
+- The eval (a few minutes, timeout 30) and the web and Python builds need nothing of x86, so they
+  stay off the minutes. The full eval in `eval.yml` runs on the self-hosted runner too (up to 75
+  minutes).
 - The amd64 image legs need x86 to build and check natively.
 - The jobs that validate the tag, publish to PyPI, sign and create the release are short (a minute
   or two each) and run on a fresh VM. That keeps the publishing credentials (OIDC tokens,
@@ -63,7 +64,7 @@ flowchart LR
     subgraph gb10 ["Dell Pro Max GB10 (ARM64): self-hosted runner VMs"]
         rels["Release: eval, web, python, arm64 image-scan + image,<br/>integration python (dry run that asks)"]
         ret["GHCR retention"]
-        manual["Manual: eval-providers, agent-bench,<br/>azure-search, pinecone"]
+        manual["Manual: eval, eval-providers, agent-bench,<br/>azure-search, pinecone"]
     end
     gh -->|PR and push| ci
     gh -->|"manual run: CI with integration, or Integration"| integ
