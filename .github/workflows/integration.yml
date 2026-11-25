@@ -2,12 +2,10 @@ name: Integration
 
 # The integration and end-to-end jobs (#507): everything that needs a container, a service, the
 # network or another external system, which pull request CI (ci.yml) leaves out. They run only
-# when asked for:
-#   - on a pull request that carries the label `run integration` (when it is added, and on each
-#     push while it is on; a pull request from a fork only when the label is added: each new
-#     commit needs the label removed and added again);
-#   - by a manual CI run with the input `integration` (ci.yml calls this workflow);
-#   - by every release (release.yml calls it; nothing is published unless it passes).
+# when someone starts them by hand (#554), never on a pull request, a push or a tag:
+#   - a manual run of this workflow (Actions -> Integration -> Run workflow);
+#   - a manual CI run with the input `integration` (ci.yml calls this workflow);
+#   - a release dry run with the input `integration` (release.yml calls it, with `release`).
 # The tests they run are marked: pytest's `integration` marker and behave's `@integration` tag,
 # both off by default and turned on by `--integration` / EXACTDOCS_INTEGRATION=1
 # (packages/exactdocs/tests/fixtures/integration.py, docs/releasing.md).
@@ -21,8 +19,8 @@ name: Integration
 #     started and its cases skip; the libSQL local-file cases skip without the x86-only `libsql`
 #     wheel; every other service image is multi-arch. The images are built for arm64.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, labeled]
+  # Its own manual run: the runners of RUNNER_MODE, as a manual CI run (`release` off).
+  workflow_dispatch:
   workflow_call:
     inputs:
       release:
@@ -30,17 +28,11 @@ on:
         type: boolean
         default: false
 
-# A new push to a labelled pull request cancels the run in progress; adding any other label, or a
-# push to a fork's pull request, starts a run of its own (its jobs are skipped) that cancels
-# nothing.
+# One run per calling workflow and ref at a time: a new one waits for the one in progress, which
+# is never cancelled (GitHub keeps one waiting run per group; a newer one replaces it).
 concurrency:
-  group: >-
-    integration-${{ github.workflow }}-${{ github.ref }}-${{
-    ((github.event.action == 'labeled' && github.event.label.name != 'run integration')
-    || (github.event_name == 'pull_request' && github.event.action != 'labeled'
-    && github.event.pull_request.head.repo.full_name != github.repository))
-    && github.run_id || 'run' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: integration-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -51,14 +43,6 @@ env:
 jobs:
   python:
     name: Python integration (pytest, behave; PostgreSQL, search and vector servers)
-    # Every job: called (a manual CI run, a release), or a pull request with the label, except on
-    # the event of another label being added. A pull request from a fork runs only on the event
-    # of the label being added (a maintainer's look at that commit), never on its later pushes:
-    # remove the label and add it again to run a new commit.
-    if: >-
-      github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'run integration')
-      && ((github.event.action == 'labeled' && github.event.label.name == 'run integration')
-      || (github.event.action != 'labeled' && github.event.pull_request.head.repo.full_name == github.repository)))
     runs-on: ${{ (inputs.release || vars.RUNNER_MODE == 'self-hosted') && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     # GitHub-hosted (#468): a smaller machine than the old self-hosted VM. With the E14 backends'
     # service containers (#351) the whole pytest suite took 53 minutes; the integration part alone
@@ -358,10 +342,6 @@ jobs:
   # hadolint needs no image build: it runs in ci.yml's Lint job, on every pull request.
   image:
     name: Docker image (build, scan, smoke test)
-    if: >-
-      github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'run integration')
-      && ((github.event.action == 'labeled' && github.event.label.name == 'run integration')
-      || (github.event.action != 'labeled' && github.event.pull_request.head.repo.full_name == github.repository)))
     runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 45
     steps:
@@ -513,10 +493,6 @@ jobs:
   # `-local` one also searches with `--network none`, on the models baked into the image.
   image-variants:
     name: Docker image variants (-ai, -local)
-    if: >-
-      github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'run integration')
-      && ((github.event.action == 'labeled' && github.event.label.name == 'run integration')
-      || (github.event.action != 'labeled' && github.event.pull_request.head.repo.full_name == github.repository)))
     runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 60
     steps:
@@ -650,10 +626,6 @@ jobs:
   # this job (runner.temp is per job). Not --no-cache: the --offline step needs a filled cache.
   uvx:
     name: uvx smoke, upgrade + browser end-to-end (built wheel)
-    if: >-
-      github.event_name != 'pull_request' || (contains(github.event.pull_request.labels.*.name, 'run integration')
-      && ((github.event.action == 'labeled' && github.event.label.name == 'run integration')
-      || (github.event.action != 'labeled' && github.event.pull_request.head.repo.full_name == github.repository)))
     runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 30
     steps:

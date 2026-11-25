@@ -6,8 +6,9 @@ name: CI
 # Python jobs and fails if one did, so branch protection keeps its required check.
 #
 # The integration and end-to-end jobs (service containers, Docker images, uvx and the browser
-# test) are in integration.yml. They run on a pull request labelled `run integration`, on a manual
-# run of this workflow with the input `integration`, and in every release (docs/releasing.md).
+# test) are in integration.yml. No pull request or push runs them (#554): only a manual run of
+# this workflow with the input `integration` (job `integration`), a manual run of Integration
+# itself, or a release dry run with `integration` (docs/releasing.md "Fast and integration tests").
 #
 # Runners (docs/releasing.md "CI/CD and runners"), switched by the repository variable RUNNER_MODE
 # (Settings -> Secrets and variables -> Actions -> Variables):
@@ -240,7 +241,8 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
-  # A manual run with the input `integration`: the integration and end-to-end jobs too.
+  # A manual run with the input `integration`: the integration and end-to-end jobs too. Never on a
+  # pull request or a push.
   integration:
     name: Integration
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.integration }}
