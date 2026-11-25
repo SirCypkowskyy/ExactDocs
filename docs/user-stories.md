@@ -323,7 +323,7 @@ Which mode answers a call, first match wins:
         - no `ref` means the default version.
 - **[MCP-03]** As an AI agent, I want to read a full article by its exact library, version and path, because once I know where the answer is, I want the whole article.
     - Acceptance:
-        - `read_article(library, ref?, path)` returns the verbatim Markdown as a plain text block (not escaped inside JSON) plus front-matter metadata, commit SHA and source link as structured content (`read_chunk` likewise)
+        - `read_article(library, ref?, path)` returns the verbatim Markdown as a plain text block (not escaped inside JSON) plus the same text, front-matter metadata, commit SHA and source link as structured content, so a client that reads only `structuredContent` gets the article too (`read_chunk` likewise)
         - an unknown path returns an error listing close matches.
     - *MVP-2:* articles are also exposed as MCP resources (`exactdocs://{owner}/{repo}/{path*}{?ref}`) for clients that browse resources.
 - **[MCP-04]** As an AI agent, I want every search result to carry its location and its neighbors, and to fetch a neighbor chunk or the whole parent article, because a matching section often needs the one before or after it.

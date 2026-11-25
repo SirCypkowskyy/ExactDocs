@@ -189,7 +189,8 @@ NOTICE_AND_TEXT = 2
 NOTICE_BLOCK_TOOLS = {"read_article", "read_chunk", "resolve-library-id", "query-docs"}
 # context7-shaped: no output schema, so no `notice` field; the notice is the first text block.
 CONTEXT7_TOOLS = {"resolve-library-id", "query-docs"}
-# MCP Apps: the notice is the first text block; the structured content is the UI (test_mcp_apps).
+# MCP Apps: the notice is the first text block; the structured content is the notice, then the UI
+# (test_mcp_apps, test_mcp_structured_content).
 APP_TOOLS = {"view_article", "view_search"}
 
 
@@ -204,6 +205,8 @@ async def test_the_notice_comes_first_in_the_text_every_client_reads(
     if tool in APP_TOOLS:
         assert result.content[0].text == NOTICE
         assert result.structured_content is not None  # the UI, for hosts with MCP Apps
+        assert next(iter(result.structured_content)) == "notice"
+        assert result.structured_content["notice"] == NOTICE
         return
     if tool in NOTICE_BLOCK_TOOLS:
         # The notice is a block of its own and the stored text follows it untouched.
@@ -215,6 +218,8 @@ async def test_the_notice_comes_first_in_the_text_every_client_reads(
             return
         assert result.structured_content is not None
         assert result.structured_content["notice"] == NOTICE
+        # The same text, for clients that give their model the structured content (#587).
+        assert result.structured_content["content"] == result.content[1].text
         return
     text = json.loads(result.content[0].text)
     assert next(iter(text)) == "notice"

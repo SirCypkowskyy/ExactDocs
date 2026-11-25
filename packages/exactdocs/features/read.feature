@@ -10,7 +10,12 @@ Feature: Reading whole articles and single chunks verbatim
     When an agent reads "docs/guide/install.md" of "/fixture/docs-repo/v1.4.0"
     Then the Markdown arrives after the notice as a plain text block, identical to the imported file
     And the structured content has its front matter, commit SHA and source link
-    And the structured content carries the untrusted-content notice
+    And the structured content carries the untrusted-content notice and the same Markdown
+
+  Scenario: An agent whose client hands its model the structured content reads the whole article
+    When an agent on pydantic-ai reads "docs/guide/install.md" of "/fixture/docs-repo/v1.4.0"
+    Then its model reads the untrusted-content notice first
+    And its model reads the Markdown, identical to the imported file
 
   Scenario: A wrong path suggests close matches
     When an agent reads "docs/guide/instal.md" of "/fixture/docs-repo/v1.4.0"
