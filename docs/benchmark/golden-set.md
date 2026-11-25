@@ -1,17 +1,36 @@
 # Golden set
 
+!!! abstract "TL;DR"
+    - 321 questions with known answers about the docs of five open source projects, three pinned
+      versions each, in six question kinds.
+    - `just golden-validate` checks that every section a case names exists as a chunk the importer
+      produces.
+    - No person has reviewed the cases. An independent agent review of a 90-case sample found 23
+      wrong in some way (none wrong at its core, mostly missing sections) and fixed them; the other
+      231 cases were not reviewed.
+
 The golden set (#345) is 321 questions with known answers about the documentation of five open
-source projects, three pinned versions each. Every case names the version it asks about, the
-sections of that version's docs that answer it, a short reference answer and the facts a correct
-answer must contain. The benchmarks import each version with the real importer and ask the
-questions in that version's library.
+source projects, three pinned versions each. Every case names:
+
+- the version it asks about;
+- the sections of that version's docs that answer it;
+- a short reference answer;
+- the facts a correct answer must contain.
+
+The benchmarks import each version with the real importer and ask the questions in that
+version's library.
 
 It lives in
 [`packages/exactdocs/evals/golden/`](https://github.com/SirCypkowskyy/ExactDocs/tree/develop/packages/exactdocs/evals/golden):
-`corpus.yaml` pins the projects and versions, and `cases/<project>.yaml` holds each project's
-cases. Nothing of these projects is stored in this repository. `just golden-validate` and the
-benchmarks fetch each pinned commit (`git fetch --depth 1`, about 65 MB in all) into a cache
-outside it.
+
+| File | Holds |
+|---|---|
+| `corpus.yaml` | the projects and versions, pinned |
+| `cases/<project>.yaml` | each project's cases |
+
+!!! note "The projects' docs are not in this repository"
+    `just golden-validate` and the benchmarks fetch each pinned commit (`git fetch --depth 1`,
+    about 65 MB in all) into a cache outside it.
 
 ## The corpus
 
@@ -56,9 +75,11 @@ The table above counts the cases per kind and project, with one example question
 
 ## How the cases were written and checked
 
-Every case was written by an agent from the source at its pinned commit: the facts are taken from
-that version's text, and each `unanswerable` case was searched for (`git grep`) in that version's
-whole docs tree. The same agent then checked each case against the source.
+Every case was written by an agent from the source at its pinned commit:
+
+- the facts are taken from that version's text;
+- each `unanswerable` case was searched for (`git grep`) in that version's whole docs tree;
+- the same agent then checked each case against the source.
 
 What a machine checks, on every case, with `just golden-validate`:
 
@@ -69,17 +90,21 @@ What a machine checks, on every case, with `just golden-validate`:
 - every section it names exists at the pinned commit as a chunk the importer's own parser and
   chunker produce, so a case can only name a section ExactDocs can return.
 
-CI checks the rules on every pull request; the section check needs the corpus cache, so it runs
-locally and wherever the cache is present. Details are in
-[What `golden-validate` checks](../evals.md#what-golden-validate-checks).
+!!! info "Where the checks run"
+    CI checks the rules on every pull request. The section check needs the corpus cache, so it
+    runs locally and wherever the cache is present. Details are in
+    [What `golden-validate` checks](../evals.md#what-golden-validate-checks).
 
 ## The independent review
 
-No person has reviewed the cases. A second agent did (#490), with a brief to find what is wrong
-rather than to confirm it, and it is not the agent or the prompt that wrote them. It reviewed a
-random sample: `just golden-review sample` drew three cases of each kind in each project, 90 in all,
-with a fixed seed, from the set as it was before any fix. For each case it read the docs at the
-pinned commit and checked:
+No person has reviewed the cases. A second agent did (#490):
+
+- its brief was to find what is wrong rather than to confirm it;
+- it is not the agent or the prompt that wrote them;
+- it reviewed a random sample: `just golden-review sample` drew three cases of each kind in each
+  project, 90 in all, with a fixed seed, from the set as it was before any fix.
+
+For each case it read the docs at the pinned commit and checked:
 
 - that the expected sections state every fact, not merely imply it;
 - that the reference answer is right for that version;
@@ -133,11 +158,13 @@ above is within half a point of the share weighted by stratum size (25.3%). What
   section answers its question, and all 15 `unanswerable` cases held: none is answered anywhere in
   its version's docs.
 - **Missing sections, 17 cases.** Another section of the same version answers the question as
-  well: the API reference page next to the guide the case names (`useMutation`'s `scope`,
-  `useQuery`'s `keepPreviousData`, `refetchOnWindowFocus`), a tutorial that repeats the table of a
-  guide, the ESLint rule page that says not to put a query result in a dependency array, a release
-  note for a "since when" question, a deprecation note in the breaking changes. Each section was
-  added to its case.
+  well. Each section was added to its case. The kinds of section:
+    - the API reference page next to the guide the case names (`useMutation`'s `scope`,
+      `useQuery`'s `keepPreviousData`, `refetchOnWindowFocus`);
+    - a tutorial that repeats the table of a guide;
+    - the ESLint rule page that says not to put a query result in a dependency array;
+    - a release note for a "since when" question;
+    - a deprecation note in the breaking changes.
 - **Wrong kind, 6 cases.** Five `cross-page` cases have every fact in one article (the second
   article adds nothing), and one `version-change` case asks about no change. They are now `how-to`
   and `conceptual`.
@@ -147,23 +174,30 @@ above is within half a point of the share weighted by stratum size (25.3%). What
 - **By kind**, `version-change` cases were wrong most often (8 of 15), then `cross-page`; by project,
   TanStack Query (9 of 18), whose guides and API reference pages often say the same thing.
 
-The 23 wrong cases of the sample are fixed; the other 231 cases were not reviewed. If the sample is
-representative, about 59 of them (41 to 82 at the interval's ends) have problems of the same kinds,
-mostly missing sections.
+!!! warning "Most cases are not reviewed"
+    The 23 wrong cases of the sample are fixed; the other 231 cases were not reviewed. If the
+    sample is representative, about 59 of them (41 to 82 at the interval's ends) have problems of
+    the same kinds, mostly missing sections.
 
-What this means for the results: the sections the review added answer the question as well as
-the one listed, so they are marked as **alternatives** of the part they answer
-(`alternative: true`, #501): 21 sections in the 17 cases; 4 of those cases still need two parts.
-recall@k and MRR count a hit on any section a case lists, and section recall and nDCG@10 count
-each part once, so a configuration or tool that returns the other answering section (often an API
-reference page) is not scored a miss ([Method](method.md#retrieval-metrics)). Until #501,
-recall@k counted only the first listed section, and these sections counted for nDCG@10 and
-section recall as parts the answer also needed.
+What this means for the results:
 
-The fixes changed the golden set's fingerprint (`sha256:39f6f9d5e909d128` to
-`sha256:7dd51c59057c279a`), and marking the alternatives changed it again
-(`sha256:a00997851150e3b0`). The [ingestion run](ingestion.md) and the
-[retrieval run](retrieval.md) were recorded again each time.
+- The sections the review added answer the question as well as the one listed, so they are
+  marked as **alternatives** of the part they answer (`alternative: true`, #501): 21 sections in
+  the 17 cases. 4 of those cases still need two parts.
+- recall@k and MRR count a hit on any section a case lists, and section recall and nDCG@10 count
+  each part once. A configuration or tool that returns the other answering section (often an API
+  reference page) is not scored a miss ([Method](method.md#retrieval-metrics)).
+- Until #501, recall@k counted only the first listed section, and these sections counted for
+  nDCG@10 and section recall as parts the answer also needed.
+
+The golden set's fingerprint changed twice, and the [ingestion run](ingestion.md) and the
+[retrieval run](retrieval.md) were recorded again each time:
+
+| Change | Fingerprint |
+|---|---|
+| before the review | `sha256:39f6f9d5e909d128` |
+| the fixes | `sha256:7dd51c59057c279a` |
+| marking the alternatives | `sha256:a00997851150e3b0` |
 
 ### Wording
 
@@ -186,10 +220,15 @@ keyword search (BM25) over embeddings.
 
 ## Adding a case
 
-Pick a project and version, read the page at the pinned commit, write the case in
-`cases/<project>.yaml` and run `just golden-validate --projects <project>`: a wrong heading path
-lists the closest sections the article has. The step-by-step guide and the pitfalls this corpus
-shows (pages without H1, TanStack Query framework pages, Zod's MDX, Pydantic's includes) are in
-[Adding a case](../evals.md#adding-a-case). Adding or changing a case changes the golden set's
-fingerprint, so the recorded runs and these pages are refreshed in the same pull request
-([Method](method.md#refreshing-these-pages)).
+1. Pick a project and version.
+2. Read the page at the pinned commit.
+3. Write the case in `cases/<project>.yaml`.
+4. Run `just golden-validate --projects <project>`. A wrong heading path lists the closest
+   sections the article has.
+
+The step-by-step guide and the pitfalls this corpus shows (pages without H1, TanStack Query
+framework pages, Zod's MDX, Pydantic's includes) are in [Adding a case](../evals.md#adding-a-case).
+
+!!! note
+    Adding or changing a case changes the golden set's fingerprint, so the recorded runs and these
+    pages are refreshed in the same pull request ([Method](method.md#refreshing-these-pages)).

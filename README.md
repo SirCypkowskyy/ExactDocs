@@ -146,7 +146,7 @@ Then ask your agent something. It finds the library with `resolve-library-id` an
 On `develop`, `exactdocs config --client claude --new-token` prints this snippet for Claude Code,
 Claude Desktop, Cursor, VS Code or Codex, with a token made for that client. A local agent that
 only reads can run `uvx exactdocs serve --stdio` instead, with no token and no port.
-[Getting started](docs/getting-started.md) covers the rest: the CLI, private repositories, the
+[Getting started](docs/getting-started/index.md) covers the rest: the CLI, private repositories, the
 sources file, webhooks, accounts and sign-in through an identity provider.
 
 ## Features
@@ -218,7 +218,7 @@ v0.2.0 (MVP-1) has the main loop for one admin with no external services: import
 URL, heading-based chunking, BM25 pinned to a version, the web UI and the MCP tools. `develop` adds
 everything this README lists beyond that. Later: `llms.txt` and website crawling, docs resolved
 from package registries and lockfiles, prebuilt index snapshots, and AsciiDoc and notebooks. The
-[user stories](docs/user-stories.md) and the [delivery plan](docs/plan.md) have the details.
+[user stories](docs/user-stories.md) and the [delivery plan](docs/plan/index.md) have the details.
 
 ## Development
 

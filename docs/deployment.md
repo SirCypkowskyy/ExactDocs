@@ -57,7 +57,7 @@ If people sign in through an identity provider, also set `EXACTDOCS_PUBLIC_URL` 
 they use, such as `https://docs.example.com` (no path). The redirect URI that ExactDocs sends to
 the provider is built from it, never from the request's `Host` header, so it stays right behind
 any proxy. The server refuses to start with a provider configured and no public URL (see
-[Sign in through an identity provider](getting-started.md#sign-in-through-an-identity-provider)).
+[Sign in through an identity provider](getting-started/accounts.md#sign-in-through-an-identity-provider)).
 
 If the proxy is not listed in `EXACTDOCS_FORWARDED_ALLOW_IPS`, every client looks like the proxy,
 and 5 failed sign-ins from anyone throttle everyone.
@@ -533,7 +533,7 @@ services:
       EXACTDOCS_DATABASE_URL: postgresql://exactdocs:${POSTGRES_PASSWORD}@db:5432/exactdocs
       EXACTDOCS_SECRET_KEY: ${EXACTDOCS_SECRET_KEY:?set EXACTDOCS_SECRET_KEY}
       WEB_CONCURRENCY: "2" # server processes; on PostgreSQL every one serves and runs jobs
-      # Sign-in through an OIDC provider (docs/getting-started.md, "Sign in through an identity
+      # Sign-in through an OIDC provider (docs/getting-started/accounts.md, "Sign in through an identity
       # provider"): the provider in the TOML file ([auth.providers.corp]), its secret from the env.
       # EXACTDOCS_PUBLIC_URL: https://docs.example.com
       # EXACTDOCS_CONFIG_FILE: /run/exactdocs.toml

@@ -1,11 +1,23 @@
 # Comparison with other tools
 
+!!! abstract "TL;DR"
+    - Grounded Docs 3.4.1 against ExactDocs' BM25 at `default`, on the whole golden set, run on
+      24 November 2026.
+    - Full-text only: recall@5 83.5% against 87.6% (not significant, p 0.08); recall@10 85.4%
+      against 93.6% (significant).
+    - With `bge-small-en-v1.5`: recall@1 71.5% against 58.8% and MRR 0.785 against 0.711 (both
+      significant); recall@10 89.1% against 93.6% (significant).
+    - Its results hold about twice the context: 7,360 to 7,935 estimated tokens per question,
+      against 3,464.
+
 ExactDocs next to other documentation tools, on the same [golden set](golden-set.md): the same
-questions about the same projects at the same pinned versions, every tool's results scored from
-their text with the [text scorer](../evals.md#scoring-text-results), so each is measured with the
-retrieval benchmark's own metrics, intervals and paired tests ([Method](method.md)). Every number
-records the tool's version, its settings and the date it was measured. The tools run as their
-documentation sets them up; nothing is tuned for the golden set.
+questions about the same projects at the same pinned versions.
+
+- Every tool's results are scored from their text with the
+  [text scorer](../evals.md#scoring-text-results), so each is measured with the retrieval
+  benchmark's own metrics, intervals and paired tests ([Method](method.md)).
+- Every number records the tool's version, its settings and the date it was measured.
+- The tools run as their documentation sets them up; nothing is tuned for the golden set.
 
 ## Grounded Docs
 
@@ -20,29 +32,43 @@ next to ExactDocs' BM25 at `default` asked and scored the same way. A hit is a r
 any section the case lists, a part or one of its alternatives, as in
 [Retrieval metrics](method.md#retrieval-metrics):
 
-- **Full-text search only.** Grounded Docs finds a section that answers in its top 5 a little
-  less often than ExactDocs' BM25 (recall@5 83.5% against 87.6%; the paired test finds no
-  significant difference, p 0.08), and less often in its top 10 (85.4% against 93.6%,
-  significant); its nDCG@10 is lower (0.659 against 0.714, significant), and its recall@1 is the
-  same (58.8%). It returns 7.5 results per question rather than 10, because it merges the nearby
-  matches of a page into one result.
-- **With `bge-small-en-v1.5`.** It puts a section that answers first more often than ExactDocs'
-  BM25 (recall@1 71.5% against 58.8%, significant), and its MRR is higher (0.785 against 0.711,
-  significant); recall@5 and nDCG@10 do not differ significantly (85.8% against 87.6% at 5), and
-  recall@10 is lower (89.1% against 93.6%, significant). Against ExactDocs' hybrid search with
-  the same model (the recorded run, scored by chunk ID), recall@1 is higher (71.5% against
-  64.4%) and recall@10 lower (89.1% against 93.6%), both only just significant (p 0.0495 and
-  0.041); recall@5, MRR and nDCG@10 do not differ significantly.
+- **Full-text search only**, against ExactDocs' BM25:
+
+    | Metric | Grounded Docs | ExactDocs BM25 | Significant |
+    |---|---|---|---|
+    | recall@1 | 58.8% | 58.8% | (the same) |
+    | recall@5 | 83.5% | 87.6% | no (p 0.08) |
+    | recall@10 | 85.4% | 93.6% | yes |
+    | nDCG@10 | 0.659 | 0.714 | yes |
+
+    It returns 7.5 results per question rather than 10, because it merges the nearby matches of a
+    page into one result.
+
+- **With `bge-small-en-v1.5`**, against ExactDocs' BM25:
+
+    | Metric | Grounded Docs | ExactDocs BM25 | Significant |
+    |---|---|---|---|
+    | recall@1 | 71.5% | 58.8% | yes |
+    | MRR | 0.785 | 0.711 | yes |
+    | recall@5 | 85.8% | 87.6% | no |
+    | recall@10 | 89.1% | 93.6% | yes |
+
+    nDCG@10 does not differ significantly either.
+
+    Against ExactDocs' hybrid search with the same model (the recorded run, scored by chunk ID),
+    recall@1 is higher (71.5% against 64.4%) and recall@10 lower (89.1% against 93.6%), both only
+    just significant (p 0.0495 and 0.041). recall@5, MRR and nDCG@10 do not differ significantly.
 - **Twice the context.** Its results hold 7,360 to 7,935 estimated tokens per question, against
   ExactDocs' 3,464, and 1,998 to 2,324 tokens up to the first hit, against 656. That bigger
   context also holds more of the cases' facts (92% to 94%, against 87%).
 - **Changelogs are left out.** Its default exclusion patterns skip `changelog.md` and
-  `changelog.mdx` (and hidden files), so it did not index Pydantic v1's and Zod v4's changelogs,
-  and four answerable Zod v4 cases list no section outside `changelog.mdx` (two more list it
-  next to another page). Without those four (263 answerable cases), recall@5 is 84.8%
-  full-text and 87.1% with the embedding model, against ExactDocs' 87.5%. The `version-change`
-  questions, which lean on such pages, are where it trails most (recall@5 80.4% in both
-  configurations, against 92.9%).
+  `changelog.mdx` (and hidden files).
+    - So it did not index Pydantic v1's and Zod v4's changelogs, and four answerable Zod v4 cases
+      list no section outside `changelog.mdx` (two more list it next to another page).
+    - Without those four (263 answerable cases), recall@5 is 84.8% full-text and 87.1% with the
+      embedding model, against ExactDocs' 87.5%.
+    - The `version-change` questions, which lean on such pages, are where it trails most
+      (recall@5 80.4% in both configurations, against 92.9%).
 - **No result of another version** from either tool (wrong-version rate 0); 80% of Grounded Docs'
   results and 72% of ExactDocs' are version-neutral, so this says little on its own.
 - **Indexing** the whole corpus (1,716 articles, 6,263 chunks) took 95 seconds with full-text
@@ -64,29 +90,34 @@ any section the case lists, a part or one of its alternatives, as in
   `hybrid:bge-small-en-v1.5` (scored by chunk ID, which agrees with the text scorer on 99.8% of
   decisions at `default`) are listed for reference.
 - **Its documented defaults.** Scraping, its default exclusion patterns, splitting, search and
-  result assembly were left as they ship. Three settings were set: telemetry off, the corpus
-  folder as the one folder it may read, and the embedding request timeout raised from 30 to 300
-  seconds, because the local CPU endpoint answers one request at a time and Grounded Docs sends
-  several at once (it waits longer; it indexes and ranks the same). The crawl's depth limit was
-  raised for the versions whose folders are deeper than its default of 3, so that every article
-  was offered.
+  result assembly were left as they ship. Three settings were set:
+    - telemetry off;
+    - the corpus folder as the one folder it may read;
+    - the embedding request timeout raised from 30 to 300 seconds, because the local CPU endpoint
+      answers one request at a time and Grounded Docs sends several at once (it waits longer; it
+      indexes and ranks the same).
+
+    The crawl's depth limit was raised for the versions whose folders are deeper than its default
+    of 3, so that every article was offered.
 - **Same embedding model.** The vector configuration used `BAAI/bge-small-en-v1.5`, the model of
   ExactDocs' best local configuration, served from the same ONNX file through a local
   OpenAI-compatible endpoint, the way Grounded Docs reaches any local model. Grounded Docs stores
   this model's 384-dimension vectors padded with zeros to 512 (its table of known models says
   512), which changes no distance between two vectors.
 
-What to keep in mind:
+!!! warning "What to keep in mind"
 
-- **Bigger results.** Each Grounded Docs result is the matching chunks with the context it
-  assembles around them (parent sections, neighbouring and child sections), so its ten results
-  hold more text than ExactDocs' ten chunks. A result that holds a section's text answers it, so
-  compare recall with the context tokens per question and the tokens up to the first hit.
-- **Version-neutral text.** Most of a pinned version's text is the same in its other versions, so
-  most results of both tools cannot be told apart by their text, and the wrong-version rate scored
-  from text is a lower bound. Grounded Docs searches only the version it is asked for.
-- **Latency is not compared.** Grounded Docs answered through MCP over HTTP; ExactDocs' BM25
-  latency is its search alone, in-process.
+    - **Bigger results.** Each Grounded Docs result is the matching chunks with the context it
+      assembles around them (parent sections, neighbouring and child sections), so its ten
+      results hold more text than ExactDocs' ten chunks. A result that holds a section's text
+      answers it, so compare recall with the context tokens per question and the tokens up to
+      the first hit.
+    - **Version-neutral text.** Most of a pinned version's text is the same in its other
+      versions, so most results of both tools cannot be told apart by their text, and the
+      wrong-version rate scored from text is a lower bound. Grounded Docs searches only the
+      version it is asked for.
+    - **Latency is not compared.** Grounded Docs answered through MCP over HTTP; ExactDocs' BM25
+      latency is its search alone, in-process.
 
 ### The recorded run
 

@@ -45,7 +45,7 @@ over the TOML file, field by field.
 ### Sign-in providers
 
 People can sign in through OpenID Connect providers as well as with a password;
-[Getting started](getting-started.md#sign-in-through-an-identity-provider) shows a complete
+[Getting started](getting-started/accounts.md#sign-in-through-an-identity-provider) shows a complete
 example and what happens at sign-in. Each provider is a `[auth.providers.<name>]` table in the
 TOML file, or `EXACTDOCS_AUTH__PROVIDERS__<NAME>__<FIELD>` in the environment, where lists are
 JSON (`EXACTDOCS_AUTH__PROVIDERS__CORP__ALLOWED_GROUPS='["docs-readers"]'`). The name is
