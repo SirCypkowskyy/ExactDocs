@@ -793,7 +793,10 @@ EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
 ```
 
 Every result keeps its per-case `rows`, so every one has intervals and a paired test against its
-budget's default (#489). On that runner, embedding the whole corpus took 25 minutes with
+budget's default (#489). The run kept no context per case (#575): BM25's rows at every chunking
+were completed from a re-run of 25 November (Linux x86_64) that gave every case the same rank,
+nDCG and section ranks (`rows_from` names it), so BM25 has recall within each token budget; the
+other results were not run again and have none. On that runner, embedding the whole corpus took 25 minutes with
 bge-small at `default` (32 at `h6`, 14 at `h2`, 23 at `merge-400`) and 35 with arctic-embed-s; the
 cross-encoder adds about 2.5 s per question (32 candidates). What it found: BM25 scores alike at
 `h2`, `default` and `merge-400` (recall@5 89.1%, 87.6%, 87.6%), above `h6` (85.8%); `h2` comes

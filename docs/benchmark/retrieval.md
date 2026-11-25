@@ -21,6 +21,13 @@ Every result keeps each case's outcome, so every one has intervals and a paired 
 budget's default ([Intervals and significance](method.md#intervals-and-significance)). The
 latencies are that runner's.
 
+**The context each result returned** (#575) was not kept by that run. BM25 is deterministic, so
+it was asked again at every chunking on 25 November (Linux x86_64, 4 CPUs): every case came back
+at the same rank, with the same nDCG and section ranks, and the recorded rows took the context
+of each chunk returned from that run (`rows_from` names it); the recorded latencies are kept.
+That gives BM25's recall within a token budget, under *Within a token budget* below. The other
+configurations were not run again: they have no budget numbers yet.
+
 **Two scoring rules changed since the run it replaces** (23–24 November, the same subset on the
 same runner), so its numbers are not comparable with that one's
 ([Method](method.md#retrieval-metrics)):
@@ -74,6 +81,10 @@ agentic search and every configuration reranked by the LLM judge. They run only 
   against 3,464, [text calibration](../evals.md#calibration)). `h6`, where every heading starts a
   chunk, is below them: 85.8%, with MRR and nDCG@10 significantly worse than at `default`. The
   shipped default stays `default` (#381); a non-significant lead does not change it.
+- At the same amount of context `default` is far ahead of `h2` (#575): within the first 1,000
+  estimated tokens of what BM25 returned, a section that answers is there in 78.3% of the cases
+  at `default` and 49.1% at `h2`; within 2,000, 88.8% against 76.8% (both significant). `h6` and
+  `merge-400` are as good as `default` there.
 - Hybrid search on bge-small is the best local configuration, at `merge-400` (91.0%), but only
   1.9 points of recall@5 above BM25 at `h2`, under the 5-point margin and not significant
   (p 0.33). At `default`, `h6` and `merge-400` it ranks the answer higher than BM25 at `default`
