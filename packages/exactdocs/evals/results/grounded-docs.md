@@ -5,10 +5,10 @@ Grounded Docs indexed every pinned version of the golden corpus from the same fi
 ## The run
 
 - Grounded Docs 3.4.1 (npm `@arabold/docs-mcp-server`, integrity `sha512-IZQKYKs3p939Tt7N...`), Node.js v22.23.5; questions through its `search_docs` MCP tool with the case's library and version, 10 results.
-- Run 2026-11-25T10:53:10+00:00: golden set 321 cases, fingerprint `sha256:a00997851150e3b0`, projects starlette, pydantic, tanstack-query, zod, electron; ExactDocs commit `12125cf2892e6ca5309de872d07cc0ff5773e7a6`, Python 3.14.6, Linux x86_64, 4 CPUs.
+- Run 2026-11-25T13:00:45+00:00: golden set 321 cases, fingerprint `sha256:a00997851150e3b0`, projects starlette, pydantic, tanstack-query, zod, electron; ExactDocs commit `f8c92701bf0b6993a4358b9a92d39a0d8f8b9b98`, Python 3.14.6, Linux x86_64, 4 CPUs.
 - `full-text`: no embedding model: full-text search only, what it does when no provider credentials are set. Environment: none.
 - `bge-small-en-v1.5`: full-text and vector search, BAAI/bge-small-en-v1.5 served locally through an OpenAI-compatible endpoint (OPENAI_API_BASE). Environment: `DOCS_MCP_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5`, `OPENAI_API_BASE=<endpoint>/v1`, `OPENAI_API_KEY=local`.
-  Embedding model BAAI/bge-small-en-v1.5 (revision `aa8f8b060edb`, 384 dimensions, stored at 512), served by retrieval_eval.openai_embeddings (fastembed, the ONNX file `exactdocs models pull` fetched): indexing 6,263 texts, 2,466,665 tokens, 1,599 s of embedding (0 requests abandoned by the client); questions 321 texts, 7 s.
+  Embedding model BAAI/bge-small-en-v1.5 (revision `aa8f8b060edb`, 384 dimensions, stored at 512), served by retrieval_eval.openai_embeddings (fastembed, the ONNX file `exactdocs models pull` fetched): indexing 6,263 texts, 2,466,665 tokens, 1,599 s of embedding (0 requests abandoned by the client); questions 321 texts, 5 s.
 
 ## Results
 
@@ -17,7 +17,7 @@ Grounded Docs indexed every pinned version of the golden corpus from the same fi
 | Tool and configuration | Scored by | recall@1 | recall@5 | recall@10 | MRR | nDCG@10 | wrong version | version-neutral | context tokens / question | tokens to first hit |
 |---|---|---|---|---|---|---|---|---|---|---|
 | ExactDocs bm25 @ default | text | 58.8% (52.8-64.8) | 87.6% (83.5-91.4) | 93.6% (90.6-96.2) | 0.711 (0.666-0.754) | 0.714 (0.676-0.751) | 0.0% | 72.2% | 3,464 (3,320-3,614) | 656 |
-| ExactDocs bm25 @ default | chunk ID | 58.8% (52.8-64.8) | 87.6% (83.5-91.4) | 93.6% (90.6-96.2) | 0.711 (0.666-0.754) | 0.714 (0.676-0.751) | 0.0% | - | - | - |
+| ExactDocs bm25 @ default | chunk ID | 58.8% (52.8-64.8) | 87.6% (83.5-91.4) | 93.6% (90.6-96.2) | 0.711 (0.666-0.754) | 0.714 (0.676-0.751) | 0.0% | - | 3,464 (3,320-3,614) | 656 |
 | ExactDocs hybrid:bge-small-en-v1.5 @ default | chunk ID | 64.4% (58.8-70.0) | 90.3% (86.5-93.6) | 93.6% (90.6-96.2) | 0.756 (0.714-0.798) | 0.749 (0.712-0.785) | 0.0% | - | - | - |
 | Grounded Docs full-text | text | 58.8% (52.8-64.8) | 83.5% (79.0-88.0) | 85.4% (81.3-89.5) | 0.689 (0.642-0.737) | 0.659 (0.616-0.702) | 0.0% | 80.9% | 7,935 (7,640-8,250) | 2,324 |
 | Grounded Docs bge-small-en-v1.5 | text | 71.5% (66.3-76.8) | 85.8% (81.7-89.9) | 89.1% (85.4-92.9) | 0.785 (0.743-0.826) | 0.731 (0.691-0.770) | 0.0% | 79.7% | 7,360 (7,081-7,657) | 1,998 |
@@ -40,7 +40,7 @@ Recall within the first 1,000, 2,000 and 4,000 estimated tokens (characters / 4)
 | Tool and configuration | Scored by | context tokens / question | tokens to first hit | within 1,000, whole results | within 2,000, whole results | within 4,000, whole results | within 1,000, text cut | within 2,000, text cut | within 4,000, text cut |
 |---|---|---|---|---|---|---|---|---|---|
 | ExactDocs bm25 @ default | text | 3,464 (3,320-3,614) | 656 | 78.3% (73.4-83.2) | 88.8% (85.0-92.1) | 93.6% (90.6-96.2) | 83.5% (79.0-88.0) | 90.3% (86.5-93.6) | 93.6% (90.6-96.2) |
-| ExactDocs bm25 @ default | chunk ID | - | - | - | - | - | - | - | - |
+| ExactDocs bm25 @ default | chunk ID | 3,464 (3,320-3,614) | 656 | 78.3% (73.4-83.2) | 88.8% (85.0-92.1) | 93.6% (90.6-96.2) | - | - | - |
 | ExactDocs hybrid:bge-small-en-v1.5 @ default | chunk ID | - | - | - | - | - | - | - | - |
 | Grounded Docs full-text | text | 7,935 (7,640-8,250) | 2,324 | 25.1% (20.2-30.3) | 53.6% (47.6-59.6) | 70.0% (64.4-75.3) | 44.6% (38.6-50.6) | 65.9% (60.3-71.5) | 77.1% (71.9-82.0) |
 | Grounded Docs bge-small-en-v1.5 | text | 7,360 (7,081-7,657) | 1,998 | 34.5% (28.8-40.5) | 58.8% (53.2-64.8) | 75.7% (70.4-80.9) | 58.4% (52.4-64.0) | 73.0% (67.8-78.3) | 82.4% (77.9-86.9) |
@@ -50,10 +50,10 @@ Recall within the first 1,000, 2,000 and 4,000 estimated tokens (characters / 4)
 | Grounded Docs | against | within 1,000, whole results | within 2,000, whole results | within 4,000, whole results | within 1,000, text cut | within 2,000, text cut | within 4,000, text cut |
 |---|---|---|---|---|---|---|---|
 | full-text | ExactDocs bm25 @ default (text) | -53.2 points (-59.2 to -47.2), p 1.22e-40, significant | -35.2 points (-41.6 to -28.8), p 9.84e-23, significant | -23.6 points (-29.2 to -18.4), p 4.62e-16, significant | -39.0 points (-45.3 to -32.6), p 1.8e-25, significant | -24.3 points (-30.0 to -18.7), p 5.79e-15, significant | -16.5 points (-21.3 to -11.6), p 2.14e-10, significant |
-| full-text | ExactDocs bm25 @ default (chunk ID) | - | - | - | - | - | - |
+| full-text | ExactDocs bm25 @ default (chunk ID) | -53.2 points (-59.2 to -47.2), p 1.22e-40, significant | -35.2 points (-41.6 to -28.8), p 9.84e-23, significant | -23.6 points (-29.2 to -18.4), p 4.62e-16, significant | - | - | - |
 | full-text | ExactDocs hybrid:bge-small-en-v1.5 @ default (chunk ID) | - | - | - | - | - | - |
 | bge-small-en-v1.5 | ExactDocs bm25 @ default (text) | -43.8 points (-50.6 to -37.1), p 1.06e-26, significant | -30.0 points (-36.3 to -23.6), p 4.45e-17, significant | -18.0 points (-23.2 to -12.7), p 5.38e-11, significant | -25.1 points (-31.8 to -18.4), p 4.7e-12, significant | -17.2 points (-22.9 to -11.6), p 4.04e-09, significant | -11.2 points (-15.7 to -6.7), p 1.64e-06, significant |
-| bge-small-en-v1.5 | ExactDocs bm25 @ default (chunk ID) | - | - | - | - | - | - |
+| bge-small-en-v1.5 | ExactDocs bm25 @ default (chunk ID) | -43.8 points (-50.6 to -37.1), p 1.06e-26, significant | -30.0 points (-36.3 to -23.6), p 4.45e-17, significant | -18.0 points (-23.2 to -12.7), p 5.38e-11, significant | - | - | - |
 | bge-small-en-v1.5 | ExactDocs hybrid:bge-small-en-v1.5 @ default (chunk ID) | - | - | - | - | - | - |
 
 ### Every metric scored from the text
