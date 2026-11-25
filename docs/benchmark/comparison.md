@@ -105,10 +105,10 @@ What to keep in mind:
 
 <!-- bench:grounded-docs-run -->
 - Grounded Docs 3.4.1 (npm `@arabold/docs-mcp-server`, integrity `sha512-IZQKYKs3p939Tt7N...`), Node.js v22.23.5; questions through its `search_docs` MCP tool with the case's library and version, 10 results.
-- Run 2026-11-24T20:47:42+00:00: golden set 321 cases, fingerprint `sha256:a00997851150e3b0`, projects starlette, pydantic, tanstack-query, zod, electron; ExactDocs commit `d2de6fdf9335f83261a061c7fd9876705d87b998`, Python 3.14.6, Linux x86_64, 4 CPUs.
+- Run 2026-11-25T10:53:10+00:00: golden set 321 cases, fingerprint `sha256:a00997851150e3b0`, projects starlette, pydantic, tanstack-query, zod, electron; ExactDocs commit `12125cf2892e6ca5309de872d07cc0ff5773e7a6`, Python 3.14.6, Linux x86_64, 4 CPUs.
 - `full-text`: no embedding model: full-text search only, what it does when no provider credentials are set. Environment: none.
 - `bge-small-en-v1.5`: full-text and vector search, BAAI/bge-small-en-v1.5 served locally through an OpenAI-compatible endpoint (OPENAI_API_BASE). Environment: `DOCS_MCP_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5`, `OPENAI_API_BASE=<endpoint>/v1`, `OPENAI_API_KEY=local`.
-  Embedding model BAAI/bge-small-en-v1.5 (revision `aa8f8b060edb`, 384 dimensions, stored at 512), served by retrieval_eval.openai_embeddings (fastembed, the ONNX file `exactdocs models pull` fetched): indexing 6,263 texts, 2,466,665 tokens, 1,599 s of embedding (0 requests abandoned by the client); questions 321 texts, 4 s.
+  Embedding model BAAI/bge-small-en-v1.5 (revision `aa8f8b060edb`, 384 dimensions, stored at 512), served by retrieval_eval.openai_embeddings (fastembed, the ONNX file `exactdocs models pull` fetched): indexing 6,263 texts, 2,466,665 tokens, 1,599 s of embedding (0 requests abandoned by the client); questions 321 texts, 7 s.
 <!-- /bench -->
 
 <!-- bench:grounded-docs -->
@@ -132,6 +132,29 @@ What to keep in mind:
 | bge-small-en-v1.5 | ExactDocs bm25 @ default (text) | +12.7 points (+6.0 to +19.9), p 0.00049, significant | -1.9 points (-6.4 to +3.0), p 0.441, not significant | -4.5 points (-8.2 to -0.8), p 0.0295, significant | +0.074 (+0.024 to +0.126), p 0.0049, significant | +0.016 (-0.026 to +0.059), p 0.466, not significant |
 | bge-small-en-v1.5 | ExactDocs bm25 @ default (chunk ID) | +12.7 points (+6.0 to +19.9), p 0.00049, significant | -1.9 points (-6.4 to +3.0), p 0.441, not significant | -4.5 points (-8.2 to -0.8), p 0.0295, significant | +0.074 (+0.024 to +0.126), p 0.0049, significant | +0.016 (-0.026 to +0.059), p 0.466, not significant |
 | bge-small-en-v1.5 | ExactDocs hybrid:bge-small-en-v1.5 @ default (chunk ID) | +7.1 points (+0.4 to +13.9), p 0.0495, significant | -4.5 points (-9.0 to +0.0), p 0.0532, not significant | -4.5 points (-8.6 to +0.0), p 0.041, significant | +0.029 (-0.022 to +0.079), p 0.272, not significant | -0.018 (-0.064 to +0.026), p 0.422, not significant |
+
+### Within a token budget
+
+Recall within the first 1,000, 2,000 and 4,000 estimated tokens (characters / 4) of the text each tool returned. Whole results: the result that first answers the case ends within the budget. Text cut: the text is cut at the budget, and the result the budget cuts counts when its part within the budget answers (scored from text only).
+
+| Tool and configuration | Scored by | context tokens / question | tokens to first hit | within 1,000, whole results | within 2,000, whole results | within 4,000, whole results | within 1,000, text cut | within 2,000, text cut | within 4,000, text cut |
+|---|---|---|---|---|---|---|---|---|---|
+| ExactDocs bm25 @ default | text | 3,464 (3,320-3,614) | 656 | 78.3% (73.4-83.2) | 88.8% (85.0-92.1) | 93.6% (90.6-96.2) | 83.5% (79.0-88.0) | 90.3% (86.5-93.6) | 93.6% (90.6-96.2) |
+| ExactDocs bm25 @ default | chunk ID | - | - | - | - | - | - | - | - |
+| ExactDocs hybrid:bge-small-en-v1.5 @ default | chunk ID | - | - | - | - | - | - | - | - |
+| Grounded Docs full-text | text | 7,935 (7,640-8,250) | 2,324 | 25.1% (20.2-30.3) | 53.6% (47.6-59.6) | 70.0% (64.4-75.3) | 44.6% (38.6-50.6) | 65.9% (60.3-71.5) | 77.1% (71.9-82.0) |
+| Grounded Docs bge-small-en-v1.5 | text | 7,360 (7,081-7,657) | 1,998 | 34.5% (28.8-40.5) | 58.8% (53.2-64.8) | 75.7% (70.4-80.9) | 58.4% (52.4-64.0) | 73.0% (67.8-78.3) | 82.4% (77.9-86.9) |
+
+### Paired tests within a token budget
+
+| Grounded Docs | against | within 1,000, whole results | within 2,000, whole results | within 4,000, whole results | within 1,000, text cut | within 2,000, text cut | within 4,000, text cut |
+|---|---|---|---|---|---|---|---|
+| full-text | ExactDocs bm25 @ default (text) | -53.2 points (-59.2 to -47.2), p 1.22e-40, significant | -35.2 points (-41.6 to -28.8), p 9.84e-23, significant | -23.6 points (-29.2 to -18.4), p 4.62e-16, significant | -39.0 points (-45.3 to -32.6), p 1.8e-25, significant | -24.3 points (-30.0 to -18.7), p 5.79e-15, significant | -16.5 points (-21.3 to -11.6), p 2.14e-10, significant |
+| full-text | ExactDocs bm25 @ default (chunk ID) | - | - | - | - | - | - |
+| full-text | ExactDocs hybrid:bge-small-en-v1.5 @ default (chunk ID) | - | - | - | - | - | - |
+| bge-small-en-v1.5 | ExactDocs bm25 @ default (text) | -43.8 points (-50.6 to -37.1), p 1.06e-26, significant | -30.0 points (-36.3 to -23.6), p 4.45e-17, significant | -18.0 points (-23.2 to -12.7), p 5.38e-11, significant | -25.1 points (-31.8 to -18.4), p 4.7e-12, significant | -17.2 points (-22.9 to -11.6), p 4.04e-09, significant | -11.2 points (-15.7 to -6.7), p 1.64e-06, significant |
+| bge-small-en-v1.5 | ExactDocs bm25 @ default (chunk ID) | - | - | - | - | - | - |
+| bge-small-en-v1.5 | ExactDocs hybrid:bge-small-en-v1.5 @ default (chunk ID) | - | - | - | - | - | - |
 
 ### Every metric scored from the text
 
