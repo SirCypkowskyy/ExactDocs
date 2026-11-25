@@ -192,6 +192,11 @@ just harness-bench run ... --resume
   `ANTHROPIC_BASE_URL`, `OPENAI_BASE_URL`, `GOOGLE_GEMINI_BASE_URL` or `OLLAMA_BASE_URL`. A
   subscription login is never used. A harness runs only the models of providers it supports.
 - `--arm`, `--retrieval` and `--grounded-docs` are the agent benchmark's.
+- `--report-only` runs nothing: it reports what the checkpoint holds for the jobs, harnesses,
+  models and arms asked, for runs made by several commands (a harness on fewer models).
+- Every network and container a run creates is labelled `exactdocs.harness-bench=1`; a run killed
+  from outside can leave its network behind
+  (`docker network prune --filter label=exactdocs.harness-bench=1`).
 
 ### The manual workflow
 
