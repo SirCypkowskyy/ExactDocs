@@ -1,0 +1,22 @@
+title: 'Model configuration: forbid extra fields, strip strings, immutable'
+project: pydantic
+version: v2.14.3
+environment: pydantic-2.14.3
+pair: pydantic-config
+other_version: v1.10.22
+other_from: pydantic-config-v1
+api_since:
+  version: 2.0.0
+  released: '2023-06-30'
+files:
+- app/settings.py
+prompt: |
+  Configure the `ServerSettings` model in `app/settings.py` so that it rejects unknown
+  fields (a typo in a settings file must fail validation), strips surrounding
+  whitespace from every string field, and makes its instances immutable: assigning to
+  a field after creation raises an error.
+notes: |
+  Pydantic 1 configures a model with an inner `class Config` (`extra = Extra.forbid`,
+  `anystr_strip_whitespace`, `allow_mutation = False`); Pydantic 2 with
+  `model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, frozen=True)`,
+  and both the class and the old keys are deprecated.

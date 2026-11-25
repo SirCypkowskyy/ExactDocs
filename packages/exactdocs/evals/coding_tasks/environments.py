@@ -24,6 +24,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -132,13 +133,14 @@ class Environment:
         )
 
     def digest(self) -> str:
-        """Hash the lockfiles and the description, which decide what gets installed.
+        """Hash what decides the install: the lockfiles, the ecosystem and the Python version.
 
         Returns:
-            The first ``HASH_CHARS`` hex digits of their SHA-256.
+            The first ``HASH_CHARS`` hex digits of their SHA-256 (the forbidden APIs and the
+            release date do not change an install, so they are left out).
         """
-        sha = hashlib.sha256()
-        for name in (ENVIRONMENT_FILE, *self.lockfiles):
+        sha = hashlib.sha256(f"{self.spec.ecosystem} {self.spec.python}".encode())
+        for name in self.lockfiles:
             sha.update(name.encode())
             sha.update((self.directory / name).read_bytes())
         return sha.hexdigest()[:HASH_CHARS]
@@ -195,6 +197,11 @@ def load_environments(root: Path = ENVIRONMENTS_DIR) -> tuple[dict[str, Environm
             continue
         environment = Environment(name=name, spec=spec, directory=path.parent)
         problems.extend(f"environment {name}: {p}" for p in lock_problems(environment))
+        for forbidden in spec.forbidden:
+            try:
+                re.compile(forbidden.pattern)
+            except re.error as error:
+                problems.append(f"environment {name}: forbidden {forbidden.api}: {error}")
         found[name] = environment
     return found, problems
 

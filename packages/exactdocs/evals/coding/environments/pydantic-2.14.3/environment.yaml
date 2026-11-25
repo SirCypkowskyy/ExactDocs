@@ -31,8 +31,8 @@ forbidden:
   pattern: '\bjson_encoders\b'
   reason: deprecated in 2.0; use `@field_serializer`
 - api: Pydantic 1 config keys
-  pattern: '\b(allow_population_by_field_name|anystr_strip_whitespace|anystr_lower|min_anystr_length|max_anystr_length)\b'
-  reason: renamed in 2.0 (`populate_by_name`, `str_strip_whitespace`, ...); the old keys only warn
+  pattern: '\b(allow_population_by_field_name|allow_mutation|anystr_strip_whitespace|anystr_lower|min_anystr_length|max_anystr_length)\b'
+  reason: renamed in 2.0 (`populate_by_name`, `frozen`, `str_strip_whitespace`, ...); the old keys only warn
 - api: min_items / max_items
   pattern: '\b(min|max)_items\b'
   reason: renamed in 2.0 to `min_length` / `max_length`

@@ -15,7 +15,7 @@ forbidden:
   reason: added in Pydantic 2.0; 1.10 validates a whole model with `@root_validator`
 - api: ConfigDict / model_config
   pattern: '\bConfigDict\b|\bmodel_config\s*='
-  reason: added in Pydantic 2.0; 1.10 configures a model with an inner `class Config`
+  reason: Pydantic 2's configuration; 1.10 ignores a `model_config` attribute and configures a model with an inner `class Config`
 - api: model_dump / model_dump_json
   pattern: '\.model_dump(_json)?\('
   reason: added in Pydantic 2.0; 1.10 has `.dict()` and `.json()`

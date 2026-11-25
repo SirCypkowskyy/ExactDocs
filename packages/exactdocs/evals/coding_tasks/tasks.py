@@ -92,6 +92,9 @@ class TaskSpec(_Model):
     """The version pair this task belongs to: the same request where the right code differs."""
     other_from: str | None = None
     """The task of the pair whose reference solution is this task's other-version solution."""
+    other_environment: str | None = None
+    """An environment pinning ``other_version``: the check also runs the other-version solution
+    there, against the same hidden tests, and it must pass (a pair's partner task does this)."""
     api_since: ApiSince | None = None
     """The release behind the trap (an API added, removed, renamed or deprecated)."""
     forbidden: list[Forbidden] = Field(default_factory=list)
@@ -114,6 +117,8 @@ class CodingTask:
     """The environment that pins its version."""
     other_directory: Path
     """The other-version solution's files: ``other/``, or the reference of ``other_from``."""
+    other_environment: Environment | None = None
+    """The environment of ``other_version`` the other-version solution must pass on, if named."""
 
     @property
     def workspace(self) -> Path:
@@ -246,6 +251,9 @@ def load_tasks(
                 directory=directory,
                 environment=environments[spec.environment],
                 other_directory=other,
+                other_environment=(
+                    environments[spec.other_environment] if spec.other_environment else None
+                ),
             )
         )
     return tasks, problems
@@ -291,6 +299,12 @@ def _problems(
     for name in (WORKSPACE, HIDDEN, REFERENCE):
         if not files_of(directory / name):
             problems.append(f"{name}/ is missing or empty")
+    if spec.other_environment is not None:
+        other_env = environments.get(spec.other_environment)
+        if other_env is None:
+            problems.append(f"unknown other_environment {spec.other_environment}")
+        elif spec.other_version.removeprefix("v") != other_env.spec.version:
+            problems.append(f"other_version {spec.other_version} but {spec.other_environment} pins another")
     if spec.other_from is not None:
         partner = specs.get(spec.other_from)
         if partner is None:

@@ -79,6 +79,9 @@ class TaskCheck(_Model):
     """The reference solution."""
     other: SolutionCheck
     """The other-version solution."""
+    other_on_its_version: SolutionCheck | None = None
+    """The other-version solution on the environment of its own version (``other_environment``),
+    where it must pass; ``None`` when the task names none."""
     problems: list[str] = Field(default_factory=list)
     """What makes the task unsound; empty when it is sound."""
 
@@ -126,6 +129,8 @@ class Solve:
     """``reference`` or ``other``."""
     work_dir: Path
     """Where the workspaces are built."""
+    on_other_environment: bool = False
+    """Run on the task's ``other_environment`` instead of its own."""
 
     async def __call__(self, inputs: TaskInput) -> TaskRun:
         """Grade one task's fixed solution.
@@ -137,7 +142,8 @@ class Solve:
             Its run: no agent, the grade.
         """
         task = self.tasks[inputs.task]
-        prepared = self.prepared[task.environment.name]
+        environment = task.other_environment if self.on_other_environment else task.environment
+        prepared = self.prepared[(environment or task.environment).name]
         files = task.reference if self.solution == "reference" else task.other_directory
         root = Path(tempfile.mkdtemp(prefix=f"{task.id}-{self.solution}-", dir=self.work_dir))
         workspace = materialize(task, root / "workspace", prepared, solution=files)
@@ -193,13 +199,19 @@ def _by_case(
     return found
 
 
-def problems_of(task: CodingTask, reference: SolutionCheck, other: SolutionCheck) -> list[str]:
+def problems_of(
+    task: CodingTask,
+    reference: SolutionCheck,
+    other: SolutionCheck,
+    other_on_its_version: SolutionCheck | None = None,
+) -> list[str]:
     """What makes a task unsound.
 
     Args:
         task: The task.
         reference: Its reference solution's check.
         other: Its other-version solution's check.
+        other_on_its_version: The other-version solution on its own version's environment.
 
     Returns:
         The problems; empty for a sound task.
@@ -218,6 +230,11 @@ def problems_of(task: CodingTask, reference: SolutionCheck, other: SolutionCheck
         problems.append("the other-version solution passes")
     if not other.forbidden:
         problems.append("the other-version solution uses no forbidden API: nothing names it")
+    if other_on_its_version is not None and not other_on_its_version.passed:
+        problems.append(
+            f"the other-version solution fails on {task.spec.other_version} too: "
+            f"{other_on_its_version.reason}"
+        )
     return problems
 
 
@@ -262,6 +279,21 @@ async def check_tasks(
             solve, name=f"check {solution}", max_concurrency=concurrency, progress=False
         )
         runs[solution] = _by_case(report)
+    crossing = [t for t in tasks if t.other_environment is not None]
+    if crossing:
+        solve = Solve(
+            tasks=by_id,
+            prepared=prepared,
+            sandbox=sandbox,
+            limits=limits,
+            solution="other",
+            work_dir=work_dir,
+            on_other_environment=True,
+        )
+        report = await task_dataset(crossing, corpus).evaluate(
+            solve, name="check other on its version", max_concurrency=concurrency, progress=False
+        )
+        runs["other on its version"] = _by_case(report)
     checks = []
     for task in tasks:
         ref_run, ref_reason = runs["reference"].get(task.id, (None, "not run"))
@@ -270,6 +302,12 @@ async def check_tasks(
         other_passed = bool(other_run and other_run.grade and other_run.grade.passed)
         reference = _solution_check(ref_run, ref_reason, keep_output=not ref_passed)
         other = _solution_check(other_run, other_reason, keep_output=True)
+        crossed = None
+        if task.other_environment is not None:
+            own_run, own_reason = runs["other on its version"].get(task.id, (None, "not run"))
+            crossed = _solution_check(
+                own_run, own_reason, keep_output=not (own_run and own_run.grade and own_run.grade.passed)
+            )
         checks.append(
             TaskCheck(
                 task=task.id,
@@ -279,7 +317,8 @@ async def check_tasks(
                 other_version=task.spec.other_version,
                 reference=reference,
                 other=other,
-                problems=problems_of(task, reference, other),
+                other_on_its_version=crossed,
+                problems=problems_of(task, reference, other, crossed),
             )
         )
     return CheckReport(tasks=checks, isolation=sandbox.isolation)
@@ -311,6 +350,9 @@ def markdown(report: CheckReport) -> str:
     for t in report.tasks:
         ref = f"pass ({t.reference.tests})" if t.reference.passed else "**FAIL**"
         other = "**passes**" if t.other.passed else "fails"
+        if t.other_on_its_version is not None:
+            own = "passes" if t.other_on_its_version.passed else "**fails**"
+            other += f" (on {t.other_version}: {own})"
         lines.append(
             f"| {t.task} | {t.project} {t.version} | {t.reference.installed or 'n/a'} | {ref} | "
             f"{t.other_version}: {other} | {', '.join(t.other.forbidden) or '**none**'} |"
@@ -336,6 +378,9 @@ async def prepare_all(
         Each environment, installed, by name.
     """
     environments = {t.environment.name: t.environment for t in tasks}
+    environments |= {
+        t.other_environment.name: t.other_environment for t in tasks if t.other_environment
+    }
     gate = asyncio.Semaphore(concurrency)
 
     async def one(name: str) -> tuple[str, PreparedEnvironment]:

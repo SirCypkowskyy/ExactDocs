@@ -1,0 +1,20 @@
+title: Accept both a field's alias and its name
+project: pydantic
+version: v2.5.3
+environment: pydantic-2.5.3
+other_version: v2.14.3
+other_environment: pydantic-2.14.3
+api_since:
+  version: 2.11.0
+  released: '2025-03-27'
+files:
+- app/events.py
+prompt: |
+  The API sends `Event` (in `app/events.py`) with camelCase keys (`eventId`,
+  `occurredAt`), but our own code builds events with the Python names
+  (`Event(event_id=..., occurred_at=...)`), which fails today. Configure the model so
+  that validation accepts either the alias or the field name for every field. Dumps
+  stay as they are.
+notes: |
+  Pydantic 2.0-2.10 has `populate_by_name=True`; 2.11 added `validate_by_name` and
+  `validate_by_alias` (and recommends them), which 2.5 does not know and ignores.
