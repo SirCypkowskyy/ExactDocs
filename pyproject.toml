@@ -150,6 +150,7 @@ ignore = [
 "packages/exactdocs/evals/run_bench_pages.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_text_bench.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_grounded_bench.py" = ["implicit-namespace-package"]
+"packages/exactdocs/evals/run_context7_bench.py" = ["implicit-namespace-package"]
 "**/features/**" = ["assert", "D", "DOC", "ANN", "FBT", "implicit-namespace-package"]
 # Alembic revisions are generated from migrations/script.py.mako: no per-function docstrings.
 "**/migrations/versions/**" = ["D"]

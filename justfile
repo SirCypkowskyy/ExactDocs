@@ -119,6 +119,10 @@ text-bench *args:
 grounded-bench *args:
     uv run python packages/exactdocs/evals/run_grounded_bench.py {{ args }}
 
+# Context7 (never in CI): its REST API answers the golden set where it serves the pinned versions, scored next to ExactDocs' BM25 (docs/evals.md); needs CONTEXT7_API_KEY, or --from-cache
+context7-bench *args:
+    uv run python packages/exactdocs/evals/run_context7_bench.py {{ args }}
+
 # Agent benchmark (never in CI): an agent with only the ExactDocs MCP tools answers the golden set (docs/evals.md); `just agent-bench run --offline`
 agent-bench *args:
     uv run python packages/exactdocs/evals/run_agent_bench.py {{ args }}
