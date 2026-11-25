@@ -80,3 +80,22 @@ def step_no_language(context: Context) -> None:
     (chunk,) = context.chunks
     assert chunk.content == BLANK_FENCES, chunk.content
     assert chunk.code_languages == ()
+
+
+# Issue #562: MkDocs (attr_list) and Docusaurus set heading ids so; they stayed in the heading text.
+ATTRIBUTE_LISTS = "# Async Tests { #async-tests }\n\nIntro.\n\n## HTTPX { #httpx }\n\nUse it.\n"
+
+
+@given('the article "{path}" sets its heading ids with attribute lists')
+def step_attribute_lists(context: Context, path: str) -> None:
+    context.article = parse_article(path, ATTRIBUTE_LISTS)
+
+
+@then('that chunk has the anchor "{anchor}"')
+def step_chunk_anchor(context: Context, anchor: str) -> None:
+    assert context.chunk.anchor == anchor, context.chunk.anchor
+
+
+@then("that chunk still holds its heading as written")
+def step_verbatim_heading(context: Context) -> None:
+    assert context.chunk.content.startswith("## HTTPX { #httpx }\n"), context.chunk.content

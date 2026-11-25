@@ -312,6 +312,13 @@ class RunMeta(_Model):
     """The user prompt's template."""
     corpus: list[CorpusCommit]
     """Every imported version and its commit."""
+    servers: dict[str, dict[str, str]] = Field(default_factory=dict)
+    """What each setup's documentation server was (``servers.ArmServers.described``): the
+    server and its release, its integrity hash, its configuration and the tools the agent got;
+    empty for stand-ins."""
+    resumed: int = 0
+    """Questions kept from an earlier run of the same command (``--resume``), not asked again:
+    they ran at that run's commit and time."""
 
 
 class BenchReport(_Model):
@@ -367,7 +374,7 @@ def results_of(
                 facts=info.facts,
                 grade=label.value if label else ERROR,
                 wrong_version=bool(wrong and wrong.value),
-                grounded=grounded(info, run),
+                grounded=grounded(info, run) if traced(arm) else None,
                 other_versions_read=read_other_versions(case.inputs, info, run),
                 tool_calls=run.tool_calls,
                 chunks_read=[
@@ -405,6 +412,19 @@ def results_of(
             )
         )
     return rows
+
+
+def traced(arm: str) -> bool:
+    """Tell whether an arm's reads can be traced to the golden set's sections (``Arm.traced``).
+
+    Args:
+        arm: The arm's name.
+
+    Returns:
+        False for an arm whose text comes from an index of sources the run does not know.
+    """
+    known = ARMS.get(arm)
+    return known is None or known.traced
 
 
 def accurate(row: QuestionResult) -> bool:
@@ -874,11 +894,13 @@ def _quality(report: BenchReport) -> list[str]:
         shares = c.intervals
         accuracy = _pct(c.accuracy) + _ci(shares.get("accuracy"))
         arm = ARMS.get(c.arm)
-        read = (
-            "n/a (no tools)"
-            if arm is not None and arm.tool is None
-            else _pct(c.grounded_share) + _ci(shares.get("grounded_share"))
-        )
+        other = str(c.read_other_versions)
+        if arm is not None and arm.tool is None:
+            read = "n/a (no tools)"
+        elif not traced(c.arm):
+            read, other = "n/a (its own index)", "n/a"
+        else:
+            read = _pct(c.grounded_share) + _ci(shares.get("grounded_share"))
         wrong = _count_share(
             c.wrong_version, c.wrong_version_share, shares.get("wrong_version_share")
         )
@@ -895,7 +917,7 @@ def _quality(report: BenchReport) -> list[str]:
             f"| `{c.agent_model}` | {arm_label(c)} | {accuracy} | {c.grades['correct']} "
             f"| {c.grades['partially_correct']} | {c.grades['wrong']} | {c.grades['refused']} "
             f"| {c.grades[NO_ANSWER]} | {c.grades[ERROR]} | {wrong} | {refused} | {right} "
-            f"| {read} | {c.read_other_versions} | {calls} |"
+            f"| {read} | {other} | {calls} |"
         )
     return lines
 
@@ -1100,6 +1122,26 @@ def _without_answer(report: BenchReport) -> list[str]:
     return lines
 
 
+def _servers(report: BenchReport) -> list[str]:
+    """What each arm's documentation server was.
+
+    Args:
+        report: The run.
+
+    Returns:
+        The lines; none for a run on stand-ins.
+    """
+    if not report.meta.servers:
+        return []
+    lines = ["", "## Documentation servers", ""]
+    for name, about in report.meta.servers.items():
+        shown = "; ".join(
+            f"{k}: `{v}`" if k == "integrity" else f"{k}: {v}" for k, v in about.items()
+        )
+        lines.append(f"- **{name}**: {shown}")
+    return lines
+
+
 def markdown(report: BenchReport) -> str:
     """Render the report for a person (and ``$GITHUB_STEP_SUMMARY``).
 
@@ -1119,6 +1161,11 @@ def markdown(report: BenchReport) -> str:
             f"({', '.join(meta.arms)}); judge `{meta.judge_model}`; ExactDocs "
             f"{meta.exactdocs_version} at `{meta.git_commit[:12]}`; at most {meta.max_requests} "
             f"model requests per question; thinking: {meta.thinking}."
+            + (
+                f" {meta.resumed} of the answers were kept from an earlier run (`--resume`)."
+                if meta.resumed
+                else ""
+            )
         ),
         "",
         *_quality(report),
@@ -1142,6 +1189,7 @@ def markdown(report: BenchReport) -> str:
             ]
             lines.append(f"| `{c.agent_model}` | {arm_label(c)} | " + " | ".join(shown) + " |")
     lines += _without_answer(report)
+    lines += _servers(report)
     if meta.retrieval:
         lines += ["", "## Retrieval configurations", ""]
     for name, env in meta.retrieval.items():
