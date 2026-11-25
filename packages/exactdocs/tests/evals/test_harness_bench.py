@@ -46,8 +46,8 @@ from harness_bench.jobs import QuestionJob, TaskJob, agent_run
 from harness_bench.opencode import OpenCode
 from harness_bench.releases import HARNESSES
 from harness_bench.report import cells_of, markdown
-from harness_bench.run import Installed, Plan, classify, load_rows, run_bench
-from harness_bench.transcript import Transcript
+from harness_bench.run import Installed, Plan, classify, key_of, load_rows, run_bench
+from harness_bench.transcript import Transcript, provider_failed
 from harness_stand_ins import MODEL, STAND_IN_CLI, StandInEndpoints, StandInHarness, solutions
 
 TRANSCRIPTS = Path(__file__).parents[1] / "fixtures" / "harness_transcripts"
@@ -575,6 +575,20 @@ async def test_a_resumed_run_runs_nothing_twice(
 
     assert again.meta.resumed == len(first.results) == 2
     assert [r.run_dir for r in again.results] == [r.run_dir for r in first.results]
+    failed = first.results[0].model_copy(update={"failure": "provider", "counted": False})
+    rows = {**load_rows(tmp_path / "rows.jsonl"), key_of(failed): failed}
+    only = await run_bench(
+        _plan(jobs, tasks),  # the second job never ran: it is left out, nothing runs
+        endpoints=StandInEndpoints(),
+        runner=ProcessRunner(),
+        work_dir=tmp_path,
+        done=rows,
+        run_missing=False,
+        servers=first.meta.servers,
+    )
+    assert len(only.results) == 2
+    assert sum(c.errors for c in only.cells) == 1  # a failed run is reported, not run again
+    assert only.meta.servers == first.meta.servers
 
 
 async def test_golden_questions_run_through_a_harness_and_are_judged_blind(
@@ -641,6 +655,21 @@ def test_a_run_is_the_providers_the_clis_or_the_agents() -> None:
     )
     assert classify(turns, _cli(exit_code=1))[:2] == ("no_answer", "no_answer")
     assert classify(Transcript(lines=3, answer="done"), _cli()) == (None, None, None)
+
+
+@pytest.mark.parametrize(
+    ("said", "providers"),
+    [
+        ("API Error: 429 rate_limit_error", True),
+        ("We’re currently experiencing high demand, which may cause temporary errors.", True),
+        ("stream disconnected before completion: Internal Server Error", True),
+        ("you have reached your session usage limit", True),
+        ("error_max_turns: Reached maximum number of turns (40)", False),
+        ("the transcript has no result", False),
+    ],
+)
+def test_whose_failure_an_error_names(said: str, providers: bool) -> None:
+    assert provider_failed(said) is providers
 
 
 def test_a_transcript_becomes_the_agent_benchmarks_record() -> None:

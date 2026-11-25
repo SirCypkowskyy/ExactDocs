@@ -625,6 +625,20 @@ def _used(usage: Usage, digits: int = 0, *, none: str = "not reported") -> str:
     return text if usage.reported == usage.of else f"{text} ({usage.reported} of {usage.of})"
 
 
+def _thought(cell: CellSummary) -> str:
+    """Show a cell's thinking tokens and where they come from.
+
+    Args:
+        cell: The cell.
+
+    Returns:
+        ``not reported``, or the mean with its interval and its source.
+    """
+    if cell.thinking_tokens.spread is None:
+        return "not reported"
+    return f"{_used(cell.thinking_tokens)} ({cell.thinking})"
+
+
 def _label(cell: CellSummary) -> str:
     """Name a cell.
 
@@ -769,7 +783,7 @@ def _kind_tables(cells: Sequence[CellSummary], title: str, measure: str) -> list
     ]
     lines += [
         f"| {_label(c)} | {_mean(c.seconds)} | {_used(c.input_tokens)} | "
-        f"{_used(c.output_tokens)} | {_used(c.thinking_tokens)} ({c.thinking}) | "
+        f"{_used(c.output_tokens)} | {_thought(c)} | "
         f"{_used(c.usd, 4, none='unpriced')} |"
         for c in cells
     ]
