@@ -29,7 +29,7 @@ only reads an existing database can use `uvx exactdocs serve --stdio`, which nee
 nor a port (see [stdio](mcp.md#without-a-network-port-stdio)).
 
 The image comes in three variants. All of them run plain BM25 search until you configure a model;
-[Deployment](deployment.md#image-variants) explains which one to pick.
+[Deployment](deployment/index.md#image-variants) explains which one to pick.
 
 ## Create the first admin
 
@@ -138,7 +138,7 @@ The CLI looks for the server and token in this order: flags, then `EXACTDOCS_URL
 `https://`. Proxy variables (`HTTPS_PROXY`, `NO_PROXY` and the like, or their `EXACTDOCS_`
 overrides) and a CA bundle are honoured for remote servers, where the proxy sees where you connect
 but not your HTTPS traffic, and ignored for loopback
-([Outbound connections](configuration.md#outbound-connections)).
+([Outbound connections](configuration/outbound.md)).
 
 ### Manage libraries and tokens
 
@@ -272,7 +272,7 @@ Over REST, send the credential next to the URL in `POST /api/v1/repositories/che
   client's, is refused with 401 for these requests.
 - The generated key file and the database live in the same data volume, so a backup of the whole
   volume holds both and defeats the encryption. Use `exactdocs backup`, which leaves `secret.key`
-  out unless asked (see [Backup and restore](deployment.md#backup-and-restore)), or keep
+  out unless asked (see [Backup and restore](deployment/backup.md)), or keep
   `EXACTDOCS_SECRET_KEY` outside the volume. A key file that others could read is made private
   again but logged as exposed: rotate it. A symlink, or a file owned by another user, is refused.
 - If the secret key is lost or changed, the library's docs stay available and adding a version
@@ -410,7 +410,7 @@ address remembered for the username, so one that signed in with the old password
 username's count again.
 
 Behind a reverse proxy, list the proxy in `EXACTDOCS_FORWARDED_ALLOW_IPS` so that the throttle
-counts the client's address rather than the proxy's ([Deployment](deployment.md#behind-a-reverse-proxy)).
+counts the client's address rather than the proxy's ([Deployment](deployment/reverse-proxy.md)).
 
 Where the counts live depends on the database:
 
@@ -489,8 +489,8 @@ admin_groups = ["exactdocs-admins"] # role admin while in one of them, else user
 At the provider, register `https://docs.example.com/api/v1/auth/corp/callback` as the client's
 redirect URI. The client can be confidential (with a secret) or public (without one). The sign-in
 page then shows a **Sign in with Corp SSO** button next to the password form. You can configure
-several providers at once. [Configuration](configuration.md#sign-in-providers) lists every field,
-and [Deployment](deployment.md#behind-a-reverse-proxy) explains the public URL behind a proxy.
+several providers at once. [Configuration](configuration/sign-in.md#sign-in-providers) lists every field,
+and [Deployment](deployment/reverse-proxy.md) explains the public URL behind a proxy.
 
 The flow is the authorization code flow with PKCE (`S256`), `state` and `nonce`. ExactDocs reads
 the provider's discovery document from the issuer's `/.well-known/openid-configuration` on the
@@ -521,7 +521,7 @@ Only members of `allowed_groups` get in, unless `allow_any_user = true` admits e
 provider vouches for.
 
 **Revalidation.** ExactDocs asks for `offline_access` and keeps the refresh token, encrypted with
-the [secret key](configuration.md#the-secret-key). Every `revalidate_minutes` (60 by default) it
+the [secret key](configuration/security.md#the-secret-key). Every `revalidate_minutes` (60 by default) it
 asks the provider again:
 
 - still allowed: the groups and role are refreshed;
@@ -548,8 +548,8 @@ provider may sign you straight back in.
 
 Two more kinds of provider sit next to `oidc`: `oauth2`, for a provider without OpenID Connect,
 and `github`, for GitHub or GitHub Enterprise with organization and team checks.
-[OAuth2-only sign-in](configuration.md#oauth2-only-sign-in) and
-[GitHub and GitHub Enterprise sign-in](configuration.md#github-and-github-enterprise-sign-in)
+[OAuth2-only sign-in](configuration/sign-in.md#oauth2-only-sign-in) and
+[GitHub and GitHub Enterprise sign-in](configuration/sign-in.md#github-and-github-enterprise-sign-in)
 list their fields.
 
 ### Library roles and sharing
@@ -575,7 +575,7 @@ access log from its *Sharing* page or the Sharing section of its settings, and o
 library's on the *Access log* page (`/access-log`).
 
 Every signed-in account may add libraries unless an operator limits that to chosen users or groups
-([Who may create libraries](configuration.md#who-may-create-libraries)). API tokens and MCP clients
+([Who may create libraries](configuration/sign-in.md#who-may-create-libraries)). API tokens and MCP clients
 act as their user, so an agent sees exactly the libraries its user may view. A token can also be
 narrowed to chosen libraries: `--library` on `exactdocs token create`, or `library_ids` in the
 [REST API](rest-api/authentication.md#library-scope). [Architecture](architecture/identity.md#library-roles) explains how the roles are

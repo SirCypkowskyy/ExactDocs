@@ -1,4 +1,4 @@
-# ExactDocs on PostgreSQL: several server processes share one database (docs/deployment.md, "PostgreSQL").
+# ExactDocs on PostgreSQL: several server processes share one database (docs/deployment/postgresql.md).
 #   export POSTGRES_PASSWORD=$(openssl rand -hex 24) EXACTDOCS_SECRET_KEY=$(openssl rand -base64 32)
 #   docker compose -f compose.postgres.yaml up -d
 services:

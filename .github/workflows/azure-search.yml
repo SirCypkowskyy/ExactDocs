@@ -2,7 +2,7 @@ name: Azure AI Search (real service)
 
 # Manual only (#353): Azure AI Search has no emulator, so CI runs the external index contract
 # suites against an in-process fake of its REST API; this runs the same suites against a real
-# service, with the repository's credentials (docs/configuration.md#azure-ai-search):
+# service, with the repository's credentials (docs/configuration/index-backends/azure-search.md):
 #
 #   repository variable   AZURE_SEARCH_ENDPOINT    https://<service>.search.windows.net
 #   environment secret    AZURE_SEARCH_API_KEY     an admin key (auth: api_key)

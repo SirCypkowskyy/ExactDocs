@@ -20,7 +20,7 @@
   <a href="https://github.com/SirCypkowskyy/ExactDocs/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/SirCypkowskyy/ExactDocs/actions/workflows/ci.yml/badge.svg?branch=develop"></a>
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-17171a"></a>
   <a href="https://www.python.org/"><img alt="Python 3.14" src="https://img.shields.io/badge/python-3.14-17171a?logo=python&logoColor=white"></a>
-  <a href="docs/deployment.md"><img alt="Docker image on ghcr.io" src="https://img.shields.io/badge/docker-ghcr.io%2Fsircypkowskyy%2Fexactdocs-17171a?logo=docker&logoColor=white"></a>
+  <a href="docs/deployment/index.md"><img alt="Docker image on ghcr.io" src="https://img.shields.io/badge/docker-ghcr.io%2Fsircypkowskyy%2Fexactdocs-17171a?logo=docker&logoColor=white"></a>
   <a href="https://sircypkowskyy.github.io/ExactDocs/"><img alt="Documentation" src="https://img.shields.io/badge/docs-sircypkowskyy.github.io%2FExactDocs-17171a"></a>
 </p>
 
@@ -167,7 +167,7 @@ BM25 by default, with identifiers indexed whole and by their parts (`camelCase`,
 an agentic mode, where an LLM browses the version and picks the chunks, are optional. Each mode
 stays inside the version and its budgets, and falls back to a cheaper mode with a reason instead
 of failing. Articles are cut at their headings, never inside a code block or a table. See
-[Search and AI models](docs/search.md).
+[Search and AI models](docs/search/index.md).
 
 ### For the people who run it
 
@@ -208,9 +208,9 @@ same process. [Architecture](docs/architecture/index.md) and [Flows](docs/flows/
 
 The image comes in three variants: `:latest` (BM25, no model), `:latest-ai` (hosted and
 self-hosted model providers) and `:latest-local` (two small local models, for instances with no
-network). [Deployment](docs/deployment.md) covers a hardened container, reverse proxies, health
+network). [Deployment](docs/deployment/index.md) covers a hardened container, reverse proxies, health
 checks, upgrades, backups, PostgreSQL, Supabase and observability, and
-[Configuration](docs/configuration.md) lists every setting.
+[Configuration](docs/configuration/index.md) lists every setting.
 
 ## Roadmap
 

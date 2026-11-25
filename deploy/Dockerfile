@@ -21,7 +21,7 @@
 #   docker run --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges ...
 # with /data (the volume) as the only writable path.
 #
-# Behind a corporate proxy (#538, docs/deployment.md): pass HTTPS_PROXY, HTTP_PROXY and NO_PROXY
+# Behind a corporate proxy (#538, docs/deployment/corporate-proxy.md): pass HTTPS_PROXY, HTTP_PROXY and NO_PROXY
 # at run time, and when the proxy re-signs TLS mount its CA and name it, e.g.
 #   docker run -e HTTPS_PROXY=... -v ./corp-ca.pem:/etc/exactdocs/ca.pem:ro \
 #     -e EXACTDOCS_CA_BUNDLE=/etc/exactdocs/ca.pem ...
