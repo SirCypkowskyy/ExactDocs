@@ -26,7 +26,7 @@ Run it.
 pip install demo
 {FENCE}
 
-## Use {{#use}}
+## Use [#use]
 
 Use it.
 """
@@ -131,7 +131,7 @@ def step_paths(context: Context) -> None:
     metrics = context.bench_version.metrics
     assert metrics.empty_heading_paths == 1  # tabs.mdx: its only heading is hidden
     assert metrics.wrong_heading_paths == 1
-    assert metrics.wrong_heading_examples == ["Guide > Use {#use}"]
+    assert metrics.wrong_heading_examples == ["Guide > Use [#use]"]
 
 
 @when('the ingestion benchmark runs the "{first}" and "{second}" chunking configurations')

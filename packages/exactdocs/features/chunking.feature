@@ -27,3 +27,10 @@ Feature: Heading-based chunks
     Given the article "storage.md" has code fences with only spaces or a tab after the backticks
     When I chunk the article "storage.md"
     Then its only chunk holds every fence and names no code language
+
+  Scenario: A heading's attribute list sets its anchor and stays out of its heading path
+    Given the article "async-tests.md" sets its heading ids with attribute lists
+    When I chunk the article "async-tests.md"
+    Then there is a chunk with the heading path "Async Tests > HTTPX"
+    And that chunk has the anchor "httpx"
+    And that chunk still holds its heading as written
