@@ -209,27 +209,30 @@ class Installed:
     """The harness."""
     executable: Path
     """Its CLI's command."""
+    tools: tuple[Path, ...] = ()
+    """Folders of commands every run gets besides the CLI (the pinned ripgrep)."""
 
     @property
     def readable(self) -> list[tuple[Path, Path]]:
-        """What its container mounts read-only: the CLI's install and Node.js.
+        """What its container mounts read-only: the CLI's install, Node.js and the tools.
 
         Returns:
             ``(source, target)`` pairs, each at its own path.
         """
         prefix = self.executable.parents[2]  # <prefix>/node_modules/.bin/<cli>
         node = node_home()
-        return [(prefix, prefix), *([(node, node)] if node else [])]
+        found = [prefix, *([node] if node else []), *self.tools]
+        return [(p, p) for p in found]
 
     @property
     def path(self) -> list[Path]:
-        """What its container puts first on ``PATH``: the CLI's and Node.js' commands.
+        """What its container puts first on ``PATH``: the CLI's, Node.js' and the tools' commands.
 
         Returns:
             The directories.
         """
         node = node_home()
-        return [self.executable.parent, *([node / "bin"] if node else [])]
+        return [self.executable.parent, *([node / "bin"] if node else []), *self.tools]
 
 
 @dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- it collects rows

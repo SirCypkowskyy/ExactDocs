@@ -39,7 +39,13 @@ from harness_bench.container import DockerRunner, RunLimits
 from harness_bench.endpoints import HttpArmServers
 from harness_bench.harness import HarnessModel, HarnessRun, McpServer
 from harness_bench.jobs import Job, QuestionJob, TaskJob
-from harness_bench.releases import HARNESSES, harnesses_home, install, parse_harnesses
+from harness_bench.releases import (
+    HARNESSES,
+    harnesses_home,
+    install,
+    install_ripgrep,
+    parse_harnesses,
+)
 from harness_bench.report import HarnessReport, baseline_outcomes, markdown
 from harness_bench.run import Installed, Plan, load_rows, run_bench
 from retrieval_eval.context7 import API_KEY_VARIABLE
@@ -351,6 +357,40 @@ def _baseline(args: argparse.Namespace) -> tuple[dict, list[str]]:
     return baseline_outcomes(tasks, questions), paths
 
 
+def _plan(args: argparse.Namespace, asked: _Asked) -> tuple[Plan, dict[str, Path]]:
+    """Install the CLIs, build the jobs and fetch the corpus the arms need.
+
+    Args:
+        args: The parsed ``run`` arguments.
+        asked: What the command asks for.
+
+    Returns:
+        The plan, and each asked project's cached repository (for the arms that import it).
+    """
+    ripgrep = install_ripgrep(args.harnesses_home)
+    installed = [
+        Installed(
+            harness=HARNESSES[h],
+            executable=install(HARNESSES[h], args.harnesses_home),
+            tools=(ripgrep,) if ripgrep else (),
+        )
+        for h in asked.harnesses
+    ]
+    jobs, projects, selection = asyncio.run(_jobs(args, asked))
+    wanted = projects if any(s.arm.configured for s in asked.setups) else set()
+    repos = {p.id: fetch(p, args.golden_cache) for p in asked.corpus.projects if p.id in wanted}
+    plan = Plan(
+        jobs=jobs,
+        harnesses=installed,
+        models=asked.models,
+        setups=asked.setups,
+        selection=selection,
+        cutoff=args.cutoff if "tasks" in asked.kinds else None,
+        judge_model=args.judge_model if "questions" in asked.kinds else None,
+    )
+    return plan, repos
+
+
 def _run(args: argparse.Namespace) -> int:
     """Run the benchmark, write the reports and print the Markdown.
 
@@ -367,17 +407,12 @@ def _run(args: argparse.Namespace) -> int:
     work_dir = args.work_dir or Path(tempfile.mkdtemp(prefix="exactdocs-harness-bench-"))
     work_dir.mkdir(parents=True, exist_ok=True)
     try:
-        installed = [
-            Installed(harness=HARNESSES[h], executable=install(HARNESSES[h], args.harnesses_home))
-            for h in asked.harnesses
-        ]
-        jobs, projects, selection = asyncio.run(_jobs(args, asked))
-        wanted = projects if any(s.arm.configured for s in asked.setups) else set()
-        repos = {p.id: fetch(p, args.golden_cache) for p in asked.corpus.projects if p.id in wanted}
+        plan, repos = _plan(args, asked)
         baseline, baselines = _baseline(args)
     except (RuntimeError, ValueError, OSError) as error:
         sys.stderr.write(f"harness-bench: {error}\n")
         return 1
+    projects = {j.project for j in plan.jobs}
     servers = ArmServers(
         projects=[p for p in asked.corpus.projects if p.id in projects],
         repos=repos,
@@ -390,15 +425,6 @@ def _run(args: argparse.Namespace) -> int:
     done = load_rows(checkpoint) if args.resume else {}
     if not args.resume:
         checkpoint.write_text("", encoding="utf-8")
-    plan = Plan(
-        jobs=jobs,
-        harnesses=installed,
-        models=asked.models,
-        setups=asked.setups,
-        selection=selection,
-        cutoff=args.cutoff if "tasks" in asked.kinds else None,
-        judge_model=args.judge_model if "questions" in asked.kinds else None,
-    )
     try:
         report = asyncio.run(
             run_bench(
