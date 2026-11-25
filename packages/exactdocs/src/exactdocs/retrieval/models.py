@@ -1118,7 +1118,7 @@ class TagMatch(StrEnum):
 
 
 class ResultGrouping(StrEnum):
-    """How a search orders the results it returns (#575)."""
+    """How a search orders the results it returns."""
 
     ARTICLE = "article"
     """One group per article, the groups ordered by their best result and each group's results

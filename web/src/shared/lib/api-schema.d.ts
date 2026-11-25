@@ -4858,6 +4858,13 @@ export interface components {
              */
             readonly explored_path?: readonly string[];
             /**
+             * Group
+             * @description Grouped by article (`group_by` `article`): the 1-based rank of this result's article.
+             *     An article's results come together, best first, and its group takes the place of its best
+             *     result. Null when the results are not grouped.
+             */
+            readonly group?: number | null;
+            /**
              * Library
              * @description Library ID, `/owner/repo`, of the library the result is from.
              */
@@ -6027,6 +6034,12 @@ export interface components {
             readonly library: string;
         };
         /**
+         * ResultGrouping
+         * @description How a search orders the results it returns.
+         * @enum {string}
+         */
+        readonly ResultGrouping: "article" | "chunk";
+        /**
          * RetrievalMode
          * @description How a search found its results. One result shape serves every mode.
          * @enum {string}
@@ -6178,7 +6191,8 @@ export interface components {
             readonly libraries: readonly components["schemas"]["LibraryFacetOut"][];
             /**
              * Results
-             * @description The results, best first, each naming its library and version.
+             * @description The results, best first or grouped by library and article (`group`), each naming its
+             *     library and version.
              */
             readonly results: readonly components["schemas"]["LibrarySearchResultOut"][];
         };
@@ -6228,7 +6242,7 @@ export interface components {
             readonly cache_hit: boolean;
             /**
              * Results
-             * @description The results, best first; empty when nothing matched.
+             * @description The results, best first, or grouped by article (`group`); empty when nothing matched.
              */
             readonly results: readonly components["schemas"]["SearchResultOut"][];
         };
@@ -6317,6 +6331,13 @@ export interface components {
              * @description Model output, untrusted: `agentic`: the read calls the LLM made up to the one that reached this chunk's article, in order, e.g. `search_docs(retry)`, `article_outline(guide/resilience.md)` (at most 50; each argument is the model's, control characters removed, at most 120 characters); empty for the other modes.
              */
             readonly explored_path?: readonly string[];
+            /**
+             * Group
+             * @description Grouped by article (`group_by` `article`): the 1-based rank of this result's article.
+             *     An article's results come together, best first, and its group takes the place of its best
+             *     result. Null when the results are not grouped.
+             */
+            readonly group?: number | null;
         };
         /**
          * SessionState
@@ -12077,6 +12098,8 @@ export interface operations {
                 readonly limit?: number;
                 /** @description `bm25`, `vector`, `hybrid`, `hybrid_hyde` or `agentic`, if available (422 `mode_unavailable` otherwise). Default: the library's mode, else the instance's, else the best one configured. */
                 readonly mode?: string | null;
+                /** @description `chunk` (default here): the results best first. `article`: the same results grouped by article, as MCP's `search_docs` returns them (each result's `group`). */
+                readonly group_by?: components["schemas"]["ResultGrouping"];
             };
             readonly header?: never;
             readonly path: {
@@ -12165,6 +12188,8 @@ export interface operations {
                 readonly limit?: number;
                 /** @description `bm25` (default), `vector` or `hybrid`; the vector modes need an embedding model (422 `mode_unavailable` otherwise). */
                 readonly mode?: string | null;
+                /** @description `chunk` (default here): the results best first. `article`: the same results grouped by library and article, as MCP's `search_all_docs` returns them. */
+                readonly group_by?: components["schemas"]["ResultGrouping"];
             };
             readonly header?: never;
             readonly path?: never;
