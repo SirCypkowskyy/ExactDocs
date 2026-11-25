@@ -186,7 +186,11 @@ async def test_a_limit_above_the_maximum_is_clamped_and_the_result_says_so(
             {"query": "retry_policy", "limit": "-3"},
             "limit -3 is below the minimum of 1: 1 was used.",
         ),
-        ("list_libraries", {"limit": 1e4}, "limit 10000 is above the maximum of 200: 200 was used."),
+        (
+            "list_libraries",
+            {"limit": 1e4},
+            "limit 10000 is above the maximum of 200: 200 was used.",
+        ),
     ],
 )
 async def test_every_limit_out_of_range_is_clamped(
@@ -245,7 +249,9 @@ async def test_a_path_prefix_is_a_directory_matched_literally(container: Contain
     async with container.running():
         await publish(container, ARTICLES | {"docs/api-old/legacy.md": "retry_policy was"})
     result = await call(
-        container, "search_docs", {"library": LIB, "query": "retry_policy", "path_prefix": "docs/api"}
+        container,
+        "search_docs",
+        {"library": LIB, "query": "retry_policy", "path_prefix": "docs/api"},
     )
     escape = await call(
         container, "search_docs", {"library": LIB, "query": "x", "path_prefix": "../docs"}
@@ -266,7 +272,7 @@ async def test_a_path_prefix_cuts_to_the_limit_and_says_more_exist(container: Co
     )
 
     found = result.structured_content
-    assert [r["article_path"] for r in found["results"]][0].startswith("docs/api/")
+    assert found["results"][0]["article_path"].startswith("docs/api/")
     assert len(found["results"]) == 1
     assert found["coverage"]["complete"] is False
 
@@ -317,7 +323,7 @@ async def test_a_library_name_that_matches_one_library_is_resolved(
 
     assert not result.is_error, text_of(result)
     name = arguments.get("library", arguments.get("libraryId"))
-    assert f"is a name, not an ID: resolved to '/acme/payments'." in text_of(result)
+    assert "is a name, not an ID: resolved to '/acme/payments'." in text_of(result)
     assert repr(name) in text_of(result)
     if tool == "search_all_docs":
         assert {r["library"] for r in result.structured_content["results"]} == {LIB}

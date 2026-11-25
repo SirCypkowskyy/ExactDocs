@@ -1,4 +1,4 @@
-"""A library's name where a tool wants its ID (#573): the one library it means, or the candidates."""
+"""A library's name where a tool wants its ID (#573): the library it means, or the candidates."""
 
 from collections.abc import Collection
 from dataclasses import dataclass, field
@@ -90,7 +90,9 @@ class Readable:
         return frozenset(lib.casefold() for lib in libraries if lib.casefold() not in self.hidden)
 
 
-def resolver(*libraries: CatalogLibrary, hidden: set[str] | None = None) -> ResolveLibraryNameUseCase:
+def resolver(
+    *libraries: CatalogLibrary, hidden: set[str] | None = None
+) -> ResolveLibraryNameUseCase:
     return ResolveLibraryNameUseCase(
         libraries=InMemoryLibraries(libraries=list(libraries)), access=Readable(hidden or set())
     )

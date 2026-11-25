@@ -357,7 +357,10 @@ async def test_a_path_prefix_keeps_the_chunks_of_that_directory_only(
         SearchDocsQuery(library=LIB, query="token", path_prefix="docs/guide")
     )
 
-    assert {r.article_path for r in everywhere.results} == {"docs/api/auth.md", "docs/api/client.md"}
+    assert {r.article_path for r in everywhere.results} == {
+        "docs/api/auth.md",
+        "docs/api/client.md",
+    }
     assert {r.article_path for r in api.results} == {"docs/api/auth.md", "docs/api/client.md"}
     assert (api.coverage.candidates, api.coverage.complete) == (2, True)
     assert guide.results == []
@@ -386,9 +389,7 @@ async def test_a_path_prefix_fills_the_limit_from_a_deeper_ranking(
         SearchDocsQuery(library=LIB, query="retry_policy token", limit=1)
     )
     narrowed = await retrieval.search_docs(
-        SearchDocsQuery(
-            library=LIB, query="retry_policy token", path_prefix="docs/api", limit=1
-        )
+        SearchDocsQuery(library=LIB, query="retry_policy token", path_prefix="docs/api", limit=1)
     )
 
     assert best.results[0].article_path == "docs/guide/resilience.md"

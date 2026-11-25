@@ -274,7 +274,7 @@ async def test_list_libraries_stays_small_with_many_versions(container: Containe
 @pytest.mark.parametrize(
     "arguments",
     [
-        # A name ("react") and a versioned ID are read since #573: tests/bootstrap/test_mcp_arguments.py
+        # A name ("react") and a versioned ID are read since #573 (test_mcp_arguments.py).
         {"library": "/" + "a" * 256 + "/b"},
         {"library": "/acme/payments", "ref": "r" * 257},
         {"library": "/acme/payments", "path_prefix": "p" * 257},
