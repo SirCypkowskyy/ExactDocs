@@ -253,7 +253,7 @@ describe("the jobs table", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Last page" }));
 
-    // docs/rest-api.md's example: 233 jobs, 20 a page, the last one is offset 220 (13 jobs).
+    // docs/rest-api/pagination.md's example: 233 jobs, 20 a page, the last one is offset 220 (13 jobs).
     expect(await screen.findByText("221–233 of 233")).toBeInTheDocument();
     expect(urls(fetchMock)[asked]).toBe("/api/v1/jobs?limit=20&offset=220");
     expect(history.location.search).toContain("page=12");

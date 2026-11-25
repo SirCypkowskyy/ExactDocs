@@ -1,4 +1,4 @@
-/** The API's cap on a search query (docs/rest-api.md): 1000 characters. */
+/** The API's cap on a search query (docs/rest-api/search.md): 1000 characters. */
 export const MAX_QUERY = 1000;
 
 /**

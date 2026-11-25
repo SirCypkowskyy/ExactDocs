@@ -1,7 +1,7 @@
 import { keepPreviousData, type QueryClient, queryOptions } from "@tanstack/react-query";
 
 /*
- * Numbered pages over the list API (blocks-map §2.2, docs/rest-api.md "Jumping to a page"). The
+ * Numbered pages over the list API (blocks-map §2.2, docs/rest-api/pagination.md "Jumping to a page"). The
  * API pages with `limit` (1 to 200) and either an `offset` (0 to 10000) or an opaque,
  * forward-only `cursor`, and every list carries `total`; the page count is `ceil(total / size)`.
  *
