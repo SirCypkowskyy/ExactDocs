@@ -452,9 +452,7 @@ async def _asked_version(
     other = respelled(ref, imported.versions)
     if other is not None and (version := await versions.find(library, other)) is not None:
         return version, [respelled_note(ref, other)]
-    raise VersionNotIndexedError(
-        library, ref, versions=imported.versions, default=imported.default
-    )
+    raise VersionNotIndexedError(library, ref, versions=imported.versions, default=imported.default)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2034,10 +2032,8 @@ class SearchDocsUseCase:
             caller: The account searching.
 
         Returns:
-            The results of the one version searched.
-
-        Raises:
-            VersionNotIndexedError: The version is not imported or has no active manifest.
+            The results of the one version searched; a ref that names no version raises
+            ``_asked_version``'s error.
         """
         mode = choice.mode.value
         with self.tracer.span(f"{SEARCH_DOCS}.version", mode=mode):
@@ -2928,10 +2924,10 @@ class ArticleOutlineUseCase:
             query: The library, the exact ref (or none for the default version) and the path.
 
         Returns:
-            The heading tree with a chunk ID per heading and the version that answered.
+            The heading tree with a chunk ID per heading and the version that answered; a ref
+            that names no version raises ``_asked_version``'s error.
 
         Raises:
-            VersionNotIndexedError: The version is not imported or has no active manifest.
             ArticleNotFoundError: The version has no article at this path.
         """
         await _require(self.access, query.library, Access.READ)
@@ -3620,10 +3616,8 @@ class QueryDocsUseCase:
             caller: The account asking.
 
         Returns:
-            The packed sections of the one version searched.
-
-        Raises:
-            VersionNotIndexedError: The version is not imported or has no active manifest.
+            The packed sections of the one version searched; a ref that names no version raises
+            ``_asked_version``'s error.
         """
         mode = choice.mode.value
         with self.tracer.span(f"{QUERY_DOCS}.version", mode=mode):

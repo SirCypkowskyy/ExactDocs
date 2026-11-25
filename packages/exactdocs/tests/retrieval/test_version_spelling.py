@@ -32,11 +32,11 @@ from exactdocs.retrieval.models import (
     SourceHost,
 )
 from exactdocs.retrieval.module import RetrievalModule
+from exactdocs_kernel import respelled_note
 
 LIB = "/encode/starlette"
 NOTE = (
-    "ref 'v1.10.0' is not imported: read as '1.10.0', the one version it names but for a "
-    "leading v."
+    "ref 'v1.10.0' is not imported: read as '1.10.0', the one version it names but for a leading v."
 )
 
 
@@ -155,10 +155,7 @@ async def test_either_spelling_finds_the_other(asked: str, imported: str) -> Non
     found = await retrieval.search_docs(SearchDocsQuery(library=LIB, ref=asked, query="routes"))
 
     assert found.version == imported
-    assert found.notes == [
-        f"ref {asked!r} is not imported: read as {imported!r}, the one version it names but for "
-        "a leading v."
-    ]
+    assert found.notes == [respelled_note(asked, imported)]
 
 
 async def test_article_outline_and_query_docs_read_it_the_same_way() -> None:
@@ -208,7 +205,7 @@ async def test_a_ref_that_names_no_version_lists_them_and_answers_from_none() ->
 async def test_two_spellings_imported_are_never_guessed() -> None:
     retrieval = await build(("1.0", "V1.0"), indexed=("1.0", "V1.0"))
 
-    with pytest.raises(VersionNotIndexedError, match="version 'v1.0' is not imported"):
+    with pytest.raises(VersionNotIndexedError, match=r"version 'v1\.0' is not imported"):
         await retrieval.search_docs(SearchDocsQuery(library=LIB, ref="v1.0", query="routes"))
 
 

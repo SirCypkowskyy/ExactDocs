@@ -144,8 +144,7 @@ class VersionNotFoundError(NotFoundError):
             super().__init__(f"library {library_id!r} has no imported version")
         elif versions:
             super().__init__(
-                f"library {library_id!r} has no version {ref!r}; "
-                f"{name_versions(versions, default)}"
+                f"library {library_id!r} has no version {ref!r}; {name_versions(versions, default)}"
             )
         else:
             super().__init__(f"library {library_id!r} has no version {ref!r}")

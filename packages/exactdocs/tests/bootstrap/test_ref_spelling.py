@@ -35,8 +35,7 @@ PATH = "docs/routing.md"
 OLD = "Mount routes with legacy_router."
 NEW = "Mount routes with Router and Mount."
 NOTE = (
-    "ref 'v1.10.0' is not imported: read as '1.10.0', the one version it names but for a "
-    "leading v."
+    "ref 'v1.10.0' is not imported: read as '1.10.0', the one version it names but for a leading v."
 )
 VERSIONS = "imported versions, newest first: '1.10.0', '0.27.0'; default version: '1.10.0'"
 

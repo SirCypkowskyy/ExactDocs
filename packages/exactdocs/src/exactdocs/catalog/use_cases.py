@@ -161,6 +161,9 @@ async def _find_version(
 ) -> tuple[Library, Version]:
     """Find the version a ref names (the default one without a ref); never any other version.
 
+    The exact lookup of ``_read_version``: a stored ref (the active manifest, renames, removal)
+    is never read as another spelling. Its errors are ``_read_version``'s.
+
     Args:
         repository: Where the library is read.
         library_id: The library.
@@ -168,33 +171,29 @@ async def _find_version(
 
     Returns:
         The library and the version.
-
-    Raises:
-        LibraryNotFoundError: The library is not in the catalog.
-        VersionNotFoundError: The ref names no version, or the library has none.
     """
-    library = await repository.get(library_id)
-    if library is None:
-        raise LibraryNotFoundError(str(library_id))
-    version = library.find_version(ref) if ref else library.default_version()
-    if version is None:
-        raise _no_version(library, ref)
+    library, version, _ = await _read_version(repository, library_id, ref, respell=False)
     return library, version
 
 
 async def _read_version(
-    repository: LibraryRepository, library_id: LibraryId, ref: VersionRef | None
+    repository: LibraryRepository,
+    library_id: LibraryId,
+    ref: VersionRef | None,
+    *,
+    respell: bool = True,
 ) -> tuple[Library, Version, list[str]]:
-    """Find the version a reader's ref names, forgiving a leading ``v`` (#605).
+    """Find the version a reader's ref names, forgiving only a leading ``v`` (#605).
 
-    As ``_find_version``, else the one version ``ref`` names but for a leading ``v`` or ``V``,
-    with a note saying so. Only reader-facing use cases call it; lookups of a stored ref (the
-    active manifest, renames, removal, pinning) stay exact.
+    Exactly ``ref`` (or the commit a short SHA names; the default version without a ref), else,
+    when ``respell``, the one version ``ref`` names but for a leading ``v`` or ``V``, with a note
+    saying so. Only reader-facing use cases respell; lookups of a stored ref stay exact.
 
     Args:
         repository: Where the library is read.
         library_id: The library.
         ref: The ref, or a short commit SHA; None for the default version.
+        respell: Whether a ref may name a version spelled with or without a leading ``v``.
 
     Returns:
         The library, the version and the notes on how the ref was read (none when as given).
@@ -202,7 +201,7 @@ async def _read_version(
     Raises:
         LibraryNotFoundError: The library is not in the catalog.
         VersionNotFoundError: The ref names no version, or the library has none; it names the
-            library's versions.
+            library's versions, newest first, and its default.
     """
     library = await repository.get(library_id)
     if library is None:
@@ -211,30 +210,17 @@ async def _read_version(
         version = library.default_version()
     else:
         version = library.find_version(ref)
-        if version is None and (other := library.respelled_version(ref)) is not None:
+        if version is None and respell and (other := library.respelled_version(ref)) is not None:
             return library, other, [respelled_note(ref.value, other.ref.value)]
     if version is None:
-        raise _no_version(library, ref)
+        default = library.default_version()
+        raise VersionNotFoundError(
+            str(library.id),
+            None if ref is None else str(ref),
+            versions=[str(v.ref) for v in library.newest_first()],
+            default=None if default is None else str(default.ref),
+        )
     return library, version, []
-
-
-def _no_version(library: Library, ref: VersionRef | None) -> VersionNotFoundError:
-    """Build the error of a ref that names no version, naming the versions the library has.
-
-    Args:
-        library: The library.
-        ref: The ref asked for; None for the default version.
-
-    Returns:
-        The error.
-    """
-    default = library.default_version()
-    return VersionNotFoundError(
-        str(library.id),
-        None if ref is None else str(ref),
-        versions=[str(v.ref) for v in library.newest_first()],
-        default=None if default is None else str(default.ref),
-    )
 
 
 async def _require(access: AccessPolicy, library: str, needed: Access) -> None:

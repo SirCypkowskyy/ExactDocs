@@ -208,9 +208,7 @@ class ResolvedVersion(VersionOut):
     imported version it names but for a leading `v` (#605). Absent when it was read as sent."""
 
     @classmethod
-    def from_library(
-        cls, library: Library, version: Version, *, notes: Sequence[str] = ()
-    ) -> Self:
+    def from_library(cls, library: Library, version: Version, *, notes: Sequence[str] = ()) -> Self:
         """Map the library and the chosen version.
 
         Args:
@@ -1208,9 +1206,7 @@ class Article(ArticleInfo):
     imported version it names but for a leading `v` (#605). Absent when it was read as sent."""
 
     @classmethod
-    def with_content(
-        cls, info: ArticleInfo, content: str, *, notes: Sequence[str] = ()
-    ) -> Self:
+    def with_content(cls, info: ArticleInfo, content: str, *, notes: Sequence[str] = ()) -> Self:
         """Add the text to an article's metadata.
 
         Args:

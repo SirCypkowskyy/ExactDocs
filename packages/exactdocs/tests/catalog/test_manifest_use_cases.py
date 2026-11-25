@@ -497,7 +497,11 @@ async def test_a_ref_that_names_a_version_but_for_a_leading_v_reads_it_with_a_no
     tags = await world.catalog.list_tags(ListTagsQuery(library=lib, ref="v1.10.0"))
     resolved = await world.catalog.resolve_version(ResolveVersionQuery(id=f"{lib}/v1.10.0"))
 
-    assert (listed.ref, [a.path for a in listed.articles], listed.notes) == ("1.10.0", ["a.md"], [note])
+    assert (listed.ref, [a.path for a in listed.articles], listed.notes) == (
+        "1.10.0",
+        ["a.md"],
+        [note],
+    )
     assert (read.ref, read.content, read.notes) == ("1.10.0", "ten", [note])
     assert (tags.ref, tags.notes) == ("1.10.0", [note])
     assert (resolved.ref, resolved.notes) == ("1.10.0", [note])
@@ -520,7 +524,7 @@ async def test_a_ref_matching_two_spellings_is_not_guessed(world: World) -> None
     await world.active("1.0", "aaa111", article("a.md", "plain"), kind=RefKind.TAG)
     await world.active("V1.0", "bbb222", article("a.md", "upper"), kind=RefKind.TAG)
 
-    with pytest.raises(VersionNotFoundError, match="has no version 'v1.0'"):
+    with pytest.raises(VersionNotFoundError, match=r"has no version 'v1\.0'"):
         await world.catalog.get_article(
             GetArticleQuery(library="/acme/payments", ref="v1.0", path="a.md")
         )

@@ -260,7 +260,10 @@ async def test_close_paths_come_from_the_exact_version_only() -> None:
             commit_sha="1" * 40,
             articles=[
                 ArticleIn(
-                    path="docs/routing.md", blob_sha="2" * 40, content_version=1, title="R",
+                    path="docs/routing.md",
+                    blob_sha="2" * 40,
+                    content_version=1,
+                    title="R",
                     content="r",
                 )
             ],

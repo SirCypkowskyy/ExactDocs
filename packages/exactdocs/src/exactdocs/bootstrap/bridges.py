@@ -274,9 +274,7 @@ class CatalogLibraryVersions:
             return None
         by_ref = sorted(detail.versions, key=lambda v: v.ref)
         newest = sorted(by_ref, key=lambda v: v.imported_at, reverse=True)
-        return KnownVersions(
-            versions=tuple(v.ref for v in newest), default=detail.default_version
-        )
+        return KnownVersions(versions=tuple(v.ref for v in newest), default=detail.default_version)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

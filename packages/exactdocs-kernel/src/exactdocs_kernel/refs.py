@@ -1,4 +1,4 @@
-"""The one reading of a ref spelled with or without a leading ``v``, shared by catalog and retrieval.
+"""The one reading of a ref with or without a leading ``v``, shared by catalog and retrieval.
 
 Projects tag ``v1.2.3`` or ``1.2.3`` and agents guess the form (#605). Every reader-facing
 lookup (``list_articles`` and ``read_article`` in the catalog, ``search_docs`` and ``query-docs``

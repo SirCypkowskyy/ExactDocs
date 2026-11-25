@@ -116,7 +116,9 @@ def step_searched_version(context: Context, ref: str) -> None:
     assert not result.is_error, _text(context)
     assert context.mcp_data["version"] == ref, context.mcp_data
     assert context.mcp_data["results"], context.mcp_data
-    assert all(r["commit_sha"] == context.mcp_data["commit_sha"] for r in context.mcp_data["results"])
+    assert all(
+        r["commit_sha"] == context.mcp_data["commit_sha"] for r in context.mcp_data["results"]
+    )
 
 
 @then('the result carries a note that ref "{asked}" was read as "{used}"')
