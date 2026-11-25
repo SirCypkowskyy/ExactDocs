@@ -376,14 +376,30 @@ class NodeGroundedDocs:
         Yields:
             The search, through its ``search_docs`` tool.
         """
+        async with contextlib.AsyncExitStack() as stack:
+            url = await stack.enter_async_context(self.listening(store, variables))
+            client = await stack.enter_async_context(Client(url, timeout=SEARCH_SECONDS))
+            yield _searcher(client)
+
+    @contextlib.asynccontextmanager
+    async def listening(self, store: Path, variables: Mapping[str, str]) -> AsyncGenerator[str]:
+        """Run ``docs-mcp-server mcp`` over HTTP on a free loopback port, for any MCP client.
+
+        The agent benchmark's ``grounded-docs`` arm (#495) connects its agent here.
+
+        Args:
+            store: The data directory.
+            variables: The configuration's environment variables.
+
+        Yields:
+            The server's MCP endpoint, once it answers.
+        """
         with tempfile.TemporaryFile() as log:
             process = await self._start(store, variables, log)
             try:
-                client = await _connect(
-                    f"http://127.0.0.1:{process.port}/mcp", process.process, log
-                )
-                async with client:
-                    yield _searcher(client)
+                url = f"http://127.0.0.1:{process.port}/mcp"
+                await _connect(url, process.process, log)
+                yield url
             finally:
                 await _stop(process.process)
 
@@ -483,16 +499,13 @@ async def _stop(process: asyncio.subprocess.Process) -> None:
         await process.wait()
 
 
-async def _connect(url: str, process: asyncio.subprocess.Process, log: IO[bytes]) -> Client:
-    """Wait until the MCP server answers, then return a client for it.
+async def _connect(url: str, process: asyncio.subprocess.Process, log: IO[bytes]) -> None:
+    """Wait until the MCP server answers.
 
     Args:
         url: The server's MCP endpoint.
         process: The server's process.
         log: Its output.
-
-    Returns:
-        A client (not entered) whose first connection succeeded.
 
     Raises:
         RuntimeError: The server stopped, or did not answer in ``START_SECONDS``.
@@ -513,7 +526,7 @@ async def _connect(url: str, process: asyncio.subprocess.Process, log: IO[bytes]
                 raise RuntimeError(message) from error
             await asyncio.sleep(1)
             continue
-        return Client(url, timeout=SEARCH_SECONDS)
+        return
 
 
 def read_store(store: Path) -> dict[tuple[str, str], Stored]:
@@ -589,11 +602,62 @@ def _node_version(node: Path) -> str:
     ).stdout.strip()
 
 
+def npm_install(prefix: Path, package: str, version: str, integrity: str, *, offline: bool) -> Path:
+    """Install a pinned npm release into ``prefix``, or check the one there.
+
+    The registry's integrity hash in the lock file must be ``integrity``: another release, or a
+    tarball that changed, is refused. Grounded Docs is installed this way, and the Context7 MCP
+    server of the agent benchmark's ``context7`` arm (#495).
+
+    Args:
+        prefix: The folder ``npm install`` runs in, one per release.
+        package: The npm package.
+        version: Its pinned release.
+        integrity: The registry's integrity hash of that release's tarball.
+        offline: Install nothing; check what is there.
+
+    Returns:
+        The package's entry point, ``dist/index.js``.
+
+    Raises:
+        RuntimeError: npm is missing, the install failed, it is not there offline, or the
+            installed package is not the pinned release.
+    """
+    entry = prefix / "node_modules" / package / "dist" / "index.js"
+    if not entry.exists():
+        npm = shutil.which("npm")
+        if offline or npm is None:
+            why = "--offline" if offline else "npm is not on PATH"
+            message = f"{package} {version} is not installed in {prefix} ({why})"
+            raise RuntimeError(message)
+        prefix.mkdir(parents=True, exist_ok=True)
+        (prefix / "package.json").write_text('{"private": true}\n', encoding="utf-8")
+        done = subprocess.run(
+            [npm, "install", "--no-audit", "--no-fund", f"{package}@{version}"],
+            cwd=prefix,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if done.returncode:
+            message = f"npm install {package}@{version} failed: {done.stderr.strip()[-2000:]}"
+            raise RuntimeError(message)
+    lock = json.loads((prefix / "package-lock.json").read_text(encoding="utf-8"))
+    found = lock.get("packages", {}).get(f"node_modules/{package}", {})
+    if (found.get("version"), found.get("integrity")) != (version, integrity):
+        message = (
+            f"{prefix} holds {package} {found.get('version')} ({found.get('integrity')}), "
+            f"not {version} ({integrity})"
+        )
+        raise RuntimeError(message)
+    return entry
+
+
 def install(home: Path, *, offline: bool) -> NodeGroundedDocs:
     """Install the pinned Grounded Docs release into ``home``, or check the one there.
 
     ``npm install`` puts it in ``home/<VERSION>``; the registry's integrity hash in the lock file
-    must be ``INTEGRITY``.
+    must be ``INTEGRITY`` (``npm_install``).
 
     Args:
         home: Where Grounded Docs and its data directories are kept.
@@ -606,34 +670,7 @@ def install(home: Path, *, offline: bool) -> NodeGroundedDocs:
         RuntimeError: Node.js or npm is missing, the install failed, it is not there offline, or
             the installed package is not the pinned release.
     """
-    prefix = home / VERSION
-    entry = prefix / "node_modules" / PACKAGE / "dist" / "index.js"
-    if not entry.exists():
-        npm = shutil.which("npm")
-        if offline or npm is None:
-            why = "--offline" if offline else "npm is not on PATH"
-            message = f"Grounded Docs {VERSION} is not installed in {prefix} ({why})"
-            raise RuntimeError(message)
-        prefix.mkdir(parents=True, exist_ok=True)
-        (prefix / "package.json").write_text('{"private": true}\n', encoding="utf-8")
-        done = subprocess.run(
-            [npm, "install", "--no-audit", "--no-fund", f"{PACKAGE}@{VERSION}"],
-            cwd=prefix,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if done.returncode:
-            message = f"npm install {PACKAGE}@{VERSION} failed: {done.stderr.strip()[-2000:]}"
-            raise RuntimeError(message)
-    lock = json.loads((prefix / "package-lock.json").read_text(encoding="utf-8"))
-    package = lock.get("packages", {}).get(f"node_modules/{PACKAGE}", {})
-    if (package.get("version"), package.get("integrity")) != (VERSION, INTEGRITY):
-        message = (
-            f"{prefix} holds {PACKAGE} {package.get('version')} ({package.get('integrity')}), "
-            f"not {VERSION} ({INTEGRITY})"
-        )
-        raise RuntimeError(message)
+    entry = npm_install(home / VERSION, PACKAGE, VERSION, INTEGRITY, offline=offline)
     node = shutil.which("node")
     if node is None:
         message = "Grounded Docs needs Node.js 22 or later (node is not on PATH)"
@@ -1059,6 +1096,73 @@ def _embedding_info(
     )
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Indexed:
+    """A configuration's data directory once every pinned version is indexed into it."""
+
+    store: Path
+    """The data directory."""
+    variables: dict[str, str]
+    """The configuration's environment variables (the embedding endpoint's, for one with a
+    model): what its MCP server runs with."""
+    settings: dict[str, Any]
+    """Grounded Docs' configuration in effect."""
+    indexing: list[VersionIndex]
+    """Every pinned version, as it was indexed (or kept, with ``Plan.resume``)."""
+    model: LocalEmbedding | None
+    """The embedding model; None for full-text search."""
+    served: Served | None
+    """The embedding endpoint's counts; None without one."""
+
+
+@contextlib.asynccontextmanager
+async def indexed(
+    tool: GroundedDocs,
+    plan: Plan,
+    configuration: Configuration,
+    embedder: Callable[[str], LocalEmbedding],
+) -> AsyncGenerator[Indexed]:
+    """Index every pinned version for a configuration, and keep its embedding endpoint up.
+
+    The run asks its questions inside the block; so does the agent benchmark's
+    ``grounded-docs`` arm (#495), whose agent searches the same data directory.
+
+    Args:
+        tool: Grounded Docs.
+        plan: The run (``Plan.resume`` keeps the versions the data directory holds).
+        configuration: The configuration.
+        embedder: Loads an embedding model by name (called only for a configuration with one).
+
+    Yields:
+        The data directory and what its server needs, while the endpoint runs.
+    """
+    store = plan.home / "stores" / configuration.name
+    with contextlib.ExitStack() as stack:
+        model, endpoint = None, None
+        if configuration.embedding_model is not None:
+            model = embedder(configuration.embedding_model)
+            endpoint = stack.enter_context(serve(model.embed, model.count, model.model))
+        variables = _variables(configuration, endpoint)
+        served = endpoint.served if endpoint else None
+        settings = await tool.settings(store, variables)
+        how = _Indexing(
+            tool=tool,
+            store=store,
+            variables=variables,
+            defaults=crawl_defaults(settings),
+            served=served,
+        )
+        indexing = await _index_all(plan, configuration, how)
+        yield Indexed(
+            store=store,
+            variables=variables,
+            settings=settings,
+            indexing=indexing,
+            model=model,
+            served=served,
+        )
+
+
 async def run_configuration(
     tool: GroundedDocs,
     plan: Plan,
@@ -1078,27 +1182,17 @@ async def run_configuration(
     Returns:
         The configuration's result, without its paired tests.
     """
-    store = plan.home / "stores" / configuration.name
-    with contextlib.ExitStack() as stack:
-        model, endpoint = None, None
-        if configuration.embedding_model is not None:
-            model = embedder(configuration.embedding_model)
-            endpoint = stack.enter_context(serve(model.embed, model.count, model.model))
-        variables = _variables(configuration, endpoint)
-        served = endpoint.served if endpoint else None
-        settings = await tool.settings(store, variables)
-        how = _Indexing(
-            tool=tool,
-            store=store,
-            variables=variables,
-            defaults=crawl_defaults(settings),
-            served=served,
+    async with indexed(tool, plan, configuration, embedder) as ready:
+        store, variables, settings, indexing = (
+            ready.store,
+            ready.variables,
+            ready.settings,
+            ready.indexing,
         )
-        indexing = await _index_all(plan, configuration, how)
         size = sum(f.stat().st_size for f in store.iterdir() if f.is_file())
-        before = _snapshot(served)
+        before = _snapshot(ready.served)
         answers, errors = await _ask_all(tool, store, variables, plan.dataset)
-        embedding = _embedding_info(model, store, indexing, _since(served, before))
+        embedding = _embedding_info(ready.model, store, indexing, _since(ready.served, before))
     rows = [
         text_row(c, answers[c.name or ""], indexes[c.inputs.project or ""])
         for c in plan.dataset.cases

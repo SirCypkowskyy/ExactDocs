@@ -1,8 +1,9 @@
 """Stand-in models that run the whole benchmark with no provider (pydantic-ai ``FunctionModel``).
 
-They prove the plumbing, not answer quality: the agents drive the real MCP tools the way a
-careful agent would (find the library, search the asked version, read the top section), or, with
-no tools (the ``none`` arm), say they do not know; ``offline:think`` also returns thinking, as a
+They prove the plumbing, not answer quality: the agents drive the real MCP tools of whichever
+arm they are given (ExactDocs', Context7's or Grounded Docs') the way a careful agent would (find
+the library, search the asked version, read the top section), or, with no tools (the ``none``
+arm), say they do not know; ``offline:think`` also returns thinking, as a
 thinking model does. The judge grades by word overlap with the facts.
 ``just agent-bench run --offline`` uses them.
 """
@@ -10,6 +11,7 @@ thinking model does. The judge grades by word overlap with the facts.
 import json
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 from typing import Any, Final
 
 from pydantic_ai.messages import (
@@ -25,6 +27,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionDef, FunctionModel
 
 from agent_bench.judge import PROMPT_HEAD, Verdict
+from retrieval_eval.grounded_docs import split_results
 
 OFFLINE_THINKING: Final[str] = "offline:think"
 """The stand-in agent that thinks before each step (then reads, as ``offline:read``)."""
@@ -51,6 +54,16 @@ REFUSALS: Final[re.Pattern[str]] = re.compile(
 """What the stand-in judge takes as an answer saying the documentation does not cover it."""
 WORD: Final[re.Pattern[str]] = re.compile(r"[\w.]{4,}")
 """A word the stand-in judge looks for (four characters or more)."""
+C7_SEPARATOR: Final[str] = "\n----------\n"
+"""What separates two libraries in Context7's ``resolve-library-id`` answer."""
+C7_ID: Final[re.Pattern[str]] = re.compile(
+    r"^- Context7-compatible library ID: (\S+)$", re.MULTILINE
+)
+"""A library's ID line in that answer."""
+C7_VERSIONS: Final[re.Pattern[str]] = re.compile(r"^- Versions: (.+)$", re.MULTILINE)
+"""A library's versions line in that answer."""
+SOURCE_LINE: Final[re.Pattern[str]] = re.compile(r"\A> Source: \S+\n*")
+"""The first line of Grounded Docs' ``read_page`` answer."""
 PROMPT_LINE: Final[re.Pattern[str]] = re.compile(
     r"uses (?P<title>.+) at version (?P<version>\S+)\."
 )
@@ -92,24 +105,61 @@ def _returns(messages: Sequence[ModelMessage]) -> dict[str, Any]:
     }
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _Asked:
+    """What the stand-in agent was asked: the dependency, its version and the question."""
+
+    title: str
+    """The project's display name."""
+    version: str
+    """Its version."""
+    query: str
+    """The question."""
+
+
 def _step(messages: list[ModelMessage], info: AgentInfo, *, read: bool) -> TextPart | ToolCallPart:
     """Take a stand-in agent's next step from what the tools returned so far.
+
+    It drives whichever documentation tools it was given: ExactDocs' (``read_chunk``), Grounded
+    Docs' (``read_page``) or Context7's (``resolve-library-id``).
 
     Args:
         messages: The run so far.
         info: The run's tools.
-        read: Read the top section with ``read_chunk`` before answering.
+        read: Read the top section (or page) before answering.
 
     Returns:
         A tool call, or the answer; with no tools, that it does not know.
     """
     prompt = _prompt(messages)
-    asked = PROMPT_LINE.search(prompt)
-    title, version = (asked["title"], asked["version"]) if asked else ("", "")
+    found = PROMPT_LINE.search(prompt)
+    title, version = (found["title"], found["version"]) if found else ("", "")
     if not info.function_tools:
         return TextPart(DO_NOT_KNOW.format(title=title, version=version))
-    query = prompt.split("\n\n", 1)[-1]
+    asked = _Asked(title=title, version=version, query=prompt.split("\n\n", 1)[-1])
     returns = _returns(messages)
+    names = {tool.name for tool in info.function_tools}
+    if "read_chunk" in names:
+        return _exactdocs_step(returns, asked, read=read)
+    if "read_page" in names:
+        return _grounded_docs_step(returns, asked, read=read)
+    return _context7_step(returns, asked)
+
+
+def _exactdocs_step(
+    returns: dict[str, Any], asked: _Asked, *, read: bool
+) -> TextPart | ToolCallPart:
+    """The next step with ExactDocs' tools: find the library, search the version, read the top.
+
+    Args:
+        returns: The latest result of each tool.
+        asked: The question.
+        read: Read the top section with ``read_chunk`` before answering.
+
+    Returns:
+        A tool call, or the answer.
+    """
+    title, version, query = asked.title, asked.version, asked.query
     if "list_libraries" not in returns:
         return ToolCallPart("list_libraries", {})
     libraries = returns["list_libraries"].get("libraries", [])
@@ -124,6 +174,87 @@ def _step(messages: list[ModelMessage], info: AgentInfo, *, read: bool) -> TextP
         return ToolCallPart("read_chunk", {"chunk_id": results[0]["chunk_id"]})
     text = returns["read_chunk"]["content"] if read else "\n\n".join(r["snippet"] for r in results)
     return TextPart(text[:ANSWER_CHARS])
+
+
+def _named(title: str) -> str:
+    """The library name a title is indexed under in Grounded Docs: the project ID's form.
+
+    Args:
+        title: The project's display name (``TanStack Query``).
+
+    Returns:
+        Lowercase, spaces as dashes (``tanstack-query``).
+    """
+    return title.casefold().replace(" ", "-")
+
+
+def _grounded_docs_step(
+    returns: dict[str, Any], asked: _Asked, *, read: bool
+) -> TextPart | ToolCallPart:
+    """The next step with Grounded Docs' tools: list the libraries, search the version, read.
+
+    Args:
+        returns: The latest result of each tool.
+        asked: The question.
+        read: Read the top result's page with ``read_page`` before answering.
+
+    Returns:
+        A tool call, or the answer.
+    """
+    if "list_libraries" not in returns:
+        return ToolCallPart("list_libraries", {})
+    listed = re.findall(r"^- (\S+)$", str(returns["list_libraries"]), re.MULTILINE)
+    library = next((n for n in listed if n == _named(asked.title)), _named(asked.title))
+    if "search_docs" not in returns:
+        args = {
+            "library": library,
+            "version": asked.version,
+            "query": asked.query,
+            "limit": SEARCH_LIMIT,
+        }
+        return ToolCallPart("search_docs", args)
+    results = split_results(str(returns["search_docs"]))
+    if not results:
+        return TextPart(NOT_COVERED.format(version=asked.version))
+    if read and "read_page" not in returns:
+        args = {"library": library, "pathOrUrl": results[0].url, "version": asked.version}
+        return ToolCallPart("read_page", args)
+    if read:
+        text = SOURCE_LINE.sub("", str(returns["read_page"]), count=1).strip()
+    else:
+        text = "\n\n".join(r.content for r in results)
+    return TextPart(text[:ANSWER_CHARS])
+
+
+def _context7_step(returns: dict[str, Any], asked: _Asked) -> TextPart | ToolCallPart:
+    """The next step with Context7's tools: resolve the library (at the version), query it.
+
+    Args:
+        returns: The latest result of each tool.
+        asked: The question.
+
+    Returns:
+        A tool call, or the answer.
+    """
+    if "resolve-library-id" not in returns:
+        args = {"libraryName": asked.title, "query": asked.query}
+        return ToolCallPart("resolve-library-id", args)
+    entries = str(returns["resolve-library-id"]).split(C7_SEPARATOR)
+    entry = next(
+        (e for e in entries if f"- Title: {asked.title}\n".casefold() in e.casefold()),
+        entries[0],
+    )
+    library = C7_ID.search(entry)
+    if library is None:
+        return TextPart(NOT_COVERED.format(version=asked.version))
+    versions = C7_VERSIONS.search(entry)
+    offered = {v.strip() for v in versions[1].split(",")} if versions else set()
+    pinned = next((v for v in (asked.version, f"v{asked.version}") if v in offered), None)
+    library_id = f"{library[1]}/{pinned}" if pinned else library[1]
+    if "query-docs" not in returns:
+        return ToolCallPart("query-docs", {"libraryId": library_id, "query": asked.query})
+    text = str(returns["query-docs"]).strip()
+    return TextPart(text[:ANSWER_CHARS] if text else NOT_COVERED.format(version=asked.version))
 
 
 def _agent(*, read: bool, think: bool) -> FunctionDef:

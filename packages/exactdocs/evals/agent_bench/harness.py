@@ -1,9 +1,10 @@
 """Run an agent with one documentation arm and record what it did, what it cost and how it ended.
 
 The ``exactdocs`` arm's server is the real CLI, ``exactdocs serve --stdio``, over a data directory
-the golden corpus was imported into with the real importer (``golden_cli.import_corpus``). The
-agent gets its arm's tools and nothing else (none for ``none``); a ``process_tool_call`` hook
-records every MCP call, the sections the agent read in full and the retrieval modes that answered.
+the golden corpus was imported into with the real importer (``golden_cli.import_corpus``); the
+other arms' servers are in ``servers``. The agent gets its arm's tools and nothing else (none for
+``none``, ``only_its_tools``); a ``process_tool_call`` hook records every MCP call and, where the
+arm's results say so, the sections the agent read in full and the retrieval modes that answered.
 Each run also records its tokens (thinking included, and the thinking on its own), its wall time
 and the time lost to provider retries, and whether it failed on the agent's side (no answer) or
 the provider's.
@@ -14,9 +15,8 @@ import json
 import os
 import re
 import sys
-import tempfile
 import time
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,7 +33,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import UsageLimits
 from pydantic_evals import Case, Dataset
 
-from agent_bench.arms import EXACTDOCS, NONE, Arm
+from agent_bench.arms import EXACTDOCS, Arm
 from agent_bench.redact import SECRET_NAME, scrub
 from agent_bench.retries import RETRIES, RetryLog
 from exactdocs.retrieval.adapters.driven.genai_prices import GenaiPrices
@@ -273,10 +273,13 @@ def _section(chunk: Mapping[str, Any]) -> Section:
     )
 
 
-async def record_tool_call(
+async def recorded_call(
     ctx: RunContext[Recorder], call_tool: CallToolFunc, name: str, args: dict[str, Any]
 ) -> ToolResult:
-    """The toolset's ``process_tool_call`` hook: call the tool and record it in the run's deps.
+    """Call the tool and record the call in the run's deps: the ``context7`` arm's hook.
+
+    Every arm's ``process_tool_call`` hook records its calls this way; ExactDocs'
+    (``record_tool_call``) and Grounded Docs' (``servers``) also record what the agent read.
 
     Args:
         ctx: The run; its deps are the run's ``Recorder``.
@@ -297,6 +300,24 @@ async def record_tool_call(
         raise
     seconds = round(time.perf_counter() - started, 3)
     ctx.deps.calls.append(ToolCall(name=name, args=shown, seconds=seconds))
+    return result
+
+
+async def record_tool_call(
+    ctx: RunContext[Recorder], call_tool: CallToolFunc, name: str, args: dict[str, Any]
+) -> ToolResult:
+    """ExactDocs' ``process_tool_call`` hook: record the call and what its result says was read.
+
+    Args:
+        ctx: The run; its deps are the run's ``Recorder``.
+        call_tool: Calls the tool on the server.
+        name: The tool.
+        args: The model's arguments.
+
+    Returns:
+        The tool's result, unchanged.
+    """
+    result = await recorded_call(ctx, call_tool, name, args)
     await ctx.deps.take(name, result, call_tool)
     return result
 
@@ -500,78 +521,26 @@ def exactdocs_toolset(
 type ArmTools = Callable[
     [Arm, RetrievalConfig | None], AbstractAsyncContextManager[Sequence[AbstractToolset[Recorder]]]
 ]
-"""Gives an arm its toolsets (under a retrieval configuration, for an arm that takes one) for the
-time of the block. The benchmark's own is ``ArmServers.tools``; tests pass stand-ins."""
+"""Gives an arm its toolsets (under a configuration, for an arm that takes one) for the time of
+the block. The benchmark's own is ``servers.ArmServers.tools``; tests pass stand-ins."""
 
 
-@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- imports are cached
-class ArmServers:
-    """Builds each arm's toolsets: none for ``none``, ExactDocs as shipped for ``exactdocs``.
+def only_its_tools(
+    arm: Arm, toolsets: Sequence[AbstractToolset[Recorder]]
+) -> list[AbstractToolset[Recorder]]:
+    """Keep an arm's toolsets to its own tools (``Arm.tools``), stand-ins' as the real servers'.
 
-    An arm that is not built yet (``Arm.planned``: ``context7``, #493; ``grounded-docs``, #492) is
-    refused here; building its server is the one place its issue adds code to.
+    Args:
+        arm: The arm.
+        toolsets: What its server (or a stand-in) offers.
+
+    Returns:
+        The toolsets, filtered to ``arm.tools`` when it names them, else unchanged.
     """
-
-    projects: Sequence[Project]
-    """The projects of the asked cases."""
-    repos: Mapping[str, Path]
-    """Each project's cached repository."""
-    work_dir: Path
-    """Where the data directories and the server logs go."""
-    imports: dict[str, Path] = field(default_factory=dict)
-    """The data directory of each embedding model the corpus was imported for."""
-    records: list[ImportedVersion] = field(default_factory=list)
-    """Every imported version, from the first import."""
-
-    async def imported(self, config: RetrievalConfig) -> Path:
-        """Import the corpus for a configuration, once per embedding model.
-
-        Args:
-            config: The retrieval configuration.
-
-        Returns:
-            The data directory the corpus is imported into (embedded with its model): a new one in
-            the work directory, so a work directory kept from an earlier run (``--resume``) is
-            never imported into twice.
-        """
-        embedding = config.env.get(EMBEDDING_VARIABLE, os.environ.get(EMBEDDING_VARIABLE, ""))
-        if embedding not in self.imports:
-            self.work_dir.mkdir(parents=True, exist_ok=True)
-            data_dir = Path(
-                tempfile.mkdtemp(prefix=f"data-{len(self.imports)}-", dir=self.work_dir)
-            )
-            records = await import_golden(data_dir, self.projects, self.repos, config.env)
-            self.imports[embedding] = data_dir
-            self.records = self.records or records
-        return self.imports[embedding]
-
-    @contextlib.asynccontextmanager
-    async def tools(
-        self, arm: Arm, config: RetrievalConfig | None
-    ) -> AsyncGenerator[Sequence[AbstractToolset[Recorder]]]:
-        """Give an arm its toolsets for the block.
-
-        Args:
-            arm: The arm.
-            config: Its retrieval configuration (``exactdocs``).
-
-        Yields:
-            The toolsets; the ExactDocs server runs for the block.
-
-        Raises:
-            ValueError: An arm whose toolset is not built yet, or ``exactdocs`` without a
-                configuration.
-        """
-        if arm.name == NONE:
-            yield []
-        elif arm.name == EXACTDOCS and config is not None:
-            data_dir = await self.imported(config)
-            log_file = self.work_dir / f"server-{config.name}.log"
-            async with exactdocs_toolset(data_dir, config.env, log_file) as server:
-                yield [server]
-        else:
-            message = f"the {arm.name} arm's toolset is not built ({arm.planned or 'no setup'})"
-            raise ValueError(message)
+    allowed = arm.tools
+    if allowed is None:
+        return list(toolsets)
+    return [toolset.filtered(lambda _ctx, tool: tool.name in allowed) for toolset in toolsets]
 
 
 def thinking_tokens_of(responses: Sequence[ModelResponse]) -> tuple[int | None, bool, int]:
