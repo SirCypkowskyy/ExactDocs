@@ -204,7 +204,7 @@ async def test_results_are_grouped_by_library_and_article(world: Fixture) -> Non
     assert grouped.results[0].chunk_id == ranked.results[0].chunk_id
     # the same path in two libraries is two articles, each kept together, in group order
     groups = {(r.library, r.article_path): r.group for r in grouped.results}
-    assert sorted(groups.values()) == [1, 2]
+    assert sorted(g or 0 for g in groups.values()) == [1, 2]
     assert [r.group for r in grouped.results] == [
         groups[r.library, r.article_path] for r in grouped.results
     ]
