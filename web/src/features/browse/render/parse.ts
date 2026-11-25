@@ -34,6 +34,25 @@ function slug(text: string, used: Set<string>): string {
   return anchor;
 }
 
+// A heading's trailing attribute list, `{ #id }` / `{#id}` / `{: #id .class key=value }`: the
+// same patterns as `_ATTRIBUTE_LIST` and `_ATTRIBUTE_ID` in the chunker's constants.
+const ATTRIBUTE_LIST =
+  /\s*\{:?[ \t]*(?:(?:#[\p{L}\p{N}_.:-]+|\.[\p{L}\p{N}_:-]+|[\p{L}\p{N}_-]+=(?:"[^"]*"|'[^']*'|[^\s{}"']+))[ \t]*)+\}\s*$/u;
+const ATTRIBUTE_ID = /(?<![^\s{:])#([\p{L}\p{N}_.:-]+)/gu;
+
+// The list is markup: it leaves the heading's last text (not a code span) and its id goes in `meta`.
+md.core.ruler.push("heading_attributes", (state) => {
+  state.tokens.forEach((token, i) => {
+    const last = state.tokens[i + 1]?.children?.at(-1);
+    if (token.type !== "heading_open" || last?.type !== "text") return;
+    const found = ATTRIBUTE_LIST.exec(last.content);
+    if (!found) return;
+    last.content = last.content.slice(0, found.index);
+    const id = [...found[0].matchAll(ATTRIBUTE_ID)].at(-1)?.[1];
+    if (id) token.meta = { ...token.meta, id };
+  });
+});
+
 export interface HeadingAnchor {
   text: string;
   anchor: string;
@@ -49,7 +68,10 @@ export function anchorsOf(tokens: readonly Token[]): Map<Token, HeadingAnchor> {
     const inline = tokens[i + 1];
     if (token.type !== "heading_open" || inline?.type !== "inline") return;
     const text = plainText(inline);
-    found.set(token, { text, anchor: slug(text, used), topLevel: token.level === 0 });
+    const given = (token.meta as { id?: string } | null)?.id;
+    const anchor = given ?? slug(text, used);
+    used.add(anchor);
+    found.set(token, { text, anchor, topLevel: token.level === 0 });
   });
   return found;
 }
