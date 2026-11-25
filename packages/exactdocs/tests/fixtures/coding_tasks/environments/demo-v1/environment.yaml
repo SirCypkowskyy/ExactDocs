@@ -1,0 +1,10 @@
+# A stand-in for the quick tests: `lib/` goes on PYTHONPATH, nothing is installed.
+ecosystem: python
+package: demo
+version: "1.0"
+released: 2023-01-10
+python: "3"
+forbidden:
+- api: field_validator
+  pattern: '\bfield_validator\b'
+  reason: added in demo 2.0; 1.0 has `@validator`

@@ -89,6 +89,7 @@ extend-exclude = [
     # The coding tasks' workspaces and solutions (#496): code for pinned library versions (Pydantic 1,
     # Starlette 0.27, ...), run in their own environments, never by this project's interpreter.
     "packages/exactdocs/evals/coding",
+    "packages/exactdocs/tests/fixtures/coding_tasks",
 ]
 
 [tool.ruff.lint]
@@ -228,6 +229,7 @@ exclude = [
     "packages/exactdocs/tests/architecture/fixtures",
     "packages/exactdocs/tests/fixtures/sphinx-docs",
     "packages/exactdocs/evals/coding",
+    "packages/exactdocs/tests/fixtures/coding_tasks",
 ]
 
 [tool.ty.rules]

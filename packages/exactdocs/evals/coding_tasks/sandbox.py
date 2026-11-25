@@ -26,7 +26,7 @@ import subprocess
 import sys
 import time
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import cache
 from pathlib import Path
@@ -38,6 +38,8 @@ MB: Final[int] = 1024 * 1024
 """Bytes in a mebibyte."""
 OUTPUT_KEPT: Final[int] = 20_000
 """Characters of a command's output kept (its end)."""
+REAP_SECONDS: Final[float] = 10.0
+"""How long a killed command, and its output pipe, may take to close."""
 DOCKER_IMAGE: Final[str] = (
     "debian:trixie-slim@sha256:8aa5a7bf5a1955bddbe7d74fcdd0b91ab30e74362a8b73af672b0481b35b44a0"
 )
@@ -167,6 +169,7 @@ def sandbox_environment(
         "TMPDIR": str(home),
         "PYTHONDONTWRITEBYTECODE": "1",
         "PYTHONUNBUFFERED": "1",
+        "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
         "NO_COLOR": "1",
         "FORCE_COLOR": "0",
         "NODE_OPTIONS": "",
@@ -291,42 +294,60 @@ class ProcessSandbox:
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
         )
-        try:
-            output, _ = await asyncio.wait_for(process.communicate(), limits.wall_seconds)
-        except TimeoutError:
+
+        async def kill() -> None:
+            """Kill the command's whole process group."""
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
-            output = await _drain(process)
-            return SandboxRun(
-                exit_code=None,
-                output=_tail(output),
-                seconds=round(time.perf_counter() - started, 3),
-                timed_out=True,
-            )
-        return SandboxRun(
-            exit_code=process.returncode,
-            output=_tail(output),
-            seconds=round(time.perf_counter() - started, 3),
-        )
+
+        return await _supervise(process, limits.wall_seconds, kill, started)
 
 
-async def _drain(process: asyncio.subprocess.Process) -> bytes:
-    """Read what a killed process wrote, and reap it.
+async def _supervise(
+    process: asyncio.subprocess.Process,
+    wall_seconds: float,
+    kill: Callable[[], Awaitable[None]],
+    started: float,
+) -> SandboxRun:
+    """Wait for a command to end or reach its wall limit, keeping what it printed either way.
 
     Args:
-        process: The process, killed.
+        process: The command, its output on a pipe.
+        wall_seconds: The wall limit.
+        kill: Kills it (and what it started).
+        started: When it started (``time.perf_counter``).
 
     Returns:
-        Its output.
+        How it ended, with the end of its output.
     """
-    stdout = process.stdout
-    data = b""
-    if stdout is not None:
-        with contextlib.suppress(Exception):
-            data = await asyncio.wait_for(stdout.read(), 5)
-    with contextlib.suppress(Exception):
-        await asyncio.wait_for(process.wait(), 5)
-    return data
+    kept = bytearray()
+
+    async def read() -> None:
+        """Keep the end of the output as it comes."""
+        if process.stdout is None:
+            return
+        while chunk := await process.stdout.read(65536):
+            kept.extend(chunk)
+            del kept[: max(0, len(kept) - 4 * OUTPUT_KEPT)]
+
+    reader = asyncio.create_task(read())
+    timed_out = False
+    try:
+        await asyncio.wait_for(process.wait(), wall_seconds)
+    except TimeoutError:
+        timed_out = True
+        await kill()
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(process.wait(), REAP_SECONDS)
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(asyncio.shield(reader), REAP_SECONDS)
+    reader.cancel()
+    return SandboxRun(
+        exit_code=None if timed_out else process.returncode,
+        output=_tail(bytes(kept)),
+        seconds=round(time.perf_counter() - started, 3),
+        timed_out=timed_out,
+    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -419,9 +440,9 @@ class DockerSandbox:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
-        try:
-            output, _ = await asyncio.wait_for(process.communicate(), limits.wall_seconds)
-        except TimeoutError:
+
+        async def kill() -> None:
+            """Kill the container."""
             killer = await asyncio.create_subprocess_exec(
                 docker,
                 "kill",
@@ -430,18 +451,8 @@ class DockerSandbox:
                 stderr=asyncio.subprocess.DEVNULL,
             )
             await killer.wait()
-            output = await _drain(process)
-            return SandboxRun(
-                exit_code=None,
-                output=_tail(output),
-                seconds=round(time.perf_counter() - started, 3),
-                timed_out=True,
-            )
-        return SandboxRun(
-            exit_code=process.returncode,
-            output=_tail(output),
-            seconds=round(time.perf_counter() - started, 3),
-        )
+
+        return await _supervise(process, limits.wall_seconds, kill, started)
 
 
 def sandbox_named(name: str, *, require_network_isolation: bool) -> Sandbox:
