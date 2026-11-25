@@ -24,6 +24,8 @@ from exactdocs.ingestion import models
 from exactdocs.ingestion.constants import DEFAULT_CHUNKER
 from exactdocs.ingestion.constants._chunker import (
     _ANCHOR_DROP,
+    _ATTRIBUTE_ID,
+    _ATTRIBUTE_LIST,
     _BLOCK_TAGS,
     _HTML_COMMENT,
     _HTML_TAG,
@@ -404,8 +406,10 @@ def _sections(tokens: list[Token], line_count: int, skip: int) -> list[_Section]
             if language := _fence_language(token.info):
                 sections[-1].fences.append((token.map[0], language))
         elif token.type == "heading_open" and token.map and token.map[0] >= skip:
+            given = _attribute_id(tokens[i + 1])
             text = _plain(tokens[i + 1])
-            anchor = _anchor(text, anchors)  # every heading takes a slug, as on GitHub
+            anchor = _anchor(text, anchors) if given is None else given  # every heading takes one
+            anchors.add(anchor)
             if token.level != 0:
                 continue
             level = int(token.tag[1:])
@@ -520,6 +524,26 @@ def _plain(inline: Token) -> str:
         elif child.type in {"softbreak", "hardbreak"}:
             parts.append(" ")
     return "".join(parts).strip()
+
+
+def _attribute_id(inline: Token) -> str | None:
+    """Cut a trailing attribute list (``{ #id .class }``) off the heading's text, if it has one.
+
+    Only a list in the heading's last text counts: braces in a code span stay as they are.
+
+    Args:
+        inline: The heading's inline token; its last text child loses the list.
+
+    Returns:
+        The list's ``#id`` (the last one), or ``None`` without a list or an id in it.
+    """
+    last = (inline.children or [None])[-1]
+    found = _ATTRIBUTE_LIST.search(last.content) if last and last.type == "text" else None
+    if last is None or found is None:
+        return None
+    last.content = last.content[: found.start()]
+    ids = _ATTRIBUTE_ID.findall(found[0])
+    return ids[-1] if ids else None
 
 
 def _anchor(text: str, used: set[str]) -> str:

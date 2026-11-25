@@ -167,6 +167,20 @@ describe("untrusted input", () => {
   });
 });
 
+describe("heading attribute lists", () => {
+  it("take the id the author set and leave the heading text, in MDX too", () => {
+    for (const mdx of [false, true]) {
+      const out = html("## HTTPX { #httpx }\n\n## Hello {#hi .x}\n\n## Map `{#k}`\n", mdx);
+      expect(out).toContain('id="doc-httpx"');
+      expect(out).toContain('id="doc-hi"');
+      expect(out).toContain('id="doc-map-k"');
+      expect(out).not.toContain("{ #httpx }");
+      expect(out).not.toContain("{#hi");
+      expect(out).toContain("{#k}");
+    }
+  });
+});
+
 describe("links and images", () => {
   it("resolves repository paths against the article's folder and never leaves the repository", () => {
     expect(repoPath("docs/guide/start.md", "./img/a.png")).toBe("docs/guide/img/a.png");

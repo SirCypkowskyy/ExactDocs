@@ -346,6 +346,25 @@ def test_anchors_match_the_shared_vectors(case: dict, chunker: Chunker) -> None:
     assert [c.anchor for c in chunks if c.heading_path] == case["anchors"]
 
 
+def test_an_attribute_list_leaves_the_heading_path_and_names_the_anchor() -> None:
+    """Issue #562: ``{ #id }`` is markup, not heading text; the chunk text stays verbatim."""
+    body = "# Async Tests { #async-tests }\n\nIntro.\n\n## HTTPX {: #httpx .x }\n\n### Mock {.y}\n"
+    chunks = MarkdownChunker(ChunkingConfig(split_depth=1)).chunk(parse_article("a.md", body))
+
+    (chunk,) = chunks
+    assert chunk.content == body
+    assert [(h.heading_path, h.anchor) for h in chunk.headings or ()] == [
+        (("Async Tests",), "async-tests"),
+        (("Async Tests", "HTTPX"), "httpx"),
+        (("Async Tests", "HTTPX", "Mock"), "mock"),
+    ]
+
+
+def test_braces_inside_a_code_span_stay_in_the_heading(chunker: Chunker) -> None:
+    (chunk,) = chunker.chunk(parse_article("a.md", "## The `{#x}` and `{}` forms\n"))
+    assert chunk.heading_path == ("The {#x} and {} forms",)
+
+
 def test_the_web_copy_of_the_anchor_vectors_is_identical() -> None:
     """The web build sees only ``web/``, so its test reads a copy (Biome formats it): same data."""
     copy = TESTS.parents[2] / "web/src/features/browse/render/fixtures/heading_anchors.json"
