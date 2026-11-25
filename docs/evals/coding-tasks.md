@@ -12,6 +12,8 @@
       every solution written for the other version fails (`just coding-tasks check`).
     - Agents run the tasks with the workspace tools and a documentation arm of the
       [agent benchmark](agent-bench.md) (`just coding-tasks run`), never in CI.
+    - Coding-agent CLIs (Claude Code, Codex, Gemini CLI, OpenCode) run the same tasks, graded the
+      same way, in the [harness benchmark](harnesses.md).
 
 It lives in
 [`packages/exactdocs/evals/coding_tasks/`](https://github.com/SirCypkowskyy/ExactDocs/tree/develop/packages/exactdocs/evals/coding_tasks)
@@ -157,8 +159,8 @@ A run the provider failed is not graded, counted in *Errors*, and asked again by
 ## The agent
 
 The agent is the agent benchmark's (#495): a pydantic-ai agent with one documentation arm
-(`none`, `exactdocs`; `context7` and `grounded-docs` once their toolsets are built) and the
-workspace tools:
+(`none`, `exactdocs`, `context7` or `grounded-docs`, each with only its own tools, as there) and
+the workspace tools:
 
 | Tool | What it does |
 |---|---|

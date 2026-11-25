@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"01a213ab-1b28-7384-b721-ffe99683db72"}
+{"type":"turn.started"}
+{"type":"error","message":"Reconnecting... 1/5 (unexpected status 503 Service Unavailable: upstream overloaded)"}
+{"type":"turn.failed","error":{"message":"exceeded retry limit, last status: 429 Too Many Requests"}}
