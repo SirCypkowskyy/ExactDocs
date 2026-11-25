@@ -13,6 +13,10 @@ updates:
     target-branch: develop
     groups:
       web: { patterns: ["*"] }
+    ignore:
+      # v9 changes the API the shared data table uses; the move is #555.
+      - dependency-name: "@tanstack/react-table"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: npm
     directory: /deploy/mermaid-check
     schedule: { interval: weekly }
