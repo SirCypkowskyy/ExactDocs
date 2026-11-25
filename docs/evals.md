@@ -1089,7 +1089,10 @@ scorings take the same wrong-version decision on every case at every chunking (B
 nothing of another version, and no result's text is only in another version). At `default`, 72%
 of BM25's results are version-neutral; its ten results hold 3,464 tokens of context on average,
 656 of them up to the first hit; they hold 87% of the cases' facts, where the expected sections'
-own text holds 81% and another question's results 25%.
+own text holds 81% and another question's results 25%. Both scorings give the same recall within
+each token budget at every chunking (#575; whole results): at `default`, 78.3%, 88.8% and 93.6%
+within 1,000, 2,000 and 4,000 tokens; at `h2`, whose chunks are twice as long, 49.1%, 76.8% and
+89.1%.
 
 The threshold is 0.8 because of the sweep: below it, results of other articles that share part of
 a section's text count as hits (at `default`, 98.8% agreement at 0.7, 97.5% at 0.5); above it the

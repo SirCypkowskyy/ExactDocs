@@ -16,7 +16,9 @@ is configured. It ran on this machine, so it indexed exactly what ExactDocs impo
 works, and how to repeat it: [Grounded Docs](../evals.md#grounded-docs) in the evals reference.
 
 The run of 24 November 2026 (Grounded Docs 3.4.1, both configurations, the whole golden set),
-next to ExactDocs' BM25 at `default` asked and scored the same way. A hit is a result that answers
+next to ExactDocs' BM25 at `default` asked and scored the same way; its questions were asked
+again on 25 November on the indexes it built, for the token budgets of #575, and every answer
+scored as before. A hit is a result that answers
 any section the case lists, a part or one of its alternatives, as in
 [Retrieval metrics](method.md#retrieval-metrics):
 
@@ -36,6 +38,17 @@ any section the case lists, a part or one of its alternatives, as in
 - **Twice the context.** Its results hold 7,360 to 7,935 estimated tokens per question, against
   ExactDocs' 3,464, and 1,998 to 2,324 tokens up to the first hit, against 656. That bigger
   context also holds more of the cases' facts (92% to 94%, against 87%).
+- **At the same amount of context, ExactDocs finds the answer more often** (#575). Within the
+  first 1,000, 2,000 and 4,000 estimated tokens of what each tool returned, ExactDocs' BM25 finds
+  a section that answers in 78.3%, 88.8% and 93.6% of the cases, results read whole; Grounded
+  Docs with `bge-small-en-v1.5` in 34.5%, 58.8% and 75.7%, and full-text in 25.1%, 53.6% and
+  70.0%. Reading whole results is the harder rule for a tool with long results, so the
+  comparison is also made with the text cut at the budget (the result the budget cuts counts
+  when its part within the budget answers), the rule that favours long results: ExactDocs 83.5%,
+  90.3% and 93.6%, Grounded Docs 58.4%, 73.0% and 82.4% with the embedding model. ExactDocs leads
+  at every budget, under both rules, and every difference is significant (McNemar, p under
+  0.000002). Grounded Docs' lead at rank 1 comes with the size of its results: each holds about
+  1,000 tokens, ExactDocs' about 350.
 - **Changelogs are left out.** Its default exclusion patterns skip `changelog.md` and
   `changelog.mdx` (and hidden files), so it did not index Pydantic v1's and Zod v4's changelogs,
   and four answerable Zod v4 cases list no section outside `changelog.mdx` (two more list it
