@@ -44,7 +44,7 @@ local = [
     # 0.9.1 (2026-10-24, more than 14 days old when taken) allows Pillow 13, which fixes the
     # CRITICAL/HIGH CVEs of Pillow 12.3 that 0.9.0 (`pillow<13`) held the -local image to (#246).
     "fastembed==0.9.1",
-    "onnxruntime==1.31.0",
+    "onnxruntime==1.32.0",
 ]
 # Qdrant as the vector backend (#355, EXACTDOCS_VECTOR_BACKEND=qdrant): imported only by
 # `retrieval/adapters/driven/qdrant_index.py`, and only once an operator names the backend. Not in
