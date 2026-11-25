@@ -5,7 +5,7 @@ its text.
 """
 
 from collections.abc import Callable, Sequence
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastmcp import FastMCP
 from fastmcp.apps.config import AppConfig
@@ -36,6 +36,7 @@ from exactdocs.retrieval.constants import (
     ARTICLE_OUTLINE_DESCRIPTION,
     MAX_QUERY,
     MAX_TAGS,
+    MORE_MATCHES,
     POINTER_TEXT,
     RULES_HEADING,
     SECTION_SEPARATOR,
@@ -225,7 +226,7 @@ def format_search(result: SearchDocsResult) -> str:
         f"{_line(result.version)} (commit {result.commit_sha}, mode {result.retrieval_mode})."
     )
     if not result.coverage.complete:
-        head += " More matches exist than the limit allowed."
+        head += f" {MORE_MATCHES}"
     blocks, group = [head], None
     for found in result.results:
         if found.group is not None and found.group != group:  # grouped by article (#575)
@@ -273,6 +274,24 @@ class _UntrustedText:
         return str(Rx(key))
 
 
+def _ui(app: PrefabApp) -> dict[str, Any]:
+    """The structured content of an MCP App tool: the notice, then the app's Prefab payload.
+
+    A host with MCP Apps renders the Prefab keys (``$prefab``, ``view``, ``state``) and ignores
+    ``notice``. A client that gives its model the structured content instead of the text blocks
+    (pydantic-ai, #587) gets the payload, whose state holds every value of the text blocks, and
+    reads the notice first. Prefab's own ``to_json`` serializes it as FastMCP would: the app calls
+    no tool, so there is no tool reference for FastMCP to address.
+
+    Args:
+        app: The app.
+
+    Returns:
+        ``notice`` followed by the app's wire format.
+    """
+    return {"notice": NOTICE, **app.to_json()}
+
+
 def _search_app(query: str, result: SearchDocsResult) -> PrefabApp:
     """Build the UI of a search: notice, query and version, then a card per result, best first.
 
@@ -298,6 +317,8 @@ def _search_app(query: str, result: SearchDocsResult) -> PrefabApp:
             )
         if not result.results:
             Muted("No matches in this version.")
+        if not result.coverage.complete:
+            Muted(MORE_MATCHES)
         for found in result.results:
             _result_card(text, found)
     return PrefabApp(title=VIEW_SEARCH_TITLE, view=view, state=text.state)
@@ -305,6 +326,9 @@ def _search_app(query: str, result: SearchDocsResult) -> PrefabApp:
 
 def _result_card(text: _UntrustedText, found: SearchResultOut) -> None:
     """Add one result's card to the component being built: where it is, its tags, its text.
+
+    The chunk ID is shown too, as in the text fallback: a model that reads this UI follows up
+    with ``read_chunk``.
 
     Args:
         text: The app's state, which takes every repository value.
@@ -314,6 +338,7 @@ def _result_card(text: _UntrustedText, found: SearchResultOut) -> None:
         with CardHeader():
             CardTitle(text.ref(_result_title(found)))
             CardDescription(text.ref(found.article_path))
+            Muted(text.ref(f"Chunk {found.chunk_id}"))
             with Row(gap=2, align="center", css_class="flex-wrap"):
                 for tag in found.tags:
                     Badge(text.ref(tag), variant="secondary")
@@ -472,7 +497,7 @@ def register_tools(
             path_prefix: Only articles inside this directory.
 
         Returns:
-            The notice and the results as text, with the UI as structured content.
+            The notice and the results as text, with the notice and the UI as structured content.
         """
         found = await search_docs(
             SearchDocsQuery(
@@ -491,7 +516,7 @@ def register_tools(
                 TextContent(type="text", text=NOTICE),
                 TextContent(type="text", text=format_search(found)),
             ],
-            structured_content=_search_app(query, found),
+            structured_content=_ui(_search_app(query, found)),
         )
 
     @mcp.tool(
