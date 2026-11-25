@@ -64,7 +64,7 @@ and only the files that changed are chunked again.
 
 A `context7.json` at the repository root pre-fills the library. Added without paths, the library
 takes its folders and exclusions; its title and description win over the README's; and its rules
-come first in every `query-docs` answer. The [REST API](rest-api.md) page has the details.
+come first in every `query-docs` answer. The [REST API](rest-api/libraries.md#context7json) page has the details.
 
 The import also looks for the project's logo: an image the root README opens with whose path or
 alt text says "logo", else a conventional file such as `logo.svg` or `.github/logo.png`. ExactDocs
@@ -203,7 +203,7 @@ They differ from `ctx7` in a few ways:
 - The query may be given as several words.
 - A library lists its default version, articles and chunks, with no stars or trust score.
 - There is no `ctx7 search` command yet. To search every library at once, use the web UI's search,
-  the `search_all_docs` MCP tool or `GET /api/v1/search` ([REST API](rest-api.md)).
+  the `search_all_docs` MCP tool or `GET /api/v1/search` ([REST API](rest-api/search.md#search-across-libraries)).
 
 ### Exit codes
 
@@ -448,7 +448,7 @@ exactdocs user reset-password bob              # new password; his sessions end,
 
 Like `admin create`, these open the database directly (in Docker,
 `docker exec -it exactdocs exactdocs user create bob`). An admin can do the same on the **Users**
-page of the web UI (`/users`; the API is `/api/v1/users`, see [REST API](rest-api.md)), which
+page of the web UI (`/users`; the API is `/api/v1/users`, see [REST API](rest-api/users-and-access.md#users)), which
 other accounts neither see nor reach (403).
 
 - A disabled account cannot sign in; it gets the same answer as a wrong password. Its sessions and
@@ -499,7 +499,7 @@ token must be signed by a key from the provider's JWKS with an asymmetric algori
 advertises (never `none` or `HS*`), and carry the configured issuer, the client ID in `aud` (and in
 `azp` when it is present or `aud` names several audiences), the attempt's `nonce`, and times that
 are valid within 60 s of leeway. A new signing key is fetched when a token first names it, at most
-once a minute. The issuer must be HTTPS. [REST API](rest-api.md) and
+once a minute. The issuer must be HTTPS. [REST API](rest-api/authentication.md#external-sign-in) and
 [Architecture](architecture.md#external-sign-in-oidc) describe the sign-in routes and the stored
 data.
 
@@ -578,5 +578,5 @@ Every signed-in account may add libraries unless an operator limits that to chos
 ([Who may create libraries](configuration.md#who-may-create-libraries)). API tokens and MCP clients
 act as their user, so an agent sees exactly the libraries its user may view. A token can also be
 narrowed to chosen libraries: `--library` on `exactdocs token create`, or `library_ids` in the
-[REST API](rest-api.md). [Architecture](architecture.md#library-roles) explains how the roles are
+[REST API](rest-api/authentication.md#library-scope). [Architecture](architecture.md#library-roles) explains how the roles are
 checked.

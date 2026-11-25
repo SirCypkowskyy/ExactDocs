@@ -1,4 +1,4 @@
-/** Most tags the API accepts in one filter, and on one article path by hand (docs/rest-api.md). */
+/** Most tags the API accepts in one filter, and on one article path by hand (docs/rest-api/articles.md). */
 export const MAX_TAGS = 20;
 /** Longest value the API reads in a tag filter; anything longer matches nothing. */
 const MAX_TAG_INPUT = 100;

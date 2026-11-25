@@ -1,7 +1,7 @@
 # Flows
 
 How the main paths through ExactDocs work. The structure behind them is in
-[Architecture](architecture.md); the endpoints are in the [REST API](rest-api.md). Planned stages
+[Architecture](architecture.md); the endpoints are in the [REST API](rest-api/index.md). Planned stages
 are drawn dashed and labelled *planned*.
 
 ## Importing a version

@@ -181,7 +181,7 @@ linked from Account settings, and unlinked again (after a confirmation); a linke
 signs the account in, and its groups and role at the provider are not used. An identity that is
 already linked to another account is refused. Linking needs a signed-in session: the
 provider's callback must come back to the same browser session that started it. See
-[REST API](rest-api.md) (*Linked sign-in providers*).
+[REST API](rest-api/account.md#linked-sign-in-providers).
 
 Two settings apply to all providers:
 
@@ -313,7 +313,7 @@ no CA file.
 ExactDocs counts reads, searches and agent answers per UTC day, account, API token, library and
 operation (#510): counts only, never a query, a path or any text. Operators read them at
 `GET /api/v1/stats/usage`, everyone their own at `GET /api/v1/account/usage`, and the leaderboards
-at `GET /api/v1/stats/leaderboard` (see [REST API](rest-api.md)). Per-person usage is monitoring
+at `GET /api/v1/stats/leaderboard` (see [REST API](rest-api/usage.md)). Per-person usage is monitoring
 data under the GDPR, hence the opt-in for people and the bounded retention. The `[usage]` table
 of the TOML file takes the same settings.
 
