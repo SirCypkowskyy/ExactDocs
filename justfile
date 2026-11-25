@@ -127,7 +127,7 @@ grounded-bench *args:
 context7-bench *args:
     uv run python packages/exactdocs/evals/run_context7_bench.py {{ args }}
 
-# Agent benchmark (never in CI): an agent with only the ExactDocs MCP tools answers the golden set (docs/evals.md); `just agent-bench run --offline`
+# Agent benchmark (never in CI): an agent with no docs, or with only the MCP tools of ExactDocs, Context7 or Grounded Docs, answers the golden set (docs/evals.md); `just agent-bench run --offline`
 agent-bench *args:
     uv run python packages/exactdocs/evals/run_agent_bench.py {{ args }}
 

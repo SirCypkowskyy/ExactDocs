@@ -4,7 +4,10 @@ name: Agent benchmark (real providers)
 # pull request. It runs the agent benchmark (docs/evals.md#the-agent-benchmark,
 # `just agent-bench run`): each agent model answers the golden set with each documentation arm
 # (`none`: no tools; `exactdocs`: only the ExactDocs MCP tools, under each retrieval
-# configuration), and an LLM judge, blind to the arm, grades the answers.
+# configuration; `context7`: only the official Context7 MCP server's, a pinned npm release;
+# `grounded-docs`: only Grounded Docs' read-only tools, a pinned npm release over its own index of
+# the pinned versions, built on the first run), and an LLM judge, blind to the arm, grades the
+# answers.
 #
 # Agent and judge models are pydantic-ai model names (`ollama:<model>` for an Ollama server);
 # their keys:
@@ -17,7 +20,9 @@ name: Agent benchmark (real providers)
 # The server's own models (an embedding model in a retrieval configuration, `eval:<model>`) use
 # the profile `eval` of the retrieval workflow (eval-providers.yml): the variables
 # EVAL_PROVIDER_KIND, EVAL_PROVIDER_BASE_URL, EVAL_PROVIDER_API_VERSION and the secret
-# EVAL_PROVIDER_API_KEY. Blank values count as unset.
+# EVAL_PROVIDER_API_KEY. The `context7` arm needs the repository secret CONTEXT7_API_KEY (the one
+# the Context7 run of eval-providers.yml reads); no Context7 number is published until Upstash
+# permits it (docs/evals.md#terms-of-service). Blank values count as unset.
 
 on:
   workflow_dispatch:
@@ -29,7 +34,7 @@ on:
         description: Judge model (e.g. openai:gpt-5)
         required: true
       arms:
-        description: Documentation arms, comma-separated (none, exactdocs; context7 and grounded-docs are not built yet)
+        description: Documentation arms, comma-separated (none, exactdocs, context7, grounded-docs)
         required: false
         default: "none,exactdocs"
       thinking:
@@ -41,7 +46,7 @@ on:
         required: false
         default: "bm25:mode=bm25 hybrid:mode=hybrid,embedding.model=eval:text-embedding-3-small"
       args:
-        description: Extra arguments (e.g. --projects zod --limit 10)
+        description: Extra arguments (e.g. --projects zod --limit 10, --grounded-docs bge-small-en-v1.5)
         required: false
         default: ""
 
@@ -83,6 +88,10 @@ jobs:
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           enable-cache: true
+      # The context7 and grounded-docs arms' servers are Node.js packages.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
       - name: Install
         run: uv sync --locked
       # The keys are given to this step only, not to `uv sync` (third-party build backends) or the
@@ -94,13 +103,16 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.AGENT_BENCH_ANTHROPIC_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.AGENT_BENCH_GOOGLE_API_KEY }}
           OLLAMA_API_KEY: ${{ secrets.AGENT_BENCH_OLLAMA_API_KEY }}
+          CONTEXT7_API_KEY: ${{ secrets.CONTEXT7_API_KEY }}
         run: |
           # A blank variable is unset: the provider SDKs would take an empty base URL or key.
           for name in OPENAI_BASE_URL OPENAI_API_KEY ANTHROPIC_API_KEY GOOGLE_API_KEY \
-            OLLAMA_BASE_URL OLLAMA_API_KEY; do
+            OLLAMA_BASE_URL OLLAMA_API_KEY CONTEXT7_API_KEY; do
             if [ -z "${!name}" ]; then unset "$name"; fi
           done
-          args=(--judge-model "$JUDGE_MODEL" --arm "${ARMS:-none,exactdocs}")
+          # Grounded Docs and its indexes live in the runner's temporary folder, built per run.
+          args=(--judge-model "$JUDGE_MODEL" --arm "${ARMS:-none,exactdocs}"
+            --grounded-docs-home "$RUNNER_TEMP/grounded-docs")
           if [ -n "$THINKING" ]; then args+=(--thinking "$THINKING"); fi
           IFS=',' read -ra models <<< "$AGENT_MODELS"
           for model in "${models[@]}"; do args+=(--agent-model "$model"); done

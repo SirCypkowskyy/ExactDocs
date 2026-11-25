@@ -1338,23 +1338,25 @@ workflow. The recorded runs and their caveats are on [Agent results](benchmark/a
 
 ### The arms
 
-| Arm | The agent's tools | Status |
+| Arm | The agent's tools | Configurations |
 |---|---|---|
-| `none` | none: it answers from what it knows of that version, or says it does not know | built |
-| `exactdocs` | only the ExactDocs MCP tools, `exactdocs serve --stdio`, under each retrieval configuration | built |
-| `context7` | the official Context7 MCP server at a pinned version | #493 |
-| `grounded-docs` | Grounded Docs' MCP server over its own index | #492 |
+| `none` | none: it answers from what it knows of that version, or says it does not know | - |
+| `exactdocs` | every ExactDocs MCP tool, `exactdocs serve --stdio` | `--retrieval` (BM25, hybrid, ...) |
+| `context7` | `resolve-library-id` and `query-docs` of the official Context7 MCP server, `@upstash/context7-mcp` 4.5.0 | - |
+| `grounded-docs` | `search_docs`, `read_page`, `list_pages`, `list_libraries` and `find_version` of Grounded Docs 3.4.1, read-only, over its own index of the pinned versions | `--grounded-docs` (`full-text`, `bge-small-en-v1.5`) |
 
-Every arm gets the same prompt, the same usage limits (`--max-requests`) and only its own tools.
-The instructions are the same for every arm and model apart from one sentence: an arm with a tool
-is told its only source of documentation is *that tool's* tools (only the name differs between
-`exactdocs`, `context7` and `grounded-docs`), to search exactly the version the project uses,
-read what it needs, answer from what it read and say when that version's documentation does not
-cover the question; `none` is told it has no tools and to answer from what it knows about that
-version or say that it does not know. Both end with "answer briefly; do not answer from another
-version". The arms are declared in `agent_bench/arms.py`; an arm whose toolset is not built yet is
-refused on the command line with its issue, and building one only adds its server to
-`ArmServers.tools` (`agent_bench/harness.py`).
+Every arm gets the same prompt, the same usage limits (`--max-requests`) and only its own tools:
+the agent's toolset is filtered to the arm's tools (`Arm.tools`, `harness.only_its_tools`), so a
+stand-in server's extra tools are filtered the same way as a real one's. The instructions are the
+same for every arm and model apart from one sentence: an arm with a tool is told its only source
+of documentation is *that tool's* tools (only the name differs between `exactdocs`, `context7` and
+`grounded-docs`), to search exactly the version the project uses, read what it needs, answer from
+what it read and say when that version's documentation does not cover the question; `none` is
+told it has no tools and to answer from what it knows about that version or say that it does not
+know. Both end with "answer briefly; do not answer from another version". No server's own
+instructions reach the agent (pydantic-ai's `include_instructions` stays off for every arm). The
+arms are declared in `agent_bench/arms.py`, their servers started in `agent_bench/servers.py`
+(`ArmServers.tools`).
 
 ### How a run works
 
@@ -1364,6 +1366,39 @@ when the configuration names an embedding model. Configurations that share an em
 share one import. Then ExactDocs is started **as shipped**, `exactdocs serve --stdio` on that data
 directory with the configuration's settings (and none of the agents' API keys), and the agent
 reaches it through a pydantic-ai `MCPToolset`. The `none` arm has no toolset.
+
+The `context7` arm (#493) runs the official Context7 MCP server, `@upstash/context7-mcp` 4.5.0
+(the release ExactDocs' own context7-compatible tools mirror, `tests/contracts/context7`),
+installed from npm into `~/.cache/exactdocs/context7-mcp/4.5.0` with the registry's integrity
+hash checked (`grounded_docs_cli.npm_install`, as Grounded Docs is installed), and started over
+stdio with Node.js 22. It answers from Context7's hosted index, so it needs `CONTEXT7_API_KEY`
+(the run refuses the arm without it, exit 2): the key is the only credential its process gets
+(none of the agents' or the judge's keys), and its OpenTelemetry metrics are off
+(`OTEL_SDK_DISABLED`). `CONTEXT7_API_URL` points it at another API, as the integration test does
+with a stand-in. Context7 serves a pinned version only where someone added it (see
+[Context7](#context7)); the agent picks the version from what `resolve-library-id` lists, as any
+agent does. What it reads cannot be traced to the pinned commits' sections (Context7 indexes its
+own sources), so *Read the answer* and *Read another version* are `n/a` for this arm. No Context7
+number is published until Upstash permits it ([Terms of service](#terms-of-service)).
+
+The `grounded-docs` arm (#492) runs Grounded Docs as the [Grounded Docs run](#grounded-docs) does,
+and on the same data directories: `@arabold/docs-mcp-server` 3.4.1 from npm (integrity checked),
+each pinned version of the asked projects indexed from the files the ExactDocs importer takes at
+the pinned commit (`grounded_docs_cli.indexed`, in `<home>/stores/<configuration>`, `--grounded-docs-home`,
+`~/.cache/exactdocs/grounded-docs` by default): a version already indexed at its commit is kept,
+so after `just grounded-bench` nothing is indexed again. Its MCP server then runs over HTTP on
+loopback in its **read-only** mode (`DOCS_MCP_READ_ONLY`), which lists no indexing tool, and with
+no inherited credential. The agent gets its five read tools; `fetch_url`, which reads any web
+page, is left out, since it would give this arm alone the web. `full-text` (the default) runs with
+no model, as `exactdocs` defaults to BM25; `bge-small-en-v1.5` serves that model locally to embed
+the questions (`--models-dir`, as `grounded-bench`). The library names Grounded Docs lists are the
+project IDs (`starlette`, `tanstack-query`); finding them is part of the task, as for ExactDocs.
+*Read the answer* counts a `read_page` answer that held a whole page of the asked version (a page
+in Grounded Docs is an article; a page read in parts does not count); its `search_docs` results
+are passages with context, like ExactDocs' snippets, and do not count.
+
+What each setup's server was (its release and integrity hash, its configuration, the tools the
+agent got) is recorded in `meta.servers` and under *Documentation servers* in the Markdown.
 
 The questions are interleaved: each case is asked of every agent model with every arm before the
 next case, `--concurrency` at a time, so a slow hour of the provider weighs on every arm alike.
@@ -1381,10 +1416,11 @@ What the agent is told is what a coding agent knows from a project, never the an
 Both are recorded in the report (`meta.agent_instructions` per arm, `meta.prompt`).
 
 A `process_tool_call` hook records, per question: every tool call (name, arguments cut to 200
-characters, time, error), the sections read in full (`read_chunk`, the chunks `query-docs`
-returned, whole articles from `read_article`) with their version, and how each search was
-answered (`bm25`, or `bm25 (mode_unavailable)` when the server fell back). The run also records,
-over every model request:
+characters, time, error), the sections read in full with their version (for `exactdocs`:
+`read_chunk`, the chunks `query-docs` returned, whole articles from `read_article`; for
+`grounded-docs`: whole pages from `read_page`; none for `context7`), and how each ExactDocs search
+was answered (`bm25`, or `bm25 (mode_unavailable)` when the server fell back). The run also
+records, over every model request:
 
 - **input tokens** and **output tokens**, as the provider reports them; the output includes the
   thinking (Ollama counts the `reasoning` text inside `completion_tokens`);
@@ -1438,8 +1474,8 @@ instructions are in `agent_bench/judge.py`.
 ### The report
 
 `reports/evals/agent-bench.json` (and `.md` next to it, also appended to `$GITHUB_STEP_SUMMARY`),
-one cell per agent model and arm (and retrieval configuration, for `exactdocs`), every rate and
-mean over the questions without a provider failure (`answered`):
+one cell per agent model and arm (and configuration, for `exactdocs` and `grounded-docs`), every
+rate and mean over the questions without a provider failure (`answered`):
 
 - **Quality**: grades and accuracy (share `correct`, plus `refused` on `unanswerable` cases),
   overall, per kind and per project; *No answer* and *Errors*; *Wrong for the version* (answers
@@ -1448,15 +1484,16 @@ mean over the questions without a provider failure (`answered`):
   answerable questions, the share where the agent read in full every part the case names, at its
   version: a section of each part, or one of its alternatives (#501); search snippets do not
   count. A case's sections are, by construction, where its facts are stated, so this measures
-  whether the cited text holds the required facts); *Read another version*; tool calls per
-  question;
+  whether the cited text holds the required facts; `n/a` for `none` and `context7`, see
+  [How a run works](#how-a-run-works)); *Read another version*; tool calls per question;
 - **Cost per question**: wall time (retries left out), input tokens, output tokens with the
   thinking, thinking tokens on their own (marked *estimated*, or *not returned*), USD, and the
   provider retries, each as mean with its 95% interval, p50 and p95 (nearest rank);
 - every rate and mean with its 95% interval (`intervals`, a percentile bootstrap over the
   questions as in [Intervals and paired tests](#intervals-and-paired-tests));
-- **Against the other arms, on the same cases** (`versus`): each arm against `none` (and every arm
-  but these two against `exactdocs` too), for the same agent model and the cases both answered:
+- **Against the other arms, on the same cases** (`versus`): each arm against `none`, and
+  `context7` and `grounded-docs` against `exactdocs` too, for the same agent model and the cases
+  both answered (a baseline arm's first configuration):
   the accuracy difference by McNemar's test (mid-p), the wall time, output tokens and input tokens
   by a paired sign-flip permutation test, each with its paired bootstrap interval, and the ratio
   of the means. This answers "how much longer does the agent take with the tool, and is it worth
@@ -1464,14 +1501,17 @@ mean over the questions without a provider failure (`answered`):
 - for each retrieval configuration of an arm but its first, McNemar's test of its accuracy
   against the first one's (`reference`, `versus_reference`), under *Against the first retrieval
   configuration*. Put the baseline first (`--retrieval`), e.g. BM25 when comparing models;
-- *Runs without an answer*: the `no_answer` and `error` runs and why.
+- *Runs without an answer*: the `no_answer` and `error` runs and why;
+- *Documentation servers*: what each setup's server was (`meta.servers`).
 
 `statistics` records the seed, resamples, confidence and level of the intervals and tests.
 `meta` holds what a rerun needs: the agent models, the judge model, the arms and their
-instructions, each retrieval configuration's settings, the selection of cases, the thinking
-setting, the limits and retries, where the models are served (`providers`: base URLs only), the
-ExactDocs version and repository commit, and every imported version with its pinned and recorded
-commit. `questions` holds every question's record (tool calls, chunks read as
+instructions, each `exactdocs` retrieval configuration's settings, each arm's server (`servers`:
+release, integrity hash, configuration, the tools the agent got; empty with stand-in tools), the
+selection of cases, the thinking setting, the limits and retries, where the models are served
+(`providers`: base URLs only), the ExactDocs version and repository commit, every imported
+version with its pinned and recorded commit, and how many answers were kept from an earlier run
+of the same command (`resumed`: those ran at that run's commit and time). `questions` holds every question's record (tool calls, chunks read as
 `<chunk ID>@<version>`, tokens, thinking, wall and retry time, USD, the answer as given, the
 judge's reason).
 
@@ -1479,7 +1519,9 @@ judge's reason).
 `PASSWORD`, `AUTH`, `HEADER` and the like is recorded as `<redacted>`, base URLs lose their user,
 password and query, and error messages and the judge's reasons have every secret-named environment
 value and `Bearer <token>` replaced (`agent_bench/redact.py`). The API keys are read from the
-environment only.
+environment only, and each documentation server gets none of the agents' keys: ExactDocs only its
+own settings, Context7 only `CONTEXT7_API_KEY` (recorded as `CONTEXT7_API_KEY set`), Grounded Docs
+no credential.
 
 ### Running it
 
@@ -1490,6 +1532,8 @@ OLLAMA_BASE_URL=https://ollama.com/v1 OLLAMA_API_KEY=... just agent-bench run \
   --arm none,exactdocs --retrieval bm25:mode=bm25 --thinking medium \
   --per-stratum 3 --concurrency 3            # 90 cases: 3 per kind and project
 just agent-bench run ... --resume            # ask again what failed on the provider's side
+just agent-bench run ... --arm none,exactdocs,grounded-docs --resume   # add an arm to a run
+CONTEXT7_API_KEY=... just agent-bench run ... --arm none,exactdocs,context7
 just agent-bench run --help
 ```
 
@@ -1500,7 +1544,16 @@ just agent-bench run --help
   pydantic-ai's Ollama provider at `OLLAMA_BASE_URL` (`https://ollama.com/v1` for Ollama Cloud)
   with `OLLAMA_API_KEY`, retried and measured as above. Use a judge from another vendor than the
   agents where you can.
-- `--arm` (repeat or comma-separate; default `none,exactdocs`) picks the arms.
+- `--arm` (repeat or comma-separate; default `none,exactdocs`) picks the arms: `none`,
+  `exactdocs`, `context7`, `grounded-docs`. `context7` and `grounded-docs` need Node.js 22 and the
+  npm registry for their first install; `context7` needs `CONTEXT7_API_KEY`. Adding an arm to a
+  recorded run is `--resume` with the arms it had and the new one: only the new arm's questions
+  are asked, and its cells are compared with the others' on the same cases.
+- `--grounded-docs NAME` (repeat for several; default `full-text`) names a Grounded Docs
+  configuration of the `grounded-docs` arm (`full-text`, `bge-small-en-v1.5`);
+  `--grounded-docs-home` is where Grounded Docs and its indexes are kept (`just grounded-bench`'s
+  `--home`, `~/.cache/exactdocs/grounded-docs` by default), `--models-dir` where the embedding
+  model is.
 - `--thinking on|off|minimal|low|medium|high|xhigh|max` sets the agents' thinking (pydantic-ai's
   `thinking`, sent to Ollama as `reasoning_effort`); left out, each model keeps its default. The
   setting is recorded (`meta.thinking`); some models think whatever it says.
@@ -1529,7 +1582,10 @@ secrets `AGENT_BENCH_OPENAI_API_KEY`, `AGENT_BENCH_ANTHROPIC_API_KEY`,
 `AGENT_BENCH_GOOGLE_API_KEY`, `AGENT_BENCH_OLLAMA_API_KEY` (and the variables
 `AGENT_BENCH_OPENAI_BASE_URL` for an OpenAI-compatible gateway and `AGENT_BENCH_OLLAMA_BASE_URL`)
 for the agents and the judge; the `eval` profile of the retrieval workflow (`EVAL_PROVIDER_*`) for
-the server's models. The report is uploaded as the artifact `agent-bench`.
+the server's models; the repository secret `CONTEXT7_API_KEY` for the `context7` arm. It sets up
+Node.js 22 for the `context7` and `grounded-docs` arms, and keeps Grounded Docs and its indexes in
+the runner's temporary folder (built on each run, a few minutes for `full-text`). The report is
+uploaded as the artifact `agent-bench`.
 
 ### Judge agreement
 
@@ -1566,13 +1622,19 @@ not worth labelling.
 `tests/evals/test_agent_bench.py` and `tests/evals/test_agent_arms.py` run in CI: the recording,
 grounding, pricing, the arms and their instructions, the blind judge, thinking tokens (reported,
 estimated, not returned), whose side a failure is on, the retry log, the redaction of secrets, the
-report and its paired comparisons, the checkpoint and `--resume`, and agreement. Both arms run end
-to end there with the stand-in models and the stand-in documentation tools of
-`tests/fixtures/agent_bench_stand_ins.py` (an in-process MCP server), as do the scenarios of
-`features/agent_bench.feature`. The end-to-end test, marked `eval` (`uv run pytest -m eval`),
-imports a two-version corpus built in a temporary repository, starts `exactdocs serve --stdio` on
-it under two configurations and runs every stand-in agent with both arms and the stand-in judge
-through it.
+report and its paired comparisons, the checkpoint and `--resume`, and agreement. All four arms
+run end to end there with the stand-in models and the stand-in documentation servers of
+`tests/fixtures/agent_bench_stand_ins.py` (in-process MCP servers in the shape of ExactDocs',
+Context7's and Grounded Docs', the last with `fetch_url` and `scrape_docs` too, which the agent
+must never be offered), as do the scenarios of `features/agent_bench.feature`. The end-to-end
+test, marked `eval` (`uv run pytest -m eval`), imports a two-version corpus built in a temporary
+repository, starts `exactdocs serve --stdio` on it under two configurations and runs every
+stand-in agent with both arms and the stand-in judge through it. `tests/evals/test_agent_arm_servers.py`
+(marked `integration` and `eval`: Node.js 22 and the npm registry; never in CI) runs the stand-in
+agents through the real servers: the official Context7 MCP server pointed at a stand-in of
+Context7's REST API on loopback (nothing reaches Context7; the test checks the key arrives as
+`Bearer` and is in no report), and Grounded Docs indexing a two-version corpus into a temporary
+home.
 
 ## Tiers
 
