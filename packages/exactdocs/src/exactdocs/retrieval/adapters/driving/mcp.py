@@ -422,9 +422,10 @@ def register_tools(
         The results come grouped by article: the article that answers best first, with all of
         its results, best first, then the next article (`group` is the article's rank).
         An empty result with `coverage.complete` true means this version has no match.
-        It never falls back to another version; pass `ref` to pin one. `path_prefix` keeps the
-        articles of one directory, as `list_articles` does. An empty optional argument counts as
-        not given; a library name is resolved to its ID; a `limit` out of range is clamped.
+        It never falls back to another version; pass `ref` to pin one (a ref that misses or adds
+        only a leading `v` is read as that version, noted). `path_prefix` keeps the articles of
+        one directory, as `list_articles` does. An empty optional argument counts as not given;
+        a library name is resolved to its ID; a `limit` out of range is clamped.
 
         Args:
             library: Library ID, e.g. '/facebook/react', or its name.
@@ -511,12 +512,15 @@ def register_tools(
             ),
             caller=caller(),
         )
+        structured = _ui(_search_app(query, found))
+        if found.notes:  # how the ref was read (#605); the server adds them to the text too
+            structured["notes"] = list(found.notes)
         return ToolResult(
             content=[
                 TextContent(type="text", text=NOTICE),
                 TextContent(type="text", text=format_search(found)),
             ],
-            structured_content=_ui(_search_app(query, found)),
+            structured_content=structured,
         )
 
     @mcp.tool(
@@ -767,9 +771,10 @@ def register_tools(
         found = await query_docs(
             QueryDocsQuery(library_id=libraryId, query=query, language=language), caller=caller()
         )
-        return ToolResult(
-            content=[
-                TextContent(type="text", text=NOTICE),
-                TextContent(type="text", text=format_docs(found)),
-            ]
-        )
+        content = [
+            TextContent(type="text", text=NOTICE),
+            TextContent(type="text", text=format_docs(found)),
+        ]
+        if found.notes:  # how the ref was read (#605), as the other tools' notes read
+            content.append(TextContent(type="text", text="Notes: " + " ".join(found.notes)))
+        return ToolResult(content=content)

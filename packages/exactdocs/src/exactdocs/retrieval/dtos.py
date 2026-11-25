@@ -1,5 +1,6 @@
 """Data crossing the retrieval boundary. Immutable, validated."""
 
+import operator
 from collections.abc import Sequence
 from datetime import date, datetime
 from typing import Annotated, Literal, Self
@@ -412,6 +413,10 @@ class SearchDocsResult(_Dto):
     against this version and filter again."""
     results: list[SearchResultOut]
     """The results, best first, or grouped by article (`group`); empty when nothing matched."""
+
+    notes: list[str] = Field(default_factory=list, exclude_if=operator.not_)
+    """How the request was read where it differs from what was sent: a ref read as the one
+    imported version it names but for a leading `v` (#605). Absent when it was read as sent."""
 
 
 class LibrarySearchResultOut(SearchResultOut):
@@ -1216,10 +1221,19 @@ class ArticleOutlineOut(_Dto):
     """The chunk of the text before the first heading, if it is one; null otherwise."""
     sections: list[OutlineSectionOut]
     """The top-level headings, in document order."""
+    notes: list[str] = Field(default_factory=list, exclude_if=operator.not_)
+    """How the request was read where it differs from what was sent: a ref read as the one
+    imported version it names but for a leading `v` (#605). Absent when it was read as sent."""
 
     @classmethod
     def from_model(
-        cls, version: SearchableVersion, article_path: str, found: Outline, chunks: int
+        cls,
+        version: SearchableVersion,
+        article_path: str,
+        found: Outline,
+        chunks: int,
+        *,
+        notes: Sequence[str] = (),
     ) -> Self:
         """Map the outline of an article of the active manifest of ``version``.
 
@@ -1228,6 +1242,7 @@ class ArticleOutlineOut(_Dto):
             article_path: The article's path.
             found: Its heading tree.
             chunks: How many chunks the article has.
+            notes: How the ref was read, where it differs from what was sent.
 
         Returns:
             The outline as a DTO.
@@ -1242,6 +1257,7 @@ class ArticleOutlineOut(_Dto):
             chunks=chunks,
             preamble_chunk_id=found.preamble.chunk_id if found.preamble else None,
             sections=[OutlineSectionOut.from_model(node) for node in found.sections],
+            notes=list(notes),
         )
 
 
@@ -1461,6 +1477,9 @@ class QueryDocsResult(_Dto):
     """The library's `context7.json` rules that fit the budget, shown before the sections. Untrusted
     repository text.
     """
+    notes: list[str] = Field(default_factory=list, exclude_if=operator.not_)
+    """How the request was read where it differs from what was sent: a ref read as the one
+    imported version it names but for a leading `v` (#605). Absent when it was read as sent."""
 
 
 class GetLibraryRetrievalQuery(_Dto):
