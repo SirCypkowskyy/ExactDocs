@@ -146,6 +146,7 @@ ignore = [
 "packages/exactdocs/evals/retrieval_eval/golden_review.py" = ["suspicious-non-cryptographic-random-usage"]
 "packages/exactdocs/evals/run_ingestion_bench.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_retrieval_bench.py" = ["implicit-namespace-package"]
+"packages/exactdocs/evals/run_retrieval_grid.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_agent_bench.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_bench_pages.py" = ["implicit-namespace-package"]
 "packages/exactdocs/evals/run_text_bench.py" = ["implicit-namespace-package"]

@@ -111,6 +111,10 @@ ingestion-bench *args:
 retrieval-bench *args:
     uv run python packages/exactdocs/evals/run_retrieval_bench.py {{ args }}
 
+# Retrieval grid: chunking, context and embedding variants and plain baselines on the golden set, resumable (docs/evals.md)
+retrieval-grid *args:
+    uv run python packages/exactdocs/evals/run_retrieval_grid.py {{ args }}
+
 # Text scorer: calibrate scoring from a result's text against chunk-ID scoring on BM25 (docs/evals.md)
 text-bench *args:
     uv run python packages/exactdocs/evals/run_text_bench.py {{ args }}
