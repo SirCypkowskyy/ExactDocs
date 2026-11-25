@@ -266,7 +266,9 @@ async def run_tasks(
         agent_models=list(agent_models),
         arms=[arm.name for arm in arms],
         retrieval={
-            s.config.name: recorded_settings(s.config.env) for s in setups if s.config is not None
+            s.config.name: recorded_settings(s.config.env)
+            for s in setups
+            if s.config is not None and s.arm.name == EXACTDOCS
         },
         tasks=len(dataset.cases),
         selection=selection,

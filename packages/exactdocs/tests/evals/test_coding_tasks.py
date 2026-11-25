@@ -507,12 +507,14 @@ def test_the_command_line_lists_the_tasks(capsys: pytest.CaptureFixture[str]) ->
     assert "over 1 projects (zod)" in out
 
 
-def test_the_command_line_refuses_context7_without_its_key(
+def test_the_command_line_refuses_the_context7_arm_without_its_key(
     capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.delenv("CONTEXT7_API_KEY", raising=False)
     assert main(["run", "--offline", "--arm", "context7"]) == 2
-    assert "needs a Context7 API key" in capsys.readouterr().err
+    assert "needs a Context7 API key in CONTEXT7_API_KEY" in capsys.readouterr().err
+    assert main(["run", "--offline", "--arm", "web"]) == 2
+    assert "unknown arm 'web'" in capsys.readouterr().err
 
 
 # ------------------------------------------------------------------ real environments (opt-in)
