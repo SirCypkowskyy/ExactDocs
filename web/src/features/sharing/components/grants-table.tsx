@@ -1,11 +1,11 @@
 import { useSearch } from "@tanstack/react-router";
-import type { ColumnDef } from "@tanstack/react-table";
 import { ChevronDown, UserPlus, UserRound, Users } from "lucide-react";
 import { createContext, type ReactNode, use, useMemo } from "react";
 import { useMessages } from "@/shared/lib/i18n";
 import { Badge } from "@/shared/ui/badge";
 import { Person } from "@/shared/ui/data-table/cells";
 import { DataTable } from "@/shared/ui/data-table/data-table";
+import type { ColumnDef } from "@/shared/ui/data-table/features";
 import { DataTablePagination } from "@/shared/ui/data-table/pagination";
 import type { RowActions } from "@/shared/ui/data-table/row-actions";
 import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";

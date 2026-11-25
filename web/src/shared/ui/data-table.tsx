@@ -1,16 +1,15 @@
 import {
-  type ColumnDef,
+  type ColumnVisibilityState,
   flexRender,
-  getCoreRowModel,
-  type Table,
-  useReactTable,
-  type VisibilityState,
+  type RowData,
+  useTable,
 } from "@tanstack/react-table";
 import { useState } from "react";
 import { useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { Button } from "./button";
 import { SortHeader } from "./data-table/columns";
+import { type ColumnDef, features, type Table } from "./data-table/features";
 import { sortingOf } from "./data-table/table-search";
 import { messages } from "./messages";
 import { Skeleton } from "./skeleton";
@@ -25,7 +24,7 @@ export { ColumnsMenu, SortHeader } from "./data-table/columns";
 export { SearchFilter } from "./data-table/search-filter";
 export { sortingOf };
 
-interface ServerTableOptions<T> {
+interface ServerTableOptions<T extends RowData> {
   data: readonly T[];
   columns: ColumnDef<T>[];
   getRowId: (row: T) => string;
@@ -37,18 +36,18 @@ interface ServerTableOptions<T> {
  * A table whose rows the server sorts and filters (manual mode): it holds the sort, which lives in
  * the URL, and which columns are shown.
  */
-export function useServerTable<T>({
+export function useServerTable<T extends RowData>({
   data,
   columns,
   getRowId,
   sort,
   onSort,
 }: ServerTableOptions<T>) {
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({});
-  return useReactTable({
+  const [columnVisibility, setColumnVisibility] = useState<ColumnVisibilityState>({});
+  return useTable({
+    features,
     data: data as T[],
     columns,
-    getCoreRowModel: getCoreRowModel(),
     getRowId,
     manualSorting: true,
     manualFiltering: true,
@@ -66,7 +65,7 @@ export function useServerTable<T>({
 }
 
 /** The rows of a server-side table, with a skeleton row while the next page is on its way. */
-export function DataTable<T>({
+export function DataTable<T extends RowData>({
   table,
   label,
   loadingMore,

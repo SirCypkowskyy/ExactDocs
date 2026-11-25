@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useRouter } from "@tanstack/react-router";
-import type { ColumnDef } from "@tanstack/react-table";
 import { ArrowRight, ArrowUpRight, Copy, FileText, FolderOpen, Link2 } from "lucide-react";
 import { useId, useMemo } from "react";
 import { toast } from "sonner";
@@ -8,6 +7,7 @@ import { useMessages } from "@/shared/lib/i18n";
 import { tagsQueryOptions } from "@/shared/lib/tags-query";
 import { Bytes, Chips } from "@/shared/ui/data-table/cells";
 import { DataTable } from "@/shared/ui/data-table/data-table";
+import type { ColumnDef } from "@/shared/ui/data-table/features";
 import { DataTablePagination } from "@/shared/ui/data-table/pagination";
 import type { RowAction } from "@/shared/ui/data-table/row-actions";
 import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";

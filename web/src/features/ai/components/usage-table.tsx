@@ -1,12 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { useSearch } from "@tanstack/react-router";
-import type { ColumnDef } from "@tanstack/react-table";
 import { Gauge, Layers, LibraryBig, type LucideIcon, Server, UserRound } from "lucide-react";
 import { useMemo } from "react";
 import { common, type Language, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { absoluteTimeWithZone } from "@/shared/lib/time";
 import { LibraryCell } from "@/shared/ui/data-table/cells";
 import { DataTable } from "@/shared/ui/data-table/data-table";
+import type { ColumnDef } from "@/shared/ui/data-table/features";
 import { DataTablePagination } from "@/shared/ui/data-table/pagination";
 import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
 import { type TableFilter, useDataTable } from "@/shared/ui/data-table/use-data-table";
