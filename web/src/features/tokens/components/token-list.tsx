@@ -1,10 +1,10 @@
-import type { ColumnDef, FilterFn, SortingFn } from "@tanstack/react-table";
 import { CircleX, Clock, Infinity as Endless } from "lucide-react";
 import { useMessages } from "@/shared/lib/i18n";
 import { useNow } from "@/shared/lib/use-now";
 import { cn } from "@/shared/lib/utils";
 import { Badge } from "@/shared/ui/badge";
 import { Chips, MonoCopy, RelativeTime } from "@/shared/ui/data-table/cells";
+import type { ColumnDef, FilterFn, SortFn } from "@/shared/ui/data-table/features";
 import type { TableFilter } from "@/shared/ui/data-table/use-data-table";
 import { messages } from "../messages";
 import {
@@ -32,7 +32,7 @@ const inList: FilterFn<Token> = (row, id, values: readonly string[]) =>
 
 /** Sorts by a time of the token (never first ascending), not by the column's category. */
 const byTime =
-  (field: "expires_at" | "last_used_at"): SortingFn<Token> =>
+  (field: "expires_at" | "last_used_at"): SortFn<Token> =>
   (a, b) => {
     const x = sortTime(a.original[field]);
     const y = sortTime(b.original[field]);
@@ -145,7 +145,7 @@ export const columnsOf = (m: TokensMessages): ColumnDef<Token>[] => [
     header: m.list.columns.expires,
     enableGlobalFilter: false,
     filterFn: inList,
-    sortingFn: byTime("expires_at"),
+    sortFn: byTime("expires_at"),
     meta: { priority: 2, skeleton: "pill" },
     cell: ({ row }) => <ExpiresCell token={row.original} />,
   },
@@ -156,7 +156,7 @@ export const columnsOf = (m: TokensMessages): ColumnDef<Token>[] => [
     sortDescFirst: true,
     enableGlobalFilter: false,
     filterFn: inList,
-    sortingFn: byTime("last_used_at"),
+    sortFn: byTime("last_used_at"),
     meta: { priority: 3 },
     cell: ({ row }) => <RelativeTime iso={row.original.last_used_at} empty={m.list.neverUsed} />,
   },

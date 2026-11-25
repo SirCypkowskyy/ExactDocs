@@ -19,8 +19,10 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
 | Retrieval eval | Pydantic Evals, `just eval` | `packages/exactdocs/evals/` (tests in `tests/evals/`; the end-to-end ones are marked `eval`) | recall, wrong-version rate, latency and cost per retrieval mode; gates in docs/evals.md; runs on releases, not in CI | minutes |
 | Ingestion benchmark | `just ingestion-bench` (needs the golden corpus cache) | `packages/exactdocs/evals/retrieval_eval/ingestion*.py` (tests in `tests/evals/test_ingestion.py`) | coverage, cut blocks, chunk sizes and heading paths per chunking configuration, with BM25 recall; `--check` against `evals/results/ingestion.json`; runs on releases, not in CI | about a minute per configuration |
 | Retrieval benchmark | `just retrieval-bench` (golden corpus cache; local models from `exactdocs models pull`) | `packages/exactdocs/evals/retrieval_eval/retrieval_bench*.py` (tests in `tests/evals/test_retrieval_bench.py`, `retrieval_bench.feature`) | recall, MRR, nDCG@10, wrong version, unanswerable handling, latency and cost of every mode, model and reranker at every chunking configuration, with the default per budget; BM25 at `default` is checked on releases; hosted models only through the manual real-providers workflow | a minute model-free; hours with every local model |
+| Retrieval grid | `just retrieval-grid` (golden corpus cache; local models for the embedding cells) | `packages/exactdocs/evals/retrieval_eval/grid*.py`, cells in `evals/golden/matrix.yaml` (tests in `tests/evals/test_retrieval_grid.py`, `retrieval_grid.feature`) | eval-only chunking, context and embedding variants and the grep and fixed-window RAG baselines, text-scored, each tested against its budget's shipped default; resumable per cell; by hand only | seconds per model-free cell; an embedding cell embeds the corpus |
 | Text scorer | `just text-bench --offline` (golden corpus cache) | `packages/exactdocs/evals/retrieval_eval/text_match.py`, `text_bench*.py` (tests in `tests/evals/test_text_match.py`, `test_text_bench.py`, `text_scorer.feature`) | scores any tool's text results with the retrieval benchmark's metrics; the calibration checks it agrees with chunk-ID scoring on ≥ 98% of decisions on BM25's results at `default`; by hand, not in CI | about two minutes per chunking |
 | Grounded Docs run | `just grounded-bench --offline` (Node.js 22, golden corpus cache, `BAAI/bge-small-en-v1.5` pulled) | `packages/exactdocs/evals/retrieval_eval/grounded_docs*.py`, `openai_embeddings.py` (tests in `tests/evals/test_grounded_docs.py`, `test_openai_embeddings.py`, `grounded_docs.feature`, replaying recorded responses) | a pinned Grounded Docs indexes the golden corpus and answers the golden set, scored from its text next to ExactDocs' BM25, with paired tests; by hand or the manual `grounded-bench.yml`, never in CI | minutes full-text; about half an hour with the embedding model |
+| Context7 run | `just context7-bench` (`CONTEXT7_API_KEY`, golden corpus cache; `--from-cache` replays the kept responses) | `packages/exactdocs/evals/retrieval_eval/context7*.py` (tests in `tests/evals/test_context7_bench.py`, `context7_bench.feature`, against `tests/fixtures/context7_stand_in.py`) | which pinned versions Context7 serves, and its `/v2/context` answers scored from the text next to ExactDocs' BM25 per coverage group, with paired tests; only from the manual real-providers workflow or by hand, never in CI | one request per question |
 
 ## Rules of thumb
 
@@ -67,10 +69,15 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   reaches a service fails there.
 - **Pull request CI runs the fast suite only**, in parallel shards (pytest by `pytest-split`,
   behave by feature file, balanced by `.test_durations` and `.behave_durations`; refresh them with
-  `just test-durations` / `just bdd-durations` when many tests were added or became slower). The integration jobs run on a PR labelled `run integration`, on a manual CI run with
-  the input `integration`, and in every release ([docs/releasing.md](../../../docs/releasing.md#fast-and-integration-tests)).
-  Add the label when the change touches an adapter on a server, PostgreSQL, the Dockerfile,
-  the wheel or the end-to-end flow.
+  `just test-durations` / `just bdd-durations` when many tests were added or became slower).
+- **The integration and end-to-end jobs run only when a maintainer starts them by hand** (#554):
+  a manual CI run with the input `integration`, a manual run of the Integration workflow, or a
+  release dry run with `integration` ([docs/releasing.md](../../../docs/releasing.md#fast-and-integration-tests)).
+  No pull request, push or tag starts them. **Agents never start them**, by any of those runs.
+  Run the affected integration tests locally instead (`just test --integration`,
+  `EXACTDOCS_INTEGRATION=1 uv run behave`) and, when the change touches an adapter on a server,
+  PostgreSQL, the Dockerfile, the wheel or the end-to-end flow, say in the PR that it needs an
+  integration run.
 - Async tests need no decorator (`asyncio_mode = "auto"`). Warnings are errors (`filterwarnings = error`).
 - **Close every SQLite connection a test opens**, or the garbage collector finalizes it during a
   later test, which then fails with "unclosed database". An autouse guard

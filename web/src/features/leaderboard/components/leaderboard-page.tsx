@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
-import type { ColumnDef } from "@tanstack/react-table";
 import { CircleAlert, ListOrdered, RefreshCw, Trophy, UsersRound } from "lucide-react";
 import { useMemo } from "react";
 import { HttpError } from "@/shared/lib/http";
@@ -10,6 +9,7 @@ import { Badge } from "@/shared/ui/badge";
 import { Button } from "@/shared/ui/button";
 import { Count, LibraryCell, Person } from "@/shared/ui/data-table/cells";
 import { DataTable } from "@/shared/ui/data-table/data-table";
+import type { ColumnDef } from "@/shared/ui/data-table/features";
 import { DataTablePagination } from "@/shared/ui/data-table/pagination";
 import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
 import { useDataTable } from "@/shared/ui/data-table/use-data-table";

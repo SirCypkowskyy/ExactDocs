@@ -1,23 +1,16 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
-  type ColumnDef,
   type ColumnFiltersState,
-  getCoreRowModel,
-  getFacetedRowModel,
-  getFacetedUniqueValues,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  type Row,
+  type ColumnVisibilityState,
+  type RowData,
   type SortingState,
-  type Table,
   type Updater,
-  useReactTable,
-  type VisibilityState,
+  useTable,
 } from "@tanstack/react-table";
 import type { LucideIcon } from "lucide-react";
 import { type RefObject, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { type ColumnDef, features, type Row, type Table } from "./features";
 import { lastJumpPage, pageQueryOptions, type ServerSource } from "./server-pages";
 import {
   type PageSize,
@@ -74,7 +67,7 @@ export interface TableParam {
 }
 
 /** What client mode needs of a query: a `useQuery` result whose data is the rows. */
-export interface ClientQuery<T> {
+export interface ClientQuery<T extends RowData> {
   data: readonly T[] | undefined;
   isPending: boolean;
   isError: boolean;
@@ -84,7 +77,7 @@ export interface ClientQuery<T> {
   refetch: () => unknown;
 }
 
-interface BaseOptions<T> {
+interface BaseOptions<T extends RowData> {
   config: TableConfig;
   /** The view as the route parsed it from the URL (`validateSearch`): its filters by name. */
   search: TableSearch;
@@ -93,7 +86,7 @@ interface BaseOptions<T> {
   filters?: readonly TableFilter[];
   params?: readonly TableParam[];
   /** Columns hidden until someone shows them in the Columns menu. */
-  initialColumnVisibility?: VisibilityState;
+  initialColumnVisibility?: ColumnVisibilityState;
   /**
    * The URL parameter the search box writes, when `q` already belongs to the page (the library
    * page's `q` is its search, so its articles table filters by `filter`). The route hands its
@@ -102,16 +95,16 @@ interface BaseOptions<T> {
   qParam?: string;
 }
 
-export type DataTableOptions<T> = BaseOptions<T> &
+export type DataTableOptions<T extends RowData> = BaseOptions<T> &
   ({ source: ServerSource<T>; query?: never } | { query: ClientQuery<T>; source?: never });
 
 /** A table inside another page whose URL is not its own: the view lives in the component. */
-export type LocalDataTableOptions<T> = Omit<BaseOptions<T>, "search" | "qParam"> & {
+export type LocalDataTableOptions<T extends RowData> = Omit<BaseOptions<T>, "search" | "qParam"> & {
   /** The whole bounded list (client mode). */
   rows: readonly T[];
 };
 
-export interface DataTableModel<T> {
+export interface DataTableModel<T extends RowData> {
   table: Table<T>;
   mode: "server" | "client";
   filters: readonly TableFilter[];
@@ -193,12 +186,12 @@ function useWriteSearch(): Write {
     } as never);
 }
 
-const columnId = <T>(c: ColumnDef<T>): string | undefined =>
+const columnId = <T extends RowData>(c: ColumnDef<T>): string | undefined =>
   c.id ?? ("accessorKey" in c && typeof c.accessorKey === "string" ? c.accessorKey : undefined);
 
 const NONE: readonly never[] = [];
 
-type Status = DataTableModel<unknown>["status"];
+type Status = DataTableModel<RowData>["status"];
 
 /** Loaded, failed, or still on its way (no rows yet). */
 const statusOf = (data: unknown, isError: boolean | undefined): Status =>
@@ -214,7 +207,7 @@ const NO_SOURCE: ServerSource<never> = {
 };
 
 /** Client mode: a facet column filters by "any of these values" unless it says otherwise. */
-function useTableColumns<T>(
+function useTableColumns<T extends RowData>(
   mode: "server" | "client",
   columns: ColumnDef<T>[],
   filters: readonly TableFilter[],
@@ -225,7 +218,7 @@ function useTableColumns<T>(
     return columns.map((c) => {
       const id = columnId(c);
       return id && filterIds.has(id) && !c.filterFn
-        ? ({ ...c, filterFn: "arrIncludesSome" } as ColumnDef<T>)
+        ? ({ ...c, filterFn: "arrHas" } as ColumnDef<T>)
         : c;
     });
   }, [mode, columns, filterIds]);
@@ -234,7 +227,7 @@ function useTableColumns<T>(
 }
 
 /** Server mode: the pages on either side, fetched while the reader looks at this one. */
-function usePrefetchNeighbours<T>(
+function usePrefetchNeighbours<T extends RowData>(
   source: ServerSource<T> | undefined,
   loaded: boolean,
   page: number,
@@ -317,7 +310,7 @@ const isFiltered = (
   params.some((p) => values[p.id] !== undefined);
 
 /** Where the rows come from, the same shape in both modes. */
-interface Feed<T> {
+interface Feed<T extends RowData> {
   rows: readonly T[] | undefined;
   status: Status;
   error: unknown;
@@ -327,7 +320,11 @@ interface Feed<T> {
 }
 
 /** Server mode: one numbered page of the source (idle without one). */
-function useServerFeed<T>(source: ServerSource<T> | undefined, page: number, size: PageSize) {
+function useServerFeed<T extends RowData>(
+  source: ServerSource<T> | undefined,
+  page: number,
+  size: PageSize,
+) {
   const query = useQuery({
     ...pageQueryOptions((source ?? NO_SOURCE) as ServerSource<T>, page, size),
     enabled: Boolean(source),
@@ -345,7 +342,7 @@ function useServerFeed<T>(source: ServerSource<T> | undefined, page: number, siz
 }
 
 /** Client mode: the whole bounded list from one query. */
-const clientFeed = <T>(query: ClientQuery<T> | undefined): Feed<T> => ({
+const clientFeed = <T extends RowData>(query: ClientQuery<T> | undefined): Feed<T> => ({
   rows: query?.data,
   status: statusOf(query?.data, query?.isError),
   error: query?.isError ? query.error : undefined,
@@ -362,19 +359,11 @@ function sortWriter(write: Write, sorting: SortingState, defaultSort: string | u
 }
 
 /**
- * Client mode sorts, filters, pages and counts facets in the browser; server mode leaves all of it
- * to the API and only says how many rows there are.
+ * Client mode sorts, filters, pages and counts facets in the browser (the row models in
+ * `features`); server mode leaves all of it to the API and only says how many rows there are.
  */
-const rowModelsOf = <T>(server: boolean, total: number | undefined) =>
-  server
-    ? { rowCount: total ?? -1 }
-    : {
-        getSortedRowModel: getSortedRowModel<T>(),
-        getFilteredRowModel: getFilteredRowModel<T>(),
-        getPaginationRowModel: getPaginationRowModel<T>(),
-        getFacetedRowModel: getFacetedRowModel<T>(),
-        getFacetedUniqueValues: getFacetedUniqueValues<T>(),
-      };
+const rowCountOf = (server: boolean, total: number | undefined) =>
+  server ? { rowCount: total ?? -1 } : {};
 
 /** A narrowing parameter's value from the URL, when it has one. */
 const paramOf = (values: Readonly<Record<string, unknown>>, id: string) => {
@@ -382,7 +371,7 @@ const paramOf = (values: Readonly<Record<string, unknown>>, id: string) => {
   return typeof value === "string" && value ? value : undefined;
 };
 
-export function useDataTable<T>(options: DataTableOptions<T>): DataTableModel<T> {
+export function useDataTable<T extends RowData>(options: DataTableOptions<T>): DataTableModel<T> {
   return useTableModel(options, useWriteSearch());
 }
 
@@ -394,7 +383,7 @@ const READY = { isPending: false, isError: false, refetch: () => {} } as const;
  * (`q`, filters, sort, page, size) lives in the component. Everything else is the kit's: the same
  * toolbar, faceted filters, pagination and states.
  */
-export function useLocalDataTable<T>({
+export function useLocalDataTable<T extends RowData>({
   rows,
   ...options
 }: LocalDataTableOptions<T>): DataTableModel<T> {
@@ -405,7 +394,10 @@ export function useLocalDataTable<T>({
   );
 }
 
-function useTableModel<T>(options: DataTableOptions<T>, write: Write): DataTableModel<T> {
+function useTableModel<T extends RowData>(
+  options: DataTableOptions<T>,
+  write: Write,
+): DataTableModel<T> {
   const { config, search, getRowId, source } = options;
   const values = search as Readonly<Record<string, unknown>>;
   const filters = options.filters ?? NONE;
@@ -414,7 +406,7 @@ function useTableModel<T>(options: DataTableOptions<T>, write: Write): DataTable
   const mode = server ? "server" : "client";
   const { page, size } = pageOf(search, config);
   const frameRef = useRef<HTMLDivElement | null>(null);
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
+  const [columnVisibility, setColumnVisibility] = useState<ColumnVisibilityState>(
     options.initialColumnVisibility ?? {},
   );
 
@@ -440,12 +432,12 @@ function useTableModel<T>(options: DataTableOptions<T>, write: Write): DataTable
 
   // The view lives in the URL: never let the table reset it on its own (a reset on new data would
   // be a state update per render, and a URL write).
-  const table = useReactTable<T>({
+  const table = useTable({
+    features,
     data,
     columns,
     getRowId,
-    getCoreRowModel: getCoreRowModel(),
-    ...rowModelsOf<T>(server, serverFeed.total),
+    ...rowCountOf(server, serverFeed.total),
     manualSorting: server,
     manualFiltering: server,
     manualPagination: server,

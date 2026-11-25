@@ -8,7 +8,6 @@ import {
   RouterProvider,
   useSearch,
 } from "@tanstack/react-router";
-import type { ColumnDef } from "@tanstack/react-table";
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ArrowRight, Trash2 } from "lucide-react";
@@ -16,6 +15,7 @@ import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetPreferences, setPreferences } from "@/shared/lib/preferences";
 import { TestRouter } from "@/shared/lib/test-router";
+import type { ColumnDef } from "@/shared/ui/data-table/features";
 import { ConfirmDialog } from "../confirm-dialog";
 import { TooltipProvider } from "../tooltip";
 import { LibraryCell } from "./cells";

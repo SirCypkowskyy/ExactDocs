@@ -1,4 +1,3 @@
-import type { ColumnDef } from "@tanstack/react-table";
 import { Pin } from "lucide-react";
 import { PHONE_QUERY, useMediaQuery } from "@/shared/lib/use-media-query";
 import {
@@ -8,6 +7,7 @@ import {
   STATE_LOOKS,
   VersionCell,
 } from "@/shared/ui/data-table/cells";
+import type { ColumnDef } from "@/shared/ui/data-table/features";
 import type { TableFilter } from "@/shared/ui/data-table/use-data-table";
 import { Tooltip } from "@/shared/ui/tooltip";
 import type { listMessages } from "../messages/list";

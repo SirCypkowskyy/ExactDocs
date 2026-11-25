@@ -1,3 +1,4 @@
+import type { RowData } from "@tanstack/react-table";
 import { Check, ListFilter } from "lucide-react";
 import { formatNumber, useLanguage, useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
@@ -22,7 +23,7 @@ import type { DataTableModel, TableFilter } from "./use-data-table";
  * values to tick. Several values mean "any of these"; a `single` filter (a date preset) takes one.
  * In client mode each value shows how many rows have it.
  */
-export function FacetedFilter<T>({
+export function FacetedFilter<T extends RowData>({
   model,
   filter,
 }: {

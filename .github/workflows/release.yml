@@ -6,16 +6,17 @@
 #                                    (pre-release: pip/uvx skip it unless asked with --prerelease)
 # Every image tag also comes as -ai and -local (X.Y.Z-ai, latest-local, dev-ai, ...): the three
 # variants of deploy/Dockerfile (#246). Nothing is published before the retrieval eval (job `eval`,
-# docs/evals.md) and the integration and end-to-end jobs that pull requests do not run (job
-# `integration`, integration.yml: #507) pass. See docs/releasing.md.
+# docs/evals.md) passes. The integration and end-to-end jobs (job `integration`, integration.yml:
+# #507) run only in a manual run started with the input `integration` (#554): a tag push never
+# runs them and no publishing job waits for them. See docs/releasing.md.
 #
 # Runners (#478, docs/releasing.md "CI/CD and runners"), switched by the repository variable
 # RUNNER_MODE (Settings -> Secrets and variables -> Actions -> Variables):
 #   hybrid (default, also when unset): the self-hosted ARM64 runner [self-hosted, linux, ARM64,
-#     exactdocs] runs the eval, the integration pytest and behave suites, the web and Python builds
-#     and the arm64 image legs; GitHub-hosted ubuntu-24.04 runs the amd64 image legs (natively),
-#     the integration image, uvx and browser jobs, and the short jobs that validate the tag,
-#     publish and sign (a fresh VM each time).
+#     exactdocs] runs the eval, the integration pytest and behave suites (when asked for), the web
+#     and Python builds and the arm64 image legs; GitHub-hosted ubuntu-24.04 runs the amd64 image
+#     legs (natively), the integration image, uvx and browser jobs (when asked for), and the short
+#     jobs that validate the tag, publish and sign (a fresh VM each time).
 #   self-hosted (when the GitHub-hosted minutes ran out): every job on the self-hosted runner.
 #     The amd64 legs are cross-built there (QEMU runs only the runtime stage's apt-get, never
 #     Python) and checked with `check_artifacts.py --no-python`.
@@ -24,12 +25,18 @@
 # is 0.0.0.dev<run number>, and the eval, the distributions, every image build, size check and
 # scan run as in a release, but nothing is published (no PyPI, no ghcr.io push, no signature, no
 # GitHub Release). Every publishing job and step is limited to `github.event_name == 'push'`.
+# With the input `integration` it also runs the integration and end-to-end jobs.
 name: Release
 
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      integration:
+        description: Also run the integration jobs (service containers, Docker images, uvx and the browser test)
+        type: boolean
+        default: false
 
 concurrency:
   group: release-${{ github.ref }}
@@ -227,13 +234,16 @@ jobs:
   # The integration and end-to-end jobs (#507), as a manual CI run with `integration` runs them:
   # the integration pytest and behave suites on PostgreSQL, Supabase, PgBouncer and every search
   # and vector server; the Docker images' build, scan and smoke tests; uvx, the upgrade from the
-  # previous release and the browser end-to-end test. Pull requests leave them out unless
-  # labelled `run integration`, so they gate the release instead: `pypi-kernel` and `image` need
-  # them. The Python job runs on the self-hosted runner in both modes (input `release`), as the
-  # eval does; there Pinecone Local (amd64-only) is not started and its cases skip.
+  # previous release and the browser end-to-end test. Only in a dry run started with the input
+  # `integration` (#554); a tag push skips them. No job needs them: a dry run publishes nothing,
+  # so a failure there fails the run and has nothing to hold back, and on a tag push a skipped
+  # job in `needs` would skip every job after it. The Python job runs on the self-hosted runner
+  # in both modes (input `release`), as the eval does; there Pinecone Local (amd64-only) is not
+  # started and its cases skip.
   integration:
     name: Integration
     needs: meta
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.integration }}
     uses: ./.github/workflows/integration.yml
     with:
       release: true
@@ -314,7 +324,7 @@ jobs:
   # pins exactdocs-kernel==<same version>. Never in a dry run.
   pypi-kernel:
     name: Publish exactdocs-kernel to PyPI
-    needs: [meta, python, eval, integration]
+    needs: [meta, python, eval]
     if: github.event_name == 'push'
     runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     environment:
@@ -428,7 +438,7 @@ jobs:
   # only: no tag until `image-publish`. A dry run builds it and pushes nothing.
   image:
     name: Build image (${{ matrix.variant }}, ${{ matrix.arch }})
-    needs: [meta, image-scan, eval, integration]
+    needs: [meta, image-scan, eval]
     runs-on: ${{ (matrix.arch == 'arm64' || vars.RUNNER_MODE == 'self-hosted') && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
     permissions:

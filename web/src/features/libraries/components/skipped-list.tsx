@@ -1,4 +1,3 @@
-import type { ColumnDef } from "@tanstack/react-table";
 import { CircleSlash, Copy, FileWarning, Info } from "lucide-react";
 import { useMemo } from "react";
 import { toast } from "sonner";
@@ -6,6 +5,7 @@ import { useMessages } from "@/shared/lib/i18n";
 import { Badge } from "@/shared/ui/badge";
 import { StateBadge } from "@/shared/ui/data-table/cells";
 import { DataTable } from "@/shared/ui/data-table/data-table";
+import type { ColumnDef } from "@/shared/ui/data-table/features";
 import { DataTablePagination } from "@/shared/ui/data-table/pagination";
 import type { RowAction } from "@/shared/ui/data-table/row-actions";
 import type { TableConfig } from "@/shared/ui/data-table/table-search";

@@ -111,6 +111,10 @@ ingestion-bench *args:
 retrieval-bench *args:
     uv run python packages/exactdocs/evals/run_retrieval_bench.py {{ args }}
 
+# Retrieval grid: chunking, context and embedding variants and plain baselines on the golden set, resumable (docs/evals.md)
+retrieval-grid *args:
+    uv run python packages/exactdocs/evals/run_retrieval_grid.py {{ args }}
+
 # Text scorer: calibrate scoring from a result's text against chunk-ID scoring on BM25 (docs/evals.md)
 text-bench *args:
     uv run python packages/exactdocs/evals/run_text_bench.py {{ args }}
@@ -118,6 +122,10 @@ text-bench *args:
 # Grounded Docs (never in CI): a pinned docs-mcp-server indexes the golden corpus, answers the golden set, scored next to ExactDocs' BM25 (docs/evals.md); needs Node.js 22
 grounded-bench *args:
     uv run python packages/exactdocs/evals/run_grounded_bench.py {{ args }}
+
+# Context7 (never in CI): its REST API answers the golden set where it serves the pinned versions, scored next to ExactDocs' BM25 (docs/evals.md); needs CONTEXT7_API_KEY, or --from-cache
+context7-bench *args:
+    uv run python packages/exactdocs/evals/run_context7_bench.py {{ args }}
 
 # Agent benchmark (never in CI): an agent with only the ExactDocs MCP tools answers the golden set (docs/evals.md); `just agent-bench run --offline`
 agent-bench *args:
