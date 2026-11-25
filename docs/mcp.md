@@ -390,6 +390,16 @@ validates its arguments, the server:
 - still refuses an argument the tool does not have (`invalid_arguments`), never ignoring it, and
   names the tool's real arguments, their types and which are required.
 
+A `ref` (or the version in `query-docs`'s `libraryId`) written with or without the leading `v` of
+its number finds the one version the library imported the other way (#606): `v1.10.0` reads
+`1.10.0` and `1.10.0` reads `v1.10.0`, when the library has no ref spelled as asked. The result
+names the version that answered and its notes say so. The ref as asked always wins, and only a `v`
+in front of a version number counts: `v1.10` never reads `1.10.0`, and `vnext` never reads `next`.
+A ref that matches no version is `not_found` and names the library's versions, or the 10 closest
+when it has more, as repository data (`read_article`, `list_articles`, `view_article`,
+`article_outline`, `search_docs`, `view_search`, `query-docs`, and their REST routes). `read_chunk`
+takes no ref and keeps the version its chunk ID was issued for.
+
 What it changed is in the result: a last text block `Notes: ...` and, for a tool with structured
 content, a `notes` list that every output schema declares.
 
