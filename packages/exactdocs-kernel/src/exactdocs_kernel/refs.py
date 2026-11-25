@@ -3,9 +3,10 @@
 Projects tag ``v1.2.3`` or ``1.2.3`` and agents guess the form (#605). Every reader-facing
 lookup (``list_articles`` and ``read_article`` in the catalog, ``search_docs`` and ``query-docs``
 in retrieval) reads a ref the same way: as given when a version has exactly that ref, else as the
-one imported version it names but for a leading ``v`` or ``V`` before a digit, with a note. A ref
-that names no version stays an error, and the error names the library's versions. The version is
-never a nearby one: only the spelling of the ``v`` is forgiven.
+one imported version it names but for a leading ``v`` or ``V`` before a digit (one of the two has
+it, the other does not), with a note. A ref that names no version stays an error, and the error
+names the library's versions. The version is never a nearby one: only a missing or extra ``v`` is
+forgiven.
 """
 
 from collections.abc import Iterable, Sequence
@@ -30,9 +31,10 @@ def _bare(ref: str) -> str:
 def respelled(ref: str, refs: Iterable[str]) -> str | None:
     """Return the one ref of ``refs`` that ``ref`` names but for a leading ``v`` or ``V``.
 
-    ``v1.10.0``, ``V1.10.0`` and ``1.10.0`` spell one version; ``vnext`` and ``next`` do not (the
-    letter counts only before a digit). Nothing else is forgiven: not letter case elsewhere, not
-    another version number.
+    ``v1.10.0`` and ``V1.10.0`` name ``1.10.0``, and ``1.10.0`` names ``v1.10.0``: one of the two
+    has the letter and the other lacks it. ``vnext`` and ``next`` do not (the letter counts only
+    before a digit). Nothing else is forgiven: not letter case (``V1.0`` is not ``v1.0``; refs are
+    case-sensitive), not another version number.
 
     Args:
         ref: The ref asked for.
@@ -40,14 +42,17 @@ def respelled(ref: str, refs: Iterable[str]) -> str | None:
 
     Returns:
         That ref; ``None`` when ``refs`` holds ``ref`` itself, when none matches, or when several
-        do (``1.0`` and ``V1.0`` both imported: asking for ``v1.0`` names neither).
+        spellings of it are imported (``1.0`` and ``V1.0``: asking for ``v1.0`` names neither).
     """
     known = list(refs)
     if ref in known:
         return None
     bare = _bare(ref)
     found = [other for other in known if _bare(other) == bare]
-    return found[0] if len(found) == 1 else None
+    if len(found) != 1:
+        return None
+    # Exactly one of the two has the letter: `V1.0` for an imported `v1.0` is a case difference.
+    return found[0] if (found[0] == bare) != (ref == bare) else None
 
 
 def respelled_note(asked: str, used: str) -> str:

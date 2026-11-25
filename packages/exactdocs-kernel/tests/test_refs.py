@@ -10,7 +10,6 @@ from exactdocs_kernel import MAX_NAMED_VERSIONS, name_versions, respelled, respe
         ("V1.10.0", ["1.10.0"], "1.10.0"),
         ("1.10.0", ["v1.10.0", "v0.27.0"], "v1.10.0"),
         ("1.10.0", ["V1.10.0"], "V1.10.0"),
-        ("V1.10.0", ["v1.10.0"], "v1.10.0"),
         ("v2", ["2", "v1"], "2"),
     ],
 )
@@ -29,7 +28,9 @@ def test_a_ref_finds_the_one_version_it_names_but_for_a_leading_v(
         ("v1.10", ["1.10.0"]),
         ("vnext", ["next"]),  # the letter counts only before a digit
         ("next", ["vnext"]),
-        ("MAIN", ["main"]),  # no other letter case is forgiven
+        ("MAIN", ["main"]),  # no letter case is forgiven
+        ("V1.10.0", ["v1.10.0"]),  # not even the v's: refs are case-sensitive
+        ("v1.10.0", ["V1.10.0"]),
         ("vv1.0", ["v1.0", "1.0"]),
         ("v", ["", "v"]),
         ("v1.0", []),

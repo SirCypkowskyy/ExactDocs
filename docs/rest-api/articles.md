@@ -26,6 +26,12 @@ Library IDs are `/{owner}/{repo}` in the path. A ref may only be the last path s
 `{ref:path}`. A route that needs a ref and an article path takes `?ref=` and `?path=`, because
 servers decode `%2F` before routing.
 
+A ref that names no imported version but differs from exactly one of them only by a missing or
+extra leading `v` or `V` (`v1.10.0` for `1.10.0`, never `V1.0` for `v1.0`) reads that version, and the response says so in `notes` (absent
+otherwise). A ref that names no version is `404 not_found`, naming the library's versions, the
+most recently imported first (at most 20), and its default version. Search, `query-docs` and the
+MCP tools read refs the same way ([MCP](../mcp.md#tools)).
+
 ## Outlines
 
 `GET /libraries/{owner}/{repo}/outline?path=&ref=` returns an article's heading tree with no body

@@ -339,8 +339,9 @@ Every response says which version answered.
 
 **A ref is read as given**, and only one spelling is forgiven (#605): projects tag `v1.2.3` or
 `1.2.3`, and agents guess the form. A ref that names no imported version but differs from exactly
-one of them only by a leading `v` or `V` (before a digit) is read as that version, and the result
-says so in its `notes`:
+one of them only by a leading `v` or `V` before a digit, which one of the two has and the other
+lacks (`v1.10.0` or `V1.10.0` for `1.10.0`, `1.10.0` for `v1.10.0`), is read as that version, and
+the result says so in its `notes`:
 
 ```text
 Notes: ref 'v1.10.0' is not imported: read as '1.10.0', the one version it names but for a leading v.
@@ -349,10 +350,13 @@ Notes: ref 'v1.10.0' is not imported: read as '1.10.0', the one version it names
 This holds for every tool that takes `ref` (`search_docs`, `view_search`, `list_articles`,
 `read_article`, `view_article`, `article_outline`), for `query-docs`' `/owner/repo/<ref>` and for
 the REST routes that take a ref, whose JSON carries the same `notes` (the `/c7/docs` text ends with
-them). Nothing else is forgiven: not another version number, not letter case elsewhere, and not a
-ref that matches two versions (`1.0` and `V1.0` both imported). A ref that names no version stays
-an error and never answers from another version; the error lists the library's imported versions,
-the most recently imported first (at most 20), and its default version:
+them). Nothing else is forgiven: not another version number, not letter case (refs are
+case-sensitive: `V1.0` is not `v1.0`), and not a ref that matches two versions (`1.0` and `V1.0`
+both imported).
+
+A ref that names no version stays an error and never answers from another version. The error
+lists the library's imported versions, the most recently imported first (at most 20), and its
+default version:
 
 ```text
 not_found: no index for /encode/starlette@2.0.0: version '2.0.0' is not imported; imported
