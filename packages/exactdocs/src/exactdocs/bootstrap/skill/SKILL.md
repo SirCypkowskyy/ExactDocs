@@ -45,7 +45,11 @@ A `stale_chunk` error means the version was re-synced: search again for current 
 ## Budgets
 
 - Search first with specific terms (identifiers, option names) and the default `limit` (5 for `search_docs`, 10 for `search_all_docs`; at most 50);
-  widen only if the hits miss.
+  widen only if the hits miss. `path_prefix` narrows a search to one directory, as in
+  `list_articles`.
+- Leave out an argument you do not need rather than sending it empty (an empty one counts as not
+  given). A number out of range is clamped and a library name resolved to its ID; the result's
+  notes say so. A wrong article path names the closest paths of that version: read one of those.
 - Prefer `read_chunk` over `read_article`; read a whole article only when the chunk is not enough.
   `article_outline` then `read_chunk` on the sections you need costs less than the whole article.
 - Do not page through a library to "learn" it; ask for what the current task needs.

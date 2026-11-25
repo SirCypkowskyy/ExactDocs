@@ -343,3 +343,71 @@ async def test_an_unavailable_mode_is_refused_and_the_error_lists_the_available_
 ) -> None:
     with pytest.raises(UnavailableModeError, match="available modes: bm25"):
         await retrieval.search_docs(SearchDocsQuery(library=LIB, query="token", mode="hybrid"))
+
+
+async def test_a_path_prefix_keeps_the_chunks_of_that_directory_only(
+    retrieval: RetrievalModule,
+) -> None:
+    # #573: an agent narrows a search the way it narrows list_articles.
+    everywhere = await retrieval.search_docs(SearchDocsQuery(library=LIB, query="token"))
+    api = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, query="token", path_prefix="./docs/api//")
+    )
+    guide = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, query="token", path_prefix="docs/guide")
+    )
+
+    assert {r.article_path for r in everywhere.results} == {
+        "docs/api/auth.md",
+        "docs/api/client.md",
+    }
+    assert {r.article_path for r in api.results} == {"docs/api/auth.md", "docs/api/client.md"}
+    assert (api.coverage.candidates, api.coverage.complete) == (2, True)
+    assert guide.results == []
+    assert guide.coverage.complete  # nothing under the prefix matches: the version has no match
+
+
+async def test_a_path_prefix_is_matched_by_whole_directory_names(
+    retrieval: RetrievalModule,
+) -> None:
+    partial = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, query="token", path_prefix="docs/ap")
+    )
+    article = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, query="token", path_prefix="docs/api/auth.md")
+    )
+
+    assert partial.results == []
+    assert [r.article_path for r in article.results] == ["docs/api/auth.md"]
+
+
+async def test_a_path_prefix_fills_the_limit_from_a_deeper_ranking(
+    retrieval: RetrievalModule,
+) -> None:
+    # With limit 1 the best chunk is in the guide; under docs/api the prefix still finds one.
+    best = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, query="retry_policy token", limit=1)
+    )
+    narrowed = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, query="retry_policy token", path_prefix="docs/api", limit=1)
+    )
+
+    assert best.results[0].article_path == "docs/guide/resilience.md"
+    assert len(narrowed.results) == 1
+    assert narrowed.results[0].article_path.startswith("docs/api/")
+    assert narrowed.coverage.complete is False  # the other docs/api article matched too
+
+
+async def test_a_path_prefix_never_reads_another_version(retrieval: RetrievalModule) -> None:
+    result = await retrieval.search_docs(
+        SearchDocsQuery(library=LIB, ref="v1.3.0", query="token", path_prefix="docs/api")
+    )
+
+    assert result.results == []
+    assert result.version == "v1.3.0"
+
+
+@pytest.mark.parametrize("prefix", ["../docs", "docs/../../etc", "docs\\api"])
+def test_a_path_prefix_that_leaves_the_tree_is_refused(prefix: str) -> None:
+    with pytest.raises(ValidationError):
+        SearchDocsQuery(library=LIB, query="x", path_prefix=prefix)

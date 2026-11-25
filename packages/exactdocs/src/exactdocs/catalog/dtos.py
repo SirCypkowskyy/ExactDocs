@@ -66,6 +66,7 @@ from exactdocs_kernel import (
     MAX_TAGS,
     NOTICE,
     Page,
+    clean_path_prefix,
 )
 
 
@@ -847,16 +848,9 @@ class ListArticlesQuery(_Dto):
             value: The prefix as sent.
 
         Returns:
-            The prefix, its segments joined by `/`.
-
-        Raises:
-            ValueError: It holds a `..` segment or a backslash.
+            The prefix, its segments joined by `/`; a `..` segment or a backslash is refused.
         """
-        segments = [s for s in value.split("/") if s not in {"", "."}]
-        if ".." in segments or "\\" in value:
-            message = "path_prefix must be a plain `/`-separated directory"
-            raise ValueError(message)
-        return "/".join(segments)
+        return clean_path_prefix(value)
 
 
 class ArticleSummary(_Dto):
