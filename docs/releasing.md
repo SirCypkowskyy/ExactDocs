@@ -362,6 +362,7 @@ jobs of `ci.yml` with no service container and no image build:
 | *Lint (ruff, ty, hadolint)* | `ruff format --check`, `ruff check`, `ty check`, hadolint on `deploy/Dockerfile` |
 | *pytest (1/6)* … *(6/6)* | `uv run pytest` split by [pytest-split](https://github.com/jerry-git/pytest-split) into six groups of about the same time (two in `self-hosted` mode), from the durations in `.test_durations`; each writes its coverage data |
 | *behave (1/3)* … *(3/3)* | `uv run behave`, every scenario but the `@integration` ones, the feature files in three groups of about the same time (one in `self-hosted` mode; `deploy/behave_shards.py`, from the times in `.behave_durations`) |
+| *Coding tasks (references pass, other versions fail)* | `just coding-tasks check` (#496): installs each pinned environment of the version-pinned coding tasks from its lockfile (cached by the lockfiles' hash) and checks that every reference solution passes its hidden tests and every other-version solution fails, naming a forbidden API; no model ([Version-pinned coding tasks](evals.md#version-pinned-coding-tasks)) |
 | *Python (ruff, ty, pytest, behave)* | waits for the jobs above and fails unless all passed (the check branch protection requires); combines the shards' coverage into one report (the total in the job summary, the data in the `python-reports` artifact) |
 | *Web (biome, fallow, react-doctor, vitest, build)* | the web client |
 

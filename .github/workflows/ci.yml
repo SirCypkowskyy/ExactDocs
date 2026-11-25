@@ -2,8 +2,9 @@ name: CI
 
 # Pull requests and pushes run the fast checks only (#507), as parallel jobs with no service
 # container and no image build: lint and types, the pytest suite in shards, the behave scenarios
-# that need no service, and the web client. "Python (ruff, ty, pytest, behave)" waits for the
-# Python jobs and fails if one did, so branch protection keeps its required check.
+# that need no service, the coding tasks' reference check, and the web client. "Python (ruff, ty,
+# pytest, behave)" waits for the Python jobs and fails if one did, so branch protection keeps its
+# required check.
 #
 # The integration and end-to-end jobs (service containers, Docker images, uvx and the browser
 # test) are in integration.yml. No pull request or push runs them (#554): only a manual run of
@@ -164,11 +165,44 @@ jobs:
           path: reports/
           retention-days: 3
 
+  # The version-pinned coding tasks (#496, docs/evals.md#version-pinned-coding-tasks): every task's
+  # reference solution passes its hidden tests on the version the task pins, and every solution
+  # written for the other version fails and names an API the pinned version lacks. No model. The
+  # pinned environments are installed from their lockfiles (uv with hashes, npm ci) into a cache
+  # keyed by the lockfiles; the tests run in the process sandbox (no network where the runner can
+  # make a network namespace, CPU, memory and time limits).
+  coding-tasks:
+    name: Coding tasks (references pass, other versions fail)
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+      - name: Install
+        run: uv sync --locked
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/exactdocs/coding-tasks/environments
+          key: coding-tasks-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/exactdocs/evals/coding/environments/**') }}
+      - name: Check the coding tasks (just coding-tasks check)
+        run: uv run python packages/exactdocs/evals/run_coding_tasks.py check --concurrency 4
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: coding-tasks-check
+          path: reports/evals/coding-tasks-check.*
+          retention-days: 14
+
   # The required check (branch protection): waits for the Python jobs, fails unless every one
   # passed, and combines the shards' coverage into one report.
   python:
     name: Python (ruff, ty, pytest, behave)
-    needs: [lint, pytest, behave]
+    needs: [lint, pytest, behave, coding-tasks]
     if: ${{ !cancelled() }}
     runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
     timeout-minutes: 10

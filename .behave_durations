@@ -24,6 +24,7 @@
   "packages/exactdocs/features/cli_libraries.feature": 60.917,
   "packages/exactdocs/features/cli_login.feature": 22.041,
   "packages/exactdocs/features/cloudflare_access.feature": 23.516,
+  "packages/exactdocs/features/coding_tasks.feature": 6.2,
   "packages/exactdocs/features/context7.feature": 8.815,
   "packages/exactdocs/features/default_chunking.feature": 5.394,
   "packages/exactdocs/features/duckdb_index.feature": 12.331,
