@@ -56,7 +56,7 @@ re-sync of a branch re-chunks only the files that changed. [Flows](flows.md) dra
 | `packages/exactdocs/src/exactdocs/usage/` | domain: daily counts of reads, searches and answers, usage reports and leaderboards |
 | `packages/exactdocs/src/exactdocs/_web/` | the built web UI (gitignored, added by CI / Docker) |
 | `packages/exactdocs/tests/`, `packages/exactdocs/features/` | pytest (unit, integration, architecture) and behave (Gherkin acceptance scenarios) |
-| `packages/exactdocs/evals/` | the retrieval eval suite (Pydantic Evals), not shipped; see [Retrieval evals](evals.md) |
+| `packages/exactdocs/evals/` | the retrieval eval suite (Pydantic Evals), not shipped; see [Retrieval evals](evals/index.md) |
 | `web/` | React client (Vite, TanStack Router and Query, shadcn); see [web/README.md](https://github.com/SirCypkowskyy/ExactDocs/blob/develop/web/README.md) |
 | `deploy/` | Dockerfile, smoke test, size-budget check, Mermaid check, scripts for the self-hosted runners of the release and the manual workflows |
 | `e2e/` | the Playwright test of the whole loop in a browser |
@@ -397,7 +397,7 @@ only holds each process's git work folders and `known_hosts`. What changes:
   meanwhile; then one `BEGIN IMMEDIATE` transaction adds what was indexed since it began, drops the
   old table and renames the new one over it. A rebuild that died leaves its table behind; the next
   one starts over. A change of the table's columns stays an Alembic revision that rebuilds it on
-  start (as `a91c4e7b3d02` did). See *Upgrades* in [Releasing](releasing.md).
+  start (as `a91c4e7b3d02` did). See *Upgrades* in [Releasing](releasing/upgrades.md).
 - **Vector store (RET-01, #242):** `retrieval_embedding_spaces` records each embedding space
   (profile kind, model, dimensions, metric, input format, state `building`/`active`/`retired`,
   created and activated times; IDs are never reused). Its vectors live in a table the
@@ -533,7 +533,7 @@ a statement outside a transaction is sent again once when the server had dropped
 stream. CI's integration job runs the persistence contract tests' SQLite cases on a `sqld` server,
 and the libSQL database's own server tests, several processes migrating and writing it at once
 among them (`EXACTDOCS_TEST_LIBSQL_DATABASE_URL` with `--integration`, its own step;
-[Fast and integration tests](releasing.md#fast-and-integration-tests)). See *ExactDocs' own database on libSQL* in
+[Fast and integration tests](releasing/tests.md)). See *ExactDocs' own database on libSQL* in
 configuration.md for what an operator sees.
 
 ### Data model
@@ -1622,7 +1622,7 @@ has none), builds a `ModeRegistry` (a mode can run when it
 has a pipeline and its roles), and picks the mode: the call's, else the library's (`LibraryModes`
 port, `retrieval_library_settings`), else the instance's (`EXACTDOCS_AI__MODE`), else the best of
 `DEFAULT_MODE_ORDER`, which lists a mode only once the eval suite marks it `eligible_as_default`
-([Retrieval evals](evals.md#gates)): only `bm25` is listed yet, so an operator, a library or a
+([Retrieval evals](evals/gates.md#gates)): only `bm25` is listed yet, so an operator, a library or a
 call chooses `hybrid`.
 Removing a library drops its mode too (`ForgetLibrary`, called by the removal bridge after the
 catalog). Built (#242): the **vector store**, the `VectorIndex` driven port (create, activate and
@@ -1836,7 +1836,7 @@ the `AgentReads` port as an `AgentRead` (the version and manifest it was bound t
 what it served; never its argument or the text): bootstrap wires the OpenTelemetry adapter
 (an `exactdocs.agent.read` event on the read's span) when telemetry is on, and the eval suite its
 own recorder, which is where every agentic run is checked against the version asked for
-(docs/evals.md). The browser applies the call's tag filter to every read, and
+(docs/evals/index.md). The browser applies the call's tag filter to every read, and
 `explored_path` and `justification` go through `models.model_text` (no control characters, cut). The model is instrumented with
 `include_content=False` (the factory's, or wrapped there), so the agent run, its model requests and
 its tool calls get spans (the read calls nested in `run_code`) and `gen_ai.client.token.usage`,

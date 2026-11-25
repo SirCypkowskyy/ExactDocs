@@ -9,7 +9,7 @@ the default each budget gets is on [Recommended defaults](defaults.md).
 `packages/exactdocs/evals/results/retrieval.json`, recorded on 24 November 2026 for #503 and #501
 on the golden set with its alternatives marked (`sha256:a00997851150e3b0`), on one self-hosted
 runner VM (Linux aarch64, 4 CPUs), with no provider, in 3 h 22 min
-([the command and the timings](../evals.md#the-recorded-run)). A full local matrix would take far
+([the command and the timings](../evals/retrieval-runs.md#the-recorded-run)). A full local matrix would take far
 longer, so it ran a subset:
 
 - `bm25` and `hybrid:bge-small-en-v1.5` at every chunking;
@@ -38,7 +38,7 @@ same runner), so its numbers are not comparable with that one's
 agentic search and every configuration reranked by the LLM judge. They run only from the manual
 *Retrieval eval (real providers)* workflow (`.github/workflows/eval-providers.yml`) with the
 `benchmark` input ticked, or locally with `--allow-providers`
-([Running the hosted part](../evals.md#running-the-hosted-part)). They are listed under
+([Running the hosted part](../evals/retrieval-runs.md#running-the-hosted-part)). They are listed under
 "Not run" below.
 
 <!-- bench:retrieval-run -->
@@ -71,7 +71,7 @@ agentic search and every configuration reranked by the LLM judge. They run only 
   comes first by the benchmark's ordering, so the summary names it, but its lead over `default`
   is not significant on any metric (recall@5 +1.5 points, p 0.42; recall@1 p 0.24; MRR p 0.13),
   and its chunks are about twice as long (7,065 estimated tokens in a question's ten results
-  against 3,464, [text calibration](../evals.md#calibration)). `h6`, where every heading starts a
+  against 3,464, [text calibration](../evals/text-scoring.md#calibration)). `h6`, where every heading starts a
   chunk, is below them: 85.8%, with MRR and nDCG@10 significantly worse than at `default`. The
   shipped default stays `default` (#381); a non-significant lead does not change it.
 - Hybrid search on bge-small is the best local configuration, at `merge-400` (91.0%), but only

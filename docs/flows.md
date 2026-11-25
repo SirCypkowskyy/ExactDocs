@@ -150,7 +150,7 @@ fusion, #92), `hybrid_hyde` (#94) and `agentic` (#98), and so is reranking (#93)
 [Search and AI models](search.md) describes each. Which mode answers is decided per
 call (RET-06): the call's `mode`, else the library's mode, else the instance's
 (`EXACTDOCS_AI__MODE`), else the best default the configured model roles allow. A mode becomes a
-default only once the eval suite shows it beats BM25 ([Retrieval evals](evals.md#gates)): `hybrid`
+default only once the eval suite shows it beats BM25 ([Retrieval evals](evals/gates.md#gates)): `hybrid`
 is not one yet, so it runs when an operator, a library or a call chooses it. A
 mode is available when it has a pipeline and its roles are configured (`hybrid`: embedding;
 `hybrid_hyde`: embedding and LLM; `agentic`: LLM) and, for the hybrid modes, the vector store can

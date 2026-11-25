@@ -17,4 +17,4 @@ questions as the last one.
 
 The tables on the result pages are generated from the recorded runs in
 [`packages/exactdocs/evals/results/`](https://github.com/SirCypkowskyy/ExactDocs/tree/develop/packages/exactdocs/evals/results);
-the commands and the full reference are in [Retrieval evals](../evals.md).
+the commands and the full reference are in [Retrieval evals](../evals/index.md).

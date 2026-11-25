@@ -6,7 +6,7 @@
 #          pulled at their pinned revisions into /opt/exactdocs/models (read-only)
 # Build from the repository root:
 #   docker build -f deploy/Dockerfile --build-arg VERSION=0.1.0 [--target ai|local] .
-# Size budgets per variant: deploy/check_artifacts.py and docs/releasing.md.
+# Size budgets per variant: deploy/check_artifacts.py and docs/releasing/images.md.
 #
 # Layers go from "changes rarely" to "changes every commit", so a source-only edit rebuilds only
 # the last steps of each stage:

@@ -16,7 +16,7 @@ model file and no ML package (`ai` may hold pydantic-ai, which only calls models
 `local` holds ONNX Runtime and must hold the default models, at their pinned revisions, in its
 read-only models directory. No variant holds aiohttp.
 
-Budgets and reasoning: docs/releasing.md ("Size and model-free budgets").
+Budgets and reasoning: docs/releasing/images.md ("Size and model-free budgets").
 """
 
 import json
@@ -92,7 +92,7 @@ class Variant:
 
 
 IMAGE_VARIANTS = {
-    # 375 MB until DBOS (#65); see docs/releasing.md.
+    # 375 MB until DBOS (#65); see docs/releasing/images.md.
     "base": Variant(budget=410 * MB, allowed_ml=frozenset(), models=False),
     "ai": Variant(budget=560 * MB, allowed_ml=LLM_CLIENT_PACKAGES, models=False),
     "local": Variant(budget=950 * MB, allowed_ml=LOCAL_PACKAGES | LLM_CLIENT_PACKAGES, models=True),

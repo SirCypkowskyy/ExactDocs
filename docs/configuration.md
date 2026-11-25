@@ -515,7 +515,7 @@ EXACTDOCS_TEST_AZURE_SEARCH_KEY=<admin key> \
 
 (Without `EXACTDOCS_TEST_AZURE_SEARCH_KEY`, the tests sign in with `DefaultAzureCredential`,
 e.g. after `az login`. The real service's cases are integration tests: `--integration` turns them
-on, see [Fast and integration tests](releasing.md#fast-and-integration-tests).)
+on, see [Fast and integration tests](releasing/tests.md).)
 
 ### Chroma
 

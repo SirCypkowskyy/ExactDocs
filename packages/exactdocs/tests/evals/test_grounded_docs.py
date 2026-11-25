@@ -2,7 +2,7 @@
 
 The run's tests use ``grounded_docs_stand_in``: Grounded Docs 3.4.1's real ``search_docs``
 responses, recorded on the retrieval benchmark's tiny corpus, replayed. Nothing here starts Node.js
-or reaches the network; the real run is ``just grounded-bench`` (docs/evals.md#grounded-docs).
+or reaches the network; the real run is ``just grounded-bench`` (docs/evals/grounded-docs.md).
 """
 
 import contextlib

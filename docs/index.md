@@ -183,9 +183,9 @@ yet. [Recommended defaults](benchmark/defaults.md) has the numbers and the known
 | [Architecture](architecture.md) | The system at a glance, then the modular monolith: domains, ports and adapters, the data model, background jobs, vertical slices, and the tests that enforce them |
 | [Flows](flows.md) | Import, re-sync, query, retrieval modes and authentication as diagrams |
 | [REST API](rest-api.md) | Conventions, authentication, errors, and the library, version, sync and job endpoints |
-| [Retrieval evals](evals.md) | The eval suite that compares retrieval modes |
+| [Retrieval evals](evals/index.md) | The eval suite that compares retrieval modes |
 | [Benchmark](benchmark/index.md) | The golden set, method, results and recommended defaults |
-| [Branching and releases](releasing.md) | `main` and `develop`, SemVer and PEP 440 versions, tag-driven releases to PyPI and ghcr.io, CI runners, size budgets |
+| [Branching and releases](releasing/index.md) | `main` and `develop`, SemVer and PEP 440 versions, tag-driven releases to PyPI and ghcr.io, CI runners, size budgets |
 
 ## Where the project is going
 

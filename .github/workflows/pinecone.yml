@@ -37,7 +37,7 @@ concurrency:
 permissions:
   contents: read
 
-# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing.md "CI/CD and
+# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing/runners.md "CI/CD and
 # runners"); it uses none of the GitHub-hosted minutes.
 jobs:
   contract:

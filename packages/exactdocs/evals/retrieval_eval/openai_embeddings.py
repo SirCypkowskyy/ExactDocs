@@ -7,7 +7,7 @@ revision, through fastembed as ExactDocs loads it), at ``POST /v1/embeddings`` o
 interface. It speaks the part of the API an embeddings client uses: ``input`` as a string or a
 list of strings, ``encoding_format`` ``float`` or ``base64``, and ``usage`` with the tokens the
 model's tokenizer counts. It runs in a thread of the benchmark's process and counts what it
-embedded. See docs/evals.md#grounded-docs.
+embedded. See docs/evals/grounded-docs.md.
 """
 
 import base64

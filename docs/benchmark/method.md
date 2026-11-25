@@ -9,7 +9,7 @@ Three benchmarks run on the [golden set](golden-set.md), each over every pinned 
 - the **agent benchmark** (#348) starts ExactDocs as shipped and lets an agent whose only tools
   are the ExactDocs MCP tools answer the questions; an LLM judge grades the answers.
 
-Their full reference (every flag, field and rule) is in [Retrieval evals](../evals.md). This page
+Their full reference (every flag, field and rule) is in [Retrieval evals](../evals/index.md). This page
 gives the definitions the result pages rely on.
 
 ## Chunking configurations
@@ -119,7 +119,7 @@ The scorer was calibrated on ExactDocs' own BM25 results for the whole golden se
 ways: at the `default` chunking it takes 99.8% of the hit and miss decisions (each expected
 section's rank in the top 10, or a miss) as chunk-ID scoring does, against a criterion of 98%.
 The threshold, the sweep that chose it and every disagreement are in
-[Scoring text results](../evals.md#scoring-text-results).
+[Scoring text results](../evals/text-scoring.md).
 [Comparison with other tools](comparison.md) scores other tools with it.
 
 ## Ingestion metrics
@@ -130,7 +130,7 @@ lists; source characters that end up in no chunk; chunk sizes in estimated token
 4) at p50, p95 and maximum; the share of chunks under 50 tokens; chunks holding more than one
 top-level heading; empty or wrong heading paths; headings the chunks miss or invent; and
 MkDocs-specific losses. The definitions are in
-[The ingestion benchmark](../evals.md#the-ingestion-benchmark).
+[The ingestion benchmark](../evals/ingestion.md).
 
 ## Agent metrics and the judge
 
@@ -162,7 +162,7 @@ and tokens by a paired sign-flip permutation test, with the ratio of the means.
 
 **Judge agreement with hand labels: not measured yet.** The judge is checked by labelling at
 least 50 answers of a real-model run by hand and comparing (`just agent-bench sample`, then
-`just agent-bench agreement`; see [Judge agreement](../evals.md#judge-agreement)). The first
+`just agent-bench agreement`; see [Judge agreement](../evals/agent-bench-running.md#judge-agreement)). The first
 real-model run ([Agent results](agent.md)) is not labelled yet, so its accuracies rest on an
 unchecked judge.
 
@@ -212,7 +212,7 @@ Each JSON report records what a rerun needs. `retrieval.json` holds the golden s
 fingerprint, every pinned commit, the ExactDocs commit, the machine, the library versions, each
 model with its Hub revision, the AI settings of each configuration, every case's outcome, and
 the seed and resamples of the intervals
-([Reproducing a result](../evals.md#reproducing-a-result)). The commands:
+([Reproducing a result](../evals/retrieval-runs.md#reproducing-a-result)). The commands:
 
 ```bash
 just ingestion-bench --offline --out packages/exactdocs/evals/results
@@ -221,7 +221,7 @@ EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
   --out packages/exactdocs/evals/results
 ```
 
-The second is the recorded retrieval run ([The recorded run](../evals.md#the-recorded-run)): 3 h
+The second is the recorded retrieval run ([The recorded run](../evals/retrieval-runs.md#the-recorded-run)): 3 h
 17 min on a 4-CPU runner, most of it embedding the corpus and the cross-encoder.
 
 ## Refreshing these pages

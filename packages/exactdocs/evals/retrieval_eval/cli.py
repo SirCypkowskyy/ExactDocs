@@ -33,7 +33,7 @@ from retrieval_eval.suite import (
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="just eval",
-        description="Compare retrieval modes on the fixture docs repository (docs/evals.md).",
+        description="Compare retrieval modes on the fixture docs repository (docs/evals/suite.md).",
     )
     parser.add_argument(
         "--modes",
@@ -126,7 +126,7 @@ OFFLINE_NOT_JUDGED: Final[Mapping[RetrievalMode, str]] = {
     RetrievalMode.HYBRID_HYDE: "offline embedding",
 }
 """On the offline embedding the hybrid modes' eligibility as a default is not judged (HyDE runs
-there only in tests, on a stand-in LLM, docs/evals.md)."""
+there only in tests, on a stand-in LLM, docs/evals/suite.md)."""
 
 
 def _builder(args: argparse.Namespace) -> ContainerBuilder:

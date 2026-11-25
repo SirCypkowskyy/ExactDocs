@@ -71,7 +71,7 @@ What a machine checks, on every case, with `just golden-validate`:
 
 CI checks the rules on every pull request; the section check needs the corpus cache, so it runs
 locally and wherever the cache is present. Details are in
-[What `golden-validate` checks](../evals.md#what-golden-validate-checks).
+[What `golden-validate` checks](../evals/golden-set.md#what-golden-validate-checks).
 
 ## The independent review
 
@@ -93,7 +93,7 @@ Each verdict is in
 [`evals/golden/review.yaml`](https://github.com/SirCypkowskyy/ExactDocs/tree/develop/packages/exactdocs/evals/golden/review.yaml):
 correct, fixed or removed, the problems, and a note quoting the source that proves each one.
 `just golden-validate` checks the file against the cases. How the review works and what each
-problem means: [Reviewing the golden set](../evals.md#reviewing-the-golden-set).
+problem means: [Reviewing the golden set](../evals/golden-set.md#reviewing-the-golden-set).
 
 <!-- bench:golden-review -->
 - Sample: 90 cases, 3 per kind and project, seed 490, drawn from golden set `sha256:39f6f9d5e909d128`.
@@ -190,6 +190,6 @@ Pick a project and version, read the page at the pinned commit, write the case i
 `cases/<project>.yaml` and run `just golden-validate --projects <project>`: a wrong heading path
 lists the closest sections the article has. The step-by-step guide and the pitfalls this corpus
 shows (pages without H1, TanStack Query framework pages, Zod's MDX, Pydantic's includes) are in
-[Adding a case](../evals.md#adding-a-case). Adding or changing a case changes the golden set's
+[Adding a case](../evals/golden-set.md#adding-a-case). Adding or changing a case changes the golden set's
 fingerprint, so the recorded runs and these pages are refreshed in the same pull request
 ([Method](method.md#refreshing-these-pages)).

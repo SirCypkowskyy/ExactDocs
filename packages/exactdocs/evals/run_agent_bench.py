@@ -1,4 +1,4 @@
-"""The agent benchmark: ``just agent-bench run|sample|agreement`` (docs/evals.md).
+"""The agent benchmark: ``just agent-bench run|sample|agreement`` (docs/evals/agent-bench.md).
 
 As in ``run_retrieval_eval.py``, the test-support directory (the importer wiring) is put on the
 path before the CLI is imported.
