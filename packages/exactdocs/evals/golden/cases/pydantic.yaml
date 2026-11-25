@@ -170,7 +170,7 @@ cases:
   metadata: {kind: identifier-lookup}
   expected_output:
     hits:
-    - {version: v2.5.3, article: docs/errors/usage_errors.md, heading_path: ['Config and model_config both defined {#config-both}']}
+    - {version: v2.5.3, article: docs/errors/usage_errors.md, heading_path: [Config and model_config both defined]}
     reference: >-
       Defining both raises a `PydanticUserError` with the code `config-both`, at class definition.
     facts:
