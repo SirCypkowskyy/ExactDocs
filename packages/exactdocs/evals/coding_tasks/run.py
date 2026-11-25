@@ -34,7 +34,15 @@ from coding_tasks.agent import DEFAULT_MAX_REQUESTS, ModelFor, TaskAgent, instru
 from coding_tasks.environments import PreparedEnvironment
 from coding_tasks.evaluators import TaskInfo, TaskInput, task_dataset
 from coding_tasks.grading import TaskRun
-from coding_tasks.report import ERROR, CellKey, CodingReport, RunMeta, TaskResult, cells_of, results_of
+from coding_tasks.report import (
+    ERROR,
+    CellKey,
+    CodingReport,
+    RunMeta,
+    TaskResult,
+    cells_of,
+    results_of,
+)
 from coding_tasks.sandbox import Limits, Sandbox
 from coding_tasks.tasks import DEFAULT_CUTOFF, CodingTask
 from fixture_repo import git
@@ -98,7 +106,9 @@ class Asking:
     rows: dict[JobKey, TaskResult] = field(default_factory=dict)
     """The jobs this run asked."""
 
-    async def run(self, jobs: Sequence[tuple[Case[TaskInput, TaskRun, TaskInfo], JobKey]]) -> list[TaskResult]:
+    async def run(
+        self, jobs: Sequence[tuple[Case[TaskInput, TaskRun, TaskInfo], JobKey]]
+    ) -> list[TaskResult]:
         """Ask every job not done yet.
 
         Args:
@@ -268,5 +278,8 @@ async def run_tasks(
         isolation=sandbox.isolation,
     )
     return CodingReport(
-        meta=meta, cells=cells_of(every, keys, DEFAULT_STATS), results=every, statistics=DEFAULT_STATS
+        meta=meta,
+        cells=cells_of(every, keys, DEFAULT_STATS),
+        results=every,
+        statistics=DEFAULT_STATS,
     )

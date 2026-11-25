@@ -14,7 +14,7 @@ side, which is not graded and asked again with ``--resume``.
 import tempfile
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
@@ -26,7 +26,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import UsageLimits
 
 from agent_bench.arms import Arm
-from agent_bench.harness import PROMPT, Recorder, failure_of, run_record
+from agent_bench.harness import PROMPT, AgentRun, Recorder, failure_of, run_record
 from agent_bench.redact import scrub
 from agent_bench.retries import RETRIES, RetryLog
 from coding_tasks.environments import PreparedEnvironment
@@ -107,7 +107,7 @@ class TaskAgent:
     """Where the tests run."""
     work_dir: Path
     """Where the workspaces are built (each run its own)."""
-    limits: Limits = Limits()
+    limits: Limits = field(default_factory=Limits)
     """The limits of each test run."""
     max_requests: int = DEFAULT_MAX_REQUESTS
     """The most model requests one task may take, the same for every arm."""
@@ -124,18 +124,45 @@ class TaskAgent:
             The agent's run and the grade; no grade when the provider failed.
         """
         task = self.tasks[inputs.task]
-        prepared = self.prepared[task.environment.name]
-        self.work_dir.mkdir(parents=True, exist_ok=True)
-        root = Path(tempfile.mkdtemp(prefix=f"{task.id}-", dir=self.work_dir))
-        workspace_dir = materialize(task, root / "workspace", prepared)
-        runner = Runner(sandbox=self.sandbox, prepared=prepared, limits=self.limits)
-        workspace = Workspace(root=workspace_dir, task=task, runner=runner)
+        workspace = self.workspace(task)
         agent = Agent[Recorder, str](
             self.models(self.model_name, task),
             deps_type=Recorder,
             instructions=instructions(self.arm),
             toolsets=[*self.toolsets, workspace.toolset()],
         )
+        run = await self.converse(agent, inputs)
+        if run.failure == "provider":
+            return TaskRun(agent=run)
+        return TaskRun(agent=run, grade=await workspace.runner.grade(task, workspace.root))
+
+    def workspace(self, task: CodingTask) -> Workspace:
+        """Build a fresh workspace for a task.
+
+        Args:
+            task: The task.
+
+        Returns:
+            Its workspace, with a runner for its environment.
+        """
+        prepared = self.prepared[task.environment.name]
+        self.work_dir.mkdir(parents=True, exist_ok=True)
+        root = Path(tempfile.mkdtemp(prefix=f"{task.id}-", dir=self.work_dir))
+        runner = Runner(sandbox=self.sandbox, prepared=prepared, limits=self.limits)
+        return Workspace(
+            root=materialize(task, root / "workspace", prepared), task=task, runner=runner
+        )
+
+    async def converse(self, agent: Agent[Recorder, str], inputs: TaskInput) -> AgentRun:
+        """Run the agent on a task's prompt and record what it did and spent.
+
+        Args:
+            agent: The agent, with its toolsets.
+            inputs: The task.
+
+        Returns:
+            The run's record; a run that failed carries its error and whose side it is on.
+        """
         recorder = Recorder()
         answer, error, failure = "", None, None
         retries = RetryLog()
@@ -157,6 +184,4 @@ class TaskAgent:
             RETRIES.reset(token)
         seconds = round(time.perf_counter() - started, 3)
         spent = run_record(messages, recorder, retries, model=self.model_name, seconds=seconds)
-        run = spent.model_copy(update={"answer": answer, "error": error, "failure": failure})
-        grade = None if failure == "provider" else await runner.grade(task, workspace_dir)
-        return TaskRun(agent=run, grade=grade)
+        return spent.model_copy(update={"answer": answer, "error": error, "failure": failure})

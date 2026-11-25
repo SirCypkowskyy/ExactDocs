@@ -25,7 +25,7 @@ from coding_tasks.grading import TaskRun
 from coding_tasks.tasks import ApiSince, CodingTask
 from retrieval_eval.golden import Corpus
 
-TESTS_PASS: Final[str] = "tests_pass"
+HIDDEN_TESTS: Final[str] = "hidden_tests"
 """The assertion that the hidden tests passed."""
 NO_FORBIDDEN_API: Final[str] = "no_forbidden_api"
 """The assertion that no forbidden API was used."""
@@ -153,10 +153,11 @@ class TestsPass(Evaluator[TaskInput, TaskRun, TaskInfo]):
         """
         grade = ctx.output.grade
         if grade is None:
-            return {TESTS_PASS: EvaluationReason(value=False, reason=NOT_GRADED)}
+            return {HIDDEN_TESTS: EvaluationReason(value=False, reason=NOT_GRADED)}
         tests = grade.tests
         if tests.passed:
-            reason = f"{tests.tests} tests passed on {ctx.metadata and ctx.metadata.package} {tests.installed}"
+            package = ctx.metadata.package if ctx.metadata else "the package"
+            reason = f"{tests.tests} tests passed on {package} {tests.installed}"
         elif tests.timed_out:
             reason = "killed at the wall limit"
         elif tests.typecheck is False:
@@ -165,12 +166,12 @@ class TestsPass(Evaluator[TaskInput, TaskRun, TaskInfo]):
             reason = f"{tests.failed} of {tests.tests} failed: {', '.join(tests.failures[:5])}"
         else:
             reason = f"the test run ended with status {tests.exit_code} before any test passed"
-        return {TESTS_PASS: EvaluationReason(value=tests.passed, reason=reason)}
+        return {HIDDEN_TESTS: EvaluationReason(value=tests.passed, reason=reason)}
 
 
 @dataclass(repr=False)
 class ForbiddenApi(Evaluator[TaskInput, TaskRun, TaskInfo]):
-    """Asserts that no API absent from (or removed in) the pinned version was used, and counts them."""
+    """Asserts that no API the pinned version lacks (or removed) was used, and counts them."""
 
     def evaluate(
         self, ctx: EvaluatorContext[TaskInput, TaskRun, TaskInfo]

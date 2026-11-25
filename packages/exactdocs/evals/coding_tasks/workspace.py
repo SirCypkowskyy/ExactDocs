@@ -159,6 +159,9 @@ async def _recorded[T](
 
     Returns:
         What the tool returned.
+
+    Raises:
+        ModelRetry: The tool refused the call (the model is told why and may try again).
     """
     shown = json.dumps(args, ensure_ascii=False, sort_keys=True)[:ARGS_SHOWN]
     started = time.perf_counter()

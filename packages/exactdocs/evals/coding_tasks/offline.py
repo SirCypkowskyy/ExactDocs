@@ -16,10 +16,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
-    ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
@@ -38,6 +36,8 @@ LIST_LIBRARIES: Final[str] = "list_libraries"
 """The documentation tool the script calls first, when the arm has it."""
 SUMMARY: Final[str] = "Done: {count} files written."
 """The script's final answer."""
+ANSWERS: Final[frozenset[str]] = frozenset({"tool-return", "retry-prompt"})
+"""The parts of a request that answer one of the model's tool calls."""
 
 
 def script(files: Mapping[str, str], tools: Sequence[str]) -> list[tuple[str, dict[str, Any]]]:
@@ -69,7 +69,7 @@ def _answered(messages: Sequence[ModelMessage]) -> int:
         Tool returns and retry prompts the model was sent.
     """
     return sum(
-        isinstance(part, ToolReturnPart | RetryPromptPart)
+        part.part_kind in ANSWERS
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts

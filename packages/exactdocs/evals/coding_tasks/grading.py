@@ -17,9 +17,9 @@ import shlex
 import shutil
 import tempfile
 import tokenize
-import xml.etree.ElementTree as ET  # noqa: S405 -- parses the junit file our own run wrote
+import xml.etree.ElementTree as ET
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
@@ -180,7 +180,7 @@ class Runner:
     """The sandbox."""
     prepared: PreparedEnvironment
     """The task's environment, installed."""
-    limits: Limits = Limits()
+    limits: Limits = field(default_factory=Limits)
     """The limits of each test run."""
 
     async def run_tests(self, workspace: Path, *, hidden: bool) -> TestOutcome:
@@ -265,7 +265,8 @@ class Runner:
             forbidden=forbidden,
             changes=changes,
             unexpected=[
-                f for f in (*changes.added, *changes.modified, *changes.deleted)
+                f
+                for f in (*changes.added, *changes.modified, *changes.deleted)
                 if f not in task.spec.files
             ],
             isolation=self.sandbox.isolation,
@@ -289,17 +290,19 @@ def test_script(prepared: PreparedEnvironment, workspace: Path, *, hidden: bool)
     spec = prepared.environment.spec
     junit = f"{HOME_DIR}/junit.xml"
     tests_dir = HIDDEN_DIR if hidden else VISIBLE_DIR
-    lines = ["#!/bin/sh", "cd \"$(dirname \"$0\")/..\" || exit 2"]
+    lines = ["#!/bin/sh", 'cd "$(dirname "$0")/.." || exit 2']
     if spec.ecosystem == "python":
         python = shlex.quote(str(prepared.python))
         probe = "import importlib.metadata as m, sys; print(m.version(sys.argv[1]))"
-        lines.append(f"echo \"@@installed $({python} -c {shlex.quote(probe)} {spec.package})\"")
+        lines.append(f'echo "@@installed $({python} -c {shlex.quote(probe)} {spec.package})"')
         config = f"-c {HIDDEN_DIR}/pytest.ini --rootdir=. --noconftest" if hidden else ""
         lines += [
-            f"{python} -m pytest {config} -p no:cacheprovider -q -rfE "
-            f"--junitxml={junit} {tests_dir}",
+            (
+                f"{python} -m pytest {config} -p no:cacheprovider -q -rfE "
+                f"--junitxml={junit} {tests_dir}"
+            ),
             "status=$?",
-            "echo \"@@tests $status\"",
+            'echo "@@tests $status"',
             "exit $status",
         ]
         return "\n".join(lines) + "\n"
@@ -313,17 +316,17 @@ def test_script(prepared: PreparedEnvironment, workspace: Path, *, hidden: bool)
         p.relative_to(workspace).as_posix() for p in (workspace / tests_dir).glob("*.test.ts")
     )
     lines += [
-        f"echo \"@@installed $({node} -e {shlex.quote(probe)})\"",
+        f'echo "@@installed $({node} -e {shlex.quote(probe)})"',
         f"{node} {NODE_MODULES}/typescript/bin/tsc -p {tsconfig} --pretty false",
         "typecheck=$?",
-        "echo \"@@typecheck $typecheck\"",
+        'echo "@@typecheck $typecheck"',
         f"{node} --test --test-force-exit --test-timeout={TEST_TIMEOUT_MS} "
         "--test-reporter=spec --test-reporter-destination=stdout "
         f"--test-reporter=junit --test-reporter-destination={junit} "
         + " ".join(shlex.quote(f) for f in files),
         "status=$?",
-        "echo \"@@tests $status\"",
-        "[ \"$typecheck\" -eq 0 ] && [ \"$status\" -eq 0 ]",
+        'echo "@@tests $status"',
+        '[ "$typecheck" -eq 0 ] && [ "$status" -eq 0 ]',
     ]
     return "\n".join(lines) + "\n"
 
@@ -351,7 +354,7 @@ def _junit(path: Path) -> tuple[int, list[str]]:
     if not path.exists():
         return 0, []
     try:
-        root = ET.parse(path).getroot()  # noqa: S314 -- written by our own test run
+        root = ET.parse(path).getroot()
     except ET.ParseError:
         return 0, ["<unreadable junit report>"]
     cases = list(root.iter("testcase"))
@@ -466,7 +469,7 @@ def code_without_comments(path: Path, text: str) -> str:
     if path.suffix == ".py":
         try:
             tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
-        except (tokenize.TokenError, SyntaxError):
+        except tokenize.TokenError, SyntaxError:
             return text
         lines = text.splitlines(keepends=True)
         for token in reversed(tokens):

@@ -25,6 +25,7 @@ from coding_tasks.agent import DEFAULT_MAX_REQUESTS
 from coding_tasks.check import CheckReport, check_tasks, markdown, prepare_all
 from coding_tasks.environments import ENVIRONMENTS_DIR, default_cache_dir
 from coding_tasks.offline import OFFLINE_AGENTS, offline_model
+from coding_tasks.report import CodingReport
 from coding_tasks.report import markdown as report_markdown
 from coding_tasks.run import load_rows, run_tasks
 from coding_tasks.sandbox import Limits, sandbox_named
@@ -125,7 +126,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     run.add_argument("--resume", action="store_true", help="continue from <report>.rows.jsonl")
     run.add_argument("--golden-cache", type=Path, default=golden_cache_dir())
-    run.add_argument("--work-dir", type=Path, help="workspaces and server logs (default: temporary)")
+    run.add_argument(
+        "--work-dir", type=Path, help="workspaces and server logs (default: temporary)"
+    )
     run.add_argument("--report", type=Path, default=RUN_REPORT)
     return parser
 
@@ -200,8 +203,10 @@ def inventory(tasks: Sequence[CodingTask], cutoff: date) -> str:
         the version and the change it hinges on came after the cutoff.
     """
     lines = [
-        "| Task | Project | Pinned | Released | Pair | Other version | Change behind the trap |"
-        " After the cutoff |",
+        (
+            "| Task | Project | Pinned | Released | Pair | Other version | Change behind the trap |"
+            " After the cutoff |"
+        ),
         "|---|---|---|---|---|---|---|---|",
     ]
     for t in tasks:
@@ -217,10 +222,12 @@ def inventory(tasks: Sequence[CodingTask], cutoff: date) -> str:
     paired = sum(t.spec.pair is not None for t in tasks)
     lines += [
         "",
-        f"{len(tasks)} tasks over {len(projects)} projects ({', '.join(projects)}); {paired} in "
-        f"version pairs; {sum(t.post_cutoff(cutoff) for t in tasks)} pin a version released after "
-        f"{cutoff}, {sum(t.api_post_cutoff(cutoff) for t in tasks)} of them also hinge on a change "
-        "released after it.",
+        (
+            f"{len(tasks)} tasks over {len(projects)} projects ({', '.join(projects)}); "
+            f"{paired} in version pairs; {sum(t.post_cutoff(cutoff) for t in tasks)} pin a "
+            f"version released after {cutoff}, {sum(t.api_post_cutoff(cutoff) for t in tasks)} "
+            "of them also hinge on a change released after it."
+        ),
     ]
     return "\n".join(lines) + "\n"
 
@@ -302,29 +309,14 @@ def _run(args: argparse.Namespace) -> int:
     if loaded is None:
         return 2
     tasks, corpus = loaded
-    if args.limit is not None:
-        taken: dict[str, int] = {}
-        kept = []
-        for task in tasks:
-            if taken.get(task.spec.project, 0) < args.limit:
-                taken[task.spec.project] = taken.get(task.spec.project, 0) + 1
-                kept.append(task)
-        tasks = kept
+    tasks = per_project(tasks, args.limit)
     try:
         prepared = asyncio.run(prepare_all(tasks, args.cache_dir))
-        repos = (
-            {
-                p.id: fetch(p, args.golden_cache)
-                for p in corpus.projects
-                if p.id in {t.spec.project for t in tasks}
-            }
-            if any(arm.retrieval for arm in arms)
-            else {}
-        )
+        wanted = {t.spec.project for t in tasks} if any(a.retrieval for a in arms) else set()
+        repos = {p.id: fetch(p, args.golden_cache) for p in corpus.projects if p.id in wanted}
     except RuntimeError as error:
         sys.stderr.write(f"coding-tasks: {error}\n")
         return 1
-    sandbox = sandbox_named(args.sandbox, require_network_isolation=True)
     work_dir = args.work_dir or Path(tempfile.mkdtemp(prefix="exactdocs-coding-tasks-"))
     work_dir.mkdir(parents=True, exist_ok=True)
     args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -337,7 +329,7 @@ def _run(args: argparse.Namespace) -> int:
             tasks,
             corpus,
             prepared,
-            sandbox,
+            sandbox_named(args.sandbox, require_network_isolation=True),
             agent_models=agent_models,
             arms=arms,
             retrieval=retrieval,
@@ -354,17 +346,48 @@ def _run(args: argparse.Namespace) -> int:
             done=done,
         )
     )
+    _write_run(report, args.report)
+    sys.stdout.write(f"\nreport: {args.report}; work dir: {work_dir}\n")
+    return 0
+
+
+def per_project(tasks: Sequence[CodingTask], limit: int | None) -> list[CodingTask]:
+    """Keep at most `limit` tasks per project, in order.
+
+    Args:
+        tasks: The tasks.
+        limit: The most per project; all when ``None``.
+
+    Returns:
+        The tasks kept.
+    """
+    taken: dict[str, int] = {}
+    kept = []
+    for task in tasks:
+        if limit is None or taken.get(task.spec.project, 0) < limit:
+            taken[task.spec.project] = taken.get(task.spec.project, 0) + 1
+            kept.append(task)
+    return kept
+
+
+def _write_run(report: CodingReport, path: Path) -> None:
+    """Write a run's JSON and Markdown, and print the Markdown.
+
+    Args:
+        report: The run.
+        path: The JSON report.
+    """
     text = report_markdown(report)
-    args.report.write_text(report.model_dump_json(indent=2) + "\n", encoding="utf-8")
-    args.report.with_suffix(".md").write_text(text, encoding="utf-8")
+    path.write_text(report.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    path.with_suffix(".md").write_text(text, encoding="utf-8")
     sys.stdout.write(text)
     if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
         with Path(summary).open("a", encoding="utf-8") as out:
             out.write(text)
     if errors := sum(r.outcome == "error" for r in report.results):
-        sys.stdout.write(f"\n{errors} tasks failed on the provider's side; `--resume` asks them again\n")
-    sys.stdout.write(f"\nreport: {args.report}; work dir: {work_dir}\n")
-    return 0
+        sys.stdout.write(
+            f"\n{errors} tasks failed on the provider's side; --resume asks them again\n"
+        )
 
 
 def _selection(args: argparse.Namespace) -> str:

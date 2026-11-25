@@ -14,8 +14,8 @@ CI runs this on every pull request (``just coding-tasks check``).
 
 import asyncio
 import tempfile
-from dataclasses import dataclass
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal
 
@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic_evals.reporting import EvaluationReport
 
 from coding_tasks.environments import PreparedEnvironment, prepare
-from coding_tasks.evaluators import TESTS_PASS, TaskInfo, TaskInput, task_dataset
+from coding_tasks.evaluators import HIDDEN_TESTS, TaskInfo, TaskInput, task_dataset
 from coding_tasks.grading import Runner, TaskRun, materialize
 from coding_tasks.sandbox import Isolation, Limits, Sandbox
 from coding_tasks.tasks import CodingTask
@@ -192,7 +192,7 @@ def _by_case(
     """
     found: dict[str, tuple[TaskRun | None, str]] = {}
     for case in report.cases:
-        assertion = case.assertions.get(TESTS_PASS)
+        assertion = case.assertions.get(HIDDEN_TESTS)
         found[case.name] = (case.output, (assertion.reason or "") if assertion else "")
     for failure in report.failures:
         found[failure.name] = (None, f"the task function raised: {failure.error_message}")
@@ -263,65 +263,82 @@ async def check_tasks(
         The report.
     """
     by_id = {t.id: t for t in tasks}
-    dataset = task_dataset(list(tasks), corpus)
-    limits = limits or Limits()
-    runs = {}
-    for solution in SOLUTIONS:
+    passes: list[tuple[Solution, list[CodingTask], bool]] = [
+        *((solution, list(tasks), False) for solution in SOLUTIONS),
+        ("other", [t for t in tasks if t.other_environment is not None], True),
+    ]
+    runs: list[dict[str, tuple[TaskRun | None, str]]] = []
+    for solution, picked, crossing in passes:
         solve = Solve(
             tasks=by_id,
             prepared=prepared,
             sandbox=sandbox,
-            limits=limits,
+            limits=limits or Limits(),
             solution=solution,
             work_dir=work_dir,
+            on_other_environment=crossing,
         )
-        report = await dataset.evaluate(
-            solve, name=f"check {solution}", max_concurrency=concurrency, progress=False
-        )
-        runs[solution] = _by_case(report)
-    crossing = [t for t in tasks if t.other_environment is not None]
-    if crossing:
-        solve = Solve(
-            tasks=by_id,
-            prepared=prepared,
-            sandbox=sandbox,
-            limits=limits,
-            solution="other",
-            work_dir=work_dir,
-            on_other_environment=True,
-        )
-        report = await task_dataset(crossing, corpus).evaluate(
-            solve, name="check other on its version", max_concurrency=concurrency, progress=False
-        )
-        runs["other on its version"] = _by_case(report)
-    checks = []
-    for task in tasks:
-        ref_run, ref_reason = runs["reference"].get(task.id, (None, "not run"))
-        other_run, other_reason = runs["other"].get(task.id, (None, "not run"))
-        ref_passed = bool(ref_run and ref_run.grade and ref_run.grade.passed)
-        other_passed = bool(other_run and other_run.grade and other_run.grade.passed)
-        reference = _solution_check(ref_run, ref_reason, keep_output=not ref_passed)
-        other = _solution_check(other_run, other_reason, keep_output=True)
-        crossed = None
-        if task.other_environment is not None:
-            own_run, own_reason = runs["other on its version"].get(task.id, (None, "not run"))
-            crossed = _solution_check(
-                own_run, own_reason, keep_output=not (own_run and own_run.grade and own_run.grade.passed)
+        report = (
+            await task_dataset(picked, corpus).evaluate(
+                solve, name=f"check {solution}", max_concurrency=concurrency, progress=False
             )
-        checks.append(
-            TaskCheck(
-                task=task.id,
-                project=task.spec.project,
-                version=task.spec.version,
-                pair=task.spec.pair,
-                other_version=task.spec.other_version,
-                reference=reference,
-                other=other,
-                other_on_its_version=crossed,
-                problems=problems_of(task, reference, other, crossed),
-            )
+            if picked
+            else None
         )
+        runs.append(_by_case(report) if report is not None else {})
+    checks = [
+        _task_check(task, *(run.get(task.id, (None, "not run")) for run in runs)) for task in tasks
+    ]
     return CheckReport(tasks=checks, isolation=sandbox.isolation)
+
+
+def _task_check(
+    task: CodingTask,
+    reference_run: tuple[TaskRun | None, str],
+    other_run: tuple[TaskRun | None, str],
+    crossed_run: tuple[TaskRun | None, str],
+) -> TaskCheck:
+    """Put one task's three runs together.
+
+    Args:
+        task: The task.
+        reference_run: The reference's run and reason.
+        other_run: The other-version solution's run and reason.
+        crossed_run: The other-version solution's run on its own version (``other_environment``).
+
+    Returns:
+        The task's check, with its problems.
+    """
+    reference = _solution_check(*reference_run, keep_output=not _passed(reference_run[0]))
+    other = _solution_check(*other_run, keep_output=True)
+    crossed = (
+        _solution_check(*crossed_run, keep_output=not _passed(crossed_run[0]))
+        if task.other_environment is not None
+        else None
+    )
+    return TaskCheck(
+        task=task.id,
+        project=task.spec.project,
+        version=task.spec.version,
+        pair=task.spec.pair,
+        other_version=task.spec.other_version,
+        reference=reference,
+        other=other,
+        other_on_its_version=crossed,
+        problems=problems_of(task, reference, other, crossed),
+    )
+
+
+def _passed(run: TaskRun | None) -> bool:
+    """Tell whether a fixed solution's hidden tests passed.
+
+    Args:
+        run: Its run, if it ran.
+
+    Returns:
+        True when graded and passed.
+    """
+    return bool(run and run.grade and run.grade.passed)
 
 
 def markdown(report: CheckReport) -> str:
@@ -337,12 +354,16 @@ def markdown(report: CheckReport) -> str:
     lines = [
         "## Coding tasks: reference and other-version solutions",
         "",
-        f"{sound} of {len(report.tasks)} tasks sound: the reference passes on the pinned version, "
-        "the other-version solution fails and names a forbidden API.",
+        (
+            f"{sound} of {len(report.tasks)} tasks sound: the reference passes on the pinned "
+            "version, the other-version solution fails and names a forbidden API."
+        ),
         "",
-        f"Sandbox: {report.isolation.sandbox}; network {report.isolation.network}; "
-        f"CPU {report.isolation.cpu}; memory {report.isolation.memory}; "
-        f"time {report.isolation.time}.",
+        (
+            f"Sandbox: {report.isolation.sandbox}; network {report.isolation.network}; "
+            f"CPU {report.isolation.cpu}; memory {report.isolation.memory}; "
+            f"time {report.isolation.time}."
+        ),
         "",
         "| Task | Pinned | Installed | Reference | Other version | Other fails, naming |",
         "|---|---|---|---|---|---|",

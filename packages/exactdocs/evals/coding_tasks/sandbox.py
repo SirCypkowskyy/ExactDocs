@@ -22,7 +22,7 @@ import contextlib
 import os
 import shutil
 import signal
-import subprocess  # noqa: S404 -- only the fixed `unshare` probe; commands run via asyncio
+import subprocess
 import sys
 import time
 import uuid
@@ -201,7 +201,7 @@ def network_namespace() -> tuple[str, ...] | None:
         return None
     for flags in ("-n", "-rn"):
         with contextlib.suppress(OSError, subprocess.SubprocessError):
-            done = subprocess.run(  # noqa: S603 -- a fixed probe
+            done = subprocess.run(
                 [unshare, flags, "true"], capture_output=True, timeout=10, check=False
             )
             if done.returncode == 0:

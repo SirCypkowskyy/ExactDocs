@@ -342,10 +342,7 @@ def _spent(agent: AgentRun) -> dict:
     """
     return {
         "tool_calls": agent.tool_calls,
-        "read": [
-            f"{s.article if s.whole_article else s.chunk_id}@{s.version}"
-            for s in agent.read
-        ],
+        "read": [f"{s.article if s.whole_article else s.chunk_id}@{s.version}" for s in agent.read],
         "input_tokens": agent.input_tokens,
         "output_tokens": agent.output_tokens,
         "thinking_tokens": agent.thinking_tokens,
@@ -463,7 +460,9 @@ def cells_of(
         cell = summarize(key, list(mine.values()), method)
         baseline = by_cell.get((key[0], NONE, ""))
         if key[1] != NONE and baseline is not None:
-            shared = sorted(t for t in mine if t in baseline and mine[t].graded and baseline[t].graded)
+            shared = sorted(
+                t for t in mine if t in baseline and mine[t].graded and baseline[t].graded
+            )
             test = paired_binary(
                 [baseline[t].passed for t in shared], [mine[t].passed for t in shared], method
             )
@@ -486,7 +485,11 @@ def _pct(rate: Rate) -> str:
     """
     if rate.rate is None:
         return "n/a"
-    ci = "" if rate.interval is None else f" [{rate.interval.low * 100:.1f}, {rate.interval.high * 100:.1f}]"
+    ci = (
+        ""
+        if rate.interval is None
+        else f" [{rate.interval.low * 100:.1f}, {rate.interval.high * 100:.1f}]"
+    )
     return f"{rate.rate * 100:.1f} %{ci} (n={rate.count})"
 
 
@@ -502,7 +505,11 @@ def _mean(value: Spread | None, digits: int = 1) -> str:
     """
     if value is None:
         return "n/a"
-    ci = "" if value.interval is None else f" [{value.interval.low:,.{digits}f}, {value.interval.high:,.{digits}f}]"
+    ci = (
+        ""
+        if value.interval is None
+        else f" [{value.interval.low:,.{digits}f}, {value.interval.high:,.{digits}f}]"
+    )
     return f"{value.mean:,.{digits}f}{ci}; p50 {value.p50:,.{digits}f}; p95 {value.p95:,.{digits}f}"
 
 
@@ -533,10 +540,12 @@ def markdown(report: CodingReport) -> str:
     lines = [
         "## Coding tasks",
         "",
-        f"{meta.tasks} tasks ({meta.selection}); arms {', '.join(meta.arms)}; agent models "
-        f"{', '.join(meta.agent_models)}; up to {meta.max_requests} requests a task; thinking "
-        f"{meta.thinking}; cutoff {meta.cutoff}. Sandbox: {meta.isolation.sandbox}, network "
-        f"{meta.isolation.network}.",
+        (
+            f"{meta.tasks} tasks ({meta.selection}); arms {', '.join(meta.arms)}; agent models "
+            f"{', '.join(meta.agent_models)}; up to {meta.max_requests} requests a task; thinking "
+            f"{meta.thinking}; cutoff {meta.cutoff}. Sandbox: {meta.isolation.sandbox}, network "
+            f"{meta.isolation.network}."
+        ),
         "",
         "| Model / arm | Passed | After the cutoff | Forbidden API used | Files changed | Errors |",
         "|---|---|---|---|---|---|",
@@ -559,7 +568,10 @@ def markdown(report: CodingReport) -> str:
         "",
         "### Cost per task",
         "",
-        "| Model / arm | Wall time (s) | Input tokens | Output tokens | Tool calls | Docs calls | USD |",
+        (
+            "| Model / arm | Wall time (s) | Input tokens | Output tokens | Tool calls "
+            "| Docs calls | USD |"
+        ),
         "|---|---|---|---|---|---|---|",
     ]
     lines += [
@@ -579,7 +591,8 @@ def markdown(report: CodingReport) -> str:
         ]
         for c in compared:
             t = c.versus_none
-            assert t is not None  # noqa: S101 -- filtered above
+            if t is None:
+                continue
             lines.append(
                 f"| {_label(c)} | {t.cases} | {t.difference * 100:+.1f} pts "
                 f"[{t.interval.low * 100:+.1f}, {t.interval.high * 100:+.1f}] | "
@@ -606,7 +619,11 @@ def markdown(report: CodingReport) -> str:
         cells = []
         for key in keys:
             row = outcome.get((*key, task))
-            mark = "" if row is None else {"passed": "pass", "failed": "fail"}.get(row.outcome, "error")
+            mark = (
+                ""
+                if row is None
+                else {"passed": "pass", "failed": "fail"}.get(row.outcome, "error")
+            )
             if row is not None and row.forbidden:
                 mark += f" ({', '.join(row.forbidden)})"
             cells.append(mark)

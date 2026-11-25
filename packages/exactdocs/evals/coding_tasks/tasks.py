@@ -77,7 +77,7 @@ class TaskSpec(_Model):
     project: str = Field(min_length=1)
     """The golden-corpus project (``pydantic``, ``zod``)."""
     version: str = Field(min_length=1)
-    """The golden-corpus version the project pins (``v1.10.22``): the documentation arms serve it."""
+    """The golden-corpus version the project pins (``v1.10.22``), the one the docs arms serve."""
     environment: str = Field(min_length=1)
     """The environment that installs it."""
     title: str = Field(min_length=1)
@@ -241,9 +241,7 @@ def load_tasks(
         if found:
             problems.extend(f"task {task_id}: {p}" for p in found)
             continue
-        other = (
-            specs[spec.other_from][1] / REFERENCE if spec.other_from else directory / OTHER
-        )
+        other = specs[spec.other_from][1] / REFERENCE if spec.other_from else directory / OTHER
         tasks.append(
             CodingTask(
                 id=task_id,
@@ -280,41 +278,131 @@ def _problems(
     Returns:
         The problems.
     """
+    return [
+        *_identity_problems(task_id, spec, directory),
+        *_environment_problems(spec, environments),
+        *_corpus_problems(spec, corpus),
+        *_other_problems(spec, directory, specs),
+        *_file_problems(spec, directory),
+    ]
+
+
+def _identity_problems(task_id: str, spec: TaskSpec, directory: Path) -> list[str]:
+    """Check a task's ID and where it is.
+
+    Args:
+        task_id: Its ID.
+        spec: Its description.
+        directory: Its directory.
+
+    Returns:
+        The problems.
+    """
     problems = []
     if not TASK_ID.match(task_id):
         problems.append("the ID is not lowercase words joined by '-'")
     if directory.parent.name != spec.project:
         problems.append(f"it is under {directory.parent.name}/ but names project {spec.project}")
-    environment = environments.get(spec.environment)
+    return problems
+
+
+def _pins(environments: dict[str, Environment], name: str, version: str) -> str | None:
+    """Check that an environment exists and pins a version.
+
+    Args:
+        environments: Every environment, by name.
+        name: The environment's name.
+        version: The version (a leading ``v`` is ignored).
+
+    Returns:
+        The problem, or ``None``.
+    """
+    environment = environments.get(name)
     if environment is None:
-        problems.append(f"unknown environment {spec.environment}")
-    elif spec.version.removeprefix("v") != environment.spec.version and not environment.stand_in:
-        problems.append(f"version {spec.version} but {spec.environment} pins another")
-    if corpus is not None:
-        project = corpus.project(spec.project)
-        if project is None:
-            problems.append(f"project {spec.project} is not in the golden corpus")
-        elif project.commit(spec.version) is None:
-            problems.append(f"version {spec.version} is not a pinned version of {spec.project}")
-    for name in (WORKSPACE, HIDDEN, REFERENCE):
-        if not files_of(directory / name):
-            problems.append(f"{name}/ is missing or empty")
+        return f"unknown environment {name}"
+    if version.removeprefix("v") != environment.spec.version and not environment.stand_in:
+        return f"version {version} but {name} pins {environment.spec.version}"
+    return None
+
+
+def _environment_problems(spec: TaskSpec, environments: dict[str, Environment]) -> list[str]:
+    """Check the task's environments pin its versions.
+
+    Args:
+        spec: Its description.
+        environments: Every environment, by name.
+
+    Returns:
+        The problems.
+    """
+    found = [_pins(environments, spec.environment, spec.version)]
     if spec.other_environment is not None:
-        other_env = environments.get(spec.other_environment)
-        if other_env is None:
-            problems.append(f"unknown other_environment {spec.other_environment}")
-        elif spec.other_version.removeprefix("v") != other_env.spec.version:
-            problems.append(f"other_version {spec.other_version} but {spec.other_environment} pins another")
-    if spec.other_from is not None:
-        partner = specs.get(spec.other_from)
-        if partner is None:
-            problems.append(f"other_from names an unknown task {spec.other_from}")
-        elif spec.pair is None or partner[0].pair != spec.pair:
-            problems.append(f"other_from {spec.other_from} is not in the same pair")
-        elif partner[0].version != spec.other_version:
-            problems.append(f"other_version {spec.other_version} but {spec.other_from} pins another")
-    elif not files_of(directory / OTHER):
-        problems.append("no other-version solution: give other/ or other_from")
+        found.append(_pins(environments, spec.other_environment, spec.other_version))
+    return [p for p in found if p]
+
+
+def _corpus_problems(spec: TaskSpec, corpus: Corpus | None) -> list[str]:
+    """Check the task's project and version are in the golden corpus.
+
+    Args:
+        spec: Its description.
+        corpus: The corpus, or ``None`` (not checked).
+
+    Returns:
+        The problems.
+    """
+    if corpus is None:
+        return []
+    project = corpus.project(spec.project)
+    if project is None:
+        return [f"project {spec.project} is not in the golden corpus"]
+    if project.commit(spec.version) is None:
+        return [f"version {spec.version} is not a pinned version of {spec.project}"]
+    return []
+
+
+def _other_problems(
+    spec: TaskSpec, directory: Path, specs: dict[str, tuple[TaskSpec, Path]]
+) -> list[str]:
+    """Check the task has an other-version solution, from its pair or its own.
+
+    Args:
+        spec: Its description.
+        directory: Its directory.
+        specs: Every task's description and directory, by ID.
+
+    Returns:
+        The problems.
+    """
+    if spec.other_from is None:
+        if files_of(directory / OTHER):
+            return []
+        return ["no other-version solution: give other/ or other_from"]
+    partner = specs.get(spec.other_from)
+    if partner is None:
+        return [f"other_from names an unknown task {spec.other_from}"]
+    if spec.pair is None or partner[0].pair != spec.pair:
+        return [f"other_from {spec.other_from} is not in the same pair"]
+    if partner[0].version != spec.other_version:
+        return [f"other_version {spec.other_version} but {spec.other_from} pins another"]
+    return []
+
+
+def _file_problems(spec: TaskSpec, directory: Path) -> list[str]:
+    """Check the task's directories, files and patterns.
+
+    Args:
+        spec: Its description.
+        directory: Its directory.
+
+    Returns:
+        The problems.
+    """
+    problems = [
+        f"{name}/ is missing or empty"
+        for name in (WORKSPACE, HIDDEN, REFERENCE)
+        if not files_of(directory / name)
+    ]
     for forbidden in spec.forbidden:
         try:
             re.compile(forbidden.pattern)

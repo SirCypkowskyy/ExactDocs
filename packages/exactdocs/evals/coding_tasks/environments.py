@@ -288,9 +288,7 @@ async def prepare(environment: Environment, cache_dir: Path) -> PreparedEnvironm
 
     Returns:
         The installed environment; an install made earlier from the same lockfile is reused.
-
-    Raises:
-        RuntimeError: The installer (``uv``, ``npm``) is missing or failed.
+        A missing or failing installer (``uv``, ``npm``) raises ``RuntimeError``.
     """
     if environment.stand_in:
         return stand_in(environment)
@@ -308,10 +306,7 @@ def _prepared(environment: Environment, root: Path) -> PreparedEnvironment:
         root: Its install directory.
 
     Returns:
-        The prepared environment.
-
-    Raises:
-        RuntimeError: ``node`` is not on ``PATH`` (a Node environment).
+        The prepared environment (``RuntimeError`` when ``node`` is not on ``PATH``).
     """
     if environment.spec.ecosystem == "python":
         python = root / ".venv" / "bin" / "python"
@@ -359,45 +354,71 @@ def _runtime_mounts(executable: Path) -> tuple[tuple[Path, Path], ...]:
 async def _install(environment: Environment, root: Path) -> None:
     """Install an environment into a new directory, then move it into place.
 
+    An installer that is missing or fails raises ``RuntimeError`` and leaves nothing behind.
+
     Args:
         environment: The environment.
         root: The install directory to create.
-
-    Raises:
-        RuntimeError: An installer is missing or failed.
     """
-    root.parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=f".{environment.name}-", dir=root.parent))
+    staging = _staging(environment, root)
     try:
-        if environment.spec.ecosystem == "python":
-            uv = _which("uv")
-            venv = staging / ".venv"
-            python = environment.spec.python or ""
-            await _run([str(uv), "venv", "--quiet", "--python", python, str(venv)])
-            lock = environment.directory / PYTHON_LOCK
-            await _run(
-                [
-                    *(str(uv), "pip", "sync", "--quiet", "--require-hashes"),
-                    *("--python", str(venv / "bin" / "python"), str(lock)),
-                ]
-            )
-        else:
-            npm = _which("npm")
-            for name in (NODE_MANIFEST, NODE_LOCK):
-                shutil.copy2(environment.directory / name, staging / name)
-            await _run(
-                [str(npm), "ci", "--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"],
-                cwd=staging,
-            )
-        marker = {"environment": environment.name, "digest": environment.digest()}
-        (staging / PREPARED_MARKER).write_text(json.dumps(marker) + "\n", encoding="utf-8")
-        if root.exists():  # another process finished the same install first
-            shutil.rmtree(staging, ignore_errors=True)
-            return
-        staging.rename(root)
+        await _install_into(environment, staging)
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
         raise
+    _finish(environment, staging, root)
+
+
+def _staging(environment: Environment, root: Path) -> Path:
+    """Make the directory an install is built in, next to where it goes.
+
+    Args:
+        environment: The environment.
+        root: The install directory.
+
+    Returns:
+        A new, empty directory.
+    """
+    root.parent.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix=f".{environment.name}-", dir=root.parent))
+
+
+async def _install_into(environment: Environment, staging: Path) -> None:
+    """Run the installers into a directory.
+
+    Args:
+        environment: The environment.
+        staging: The directory.
+    """
+    if environment.spec.ecosystem == "python":
+        uv = str(_which("uv"))
+        venv = staging / ".venv"
+        await _run([uv, "venv", "--quiet", "--python", environment.spec.python or "", str(venv)])
+        lock = str(environment.directory / PYTHON_LOCK)
+        python = str(venv / "bin" / "python")
+        await _run([uv, "pip", "sync", "--quiet", "--require-hashes", "--python", python, lock])
+        return
+    for name in (NODE_MANIFEST, NODE_LOCK):
+        shutil.copy2(environment.directory / name, staging / name)
+    npm = str(_which("npm"))
+    flags = ["--ignore-scripts", "--no-audit", "--no-fund", "--loglevel=error"]
+    await _run([npm, "ci", *flags], staging)
+
+
+def _finish(environment: Environment, staging: Path, root: Path) -> None:
+    """Mark an install finished and move it into place, unless another process did first.
+
+    Args:
+        environment: The environment.
+        staging: The finished install.
+        root: Where it goes.
+    """
+    marker = {"environment": environment.name, "digest": environment.digest()}
+    (staging / PREPARED_MARKER).write_text(json.dumps(marker) + "\n", encoding="utf-8")
+    if root.exists():
+        shutil.rmtree(staging, ignore_errors=True)
+        return
+    staging.rename(root)
 
 
 async def _run(command: Sequence[str], cwd: Path | None = None) -> None:
@@ -425,7 +446,9 @@ async def _run(command: Sequence[str], cwd: Path | None = None) -> None:
         raise RuntimeError(message) from None
     if process.returncode != 0:
         text = output.decode(errors="replace")[-2000:]
-        message = f"{' '.join(Path(c).name if i == 0 else c for i, c in enumerate(command))}: {text}"
+        message = (
+            f"{' '.join(Path(c).name if i == 0 else c for i, c in enumerate(command))}: {text}"
+        )
         raise RuntimeError(message)
 
 
