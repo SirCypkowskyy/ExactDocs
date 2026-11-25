@@ -5,9 +5,11 @@
       golden set, at every chunking configuration of the ingestion benchmark.
     - It names the configuration to use by default for each budget: no models, local models only,
       hosted models ([Recommendation and statistics](statistics.md)).
-    - In the recorded run BM25 reaches recall@5 89.1% at `h2` and 87.6% at `default`. Hybrid on
-      bge-small reaches 91.0% at `merge-400`, 1.9 points over BM25 at `h2`: under the 5-point
-      margin and not significant (p 0.33), so BM25 stays the default
+    - It scores `search_docs` as an agent reads it: grouped by article since #575, each group one
+      result.
+    - In the recorded run BM25 reaches recall@5 92.5% at `h2` and 91.0% at `default`. Hybrid on
+      bge-small at `default` reaches 92.5%, as much as BM25 at `h2`: under the 5-point margin and
+      not significant (p 1), so BM25 stays the default
       ([The recorded run](retrieval-runs.md#the-recorded-run)).
     - A run exits with 1 on a result of another version, a read outside the version, or a failed
       question.
