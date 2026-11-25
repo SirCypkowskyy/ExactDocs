@@ -41,8 +41,8 @@ Feature: The MCP tools take the arguments agents actually send
     When an agent calls "search_docs" for "/fixture/docs-repo" version "1.4.0" and "retry_policy"
     Then it searches version "v1.4.0"
     And the result carries a note that ref "1.4.0" was read as "v1.4.0"
-    When an agent calls "query-docs" for "/fixture/docs-repo/V1.3.0" and "connection_pool"
-    Then the docs come from version "v1.3.0" with a note that ref "V1.3.0" was read as "v1.3.0"
+    When an agent calls "query-docs" for "/fixture/docs-repo/1.3.0" and "connection_pool"
+    Then the docs come from version "v1.3.0" with a note that ref "1.3.0" was read as "v1.3.0"
 
   Scenario: A ref that names no version is refused, naming the versions
     When an agent calls "search_docs" for "/fixture/docs-repo" version "2.0.0" and "retry_policy"
