@@ -21,6 +21,12 @@
 #   docker run --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges ...
 # with /data (the volume) as the only writable path.
 #
+# Behind a corporate proxy (#538, docs/deployment.md): pass HTTPS_PROXY, HTTP_PROXY and NO_PROXY
+# at run time, and when the proxy re-signs TLS mount its CA and name it, e.g.
+#   docker run -e HTTPS_PROXY=... -v ./corp-ca.pem:/etc/exactdocs/ca.pem:ro \
+#     -e EXACTDOCS_CA_BUNDLE=/etc/exactdocs/ca.pem ...
+# Every outbound client (and git) then trusts that bundle instead of the image's certificates.
+#
 # Secrets: none enter the build. The only build arguments are VERSION, REVISION and CREATED
 # (metadata), PNPM_VERSION and DEBIAN_REFRESH (the package-index cache key). Never add a token or key as an ARG or ENV: both stay
 # readable in the image history. Git credentials are stored by the app in /data at run time.
@@ -52,7 +58,7 @@ RUN pnpm build
 # Built natively on the build platform and cross-installed for the target one (wheels for
 # TARGETARCH): Python 3.14 crashes under QEMU user-mode emulation, and native is much faster.
 # The venv's interpreter symlink points at /usr/local/bin/python3, present in the runtime image.
-FROM --platform=$BUILDPLATFORM ghcr.io/astral-sh/uv:0.13.8@sha256:5cc1805e2426484abca4ad46ea783bab281fdb225fd82d8ce6d66a81254bac85 AS uv
+FROM --platform=$BUILDPLATFORM ghcr.io/astral-sh/uv:0.13.9@sha256:d3b601f0c7b118bc1753febf7c41cc80981df678445e0254284eecf84db79a7d AS uv
 FROM --platform=$BUILDPLATFORM python:3.14-slim-trixie@sha256:f1b121a95d6295f7291a0fda8280f747efd657bd055e7c1f156936ed2dc5a112 AS builder
 COPY --from=uv /uv /uvx /usr/local/bin/
 ARG TARGETARCH

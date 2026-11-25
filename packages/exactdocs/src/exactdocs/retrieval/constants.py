@@ -926,6 +926,8 @@ LIBSQL_NEAREST_SCAN: Final[str] = (
 # ---------------------------------------------------------------- adapters.driven.pinecone_index
 PINECONE_BACKEND: Final[str] = "pinecone"
 """The registered name of the Pinecone vector backend (#362)."""
+PINECONE_API_URL: Final[str] = "https://api.pinecone.io"
+"""Pinecone's control plane: where an index given by name is looked up (#538: its proxy then)."""
 PINECONE_NAMESPACE: Final[str] = "exactdocs"
 """The namespace an instance keeps its vectors in when its options name none."""
 PINECONE_MAX_NAMESPACE: Final[int] = 500

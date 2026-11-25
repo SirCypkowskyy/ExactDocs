@@ -175,12 +175,48 @@ class IngestionReport(_Model):
     configurations: list[ConfigurationResult]
 
 
+def article_files(repo: Path, commit: str, project: Project) -> dict[str, bytes | None]:
+    """Read every file a project selects at a commit, byte for byte, as the repository has it.
+
+    A symlink is followed one hop to a file of the same commit (what a reader of the repository
+    sees); one that leads anywhere else is unreadable.
+
+    Args:
+        repo: The cached repository.
+        commit: The pinned commit.
+        project: The project (its docs paths).
+
+    Returns:
+        Each selected path's content, or ``None`` when it cannot be read.
+    """
+    listing = git_bytes("ls-tree", "-r", "-z", commit, cwd=repo).split(b"\0")
+    entries: dict[str, tuple[str, str]] = {}
+    for line in filter(None, listing):
+        meta, _, path = line.partition(b"\t")
+        mode, _, sha = meta.decode().split(" ")
+        entries[path.decode(errors="replace")] = (mode, sha)
+    selection = project.selection
+    files: dict[str, bytes | None] = {}
+    for path, (mode, blob) in entries.items():
+        if not selection.selects(path):
+            continue
+        sha = blob
+        if mode == _LINK_MODE:
+            target = git_bytes("cat-file", "blob", blob, cwd=repo).decode(errors="replace")
+            found = entries.get(posixpath.normpath(posixpath.join(posixpath.dirname(path), target)))
+            if found is None or found[0] == _LINK_MODE:
+                files[path] = None
+                continue
+            sha = found[1]
+        files[path] = git_bytes("cat-file", "blob", sha, cwd=repo)
+    return files
+
+
 def article_sources(repo: Path, commit: str, project: Project) -> dict[str, str | None]:
     """Read the body of every file a project selects at a commit, as the repository has it.
 
-    A symlink is followed one hop to a file of the same commit (what a reader of the repository
-    sees); one that leads anywhere else is unreadable. The front matter is left out the way
-    ``parse_article`` leaves it out, so a body is what the chunks of the article should add up to.
+    The files are ``article_files``'; the front matter is left out the way ``parse_article``
+    leaves it out, so a body is what the chunks of the article should add up to.
 
     Args:
         repo: The cached repository.
@@ -190,28 +226,12 @@ def article_sources(repo: Path, commit: str, project: Project) -> dict[str, str 
     Returns:
         Each selected path's body, or ``None`` when it cannot be read.
     """
-    listing = git_bytes("ls-tree", "-r", "-z", commit, cwd=repo).split(b"\0")
-    entries: dict[str, tuple[str, str]] = {}
-    for line in filter(None, listing):
-        meta, _, path = line.partition(b"\t")
-        mode, _, sha = meta.decode().split(" ")
-        entries[path.decode(errors="replace")] = (mode, sha)
-    selection = project.selection
-    bodies: dict[str, str | None] = {}
-    for path, (mode, blob) in entries.items():
-        if not selection.selects(path):
-            continue
-        sha = blob
-        if mode == _LINK_MODE:
-            target = git_bytes("cat-file", "blob", blob, cwd=repo).decode(errors="replace")
-            found = entries.get(posixpath.normpath(posixpath.join(posixpath.dirname(path), target)))
-            if found is None or found[0] == _LINK_MODE:
-                bodies[path] = None
-                continue
-            sha = found[1]
-        text = git_bytes("cat-file", "blob", sha, cwd=repo).decode("utf-8-sig", errors="replace")
-        bodies[path] = parse_article(path, text).body
-    return bodies
+    return {
+        path: None
+        if data is None
+        else parse_article(path, data.decode("utf-8-sig", errors="replace")).body
+        for path, data in article_files(repo, commit, project).items()
+    }
 
 
 async def stored_chunks(engine: AsyncEngine, library: str, version: str) -> dict[str, list[Chunk]]:

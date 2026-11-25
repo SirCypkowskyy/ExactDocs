@@ -54,8 +54,9 @@ from exactdocs.bootstrap.database import StartupError
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.mcp import build_stdio_mcp
 from exactdocs.bootstrap.mcp_config import Client, render
-from exactdocs.bootstrap.models_pull import default_models
+from exactdocs.bootstrap.models_pull import default_models, hub_downloader
 from exactdocs.bootstrap.models_pull import pull as pull_models
+from exactdocs.bootstrap.outbound import publish as publish_outbound
 from exactdocs.bootstrap.settings import Settings
 from exactdocs.bootstrap.telemetry import start_telemetry
 from exactdocs.identity.constants import MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH
@@ -1724,9 +1725,15 @@ def models_pull(
         SystemExit: A model could not be pulled.
     """
     settings = Settings()
+    try:
+        network = settings.outbound()
+    except ValueError as error:
+        message = f"exactdocs: {error}"
+        raise SystemExit(message) from None
     models_dir = settings.effective_models_dir
     failed = False
-    for outcome in pull_models(model or default_models(), models_dir):
+    names = model or default_models()
+    for outcome in pull_models(names, models_dir, download=hub_downloader(network)):
         status = "ok" if outcome.ok else "error"
         sys.stdout.write(f"{outcome.model}: {status}  {outcome.message}\n")
         failed = failed or not outcome.ok
@@ -1943,6 +1950,19 @@ def asgi_app() -> object:
     return create_app(Container.build(Settings()))
 
 
+def _publish_outbound() -> None:
+    """Hand the outbound settings to the libraries that read only the environment (#538).
+
+    Best effort: when the settings are invalid, the command run next says so itself.
+    """
+    try:
+        network = Settings().outbound()
+    except ValueError:  # pydantic's ValidationError too
+        return
+    publish_outbound(network)
+
+
 def main() -> None:
     """Console-script entry point."""
+    _publish_outbound()
     app()

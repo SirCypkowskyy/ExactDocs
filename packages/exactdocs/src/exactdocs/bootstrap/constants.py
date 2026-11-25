@@ -87,6 +87,16 @@ CONFIG_FILE_VARIABLE: Final[str] = "EXACTDOCS_CLIENT_CONFIG"
 """Environment variable that points the CLI client at another credentials file (it was
 ``EXACTDOCS_CONFIG_FILE`` before that became the server's TOML configuration file, #241).
 """
+OUTBOUND_OVERRIDES: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "http_proxy": "EXACTDOCS_HTTP_PROXY",
+        "https_proxy": "EXACTDOCS_HTTPS_PROXY",
+        "no_proxy": "EXACTDOCS_NO_PROXY",
+        "ca_bundle": "EXACTDOCS_CA_BUNDLE",
+    }
+)
+"""The ``EXACTDOCS_`` variables that replace the standard outbound ones (#538), by the setting
+they fill: the server reads them as settings, the CLI's client from its environment."""
 DEFAULT_PORTS: Final[dict[str, int]] = {"http": 80, "https": 443}
 """The port each URL scheme implies, so ``https://x`` and ``https://x:443`` are one server."""
 MAX_TOKEN_NAME_LENGTH: Final[int] = (
@@ -502,6 +512,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             # `azure` is a namespace shared with the `ai` extra's azure-identity (sync): only
             # this module imports the search SDK.
             packages=("azure.search",),
+            outbound=True,
         ),
         "chroma": IndexBackendKind(
             name="chroma",
@@ -510,6 +521,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="chroma",
             packages=("chromadb",),
+            outbound=True,
         ),
         "duckdb": IndexBackendKind(
             name="duckdb",
@@ -526,6 +538,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="elasticsearch",
             packages=("elasticsearch", "elastic_transport"),
+            outbound=True,
         ),
         "lancedb": IndexBackendKind(
             name="lancedb",
@@ -542,6 +555,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="libsql",
             packages=("libsql",),
+            outbound=True,
         ),
         "milvus": IndexBackendKind(
             name="milvus",
@@ -550,6 +564,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="milvus",
             packages=("pymilvus", "milvus_lite"),
+            outbound=True,
         ),
         "mongodb": IndexBackendKind(
             name="mongodb",
@@ -558,6 +573,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="mongodb",
             packages=("pymongo", "bson", "gridfs"),
+            outbound=True,
         ),
         "opensearch": IndexBackendKind(
             name="opensearch",
@@ -566,6 +582,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="opensearch",
             packages=("opensearchpy",),
+            outbound=True,
         ),
         "pinecone": IndexBackendKind(
             name="pinecone",
@@ -574,6 +591,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="pinecone",
             packages=("pinecone",),
+            outbound=True,
         ),
         "qdrant": IndexBackendKind(
             name="qdrant",
@@ -582,6 +600,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="qdrant",
             packages=("qdrant_client",),
+            outbound=True,
         ),
         "redis": IndexBackendKind(
             name="redis",
@@ -590,6 +609,7 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             vectors="vector_backend",
             extra="redis",
             packages=("redis",),
+            outbound=True,
         ),
     }
 )
@@ -659,6 +679,9 @@ DOCSTRING_SECTIONS: Final[frozenset[str]] = frozenset(
 # ---------------------------------------------------------------- telemetry, otlp
 SERVICE_NAME: Final[str] = "exactdocs"
 """``service.name`` of the exported telemetry, unless ``OTEL_SERVICE_NAME`` names another."""
+CERTIFICATE_VARIABLE: Final[str] = "OTEL_EXPORTER_OTLP_CERTIFICATE"
+"""The standard variable naming the CA file of the collector's TLS; when set, it wins over the
+outbound CA bundle (#538)."""
 OTLP_ENDPOINT_VARIABLE: Final[str] = "OTEL_EXPORTER_OTLP_ENDPOINT"
 """The collector for every signal; ``OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT`` names one per signal.
 With neither set, that signal is not exported (there is no default collector).
@@ -836,6 +859,17 @@ REQUEUE_UNLOCK: Final[str] = "SELECT pg_advisory_unlock(hashtextextended(:key, 0
 LOCAL_SDK_MODULE: Final[str] = "exactdocs.bootstrap.local_sdk"
 """The module that imports fastembed (the ``[local]`` extra): loaded only once a local model is
 used."""
+HUB_CLIENT_MODULE: Final[str] = "exactdocs.bootstrap.hub_client"
+"""The Hugging Face Hub's client behind the outbound settings (#538), imported by ``models pull``
+only: it imports ``httpx`` and the Hub, which come with the ``[local]`` extra."""
+ENTRA_URL: Final[str] = "https://login.microsoftonline.com"
+"""Entra ID's sign-in endpoint: the instance's proxy for it is what the Entra ID credentials of
+an AI profile get with ``ai.use_instance_proxy`` (#538)."""
+HUB_TIMEOUT_SECONDS: Final[float] = 60.0
+"""The Hub client's timeout where a call of the Hub sets none (a read of a large file)."""
+PROXY_FAILURE_MARKERS: Final[tuple[str, ...]] = ("the proxy ", "through the proxy ")
+"""How the messages of ``exactdocs_kernel.proxy_failure`` read: an error saying either is the one
+that names the proxy and the host."""
 LOCAL_EXTRA: Final[str] = (
     "install exactdocs[local] (uvx --from 'exactdocs[local]' exactdocs, or the -local image)"
 )

@@ -45,6 +45,7 @@ nav = [
     { "Ingestion results" = "benchmark/ingestion.md" },
     { "Retrieval results" = "benchmark/retrieval.md" },
     { "Agent results" = "benchmark/agent.md" },
+    { "Comparison with other tools" = "benchmark/comparison.md" },
     { "Recommended defaults" = "benchmark/defaults.md" },
   ] },
 ]

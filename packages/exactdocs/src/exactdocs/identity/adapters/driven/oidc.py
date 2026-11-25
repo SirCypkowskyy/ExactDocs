@@ -63,7 +63,7 @@ from exactdocs.identity.errors import (
     ProviderUnavailableError,
 )
 from exactdocs.identity.models import ExternalClaims, ExternalGrant
-from exactdocs_kernel import Clock
+from exactdocs_kernel import Clock, redact_url
 
 logger = logging.getLogger(__name__)
 
@@ -597,7 +597,14 @@ class OidcProvider:
                 status = response.status_code
                 content = await self._read_capped(response)
         except httpx2.HTTPError as error:
-            logger.warning("OIDC %s cannot be reached (%s)", self.issuer, type(error).__name__)
+            # The transport's text names a proxy that failed and the host (#538); a URL in it
+            # has its credentials masked.
+            logger.warning(
+                "OIDC %s cannot be reached (%s: %s)",
+                self.issuer,
+                type(error).__name__,
+                redact_url(str(error)),
+            )
             raise ProviderUnavailableError from None
         try:
             body = json.loads(content)

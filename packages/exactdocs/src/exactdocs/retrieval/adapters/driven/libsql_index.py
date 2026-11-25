@@ -91,6 +91,7 @@ from exactdocs.retrieval.models import (
     TagFilter,
     TextQuery,
 )
+from exactdocs_kernel import OutboundNetwork
 
 type _Statement = tuple[str, Sequence[object]]
 type _Row = tuple[Any, ...]
@@ -215,6 +216,8 @@ class _HttpEngine:
     """The JWT sent as ``Authorization: Bearer``; ``None`` for a server without auth."""
     timeout: float = LIBSQL_DEFAULT_TIMEOUT_SECONDS
     """Seconds one request may take."""
+    network: OutboundNetwork = field(default_factory=OutboundNetwork)
+    """The outbound proxy, NO_PROXY and CA bundle (#538); the environment is not read."""
     client: httpx2.AsyncClient | None = field(default=None, init=False, repr=False)
     """The open client, between ``open`` and ``close``."""
 
@@ -222,7 +225,13 @@ class _HttpEngine:
         """Make the client (the backend then checks that the server answers)."""
         headers = {"Authorization": f"Bearer {self.token}"} if self.token else {}
         self.client = httpx2.AsyncClient(
-            base_url=self.url, headers=headers, timeout=self.timeout, follow_redirects=False
+            base_url=self.url,
+            headers=headers,
+            timeout=self.timeout,
+            follow_redirects=False,
+            proxy=self.network.proxy_for(self.url),
+            verify=self.network.tls_context() or True,
+            trust_env=False,
         )
 
     async def close(self) -> None:
@@ -1020,13 +1029,14 @@ def _file_engine(url: str, token: str | None) -> _Engine:
     return _FileEngine(path=str(Path(path).expanduser()))
 
 
-def _engine(url: str, token: str | None, timeout: float) -> _Engine:
+def _engine(url: str, token: str | None, timeout: float, network: OutboundNetwork) -> _Engine:
     """Make the engine the URL names: a server over HTTP, or a local file.
 
     Args:
         url: The ``url`` option.
         token: The auth token, for a server.
         timeout: Seconds one request to a server may take.
+        network: The outbound settings a server is reached with.
 
     Returns:
         The engine (not open yet).
@@ -1049,14 +1059,17 @@ def _engine(url: str, token: str | None, timeout: float) -> _Engine:
         raise ValueError(message)
     tls = parse_qs(parts.query).get("tls", ["1"])[-1] != "0"
     http = ("https" if tls else "http") if scheme == "libsql" else scheme
-    return _HttpEngine(url=f"{http}://{parts.netloc}", token=token, timeout=timeout)
+    return _HttpEngine(
+        url=f"{http}://{parts.netloc}", token=token, timeout=timeout, network=network
+    )
 
 
-def _options(options: Mapping[str, object]) -> _Options:
+def _options(options: Mapping[str, object], network: OutboundNetwork | None) -> _Options:
     """Check the ``[index_backends.libsql]`` options.
 
     Args:
         options: The options, from the TOML file or the environment.
+        network: The outbound settings (#538); none: direct, the system's trust.
 
     Returns:
         The checked options.
@@ -1089,14 +1102,16 @@ def _options(options: Mapping[str, object]) -> _Options:
         raise ValueError(message)
     timeout = _number(options, "timeout") or LIBSQL_DEFAULT_TIMEOUT_SECONDS
     return _Options(
-        engine=_engine(url, _token(options), timeout),
+        engine=_engine(url, _token(options), timeout, network or OutboundNetwork()),
         prefix=prefix,
         compress_neighbors=compression,
         max_neighbors=None if neighbours is None else int(neighbours),
     )
 
 
-def search_backend(options: Mapping[str, object]) -> LibsqlSearchBackend:
+def search_backend(
+    options: Mapping[str, object], *, network: OutboundNetwork | None = None
+) -> LibsqlSearchBackend:
     """Build the search backend from its ``[index_backends.libsql]`` options.
 
     ``ValueError`` (or ``TypeError``) for an unknown or invalid option.
@@ -1104,15 +1119,18 @@ def search_backend(options: Mapping[str, object]) -> LibsqlSearchBackend:
     Args:
         options: ``url`` (required), ``auth_token`` / ``auth_token_file``, ``prefix``,
             ``timeout``.
+        network: The outbound proxy, NO_PROXY and CA bundle a server is reached with (#538).
 
     Returns:
         The backend, not connected yet.
     """
-    checked = _options(options)
+    checked = _options(options, network)
     return LibsqlSearchBackend(engine=checked.engine, prefix=checked.prefix)
 
 
-def vector_backend(options: Mapping[str, object]) -> LibsqlVectorBackend:
+def vector_backend(
+    options: Mapping[str, object], *, network: OutboundNetwork | None = None
+) -> LibsqlVectorBackend:
     """Build the vector backend from its ``[index_backends.libsql]`` options.
 
     ``ValueError`` (or ``TypeError``) for an unknown or invalid option.
@@ -1120,11 +1138,12 @@ def vector_backend(options: Mapping[str, object]) -> LibsqlVectorBackend:
     Args:
         options: ``url`` (required), ``auth_token`` / ``auth_token_file``, ``prefix``,
             ``timeout``, ``compress_neighbors``, ``max_neighbors``.
+        network: The outbound proxy, NO_PROXY and CA bundle a server is reached with (#538).
 
     Returns:
         The backend, not connected yet.
     """
-    checked = _options(options)
+    checked = _options(options, network)
     return LibsqlVectorBackend(
         engine=checked.engine,
         prefix=checked.prefix,

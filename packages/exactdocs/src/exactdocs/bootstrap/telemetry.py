@@ -68,8 +68,15 @@ def start_telemetry(settings: Settings, *, scraped: bool = False) -> None:
             "EXACTDOCS_TELEMETRY=otlp, but no OTLP endpoint is set (%s): no traces are exported",
             OTLP_ENDPOINT_VARIABLE,
         )
+    try:
+        network = settings.outbound()
+    except ValueError:
+        network = None  # the container's build says what is wrong with them, and stops
     configured = sdk.configure_sdk(
-        otlp=otlp_on, prometheus=prometheus_on, record_query_text=settings.telemetry_query_text
+        otlp=otlp_on,
+        prometheus=prometheus_on,
+        record_query_text=settings.telemetry_query_text,
+        network=network,
     )
     if not configured:
         logger.warning("telemetry was already set up in this process; it is left as it is")

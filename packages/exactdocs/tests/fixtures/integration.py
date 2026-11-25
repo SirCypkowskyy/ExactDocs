@@ -71,6 +71,9 @@ LIBSQL = needs("EXACTDOCS_TEST_LIBSQL_URL")
 PINECONE = needs("EXACTDOCS_TEST_PINECONE_URL")
 AZURE_SEARCH = needs("EXACTDOCS_TEST_AZURE_SEARCH_URL")
 """A real Azure AI Search service (the manual ``azure-search.yml`` workflow)."""
+PROXY_IMAGE = "EXACTDOCS_TEST_PROXY_IMAGE"
+PROXY = needs(PROXY_IMAGE)
+"""Docker and the forward proxy's image (Squid), for ExactDocs behind a proxy (#538)."""
 LOCAL_MODELS = needs("EXACTDOCS_TEST_MODELS_DIR")
 """The default local models, pulled from Hugging Face by ``exactdocs models pull`` (the release)."""
 

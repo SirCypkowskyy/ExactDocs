@@ -16,6 +16,9 @@ from exactdocs_kernel.constants import (
     MAX_TAG_LENGTH,
     MAX_TAGS,
     NOTICE,
+    OUTBOUND_VARIABLES,
+    PROXY_VARIABLES,
+    REDACTED,
     TOOL_HINTS,
 )
 from exactdocs_kernel.errors import (
@@ -41,6 +44,12 @@ from exactdocs_kernel.listing import (
     parse_sort,
     sorted_page,
 )
+from exactdocs_kernel.network import (
+    OutboundNetwork,
+    proxy_failure,
+    redact_url,
+    resolve_outbound,
+)
 from exactdocs_kernel.pagination import (
     CursorWithOffsetError,
     InvalidCursorError,
@@ -65,6 +74,9 @@ __all__ = [
     "MAX_TAG_INPUT",
     "MAX_TAG_LENGTH",
     "NOTICE",
+    "OUTBOUND_VARIABLES",
+    "PROXY_VARIABLES",
+    "REDACTED",
     "TOOL_HINTS",
     "BusyError",
     "Clock",
@@ -76,6 +88,7 @@ __all__ = [
     "InvalidFilterError",
     "InvalidSortError",
     "NotFoundError",
+    "OutboundNetwork",
     "Page",
     "RateLimitedError",
     "SealedTextUnreadableError",
@@ -94,6 +107,9 @@ __all__ = [
     "page_offset",
     "paginate",
     "parse_sort",
+    "proxy_failure",
+    "redact_url",
+    "resolve_outbound",
     "section_link",
     "sorted_page",
 ]

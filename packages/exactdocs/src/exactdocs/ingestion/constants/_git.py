@@ -117,23 +117,34 @@ _SYMREF: Final[str] = "ref: "
 _HEADS: Final[str] = "refs/heads/"
 """Prefix of branch refs."""
 _PASSTHROUGH: Final[frozenset[str]] = frozenset(
-    {
-        "path",
-        "systemroot",
-        "http_proxy",
-        "https_proxy",
-        "all_proxy",
-        "no_proxy",
-        "ssl_cert_file",
-        "ssl_cert_dir",
-        "curl_ca_bundle",
-        "git_ssl_cainfo",
-        "git_ssl_capath",
-    }
+    {"path", "systemroot", "ssl_cert_dir", "git_ssl_capath"}
 )
-"""Not secrets: where certificates live and which proxy to use, so corporate networks keep working.
-fmt: skip.
+"""Not secrets: where to find programs and certificate folders. The proxy, ``NO_PROXY`` and the CA
+bundle come from ``GitCli.network`` (#538), never from this process's environment as it is.
 """
+_PROXY_TROUBLE: Final[tuple[tuple[re.Pattern[str], str], ...]] = (
+    (re.compile(r"\b407\b|proxy authentication required"), "407 Proxy Authentication Required"),
+    (re.compile(r"could not resolve proxy"), "the proxy's host name could not be resolved"),
+    (
+        re.compile(r"connect tunnel failed, response (\d{3})|http code (\d{3}) from proxy"),
+        "CONNECT tunnel failed, HTTP {}",
+    ),
+    (
+        re.compile(
+            r"ssl certificate problem|certificate verif\w* failed|unable to get local issuer"
+        ),
+        "TLS certificate not trusted",
+    ),
+    (
+        re.compile(r"failed to connect to [^ ]+ port \d+|couldn't connect to server"),
+        "the proxy could not be reached",
+    ),
+    (re.compile(r"proxy connect aborted|recv failure|connection reset"), "the proxy closed it"),
+)
+"""How git (curl, ``LC_ALL=C``) says a connection through a proxy failed, and the fixed text the
+error then gives; only read when the URL goes through a proxy, where curl's only peer is it."""
+_UNABLE_TO_ACCESS: Final[re.Pattern[str]] = re.compile(r"unable to access '([^']+)'")
+"""Where git names the URL a failed HTTP request was for: ``unable to access '<url>': ...``."""
 _SSH_BASE: Final[tuple[str, ...]] = (
     "ssh",
     "-F",

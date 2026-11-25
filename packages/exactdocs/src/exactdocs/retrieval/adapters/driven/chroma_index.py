@@ -71,6 +71,7 @@ from exactdocs.retrieval.models import (
     TagMatch,
     VectorMetric,
 )
+from exactdocs_kernel import OutboundNetwork
 
 type Connect = Callable[[], Client]
 """Makes a new client (it answers, or raises); called by each ``open()``, in a worker thread."""
@@ -702,7 +703,7 @@ def _timeout(options: Mapping[str, object]) -> int:
 
 
 def _http(
-    url: str, tenant: str, database: str, token: str | None, header: str
+    url: str, tenant: str, database: str, token: str | None, header: str, ca_bundle: str | None
 ) -> Callable[[], Client]:
     """Make the connector of a Chroma server (or Chroma Cloud).
 
@@ -712,6 +713,8 @@ def _http(
         database: The database.
         token: The token, if any.
         header: The header the token is sent in.
+        ca_bundle: The CA bundle a ``https`` server's certificate is checked against; the
+            client's default when ``None``.
 
     Returns:
         What makes a client of it (which checks the tenant and database, so the server answers).
@@ -745,7 +748,7 @@ def _http(
             port=port,
             ssl=ssl,
             headers=dict(headers) if headers else None,
-            settings=Settings(anonymized_telemetry=False),
+            settings=Settings(anonymized_telemetry=False, chroma_server_ssl_verify=ca_bundle),
             tenant=tenant,
             database=database,
         )
@@ -794,7 +797,9 @@ def _persistent(path: str, tenant: str, database: str) -> Callable[[], Client]:
     return connect
 
 
-def vector_backend(options: Mapping[str, object]) -> ChromaVectorBackend:
+def vector_backend(
+    options: Mapping[str, object], *, network: OutboundNetwork | None = None
+) -> ChromaVectorBackend:
     """Build the Chroma vector backend from its ``[index_backends.chroma]`` options.
 
     Options: ``url`` (a server or Chroma Cloud: ``http(s)://host[:port]``, port 8000, or 443
@@ -806,6 +811,9 @@ def vector_backend(options: Mapping[str, object]) -> ChromaVectorBackend:
 
     Args:
         options: The options.
+        network: The outbound settings (#538): a server's TLS is checked against the CA bundle
+            when one is set. Chroma's HTTP client reads the proxy from the standard variables,
+            which the server sets from the same settings.
 
     Returns:
         The backend, not connected yet.
@@ -844,7 +852,9 @@ def vector_backend(options: Mapping[str, object]) -> ChromaVectorBackend:
         message = "token is for a server (url); the embedded client (path) takes none"
         raise ValueError(message)
     connect = (
-        _http(url, tenant, database, token, header) if url else _persistent(path, tenant, database)
+        _http(url, tenant, database, token, header, (network or OutboundNetwork()).ca_bundle)
+        if url
+        else _persistent(path, tenant, database)
     )
     return ChromaVectorBackend(
         connect=connect, collection=collection, timeout=_timeout(options), secret=token
