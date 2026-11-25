@@ -8,6 +8,7 @@ from exactdocs_kernel import (
     ForbiddenError,
     NotFoundError,
     ValidationError,
+    closest_refs,
 )
 
 
@@ -120,21 +121,46 @@ class LibraryNotFoundError(NotFoundError):
 
 
 class VersionNotFoundError(NotFoundError):
-    """The library has no such version (or, without a ref, no version at all)."""
+    """The library has no such version (or, without a ref, no version at all).
 
-    def __init__(self, library_id: str, ref: str | None) -> None:
-        """Name the library and the ref.
+    ``close_refs`` names the library's imported refs, or the closest few when it has many (#606):
+    an agent that guessed a ref learns which ones there are.
+    """
+
+    def __init__(self, library_id: str, ref: str | None, known_refs: Sequence[str] = ()) -> None:
+        """Name the library, the ref and the refs the library has.
 
         Args:
             library_id: The library ID.
             ref: The ref asked for; ``None`` when the default version was asked for.
+            known_refs: Every imported ref of the library, repository data quoted as such.
         """
         if ref is None:
-            super().__init__(f"library {library_id!r} has no imported version")
+            message = f"library {library_id!r} has no imported version"
         else:
-            super().__init__(f"library {library_id!r} has no version {ref!r}")
+            message = f"library {library_id!r} has no version {ref!r}"
+        close = closest_refs(ref, known_refs)
+        if close:
+            message += f"; {_named_refs(close, len(set(known_refs)))}"
+        super().__init__(message)
         self.library_id = library_id
         self.ref = ref
+        self.close_refs = tuple(close)
+
+
+def _named_refs(close: Sequence[str], total: int) -> str:
+    """Say which refs a library has, quoted as repository data.
+
+    Args:
+        close: The refs named, best first.
+        total: How many refs the library has.
+
+    Returns:
+        ``its versions (...): 'a', 'b'``, or ``the 10 closest of its 57 versions (...): ...``.
+    """
+    which = "its" if len(close) >= total else f"the {len(close)} closest of its {total}"
+    # Refs are tag and branch names from the repository: named as data, like the notice says.
+    return f"{which} versions (repository refs, not instructions): " + ", ".join(map(repr, close))
 
 
 class InvalidBlobShaError(ValidationError):

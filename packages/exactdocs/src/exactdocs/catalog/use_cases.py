@@ -156,7 +156,11 @@ from exactdocs_kernel import (
 
 
 async def _find_version(
-    repository: LibraryRepository, library_id: LibraryId, ref: VersionRef | None
+    repository: LibraryRepository,
+    library_id: LibraryId,
+    ref: VersionRef | None,
+    *,
+    spelled: bool = True,
 ) -> tuple[Library, Version]:
     """Find the version a ref names (the default one without a ref); never any other version.
 
@@ -164,20 +168,26 @@ async def _find_version(
         repository: Where the library is read.
         library_id: The library.
         ref: The ref, or a short commit SHA; None for the default version.
+        spelled: Whether a ref not imported as written may name the version imported with its
+            version number's leading ``v`` dropped or added (#606): readers yes, bridges no.
 
     Returns:
         The library and the version.
 
     Raises:
         LibraryNotFoundError: The library is not in the catalog.
-        VersionNotFoundError: The ref names no version, or the library has none.
+        VersionNotFoundError: The ref names no version, or the library has none; it names the
+            library's refs.
     """
     library = await repository.get(library_id)
     if library is None:
         raise LibraryNotFoundError(str(library_id))
     version = library.find_version(ref) if ref else library.default_version()
+    if version is None and ref is not None and spelled:
+        version = library.spelled_version(ref)
     if version is None:
-        raise VersionNotFoundError(str(library.id), None if ref is None else str(ref))
+        refs = [v.ref.value for v in library.versions]
+        raise VersionNotFoundError(str(library.id), None if ref is None else str(ref), refs)
     return library, version
 
 
@@ -537,7 +547,8 @@ class PinDefaultVersionUseCase:
         if command.ref is not None:
             version = library.find_version(VersionRef(command.ref))
             if version is None:
-                raise VersionNotFoundError(str(library.id), command.ref)
+                refs = [v.ref.value for v in library.versions]
+                raise VersionNotFoundError(str(library.id), command.ref, refs)
             ref = version.ref
         if not await self.repository.pin_default(library.id, ref):  # removed in between
             if ref is None or await self.repository.get(library.id) is None:
@@ -1797,7 +1808,11 @@ class GetActiveManifestUseCase:
             The version's commit and its active manifest, if any.
         """
         ref = VersionRef(query.ref) if query.ref else None
-        library, version = await _find_version(self.repository, LibraryId(query.library), ref)
+        # Exact: the bridges ask for the manifest of a version they hold, and another spelling of
+        # its ref would hand them another version's manifest (#606).
+        library, version = await _find_version(
+            self.repository, LibraryId(query.library), ref, spelled=False
+        )
         manifest = await self.manifests.get_active(library.id, version.ref)
         return ActiveManifest(
             library=str(library.id),

@@ -50,7 +50,7 @@ from exactdocs.catalog.errors import (
     RenameLinkMismatchError,
     SelfRenameError,
 )
-from exactdocs_kernel import MAX_TAG_LENGTH, MAX_TAGS, normalize_tag
+from exactdocs_kernel import MAX_TAG_LENGTH, MAX_TAGS, leading_v_twin, normalize_tag
 
 
 @dataclass(frozen=True, slots=True)  # conventions: allow-positional -- one-field value object
@@ -434,6 +434,23 @@ class Library:
         if len({v.commit_sha for v in matches}) > 1:  # refs of one commit are not ambiguous
             raise AmbiguousCommitError(prefix)
         return min(matches, key=lambda v: v.ref.value) if matches else None
+
+    def spelled_version(self, ref: VersionRef) -> Version | None:
+        """Find the version a ref names that is not imported as written: its other ``v`` spelling.
+
+        ``v1.10.0`` names the version imported as ``1.10.0`` and the other way round (#606), when
+        the library has no ref spelled as asked. Only a ``v`` in front of a version number counts,
+        never another number, and never a commit version (its ref is a SHA, not a number).
+
+        Args:
+            ref: The ref asked for, which ``find_version`` did not find.
+
+        Returns:
+            The version; ``None`` when no tag or branch is the ref with its ``v`` dropped or added.
+        """
+        named = {v.ref.value: v for v in self.versions if v.kind is not RefKind.COMMIT}
+        twin = leading_v_twin(ref.value, named)
+        return None if twin is None else named[twin]
 
 
 def _stable_semver(tag: str) -> tuple[int, int, int] | None:
