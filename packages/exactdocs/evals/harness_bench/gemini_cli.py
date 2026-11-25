@@ -65,6 +65,20 @@ def prefix(server: str) -> str:
     return f"mcp_{server}_"
 
 
+def _message(event: dict[str, Any], answer: list[str]) -> None:
+    """Read a ``message``: the assistant's text, in deltas (the prompt, echoed, is skipped).
+
+    Args:
+        event: The event.
+        answer: The assistant's text since the last tool call.
+    """
+    if event.get("role") != "assistant":
+        return
+    if not event.get("delta"):
+        answer.clear()
+    answer.append(str(event.get("content", "")))
+
+
 def _tool_event(
     event: dict[str, Any], prefixes: dict[str, str], calls: dict[str, HarnessCall]
 ) -> None:
@@ -186,10 +200,8 @@ class GeminiCli:
                 fields["unparsed"] += 1
             elif kind == "init":
                 fields["model"] = event.get("model")
-            elif kind == "message" and event.get("role") == "assistant":
-                if not event.get("delta"):
-                    answer.clear()
-                answer.append(str(event.get("content", "")))
+            elif kind == "message":
+                _message(event, answer)
             elif kind in {"tool_use", "tool_result"}:
                 _tool_event(event, prefixes, calls)
                 if kind == "tool_use":

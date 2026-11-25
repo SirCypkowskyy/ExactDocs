@@ -47,6 +47,8 @@ RELEASE: Final[CliRelease] = CliRelease(
 """The pinned Codex CLI release."""
 CODEX_HOME: Final[str] = ".codex"
 """The run's ``CODEX_HOME``, in its home."""
+CUSTOM_SUFFIX: Final[str] = "-api"
+"""Added to a custom provider's ID: Codex refuses to override a built-in one (``ollama``)."""
 TOOL_ITEMS: Final[dict[str, str]] = {
     "command_execution": "shell",
     "file_change": "apply_patch",
@@ -83,7 +85,10 @@ def config_toml(run: HarnessRun) -> str:
         The configuration: the model and its provider, web search off, the arm's MCP server.
     """
     model = run.model
-    provider = model.provider.name
+    custom = model.provider.name != "openai" or model.base_url != model.provider.base_url
+    # Codex reserves its built-in providers' IDs (``openai``, ``ollama``, ...): a custom one
+    # takes another.
+    provider = f"{model.provider.name}{CUSTOM_SUFFIX}" if custom else model.provider.name
     top: dict[str, object] = {
         "model": model.model,
         "model_provider": provider,
@@ -94,11 +99,11 @@ def config_toml(run: HarnessRun) -> str:
         top["model_reasoning_effort"] = "xhigh" if model.thinking == "max" else model.thinking
     lines = [f"{key} = {_toml(value)}" for key, value in top.items()]
     lines += ["", "[analytics]", "enabled = false"]
-    if provider != "openai" or model.base_url != model.provider.base_url:
+    if custom:
         lines += [
             "",
             f"[model_providers.{provider}]",
-            f"name = {_toml(provider)}",
+            f"name = {_toml(model.provider.name)}",
             f"base_url = {_toml(model.base_url)}",
             f"env_key = {_toml(model.provider.key_variable)}",
             'wire_api = "responses"',
@@ -195,9 +200,15 @@ class Codex:
                 errors.append(str(failure.get("message", failure)))
             elif kind not in {"thread.started", "turn.started"}:
                 fields["unparsed"] += 1
-        error = "; ".join(e for e in errors if e) or None
-        failed = error is not None and not answer
         turns = spent["turns"]
+        error = "; ".join(e for e in errors if e) or None
+        if error is None and not answer and not turns:
+            error = "the transcript has no turn"
+        failed = error is not None and not answer
+        # A provider that reports no reasoning tokens (Ollama) gives 0 next to thinking text.
+        reported = spent["reported"] > 0 and (
+            spent["reasoning"] > 0 or not fields["thinking_chars"]
+        )
         money, source = priced(run.model.name, spent["input"], spent["output"], None)
         return Transcript(
             answer="" if failed else answer,
@@ -206,8 +217,8 @@ class Codex:
             input_tokens=spent["input"] if turns else None,
             cached_input_tokens=spent["cached"] if turns else None,
             output_tokens=spent["output"] if turns else None,
-            thinking_tokens=spent["reasoning"] if spent["reported"] else None,
-            thinking="reported" if spent["reported"] else "not reported",
+            thinking_tokens=spent["reasoning"] if reported else None,
+            thinking="reported" if reported else "not reported",
             usd=money,
             usd_source=source,
             error=error if failed else None,
