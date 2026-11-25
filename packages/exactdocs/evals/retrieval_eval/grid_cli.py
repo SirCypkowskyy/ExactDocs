@@ -789,6 +789,36 @@ def _controls_section(report: GridReport) -> list[str]:
     return lines
 
 
+PAGE_SECTIONS: Final[tuple[str, ...]] = (
+    "Every configuration",
+    "Against the budget's default",
+    "Within a token budget",
+    "Against each variant's control",
+)
+"""The sections of the grid's summary a benchmark page shows (``page_block``)."""
+
+
+def page_block(report: GridReport) -> str:
+    """The grid's results as a benchmark page shows them (``just bench-pages``, #575).
+
+    Args:
+        report: A recorded grid run.
+
+    Returns:
+        The run's commit and machine, then the sections of ``PAGE_SECTIONS``, one heading level
+        down.
+    """
+    env = report.bench.environment
+    sections = grid_markdown(report).split("\n## ")[1:]
+    kept = [s for s in sections if s.split("\n", 1)[0].strip() in PAGE_SECTIONS]
+    head = (
+        f"- Golden set: {report.bench.cases} cases, fingerprint `{report.bench.golden}`; "
+        f"ExactDocs commit `{env.get('exactdocs_commit', '?')}`, Python "
+        f"{env.get('python', '?')}, {env.get('platform', '?')}, {env.get('cpus', '?')} CPUs."
+    )
+    return "\n\n".join([head, *(f"#### {s.strip()}" for s in kept)])
+
+
 def local_embeddings(local: LocalModels) -> EmbeddingsFor:
     """Load eval-only cells' embedding models from ``exactdocs models pull``'s directory.
 

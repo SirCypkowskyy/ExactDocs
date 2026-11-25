@@ -26,7 +26,14 @@ from retrieval_eval.grid import (
     passages_of,
     window_spans,
 )
-from retrieval_eval.grid_cli import CACHE_SLICE, REPORT_NAME, CachedEmbeddings, GridReport, main
+from retrieval_eval.grid_cli import (
+    CACHE_SLICE,
+    REPORT_NAME,
+    CachedEmbeddings,
+    GridReport,
+    main,
+    page_block,
+)
 from retrieval_eval.ingestion import Article, measure
 from retrieval_eval.retrieval_bench import Budget
 
@@ -362,6 +369,10 @@ def test_a_variant_runs_with_its_control_and_is_tested_against_it(tmp_path: Path
     assert "## Against each variant's control" in summary
     assert "| `grouped` | `own` |" in summary
     assert "## Within a token budget" in summary
+    block = page_block(report)  # what the retrieval page shows of it
+    assert "#### Within a token budget" in block
+    assert "#### Against each variant's control" in block
+    assert "By question kind" not in block
     with pytest.raises(ValidationError, match="controls that name no cell"):
         Grid.model_validate({"defaults": {}, "cells": [{"app": "bm25", "against": "nope"}]})
 
