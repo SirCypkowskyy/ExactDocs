@@ -411,13 +411,17 @@ async def test_scripted_agents_run_the_tasks_with_each_arm(tmp_path: Path) -> No
     assert cells[OTHER, "exactdocs"].passed.rate == pytest.approx(0.0)
     assert cells[OTHER, "exactdocs"].forbidden.rate == pytest.approx(1.0)
     assert cells[OTHER, "none"].forbidden_apis == {"@validator": 1, "field_validator": 1}
-    assert cells[IDLE, "none"].files_changed is not None
-    assert cells[IDLE, "none"].files_changed.mean == 0
-    assert cells[REFERENCE, "exactdocs"].docs_calls is not None
-    assert cells[REFERENCE, "exactdocs"].docs_calls.mean == 1  # list_libraries
-    assert cells[REFERENCE, "none"].docs_calls.mean == 0
-    assert cells[REFERENCE, "exactdocs"].versus_none is not None
-    assert cells[REFERENCE, "exactdocs"].versus_none.cases == 2
+    idle_files = cells[IDLE, "none"].files_changed
+    docs_with, docs_without = (cells[REFERENCE, arm].docs_calls for arm in ("exactdocs", "none"))
+    versus = cells[REFERENCE, "exactdocs"].versus_none
+    assert idle_files is not None
+    assert idle_files.mean == 0
+    assert docs_with is not None
+    assert docs_with.mean == 1  # list_libraries
+    assert docs_without is not None
+    assert docs_without.mean == 0
+    assert versus is not None
+    assert versus.cases == 2
     assert cells[REFERENCE, "none"].passed.interval is not None
     assert set(cells[REFERENCE, "none"].by_project) == {"demo"}
     reference = next(r for r in report.results if r.agent_model == REFERENCE and r.arm == "none")
