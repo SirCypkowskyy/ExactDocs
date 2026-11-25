@@ -70,6 +70,8 @@ _FTS_INSERT: Final[str] = (
     "VALUES (:rowid, :heading, :path, :text, :identifiers, :project, :version)"
 )
 """Adds one passage."""
+ARTICLE_NEIGHBOURS: Final[int] = 1
+"""``expand: article``: the chunks taken on either side of each hit, in its article."""
 
 type Search = Literal["bm25", "dense", "hybrid", "grep"]
 """How an eval-only cell finds passages."""
@@ -102,8 +104,17 @@ class Cell(_Model):
     """Eval-only: put the article title and heading path in front of the text embedded."""
     prefix_indexed: bool = False
     """Eval-only: put the article title and heading path in front of the text indexed for BM25."""
-    expand: Literal["parent"] | None = None
-    """Eval-only: return each hit's parent section, with its subsections, instead of the hit."""
+    expand: Literal["parent", "article"] | None = None
+    """Eval-only: ``parent`` returns each hit's parent section, with its subsections, instead of
+    the hit; ``article`` groups the top hits by article, each article one result holding its
+    hits and their neighbouring chunks (``neighbours`` on either side) in article order, ranked
+    by its best hit, as Grounded Docs assembles its results (#575)."""
+    neighbours: int | None = None
+    """Eval-only, ``expand: article``: the chunks taken on either side of each hit; None:
+    ``ARTICLE_NEIGHBOURS``."""
+    against: str | None = None
+    """The cell this one is a variant of (its control): the report also tests it against that
+    cell, case by case (#575). It changes nothing the cell returns."""
 
     @model_validator(mode="after")
     def _complete(self) -> Self:
@@ -128,6 +139,12 @@ class Cell(_Model):
             raise ValueError(message)
         if self.window is not None and not 0 <= self.overlap < self.window:
             message = f"cell {self.name!r}: the overlap must be under the window"
+            raise ValueError(message)
+        if self.expand == "article" and self.window is not None:
+            message = f"cell {self.name!r}: grouping by article needs a heading chunking"
+            raise ValueError(message)
+        if self.neighbours is not None and (self.expand != "article" or self.neighbours < 0):
+            message = f"cell {self.name!r}: neighbours, 0 or more, go with expand: article"
             raise ValueError(message)
         if not self.name:
             message = "an eval-only cell needs a name"
@@ -193,6 +210,9 @@ class Grid(_Model):
             raise ValueError(message)
         if unknown := sorted(set(self.defaults.values()) - set(names)):
             message = f"defaults that name no cell: {', '.join(unknown)}"
+            raise ValueError(message)
+        if unknown := sorted({c.against for c in self.cells if c.against} - set(names)):
+            message = f"controls that name no cell: {', '.join(unknown)}"
             raise ValueError(message)
         return self
 
@@ -424,6 +444,9 @@ class Found:
 
     passages: list[int]
     """The passages, best first (indexes into the index's passages)."""
+    texts: list[str]
+    """What the search returns for them, best first: each passage's ``shown`` text, or, grouped
+    by article, one text per article."""
     tokens: int = 0
     """Model tokens of the query embedding."""
 
@@ -581,10 +604,48 @@ class PassageIndex:
                     [ChunkId(str(i)) for i in dense],
                 )
                 ranked = [int(f.chunk_id) for f in fused]
+        if self.cell.expand == "article":
+            hits = ranked[:NDCG_AT]
+            return Found(passages=hits, texts=self._by_article(hits), tokens=tokens)
         shown: dict[str, int] = {}
         for i in ranked:
             shown.setdefault(self.passages[i].shown, i)
-        return Found(passages=list(shown.values())[:NDCG_AT], tokens=tokens)
+        top = list(shown.values())[:NDCG_AT]
+        return Found(passages=top, texts=[self.passages[i].shown for i in top], tokens=tokens)
+
+    def _by_article(self, hits: Sequence[int]) -> list[str]:
+        """Group hits by article, each with its neighbouring chunks, as one result per article.
+
+        Args:
+            hits: The top passages, best first.
+
+        Returns:
+            One text per article, in the order of each article's best hit: the article's hits
+            and the cell's ``neighbours`` chunks on either side of each, in article order, each
+            chunk once.
+        """
+        near = ARTICLE_NEIGHBOURS if self.cell.neighbours is None else self.cell.neighbours
+        groups: dict[tuple[str, str, str], set[int]] = {}
+        for i in hits:
+            hit = self.passages[i]
+            group = groups.setdefault((hit.project, hit.version, hit.article), set())
+            for j in range(i - near, i + near + 1):
+                if 0 <= j < len(self.passages) and self._same_article(i, j):
+                    group.add(j)
+        return ["".join(self.passages[j].chunk.content for j in sorted(g)) for g in groups.values()]
+
+    def _same_article(self, i: int, j: int) -> bool:
+        """Tell whether two passages are of the same article (passages are in article order).
+
+        Args:
+            i: A passage.
+            j: Another.
+
+        Returns:
+            True when both are of the same project, version and article.
+        """
+        a, b = self.passages[i], self.passages[j]
+        return (a.project, a.version, a.article) == (b.project, b.version, b.article)
 
     async def answer(self, project: str, version: str, query: str) -> TextAnswer:
         """Answer a question as text, timed.
@@ -600,7 +661,7 @@ class PassageIndex:
         started = time.perf_counter()
         found = await self.search(project, version, query)
         return TextAnswer(
-            texts=[self.passages[i].shown for i in found.passages],
+            texts=found.texts,
             search_ms=round((time.perf_counter() - started) * 1000, 3),
             tokens=found.tokens,
         )

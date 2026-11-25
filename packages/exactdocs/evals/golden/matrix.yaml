@@ -60,14 +60,17 @@ cells:
   - name: default/bm25+context-indexed
     search: bm25
     prefix_indexed: true
+    against: default/bm25
   - name: default/hybrid:bge-small+context-indexed
     search: hybrid
     embedding: BAAI/bge-small-en-v1.5
     prefix_indexed: true
+    against: default/hybrid:bge-small
   - name: default/hybrid:bge-small+context-embedded
     search: hybrid
     embedding: BAAI/bge-small-en-v1.5
     prefix_embedded: true
+    against: default/hybrid:bge-small
   - name: window-256+64/hybrid:bge-small+context-embedded
     window: 256
     overlap: 64
@@ -80,13 +83,84 @@ cells:
     chunking: h6
     search: bm25
     expand: parent
+    against: default/bm25
   - name: h6/hybrid:bge-small+parent
     chunking: h6
     search: hybrid
     embedding: BAAI/bge-small-en-v1.5
     expand: parent
+    against: default/hybrid:bge-small
 
   # A larger embedding model on the grid's own search
   - name: default/hybrid:bge-base
     search: hybrid
     embedding: BAAI/bge-base-en-v1.5
+
+  # Rank 1 at no more context (#575): the answering section first, measured within a token
+  # budget too. Each variant names its control (`against`) and is tested against it as well as
+  # against the budget's default. ExactDocs' own hybrid index already embeds the title and
+  # heading path (embedding input format 1): `+context-embedded` is the eval-only form of that.
+  - name: default/bm25+parent
+    search: bm25
+    expand: parent
+    against: default/bm25
+  - name: default/bm25+article
+    search: bm25
+    expand: article
+    against: default/bm25
+  - name: default/bm25+article-hits  # the hits grouped by article, no neighbouring chunk
+    search: bm25
+    expand: article
+    neighbours: 0
+    against: default/bm25
+  - name: default/bm25+context-indexed+article
+    search: bm25
+    prefix_indexed: true
+    expand: article
+    against: default/bm25+context-indexed
+  - name: h6/bm25+article
+    chunking: h6
+    search: bm25
+    expand: article
+    against: default/bm25
+  - name: default/hybrid:bge-small+context
+    search: hybrid
+    embedding: BAAI/bge-small-en-v1.5
+    prefix_indexed: true
+    prefix_embedded: true
+    against: default/hybrid:bge-small
+  - name: default/hybrid:bge-small+parent
+    search: hybrid
+    embedding: BAAI/bge-small-en-v1.5
+    expand: parent
+    against: default/hybrid:bge-small
+  - name: default/hybrid:bge-small+article
+    search: hybrid
+    embedding: BAAI/bge-small-en-v1.5
+    expand: article
+    against: default/hybrid:bge-small
+  - name: default/hybrid:bge-small+article-hits
+    search: hybrid
+    embedding: BAAI/bge-small-en-v1.5
+    expand: article
+    neighbours: 0
+    against: default/hybrid:bge-small
+  - name: default/hybrid:bge-small+context-embedded+article
+    search: hybrid
+    embedding: BAAI/bge-small-en-v1.5
+    prefix_embedded: true
+    expand: article
+    against: default/hybrid:bge-small+context-embedded
+  - name: default/hybrid:bge-small+context-embedded+article-hits
+    search: hybrid
+    embedding: BAAI/bge-small-en-v1.5
+    prefix_embedded: true
+    expand: article
+    neighbours: 0
+    against: default/hybrid:bge-small+context-embedded
+  - name: h6/hybrid:bge-small+article
+    chunking: h6
+    search: hybrid
+    embedding: BAAI/bge-small-en-v1.5
+    expand: article
+    against: default/hybrid:bge-small

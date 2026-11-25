@@ -18,6 +18,7 @@ from retrieval_eval.grounded_docs import (
     markdown,
 )
 from retrieval_eval.grounded_docs_cli import main
+from retrieval_eval.retrieval_bench import CUT_BUDGETS, TOKEN_BUDGETS
 
 _SHOWN = ("recall_at_1", "recall_at_5", "recall_at_10", "mrr", "ndcg_at_10", "wrong_version_rate")
 _ARTICLE = "docs/guide.md"
@@ -103,6 +104,38 @@ def step_recorded(context: Context) -> None:
     assert vector.settings["app"]["embeddingModel"] == "BAAI/bge-small-en-v1.5"
     assert vector.embedding is not None
     assert vector.embedding.indexing.texts == 1
+
+
+@then(
+    "the report gives recall within the first 1,000, 2,000 and 4,000 tokens of the text "
+    "returned, for Grounded Docs and for ExactDocs"
+)
+def step_budgets(context: Context) -> None:
+    assert context.exit_code == 0
+    report = context.report
+    for m in (
+        report.baseline.result.metrics.metrics,
+        *(r.result.metrics.metrics for r in report.runs),
+    ):
+        for name in TOKEN_BUDGETS:
+            assert getattr(m, name) is not None
+            assert name in m.intervals
+        assert m.context_tokens_per_question is not None
+    summary = markdown(report)
+    assert "### Within a token budget" in summary
+    assert "| within 1,000, whole results | within 2,000, whole results |" in summary
+
+
+@then("each budget is read whole and cut at the budget, with a paired test against ExactDocs")
+def step_budget_tests(context: Context) -> None:
+    for run in context.report.runs:
+        m = run.result.metrics.metrics
+        for whole, cut in zip(TOKEN_BUDGETS, CUT_BUDGETS, strict=True):
+            assert getattr(m, cut) is not None
+            assert getattr(m, cut) >= getattr(m, whole)  # a cut text holds every whole result
+        (versus,) = run.versus
+        assert {*TOKEN_BUDGETS, *CUT_BUDGETS} <= set(versus.tests)
+    assert "### Paired tests within a token budget" in markdown(context.report)
 
 
 @then("the report names the article and the case")

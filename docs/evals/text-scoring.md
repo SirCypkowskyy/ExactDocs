@@ -102,6 +102,8 @@ Next to them:
 | results / question | every case | results returned |
 | context tokens / question, p95 | every case | estimated tokens of all the text returned (characters / 4, as `CHARS_PER_TOKEN`)[^context] |
 | tokens to first hit | answerable cases with a hit in the top 10 | estimated tokens of the results up to and including the first that answers a section the case lists |
+| recall within 1,000 / 2,000 / 4,000 tokens, whole results | answerable cases | the first result that answers ends within the budget, as the retrieval benchmark measures it ([Within a token budget](retrieval-benchmark.md#within-a-token-budget), #575) |
+| recall within 1,000 / 2,000 / 4,000 tokens, text cut | answerable cases | the text cut at the budget answers: a result within it answers, or the result the budget cuts answers from its part within it (`cut_answers`) |
 | facts found | answerable cases | the share of the case's facts the returned text holds, averaged over the cases |
 
 [^context]: Tools return very different amounts of text, so a hit costs a different number of
@@ -183,6 +185,9 @@ golden set (321 cases, 404 decisions), about two minutes per chunking on 4 CPUs:
     - its ten results hold 3,464 tokens of context on average, 656 of them up to the first hit;
     - they hold 87% of the cases' facts, where the expected sections' own text holds 81% and
       another question's results 25%.
+- Both scorings give the same recall within each token budget at every chunking (#575, whole
+  results): at `default`, 78.3%, 88.8% and 93.6% within 1,000, 2,000 and 4,000 tokens; at `h2`,
+  whose chunks are twice as long, 49.1%, 76.8% and 89.1%.
 
 ### Why 0.8 and 5 words
 
