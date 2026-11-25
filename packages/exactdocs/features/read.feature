@@ -12,6 +12,10 @@ Feature: Reading whole articles and single chunks verbatim
     And the structured content has its front matter, commit SHA and source link
     And the structured content carries the untrusted-content notice
 
+  Scenario: A client that reads only the structured content still gets the article
+    When an agent reads "docs/guide/install.md" of "/fixture/docs-repo/v1.4.0"
+    Then a client that reads only the structured content gets the notice, then the imported Markdown
+
   Scenario: A wrong path suggests close matches
     When an agent reads "docs/guide/instal.md" of "/fixture/docs-repo/v1.4.0"
     Then the tool error lists "docs/guide/install.md" as a close match

@@ -232,6 +232,11 @@ configured. Asking for a mode that is not available is an error, `mode_unavailab
 the missing model role and lists the modes that are available (see
 [Search and AI models](search.md)).
 
+`read_article` and `read_chunk` return two text blocks, the notice and the text verbatim, and the
+same notice and text again in their structured content (`notice`, `content`) with the metadata:
+clients that read only the structured content when every block is text, as pydantic-ai does, get
+the text too.
+
 `search_all_docs` results each name their library and version, and `libraries` counts the matches
 per library. At most 500 libraries are searched; `libraries_omitted` says how many were left out.
 

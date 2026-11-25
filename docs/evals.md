@@ -1382,9 +1382,9 @@ Both are recorded in the report (`meta.agent_instructions` per arm, `meta.prompt
 
 A `process_tool_call` hook records, per question: every tool call (name, arguments cut to 200
 characters, time, error), the sections read in full (`read_chunk`, the chunks `query-docs`
-returned, whole articles from `read_article`) with their version, and how each search was
-answered (`bm25`, or `bm25 (mode_unavailable)` when the server fell back). The run also records,
-over every model request:
+returned, whole articles from `read_article` when its result carried the text) with their
+version, and how each search was answered (`bm25`, or `bm25 (mode_unavailable)` when the server
+fell back). The run also records, over every model request:
 
 - **input tokens** and **output tokens**, as the provider reports them; the output includes the
   thinking (Ollama counts the `reasoning` text inside `completion_tokens`);

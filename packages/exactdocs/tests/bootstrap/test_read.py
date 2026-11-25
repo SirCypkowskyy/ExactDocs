@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 import pytest
 from fastmcp import Client
+from pydantic_ai.mcp import _map_mcp_call_tool_result
 
 from exactdocs.bootstrap.container import Container
 from exactdocs.bootstrap.http import create_app
@@ -126,7 +127,38 @@ async def test_an_article_arrives_exactly_as_stored_with_its_metadata_beside_it(
     assert (
         data["source_url"] == f"https://github.com/acme/payments/blob/{'b' * 40}/guide/install.md"
     )
-    assert "content" not in data
+    # A client that reads only the structured content gets the text too (see below).
+    assert data["content"] == BODY
+
+
+def _strings(value: Any) -> list[str]:
+    """List every string of a JSON value, in document order."""
+    if isinstance(value, str):
+        return [value]
+    items = value.values() if isinstance(value, dict) else value if isinstance(value, list) else ()
+    return [text for item in items for text in _strings(item)]
+
+
+@pytest.mark.parametrize("tool", ["read_article", "read_chunk", "view_article"])
+async def test_a_client_that_prefers_structured_content_reads_the_notice_then_the_text(
+    container: Container, tool: str
+) -> None:
+    # pydantic-ai, after the MCP SDK's convention that text blocks repeat the structured content,
+    # gives the model the structured content alone when every block is text: what it maps is
+    # what the agent reads.
+    async with container.running():
+        ids = await publish(container, "v1.4.0", "b", {"guide/install.md": BODY}, kind=RefKind.TAG)
+    first = ids["guide/install.md"][0]
+    arguments, text = (
+        ({"chunk_id": first}, f"{BODY} one")
+        if tool == "read_chunk"
+        else ({"library": LIB, "path": "guide/install.md"}, BODY)
+    )
+    result = await call(container, tool, arguments)
+
+    seen = _strings(_map_mcp_call_tool_result(result))
+    assert text in seen, f"{tool} gives a pydantic-ai agent no text"
+    assert seen.index(NOTICE) < seen.index(text)
 
 
 async def test_a_blank_ref_means_the_default_version(container: Container) -> None:

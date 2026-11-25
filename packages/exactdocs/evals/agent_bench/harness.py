@@ -233,7 +233,9 @@ class Recorder:
         """
         if name == READ_CHUNK and isinstance(result, dict):
             self.read.append(_section(result))
-        elif name == READ_ARTICLE and isinstance(result, dict):
+        elif name == READ_ARTICLE and isinstance(result, dict) and "content" in result:
+            # No `content`: an older ExactDocs left the text out, and pydantic-ai gives the model
+            # the structured content alone, so the agent got the metadata only.
             self.read.append(
                 Section(
                     library=result["library"],

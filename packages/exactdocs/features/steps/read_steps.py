@@ -61,12 +61,23 @@ def step_structured(context: Context) -> None:
     assert data["commit_sha"] == commit, data
     assert data["source_url"] == f"{REPOSITORY}/blob/{commit}/{quote(context.read_path)}", data
     assert (data["ref"], data["path"]) == (context.read_ref, context.read_path), data
-    assert "content" not in data, "the text is the text block, not repeated"
 
 
 @then("the structured content carries the untrusted-content notice")
 def step_notice(context: Context) -> None:
     assert context.mcp_result.structured_content["notice"] == NOTICE
+
+
+@then("a client that reads only the structured content gets the notice, then the imported Markdown")
+def step_structured_text(context: Context) -> None:
+    result = context.mcp_result
+    assert not result.is_error, result
+    _, files = read_version(context, context.read_ref)
+    expected = parse_article(context.read_path, dict(files)[context.read_path]).body
+    data = result.structured_content
+    assert next(iter(data)) == "notice", "the notice comes first"
+    assert data["notice"] == NOTICE
+    assert data.get("content") == expected, "the structured content leaves the article out"
 
 
 @then('the tool error lists "{path}" as a close match')

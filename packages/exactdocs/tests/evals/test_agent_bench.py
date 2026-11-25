@@ -112,9 +112,10 @@ async def test_the_recorder_keeps_full_reads_and_search_modes_only() -> None:
         return _chunk("v2", "docs/start.md", ("Guide", "Setup")) | {"chunk_id": args["chunk_id"]}
 
     await recorder.take("read_chunk", _chunk(), call_tool)
-    await recorder.take(
-        "read_article", {"library": LIBRARY, "ref": "v1", "path": "docs/a.md"}, call_tool
-    )
+    article = {"library": LIBRARY, "ref": "v1", "path": "docs/a.md"}
+    await recorder.take("read_article", article | {"content": "# A"}, call_tool)
+    # Metadata only, as an older ExactDocs gave it: the agent did not get the text.
+    await recorder.take("read_article", article | {"path": "docs/b.md"}, call_tool)
     await recorder.take(
         "query-docs", ["notice", "### Setup\n\nSource: x\n\nChunk: c-9\n\ntext"], call_tool
     )

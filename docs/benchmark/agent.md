@@ -37,6 +37,18 @@ each kind in each project, a seeded stratified sample), 240 answers. With the Ex
 
 ## Read this first
 
+- **`read_article` gave the agents its metadata, not its text.** pydantic-ai, which runs the
+  agents, gives the model only a tool's structured content when every block of the result is text,
+  and the structured content of `read_article` left the article out until a fix made after this
+  run. In this run, as in every run recorded before the fix, each `read_article` call of the
+  `exactdocs` arm (39 that succeeded by `gpt-oss:120b`, in 34 questions; 22 by `kimi-k3`, in 17)
+  gave the agent the article's version, commit SHA, front matter and source link only;
+  `gpt-oss:120b` followed 20 of its calls with `view_article` of the same article, whose UI holds
+  the text. *Read the answer* still counted those articles as read: of the 16 and 26 questions it
+  counts, 12 and 6 include a `read_article` of an article that answers them, so only 4 and 20
+  (8 % and 40 % of the 50 answerable questions) surely read every part. Accuracy, time and tokens
+  are those of agents that could not read a whole article with `read_article`; a run after the fix
+  measures them with it.
 - **Open-weight models, served by Ollama Cloud.** The agents and the judge are open-weight models
   as [Ollama Cloud](https://ollama.com/) serves them (its API at `https://ollama.com/v1`), not the
   vendors' own APIs; how it quantises and serves them is not ours to see. Hosted frontier models
