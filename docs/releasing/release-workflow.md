@@ -34,8 +34,7 @@
     needs it. It covers:
 
     - the integration pytest and behave suites on PostgreSQL, PgBouncer, Supabase, libSQL and
-      every search and vector server (on the self-hosted runner, so Pinecone Local's cases skip
-      there);
+      every search and vector server, Pinecone Local included;
     - the Docker images' build, scan and smoke tests;
     - uvx, the upgrade from the previous release and the browser end-to-end test.
 3. **web**: `pnpm build`.
@@ -43,9 +42,8 @@
    wheel the way `uvx` would.
 5. **pypi-kernel**, then **pypi**: `uv publish` with **trusted publishing** (OIDC, no stored token).
 6. **image-scan** (six jobs: `base`, `ai`, `local` × `amd64`, `arm64`):
-    - each variant is built natively on a runner of its architecture (`ubuntu-24.04`, the
-      self-hosted ARM64 runner; in `self-hosted` mode amd64 is cross-built there and checked with
-      `--no-python`);
+    - each variant is built natively on a runner of its architecture (`ubuntu-24.04`,
+      `ubuntu-24.04-arm`);
     - checked against its size budget (`deploy/check_artifacts.py`);
     - and scanned (see [Image scan](image-scan.md)).
 
@@ -63,8 +61,7 @@
     - checks it holds exactly `linux/amd64` and `linux/arm64`;
     - signs it with a keyless **cosign** signature.
 
-    In `hybrid` mode nothing runs under QEMU; in `self-hosted` mode the amd64 legs use it for the
-    runtime stage's `apt-get` only.
+    Nothing runs under QEMU.
 9. **github-release**: creates or updates the release with the distributions.
 
 !!! warning "The workflow file of the tagged commit"
@@ -84,7 +81,7 @@ gh workflow run release.yml --ref develop     # or a feature branch with workflo
 |---|---|
 | runs | **meta** (without the tag checks), **eval**, **web**, **python** and all twelve image jobs (the six **image** builds with `push=false`, no registry login) |
 | skipped (`if: github.event_name == 'push'`) | **pypi-kernel**, **pypi**, **image-publish**, **github-release** |
-| with the input `integration` | **integration** too: the integration and end-to-end jobs, with the Python job on the self-hosted runner |
+| with the input `integration` | **integration** too: the integration and end-to-end jobs |
 
 It builds version `0.0.0.dev<run number>`.
 
@@ -99,11 +96,8 @@ It builds version `0.0.0.dev<run number>`.
     changed. The gates that pull requests do not run (the eval, arm64 budgets and scans) fail here
     instead of on the tag.
 
-What it cannot check:
-
-- the publishing itself (PyPI trusted publishing, the index, the signature);
-- the other runner mode: it runs on the runners of the current `RUNNER_MODE`, so a dry run in
-  `hybrid` mode does not exercise the cross-built amd64 legs of `self-hosted` mode.
+What it cannot check is the publishing itself (PyPI trusted publishing, the index, the
+signature). It runs on the same runners as a release.
 
 ## One-time setup
 

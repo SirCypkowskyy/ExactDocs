@@ -23,5 +23,5 @@
 | [Licences](licences.md) | what carries which licence in the wheels, the UI and the images |
 | [Image scan](image-scan.md) | the Trivy gate, and what to do when it fails |
 | [Fast and integration tests](tests.md) | the CI jobs, integration tests and their services |
-| [CI/CD and runners](runners.md) | GitHub-hosted and self-hosted runners, `RUNNER_MODE` |
+| [CI/CD and runners](runners.md) | GitHub-hosted runners, which job runs where, limits |
 | [The release workflow](release-workflow.md) | every job of `release.yml`, dry runs, one-time setup |

@@ -41,9 +41,7 @@
    PR that needs it. The reviewer decides; remove the entry once a fixed version ships.
 
 !!! info "A scan that passed yesterday can fail today"
-    A GitHub-hosted job downloads a fresh Trivy DB every run, while the persistent self-hosted
-    runner keeps its own in `~/.cache/trivy` and refreshes it when it is out of date. So a scan
-    can fail on an advisory published since, and the amd64 and arm64 legs of one release can
+    Every job downloads a fresh Trivy DB. So a scan can fail on an advisory published since, and the amd64 and arm64 legs of one release can
     briefly disagree. The failing run is the real result.
 
 !!! note "Slower Mondays"

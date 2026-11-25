@@ -51,8 +51,8 @@ The sizes land in the job summary.
     - Since #468 the CI jobs run on GitHub-hosted `ubuntu-24.04` (amd64), where the images come out
       smaller than on arm64 (353.0 MB against 387.1 MB for `base` before MCP Apps). So the arm64
       figures below come from the release's builds and earlier CI runs.
-    - Since #478 the release checks both architectures (natively, except the amd64 legs in
-      [`self-hosted` mode](runners.md#self-hosted-mode-what-changes)).
+    - Since #478 the release checks both architectures, each natively on a hosted runner of its
+      own ([CI/CD and runners](runners.md)).
     - arm64 is the one that gets close to a budget, and a pull request that adds a dependency only
       finds out in the release (or a [dry run](release-workflow.md#dry-run)).
 
@@ -170,9 +170,7 @@ with no model configured: the `-ai` and `-local` images stay BM25 servers until 
 - The variants are built, checked, scanned and smoke-tested in their own job, in parallel with the
   base image's; `local` builds on the `ai` stages in the same BuildKit.
 - On GitHub-hosted runners nothing is cached between runs, so every run builds from scratch and
-  pulls the models. On the persistent self-hosted runner, in `self-hosted` mode, the BuildKit cache
-  survives.
-- The job removes its two images at the end (`if: always()`).
+  pulls the models.
 
 **Locally:** `just docker-build 0.0.0.dev0 ai` (or `local`) builds `exactdocs:build-ai`
 (`exactdocs:build-local`), and `just docker-check ai` runs the same check.

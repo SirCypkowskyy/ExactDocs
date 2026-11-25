@@ -24,10 +24,9 @@ The fast checks are the parallel jobs of `ci.yml`:
 | *Web (biome, fallow, react-doctor, vitest, build)* | the web client |
 
 [^pytest]: Split by [pytest-split](https://github.com/jerry-git/pytest-split) from the durations
-    in `.test_durations`; two groups in `self-hosted` mode.
+    in `.test_durations`.
 
-[^behave]: `deploy/behave_shards.py`, from the times in `.behave_durations`; one group in
-    `self-hosted` mode.
+[^behave]: `deploy/behave_shards.py`, from the times in `.behave_durations`.
 
 *Python (ruff, ty, pytest, behave)* is the check branch protection requires. The coverage total is
 in the job summary, and the data in the `python-reports` artifact.
@@ -123,7 +122,7 @@ One run takes 45 to 60 minutes of runner time, so they run only when someone sta
 |---|---|
 | a manual run of CI with the input `integration` | *Actions → CI → Run workflow*, or `gh workflow run ci.yml --ref <branch> -f integration=true` |
 | a manual run of Integration itself, on the same runners as from CI | *Actions → Integration → Run workflow*, or `gh workflow run integration.yml --ref <branch>` |
-| a release dry run with the input `integration`, with the Python job on the self-hosted runner, where the eval runs ([Dry run](release-workflow.md#dry-run)) | *Actions → Release → Run workflow*, or `gh workflow run release.yml --ref <branch> -f integration=true` |
+| a release dry run with the input `integration` ([Dry run](release-workflow.md#dry-run)) | *Actions → Release → Run workflow*, or `gh workflow run release.yml --ref <branch> -f integration=true` |
 
 !!! warning "Who starts them"
     - No pull request, push or tag starts them, whatever its labels, and a release does not wait
