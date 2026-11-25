@@ -405,8 +405,7 @@ async def test_rest_search_input_is_capped(
         {"library": "/acme/payments", "query": "x", "tags": [f"t{i}" for i in range(21)]},
         {"library": "/acme/payments", "query": "x", "tags": ["t" * 101]},
         {"library": "/" + "a" * 256 + "/b", "query": "x"},
-        {"library": "/acme/payments/v1", "query": "x"},
-        {"library": "react", "query": "x"},
+        # A name ("react") and a versioned ID are read since #573 (test_mcp_arguments.py).
     ],
 )
 async def test_mcp_search_input_is_capped_and_the_library_shape_checked(
@@ -435,8 +434,8 @@ async def test_mcp_search_accepts_a_blank_ref_as_the_default_version(container: 
     [
         {"query": ""},
         {"query": "x" * 1001},
-        {"query": "x", "limit": 51},
-        {"query": "x", "library": "react"},
+        {"query": "x", "limit": "fifty"},
+        # A limit out of range is clamped and a name resolved since #573 (test_mcp_arguments.py).
     ],
 )
 async def test_mcp_search_all_input_is_capped_and_the_library_shape_checked(
