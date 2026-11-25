@@ -1,0 +1,59 @@
+# Pydantic 2.5.3 (PyPI, 2023-12-22); requirements.txt compiled from requirements.in with
+# `uv pip compile --python-version 3.12 --exclude-newer 2024-01-31 --generate-hashes`.
+ecosystem: python
+package: pydantic
+version: 2.5.3
+released: 2023-12-22
+python: "3.12"
+forbidden:
+- api: '@validator'
+  pattern: '@validator\b'
+  reason: the Pydantic 1 decorator, deprecated in 2.0 (PydanticDeprecatedSince20); use `@field_validator`
+- api: '@root_validator'
+  pattern: '@root_validator\b'
+  reason: the Pydantic 1 decorator, deprecated in 2.0; use `@model_validator`
+- api: class Config
+  pattern: '^\s+class Config\b'
+  reason: class-based config is deprecated in 2.0; use `model_config = ConfigDict(...)`
+- api: .dict() / .json()
+  pattern: '\.(dict|json)\('
+  reason: the Pydantic 1 methods, deprecated in 2.0; use `model_dump()` / `model_dump_json()`
+- api: parse_obj / parse_raw / parse_obj_as
+  pattern: '\bparse_(obj|raw|obj_as)\b'
+  reason: the Pydantic 1 parsers, deprecated in 2.0; use `model_validate()`, `model_validate_json()`, `TypeAdapter`
+- api: from_orm / orm_mode
+  pattern: '\b(from_orm|orm_mode)\b'
+  reason: Pydantic 1's attribute reading, deprecated in 2.0; use `from_attributes=True` and `model_validate()`
+- api: __root__
+  pattern: '\b__root__\b'
+  reason: custom root types are removed in 2.0; use `RootModel`
+- api: json_encoders
+  pattern: '\bjson_encoders\b'
+  reason: deprecated in 2.0; use `@field_serializer`
+- api: Pydantic 1 config keys
+  pattern: '\b(allow_population_by_field_name|anystr_strip_whitespace|anystr_lower|min_anystr_length|max_anystr_length)\b'
+  reason: renamed in 2.0 (`populate_by_name`, `str_strip_whitespace`, ...); the old keys only warn
+- api: min_items / max_items
+  pattern: '\b(min|max)_items\b'
+  reason: renamed in 2.0 to `min_length` / `max_length`
+- api: validate_by_name / validate_by_alias / serialize_by_alias
+  pattern: '\b(validate_by_name|validate_by_alias|serialize_by_alias)\b'
+  reason: config keys added in 2.11 (2025-03-27); 2.5 ignores them. 2.5 has `populate_by_name`
+- api: exclude_if
+  pattern: '\bexclude_if\b'
+  reason: a `Field()` argument added in 2.12 (2025-10-07); 2.5 warns on it and ignores it
+- api: fail_fast / FailFast
+  pattern: '\b(fail_fast|FailFast)\b'
+  reason: added in 2.8 (2024-07-01)
+- api: OnErrorOmit
+  pattern: '\bOnErrorOmit\b'
+  reason: added in 2.6 (2024-01-23)
+- api: experimental_allow_partial
+  pattern: '\bexperimental_allow_partial\b'
+  reason: partial validation was added in 2.10 (2024-11-20)
+- api: use_attribute_docstrings
+  pattern: '\buse_attribute_docstrings\b'
+  reason: a config key added in 2.7 (2024-04-11)
+- api: MISSING
+  pattern: '\bimport\b[^\n]*\bMISSING\b|\bpydantic\.MISSING\b'
+  reason: the sentinel was added in 2.12 (experimental) and made stable in 2.14

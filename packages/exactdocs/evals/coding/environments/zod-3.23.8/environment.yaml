@@ -1,0 +1,46 @@
+# Zod 3.23.8 (npm, 2024-05-08) with TypeScript 5.9.3; package-lock.json from
+# `npm install --package-lock-only`.
+ecosystem: node
+package: zod
+version: 3.23.8
+released: 2024-05-08
+forbidden:
+- api: top-level string formats (z.email(), z.ipv4(), z.uuid(), ...)
+  pattern: '\bz\.(email|url|uuid|guid|ipv4|ipv6|cidrv4|cidrv6|e164|jwt|base64|base64url|nanoid|cuid|cuid2|ulid|emoji|hostname|hex|hash)\('
+  reason: added in Zod 4.0 (2025-07-09); 3.23 has `z.string().email()`, `z.string().ip()`, ...
+- api: z.iso
+  pattern: '\bz\.iso\.'
+  reason: added in Zod 4.0; 3.23 has `z.string().datetime()`, `.date()`, `.time()`
+- api: z.int()
+  pattern: '\bz\.int(32)?\('
+  reason: added in Zod 4.0; 3.23 has `z.number().int()`
+- api: .prefault()
+  pattern: '\.prefault\('
+  reason: added in Zod 4.0; in 3.23 `.default()` already takes the input value
+- api: error formatting functions
+  pattern: '\bz\.(treeifyError|prettifyError|flattenError)\('
+  reason: added in Zod 4.0; 3.23 has `error.format()` and `error.flatten()`
+- api: z.stringbool()
+  pattern: '\bz\.stringbool\('
+  reason: added in Zod 4.0
+- api: z.looseObject()
+  pattern: '\bz\.looseObject\('
+  reason: added in Zod 4.0; 3.23 has `.passthrough()`
+- api: z.function({ input, output })
+  pattern: '\bz\.function\(\s*\{'
+  reason: the object form is Zod 4.0's; 3.23 has `z.function().args(...).returns(...)`
+- api: the `error` parameter
+  pattern: '[(,]\s*\{\s*error\s*:'
+  reason: added in Zod 4.0; 3.23 customizes messages with `message`, `required_error`, `invalid_type_error` or `errorMap`
+- api: invalid_format issue code
+  pattern: '["'']invalid_format["'']'
+  reason: added in Zod 4.0; 3.23 reports string formats as `invalid_string` with a `validation`
+- api: z.codec() / z.encode() / z.decode()
+  pattern: '\bz\.(codec|encode|decode)\('
+  reason: added in Zod 4.1 (2025-08-23)
+- api: z.toJSONSchema() / .meta()
+  pattern: '\bz\.toJSONSchema\(|\.meta\('
+  reason: added in Zod 4.0
+- api: z.deepPartial()
+  pattern: '\bz\.deepPartial\('
+  reason: the function was added in Zod 4.5 (2026-08-28); 3.23 has the `.deepPartial()` method

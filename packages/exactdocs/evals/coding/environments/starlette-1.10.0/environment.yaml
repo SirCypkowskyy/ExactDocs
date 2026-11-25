@@ -1,0 +1,30 @@
+# Starlette 1.10.0 (PyPI, 2026-10-24) with httpx2, which its TestClient needs since 1.2 (httpx
+# warns), and Jinja2; requirements.txt compiled from requirements.in with `uv pip compile
+# --python-version 3.12 --exclude-newer 2026-11-20 --generate-hashes`.
+ecosystem: python
+package: starlette
+version: 1.10.0
+released: 2026-10-24
+python: "3.12"
+forbidden:
+- api: on_startup / on_shutdown
+  pattern: '\bon_(startup|shutdown)\b'
+  reason: the `Starlette` and `Router` parameters were removed in 1.0.0 (2026-03-22); use `lifespan`
+- api: on_event / add_event_handler
+  pattern: '\.on_event\(|\.add_event_handler\('
+  reason: removed in 1.0.0 (2026-03-22); use `lifespan`
+- api: '@app.route / @app.websocket_route'
+  pattern: '@\w+\.(route|websocket_route)\('
+  reason: the decorators were removed in 1.0.0 (2026-03-22); pass `Route` / `WebSocketRoute` in `routes`
+- api: '@app.exception_handler'
+  pattern: '@\w+\.exception_handler\('
+  reason: the decorator was removed in 1.0.0 (2026-03-22); pass `exception_handlers`
+- api: '@app.middleware'
+  pattern: '@\w+\.middleware\('
+  reason: the decorator was removed in 1.0.0 (2026-03-22); pass `middleware=[Middleware(...)]`
+- api: TemplateResponse(name, context)
+  pattern: 'TemplateResponse\(\s*["''\w]+\s*,\s*\{[^}]*["'']request["'']'
+  reason: the name-first signature was removed in 1.0.0 (2026-03-22); use `TemplateResponse(request, name, context)`
+- api: pre-RFC 9110 status names
+  pattern: '\bHTTP_(413_REQUEST_ENTITY_TOO_LARGE|416_REQUESTED_RANGE_NOT_SATISFIABLE|422_UNPROCESSABLE_ENTITY)\b'
+  reason: deprecated in 0.48.0 (2025-09-13; warns, warnings are errors here); use HTTP_413_CONTENT_TOO_LARGE, HTTP_416_RANGE_NOT_SATISFIABLE, HTTP_422_UNPROCESSABLE_CONTENT

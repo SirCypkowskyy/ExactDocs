@@ -1,0 +1,30 @@
+# Starlette 0.27.0 (PyPI, 2023-05-16) with the httpx of its time for TestClient, and Jinja2;
+# requirements.txt compiled from requirements.in with `uv pip compile --python-version 3.12
+# --exclude-newer 2023-06-30 --generate-hashes`.
+ecosystem: python
+package: starlette
+version: 0.27.0
+released: 2023-05-16
+python: "3.12"
+forbidden:
+- api: RFC 9110 status names
+  pattern: '\bHTTP_(413_CONTENT_TOO_LARGE|416_RANGE_NOT_SATISFIABLE|422_UNPROCESSABLE_CONTENT)\b'
+  reason: added in 0.48.0 (2025-09-13); 0.27 names them HTTP_413_REQUEST_ENTITY_TOO_LARGE, HTTP_416_REQUESTED_RANGE_NOT_SATISFIABLE, HTTP_422_UNPROCESSABLE_ENTITY
+- api: TemplateResponse(request, name, ...)
+  pattern: 'TemplateResponse\(\s*request\b'
+  reason: the request-first signature was added in 0.29.0 (2023-07-13); 0.27 takes `TemplateResponse(name, context)` with the request in the context
+- api: TestClient(follow_redirects=...)
+  pattern: 'TestClient\([^)]*\bfollow_redirects\b'
+  reason: the TestClient argument was added in 0.29.0 (2023-07-13)
+- api: max_body_size
+  pattern: '\bmax_body_size\b'
+  reason: added in 1.6.0 (2026-08-08)
+- api: request.state[...]
+  pattern: '\.state\['
+  reason: dictionary-style state access was added in 0.52.0 (2026-01-18); 0.27 reads `request.state.<name>`
+- api: on_startup / on_shutdown / on_event / add_event_handler
+  pattern: '\bon_(startup|shutdown)\b|\.on_event\(|\.add_event_handler\('
+  reason: deprecated in 0.26.0 (warns; warnings are errors here) and removed in 1.0.0; use `lifespan`
+- api: '@app.route / @app.websocket_route / @app.middleware / @app.exception_handler'
+  pattern: '@\w+\.(route|websocket_route|middleware|exception_handler)\('
+  reason: decorators deprecated in 0.23.0 (warn; warnings are errors here) and removed in 1.0.0

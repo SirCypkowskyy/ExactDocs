@@ -1,0 +1,43 @@
+# Zod 4.0.17 (npm, 2025-08-09) with TypeScript 5.9.3; package-lock.json from
+# `npm install --package-lock-only`.
+ecosystem: node
+package: zod
+version: 4.0.17
+released: 2025-08-09
+forbidden:
+- api: z.string().ip() / .cidr()
+  pattern: '\.(ip|cidr)\('
+  reason: removed in Zod 4.0 (2025-07-09); use `z.ipv4()` / `z.ipv6()` / `z.cidrv4()`
+- api: required_error / invalid_type_error / errorMap
+  pattern: '\b(required_error|invalid_type_error|errorMap)\b'
+  reason: dropped in Zod 4.0; customize messages with the `error` parameter
+- api: .deepPartial()
+  pattern: '\.deepPartial\('
+  reason: the method was removed in Zod 4.0
+- api: z.function().args() / .returns()
+  pattern: '\.(args|returns)\('
+  reason: 'removed in Zod 4.0; `z.function({ input: [...], output })`'
+- api: invalid_string issue code
+  pattern: '["'']invalid_string["'']'
+  reason: replaced in Zod 4.0 by `invalid_format` (with `format`)
+- api: issue.validation
+  pattern: '\.validation\b'
+  reason: Zod 3's issue field; Zod 4 reports the string format as `format`
+- api: z.ostring() / z.onumber() / z.oboolean()
+  pattern: '\bz\.o(string|number|boolean)\('
+  reason: removed in Zod 4.0
+- api: z.codec() / z.encode() / z.decode()
+  pattern: '\bz\.(codec|encode|decode)\('
+  reason: added in Zod 4.1 (2025-08-23), after 4.0.17
+- api: z.deepPartial()
+  pattern: '\bz\.deepPartial\('
+  reason: added in Zod 4.5 (2026-08-28)
+- api: .exactPartial()
+  pattern: '\.exactPartial\('
+  reason: added in Zod 4.5 (2026-08-28)
+- api: z.creditCard() / z.iban()
+  pattern: '\bz\.(creditCard|iban)\('
+  reason: added in Zod 4.5 / 4.6 (2026)
+- api: .validate()
+  pattern: '\.validate(Async)?\('
+  reason: added in Zod 4.6 (2026-09-09); 4.0 has `.safeParse().success`
