@@ -1,0 +1,23 @@
+title: Customize how one type is written to JSON
+project: pydantic
+version: v1.10.22
+environment: pydantic-1.10.22
+pair: pydantic-json-encoding
+other_version: v2.5.3
+other_from: pydantic-json-encoding-v2
+api_since:
+  version: 2.0.0
+  released: '2023-06-30'
+files:
+- app/jobs.py
+prompt: |
+  In `app/jobs.py`, make the JSON form of `Job` give `timeout` as a whole number of
+  milliseconds (an integer: 90250 for 1 min 30.25 s) instead of Pydantic's default,
+  wherever the model is written to JSON, including the model's own JSON method;
+  `started_at` stays an ISO 8601 string, and Python (non-JSON) dumps keep the
+  `timedelta`. Implement `to_json(job)` to return the model's JSON.
+notes: |
+  Pydantic 1 customizes JSON with `json_encoders` in `class Config` (and writes a
+  timedelta as float seconds by default); Pydantic 2 with
+  `@field_serializer(..., when_used="json")`, and `json_encoders` / `class Config` are
+  deprecated.

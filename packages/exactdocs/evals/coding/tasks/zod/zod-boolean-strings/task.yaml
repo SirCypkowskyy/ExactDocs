@@ -1,0 +1,18 @@
+title: Parse boolean flags from strings
+project: zod
+version: v3.23.8
+environment: zod-3.23.8
+other_version: v4.0.17
+other_environment: zod-4.0.17
+api_since:
+  version: 4.0.0
+  released: '2025-07-09'
+files:
+- src/flags.ts
+prompt: |
+  In `src/flags.ts`, export `Flags`, a schema for an object of environment variables
+  (strings): `DEBUG` and `CACHE` are flags written "true"/"false", "1"/"0", "yes"/"no"
+  or "on"/"off", in any case, and come out as booleans; any other value is rejected; an
+  absent flag is `false`.
+notes: |
+  Zod 4.0 added `z.stringbool()`; Zod 3 does not have it and maps the strings itself.

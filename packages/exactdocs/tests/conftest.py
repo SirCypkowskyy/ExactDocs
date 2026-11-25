@@ -35,6 +35,9 @@ from fixture_repo import DocsRepo, served
 from psycopg_guard import no_psycopg_connection_left_open
 from sqlite_guard import no_connection_left_open
 
+collect_ignore_glob = ["fixtures/coding_tasks/*"]
+"""The stand-in coding tasks' workspace and hidden tests run in a sandbox, never in this suite."""
+
 IMPORTED = datetime(2026, 11, 4, 12, 0, tzinfo=UTC)
 
 

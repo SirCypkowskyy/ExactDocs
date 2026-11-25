@@ -1,0 +1,17 @@
+title: Add a header to every response with middleware
+project: starlette
+version: 1.10.0
+environment: starlette-1.10.0
+other_version: 0.27.0
+api_since:
+  version: 1.0.0
+  released: '2026-03-22'
+files:
+- app/main.py
+prompt: |
+  Add middleware to the app in `app/main.py` that sets an `X-Request-ID` header on every
+  response, including error responses such as a 404: the request's own `X-Request-ID`
+  header when it sends one, otherwise a new random UUID as 32 lowercase hex digits.
+notes: |
+  Starlette 0.x code often uses `@app.middleware("http")` (deprecated since 0.23);
+  Starlette 1.0 removed the decorator: `middleware=[Middleware(...)]`.

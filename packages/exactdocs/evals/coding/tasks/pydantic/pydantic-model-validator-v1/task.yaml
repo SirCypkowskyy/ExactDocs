@@ -1,0 +1,21 @@
+title: A validator across two fields
+project: pydantic
+version: v1.10.22
+environment: pydantic-1.10.22
+pair: pydantic-model-validator
+other_version: v2.14.3
+other_from: pydantic-model-validator-v2
+api_since:
+  version: 2.0.0
+  released: '2023-06-30'
+files:
+- app/schemas.py
+prompt: |
+  Make `PasswordChange` in `app/schemas.py` reject a request whose `confirm` differs
+  from `password`, with a validation error whose message contains
+  "passwords do not match". The check runs on the whole model, after both fields have
+  been validated, and only when both are valid: a missing field is reported on its own,
+  without the mismatch message.
+notes: |
+  Pydantic 1 checks several fields with `@root_validator(skip_on_failure=True)`;
+  Pydantic 2 with `@model_validator(mode="after")`, and `@root_validator` is deprecated.

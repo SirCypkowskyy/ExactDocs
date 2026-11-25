@@ -1,0 +1,22 @@
+title: A model with a custom field validator
+project: pydantic
+version: v1.10.22
+environment: pydantic-1.10.22
+pair: pydantic-validator
+other_version: v2.5.3
+other_from: pydantic-validator-v2
+api_since:
+  version: 2.0.0
+  released: '2023-06-30'
+files:
+- app/models.py
+prompt: |
+  Add a custom validator to the `SignUp` model in `app/models.py` for `username`: strip
+  the surrounding whitespace and lowercase it, then accept it only if it is 3 to 20
+  characters long and made of letters, digits and underscores. Reject anything else with
+  a validation error whose message contains
+  "username must be 3-20 letters, digits or underscores". The model keeps the
+  normalized username.
+notes: |
+  Pydantic 1 validates a field with `@validator`; Pydantic 2 with `@field_validator`
+  (a classmethod), and its `@validator` is deprecated (a warning, an error here).

@@ -323,6 +323,19 @@ EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
 The second is the recorded retrieval run ([The recorded run](../evals/retrieval-runs.md#the-recorded-run)): 3 h
 17 min on a 4-CPU runner, most of it embedding the corpus and the cross-encoder.
 
+## Coding tasks
+
+The coding tasks (#496) check code, not prose: an agent with the workspace tools and one
+documentation arm completes a request in a small project that pins one library version, and the
+task passes only when its hidden tests pass in a sandbox with exactly that version installed. The
+report gives the **pass rate** (overall, per project, and over the tasks pinning a version
+released after the model's training cutoff), the share of tasks whose changed code uses an API the
+pinned version does not have (**forbidden-API rate**), and the **files changed** per task, each
+with its 95% interval as above; each arm's pass rate is tested against `none`'s on the same tasks
+by McNemar's test (mid-p). Most tasks come as version pairs, the same request pinned at two
+versions where the right code differs. The task format, the sandbox and the commands are in
+[Version-pinned coding tasks](../evals/coding-tasks.md).
+
 ## Refreshing these pages
 
 The tables on the benchmark pages are not typed by hand. Each page holds generated blocks between
