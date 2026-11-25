@@ -257,7 +257,8 @@ def _ui(app: PrefabApp) -> dict[str, Any]:
     A host with MCP Apps renders the Prefab keys (``$prefab``, ``view``, ``state``) and ignores
     ``notice``. A client that gives its model the structured content instead of the text blocks
     (pydantic-ai, #587) gets the payload, whose state holds every value of the text blocks, and
-    reads the notice first.
+    reads the notice first. Prefab's own ``to_json`` serializes it as FastMCP would: the app calls
+    no tool, so there is no tool reference for FastMCP to address.
 
     Args:
         app: The app.
