@@ -35,6 +35,7 @@ from retrieval_eval.golden import (
 )
 from retrieval_eval.golden_cli import import_corpus, selected
 from retrieval_eval.golden_run import held_match
+from retrieval_eval.ingestion import tokens
 from retrieval_eval.ingestion_cli import CONFIGURATIONS, Configuration, held_headings
 from retrieval_eval.retrieval_bench_cli import environment
 from retrieval_eval.text_bench import (
@@ -102,6 +103,7 @@ async def bm25_results(
                     heading_path=list(chunk.heading_path),
                     commit_sha=chunk.commit_sha,
                     chunk_id=chunk.chunk_id,
+                    tokens=tokens(chunk.content),
                 )
             )
             texts.append(chunk.content)

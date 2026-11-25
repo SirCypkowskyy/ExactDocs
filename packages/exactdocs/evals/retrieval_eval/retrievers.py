@@ -10,6 +10,7 @@ from exactdocs.retrieval.models import AgentRead, TagMatch
 from exactdocs.retrieval.ports.driving import ReadChunk, SearchDocs
 from retrieval_eval.dataset import Answer, Hit, Question, TracedRead
 from retrieval_eval.evaluators import RECALL_AT
+from retrieval_eval.ingestion import tokens as estimated_tokens
 
 
 class Retriever(Protocol):
@@ -132,6 +133,7 @@ class SearchDocsRetriever:
                     heading_path=list(chunk.heading_path),
                     commit_sha=chunk.commit_sha,
                     chunk_id=chunk.chunk_id,
+                    tokens=estimated_tokens(chunk.content),
                 )
             )
         return Answer(

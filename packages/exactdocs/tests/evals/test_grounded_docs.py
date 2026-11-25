@@ -262,7 +262,16 @@ def test_a_run_indexes_every_version_asks_every_question_and_scores_it(
             "recall_at_10",
             "mrr",
             "ndcg_at_10",
+            "recall_at_1k_tokens",  # both scored from their text: the context is known (#575)
+            "recall_at_2k_tokens",
+            "recall_at_4k_tokens",
+            "recall_at_1k_tokens_cut",  # and the text can be cut at the budget
+            "recall_at_2k_tokens_cut",
+            "recall_at_4k_tokens_cut",
         }
+        m = run.result.metrics.metrics
+        assert m.context_tokens_per_question == run.result.metrics.context_tokens_per_question
+        assert m.recall_at_4k_tokens == 1  # the tiny guide is far under 4,000 tokens
         assert run.errors == []
     full_text, vector = report.runs
     assert full_text.embedding is None

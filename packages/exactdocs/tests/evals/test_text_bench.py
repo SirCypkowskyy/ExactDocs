@@ -14,7 +14,7 @@ from retrieval_bench_stand_ins import tiny_corpus
 from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question
 from retrieval_eval.golden_run import held_match
 from retrieval_eval.ingestion import tokens
-from retrieval_eval.retrieval_bench import metrics_of
+from retrieval_eval.retrieval_bench import CUT_BUDGETS, metrics_of
 from retrieval_eval.text_bench import (
     MIN_AGREEMENT,
     TextAnswer,
@@ -22,6 +22,7 @@ from retrieval_eval.text_bench import (
     TextScorerReport,
     agreement,
     calibrate,
+    cut_answers,
     fact_terms,
     facts_found,
     markdown,
@@ -107,6 +108,38 @@ def test_context_tokens_count_every_result_and_the_hit_costs_those_up_to_it() ->
 
     assert row.context_tokens == sum(tokens(t) for t in texts)
     assert row.tokens_to_hit == tokens(CONFIGURE_V2) + tokens(LIFESPAN)
+    # the benchmark's row keeps them too, for recall within a token budget (#575)
+    assert (row.row.context_tokens, row.row.tokens_to_hit) == (
+        row.context_tokens,
+        row.tokens_to_hit,
+    )
+
+
+def test_text_cut_at_a_budget_answers_when_the_section_lies_within_the_cut() -> None:
+    filler = f"\n{UNRELATED}" * 60  # about 1,300 tokens of text that answers nothing
+    first, last = LIFESPAN + filler, filler + "\n" + LIFESPAN
+    expected = [_expected("v2", "Lifespan")]
+
+    # the section at the start of a long result: within the cut, though the result is not
+    assert cut_answers(expected, [first], tokens(LIFESPAN) + 5, INDEX)
+    # a cut inside the section is a part of it, which answers as a finer result does
+    assert cut_answers(expected, [first], tokens(LIFESPAN) // 2, INDEX)
+    # but half of it after other text neither holds it nor lies in it
+    mixed = f"{UNRELATED}\n{UNRELATED}\n{LIFESPAN}"
+    assert not cut_answers(expected, [mixed], tokens(mixed) - tokens(LIFESPAN) // 2, INDEX)
+    # the section at the end of it is past the cut until the budget reaches it
+    assert not cut_answers(expected, [last], 1000, INDEX)
+    assert cut_answers(expected, [last], tokens(last), INDEX)
+    # a later result counts when the earlier ones leave room for it
+    assert cut_answers(expected, [UNRELATED, LIFESPAN], tokens(UNRELATED) + 50, INDEX)
+    assert not cut_answers(expected, [filler, LIFESPAN], 1000, INDEX)
+
+    row = text_row(_case(), TextAnswer(texts=[first]), INDEX).row
+    assert row.tokens_to_hit is not None
+    assert row.tokens_to_hit > 1000  # read whole, the result does not fit 1,000 tokens
+    assert row.cut_hits == dict.fromkeys(CUT_BUDGETS, True)  # cut, its start does
+    m = metrics_of([row])
+    assert (m.recall_at_1k_tokens, m.recall_at_1k_tokens_cut, m.recall_at_2k_tokens) == (0, 1, 1)
 
 
 def test_an_unanswerable_case_with_nothing_back_signals_no_answer() -> None:
@@ -284,6 +317,9 @@ def test_the_command_calibrates_on_exactdocs_own_results(
     for c in report.calibrations:
         assert (c.agreement.decisions, c.agreement.rate) == (1, 1)
         assert c.text.metrics.recall_at_1 == c.chunk_id.recall_at_1 == 1
+        # both scorings read the same chunks' content as the context returned (#575)
+        assert c.chunk_id.context_tokens_per_question == c.text.context_tokens_per_question
+        assert c.chunk_id.recall_at_1k_tokens == c.text.metrics.recall_at_1k_tokens == 1
         assert c.text.metrics.wrong_version_rate == 0
         assert c.text.unmatched_share == 0
     assert report.scorer["threshold"] == pytest.approx(0.8)

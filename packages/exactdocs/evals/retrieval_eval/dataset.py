@@ -50,6 +50,9 @@ class Hit(_Model):
     """An expected section only: it answers the same part of the case as the section listed
     before it, as well as that one does, so either is enough (#501). False: a part a complete
     answer needs, with the alternatives listed after it."""
+    tokens: int | None = None
+    """A returned hit only: the estimated tokens (characters / 4) of the text it stands for,
+    the chunk's content, when the retriever read it back (#575): the context a caller gets."""
 
 
 type Part = tuple[Hit, ...]

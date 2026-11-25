@@ -5,6 +5,7 @@ on the retrieval benchmark's tiny corpus.
 """
 
 import itertools
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,8 @@ from pydantic import ValidationError
 
 from exactdocs.ingestion.models import ChunkingConfig, parse_article
 from exactdocs.retrieval.adapters.driven.memory import HashEmbeddingModels
+from exactdocs.retrieval.models import EmbeddedTexts
+from exactdocs.retrieval.ports.driven import Embeddings
 from retrieval_bench_stand_ins import tiny_corpus
 from retrieval_eval.grid import (
     Cell,
@@ -23,7 +26,7 @@ from retrieval_eval.grid import (
     passages_of,
     window_spans,
 )
-from retrieval_eval.grid_cli import REPORT_NAME, GridReport, main
+from retrieval_eval.grid_cli import CACHE_SLICE, REPORT_NAME, CachedEmbeddings, GridReport, main
 from retrieval_eval.ingestion import Article, measure
 from retrieval_eval.retrieval_bench import Budget
 
@@ -143,6 +146,68 @@ async def test_widened_hits_that_repeat_are_returned_once() -> None:
         index.close()
 
     assert len(answer.texts) == len(set(answer.texts))
+
+
+async def test_hits_grouped_by_article_come_back_with_their_neighbours_once_per_article() -> None:
+    cell = _cell(chunking="h6", expand="article")
+    guide = _passages(cell, ChunkingConfig(max_chars=None))
+    other = passages_of(
+        cell, "demo", "v1", parse_article("docs/other.md", "# Other\n\nInstall nothing.\n"),
+        ChunkingConfig(max_chars=None),
+    )  # fmt: skip
+    index = await PassageIndex.build(cell, [*guide, *other], None)
+    try:
+        answer = await index.answer("demo", "v1", "install from source")
+    finally:
+        index.close()
+
+    # one result per article, ranked by its best hit: the guide's subsection, then the other page
+    assert len(answer.texts) == 2
+    first = answer.texts[0]
+    # its hits with one chunk on either side, in article order, each once
+    assert first.index("## Install") < first.index("### From source")
+    assert first.count("### From source") == 1
+    assert "## Configure" in first  # the neighbour after the subsection
+    assert answer.texts[1] == other[0].chunk.content
+    with pytest.raises(ValidationError, match="heading chunking"):
+        _cell(window=32, expand="article")
+
+
+async def test_cells_that_embed_the_same_texts_embed_them_once(tmp_path: Path) -> None:
+    counted = _Counting(
+        HashEmbeddingModels(size=16).bind(None, name="local:m", dimensions=None, batch_size=4)
+    )
+    cached = CachedEmbeddings(inner=counted, folder=tmp_path)
+    texts = [f"text {i}" for i in range(CACHE_SLICE + 3)]
+
+    first = await cached.embed_documents(texts)
+    again = await CachedEmbeddings(inner=counted, folder=tmp_path).embed_documents(texts)
+
+    assert counted.texts == len(texts)  # the second run read every slice back
+    assert again.vectors == first.vectors
+    assert again.input_tokens == first.input_tokens
+    assert (await cached.embed_query("q")).vectors == (await counted.embed_query("q")).vectors
+
+
+class _Counting:
+    """Implements ``Embeddings``: counts the texts embedded as documents."""
+
+    def __init__(self, inner: Embeddings) -> None:
+        self.inner, self.texts = inner, 0
+
+    @property
+    def name(self) -> str:
+        return self.inner.name
+
+    async def dimensions(self) -> int:
+        return await self.inner.dimensions()
+
+    async def embed_documents(self, texts: Sequence[str]) -> EmbeddedTexts:
+        self.texts += len(texts)
+        return await self.inner.embed_documents(texts)
+
+    async def embed_query(self, text: str) -> EmbeddedTexts:
+        return await self.inner.embed_query(text)
 
 
 def test_grep_matches_whole_words_keeps_context_and_ranks_by_terms() -> None:

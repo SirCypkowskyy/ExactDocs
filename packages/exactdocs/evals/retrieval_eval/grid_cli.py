@@ -12,12 +12,14 @@ import argparse
 import asyncio
 import fnmatch
 import hashlib
+import json
 import os
 import re
 import sys
 import time
+from array import array
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import starmap
 from pathlib import Path
 from typing import Final
@@ -31,7 +33,7 @@ from exactdocs.bootstrap.settings import AiSettings, Settings
 from exactdocs.ingestion.models import ChunkingConfig, ParsedArticle, parse_article
 from exactdocs.retrieval.adapters.driven.local_models import LocalEmbeddingModels
 from exactdocs.retrieval.constants import LOCAL_EMBEDDING_BATCH
-from exactdocs.retrieval.models import ProviderKind, ProviderProfile
+from exactdocs.retrieval.models import EmbeddedTexts, ProviderKind, ProviderProfile
 from exactdocs.retrieval.ports.driven import AgentReads, Embeddings
 from retrieval_eval.dataset import RetrievalDataset, fingerprint
 from retrieval_eval.golden import (
@@ -63,12 +65,16 @@ from retrieval_eval.ingestion_cli import (
 )
 from retrieval_eval.retrieval_bench import (
     BUDGETS,
+    TOKEN_BUDGETS,
     ConfigResult,
     ModelInfo,
     Recommendation,
     RetrievalBenchReport,
+    Versus,
     against_defaults,
     markdown,
+    paired_cell,
+    paired_tests,
     run_problems,
 )
 from retrieval_eval.retrieval_bench_cli import (
@@ -90,6 +96,10 @@ REPORT_NAME: Final[str] = "retrieval-grid"
 """The report's file name, without the extension."""
 _SLUG: Final[re.Pattern[str]] = re.compile(r"[^\w.+@-]")
 """What a cell's file name replaces in its name."""
+
+CACHE_SLICE: Final[int] = 256
+"""Texts embedded, and kept in the embedding cache, together: an interrupted cell loses at most
+one slice."""
 
 type EmbeddingsFor = Callable[[str], Awaitable[Embeddings | str]]
 """Loads an eval-only cell's embedding model by name, or says why it cannot."""
@@ -128,6 +138,90 @@ class GridReport(_Model):
     """By chunker: the ingestion metrics of each eval-only chunker (cuts in code and tables)."""
     resumed: list[str] = []
     """Cells taken from an earlier run instead of run again."""
+    versus_control: dict[str, Versus] = {}
+    """By cell: the paired tests against the cell it is a variant of (``Cell.against``, #575)."""
+
+
+@dataclass(slots=True, kw_only=True)  # conventions: allow-mutable-dataclass -- counts reuse
+class CachedEmbeddings:
+    """Implements ``Embeddings``: keeps the vectors of every slice of texts on disk (#575).
+
+    Cells that embed the same texts (the same chunks, prefixed alike) embed them once, and a
+    cell interrupted while embedding takes up where it stopped. A slice is kept under the hash
+    of the model and its texts, with the tokens it cost and the seconds it took; ``reused``
+    adds up the seconds of the slices taken from the cache, so a cell's index cost still says
+    what embedding took.
+    """
+
+    inner: Embeddings
+    """The model."""
+    folder: Path
+    """Where the slices are kept."""
+    reused: float = 0.0
+    """Seconds the slices taken from the cache took when they were embedded."""
+
+    @property
+    def name(self) -> str:
+        """The model as the role names it."""
+        return self.inner.name
+
+    async def dimensions(self) -> int:
+        """Say how many numbers each vector holds.
+
+        Returns:
+            The model's dimensions.
+        """
+        return await self.inner.dimensions()
+
+    async def embed_documents(self, texts: Sequence[str]) -> EmbeddedTexts:
+        """Embed texts slice by slice, each slice from the cache when it holds it.
+
+        Args:
+            texts: The texts.
+
+        Returns:
+            One vector per text, in order, and the tokens every slice cost.
+        """
+        vectors: list[tuple[float, ...]] = []
+        tokens = requests = 0
+        self.folder.mkdir(parents=True, exist_ok=True)
+        for start in range(0, len(texts), CACHE_SLICE):
+            part = texts[start : start + CACHE_SLICE]
+            digest = hashlib.sha256("\0".join([self.inner.name, *part]).encode()).hexdigest()
+            meta, data = self.folder / f"{digest[:32]}.json", self.folder / f"{digest[:32]}.bin"
+            if meta.is_file() and data.is_file():
+                kept: dict[str, float] = json.loads(meta.read_text(encoding="utf-8"))
+                flat = array("d")
+                flat.frombytes(data.read_bytes())
+                self.reused += kept["seconds"]
+            else:
+                started = time.perf_counter()
+                embedded = await self.inner.embed_documents(part)
+                kept = {
+                    "tokens": embedded.input_tokens,
+                    "requests": embedded.requests,
+                    "seconds": round(time.perf_counter() - started, 3),
+                    "dimensions": len(embedded.vectors[0]) if embedded.vectors else 0,
+                }
+                flat = array("d", (x for v in embedded.vectors for x in v))
+                data.write_bytes(flat.tobytes())
+                meta.write_text(json.dumps(kept), encoding="utf-8")  # last: the slice is whole
+            size = int(kept["dimensions"]) or 1
+            vectors.extend(tuple(flat[i : i + size]) for i in range(0, len(flat), size))
+            tokens += int(kept["tokens"])
+            requests += int(kept["requests"])
+        return EmbeddedTexts(vectors=tuple(vectors), input_tokens=tokens, requests=requests)
+
+    async def embed_query(self, text: str) -> EmbeddedTexts:
+        """Embed a question (never cached: the latency is measured).
+
+        Args:
+            text: The question.
+
+        Returns:
+            Its vector.
+        """
+        return await self.inner.embed_query(text)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -283,7 +377,11 @@ async def run_eval_cell(
                 )
             embeddings = loaded
         passages, ingestion = _cut(cell, corpus, dataset)
+        before = embeddings.reused if isinstance(embeddings, CachedEmbeddings) else 0.0
         index = await PassageIndex.build(cell, passages, embeddings)
+        if isinstance(embeddings, CachedEmbeddings):  # what embedding took, cached or not
+            seconds = round(index.cost.seconds + embeddings.reused - before, 1)
+            index = replace(index, cost=index.cost.model_copy(update={"seconds": seconds}))
         try:
             for case in dataset.cases:
                 q = case.inputs
@@ -307,6 +405,37 @@ async def run_eval_cell(
     return CellRecord(key="", result=result, text=scored.metrics, ingestion=ingestion)
 
 
+def _cached(embeddings_for: EmbeddingsFor, folder: Path) -> EmbeddingsFor:
+    """Load each model once for the run, with its vectors kept in ``folder`` (``CachedEmbeddings``).
+
+    Args:
+        embeddings_for: Loads a model.
+        folder: Where the vectors are kept, across runs.
+
+    Returns:
+        The loader.
+    """
+    loaded: dict[str, Embeddings | str] = {}
+
+    async def load(model: str) -> Embeddings | str:
+        """Load a model, or reuse the one loaded before.
+
+        Args:
+            model: Its name.
+
+        Returns:
+            The model, its vectors cached, or why it cannot run.
+        """
+        if model not in loaded:
+            found = await embeddings_for(model)
+            loaded[model] = (
+                found if isinstance(found, str) else CachedEmbeddings(inner=found, folder=folder)
+            )
+        return loaded[model]
+
+    return load
+
+
 def _key(cell: Cell, golden: str, projects: Sequence[Project]) -> str:
     """Hash what a cell's result depends on in the grid.
 
@@ -319,7 +448,7 @@ def _key(cell: Cell, golden: str, projects: Sequence[Project]) -> str:
         ``sha256:`` and 16 hex digits.
     """
     pinned = [(p.id, [(v.name, v.commit) for v in p.versions]) for p in projects]
-    text = f"{cell.model_dump_json()}|{golden}|{pinned}"
+    text = f"{cell.model_dump_json(exclude={'against'})}|{golden}|{pinned}"
     return "sha256:" + hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
@@ -408,6 +537,7 @@ async def run_grid(
     golden = fingerprint(dataset)
     store = out / "cells"
     store.mkdir(parents=True, exist_ok=True)
+    embeddings_for = _cached(embeddings_for, out / "embeddings")
     corpus: _Corpus | None = None
     records: dict[str, CellRecord] = {}
     resumed = []
@@ -500,7 +630,31 @@ def _report(
             if (found := records[cell.name].ingestion) is not None
         },
         resumed=list(resumed),
+        versus_control=_versus_controls(grid, results),
     )
+
+
+def _versus_controls(grid: Grid, results: Mapping[str, ConfigResult]) -> dict[str, Versus]:
+    """Test every variant against the cell it is a variant of, on the cases both answered.
+
+    Args:
+        grid: The grid.
+        results: Each cell's result, by cell name.
+
+    Returns:
+        The tests, by variant; a variant whose control did not run (or kept no rows) has none.
+    """
+    tested = {}
+    for cell in grid.cells:
+        control, variant = results.get(cell.against or ""), results.get(cell.name)
+        if control is None or variant is None or control.metrics is None:
+            continue
+        if variant.metrics is None or not (tests := paired_tests(control, variant, DEFAULT_STATS)):
+            continue
+        tested[cell.name] = Versus(
+            configuration=cell.against or "", chunking=control.chunking, tests=tests
+        )  # the control by its cell name
+    return tested
 
 
 def _about(cell: Cell) -> str:
@@ -572,9 +726,56 @@ def grid_markdown(report: GridReport) -> str:
             f"| `{name}` | {m.chunks} | {m.tokens_p50} / {m.tokens_p95} "
             f"| {m.cuts_in_code_fence} / {m.cuts_in_table} / {m.cuts_in_list} | {_pct(held)} |"
         )
+    lines += _controls_section(report)
     if report.resumed:
         lines += ["", f"Taken from an earlier run: {', '.join(f'`{n}`' for n in report.resumed)}."]
     return summary + "\n".join(lines) + "\n"
+
+
+_CONTROL_TESTS: Final[tuple[tuple[str, str], ...]] = (
+    ("recall_at_1", "recall@1"),
+    ("recall_at_5", "recall@5"),
+    ("recall_at_10", "recall@10"),
+    ("mrr", "MRR"),
+    ("ndcg_at_10", "nDCG@10"),
+    *((name, f"within {budget:,} tokens") for name, budget in TOKEN_BUDGETS.items()),
+)
+"""The metrics a variant is tested on against its control, and their labels."""
+
+
+def _controls_section(report: GridReport) -> list[str]:
+    """The paired tests of every variant against the cell it is a variant of.
+
+    Args:
+        report: The run.
+
+    Returns:
+        The lines; none when no cell names a control.
+    """
+    if not report.versus_control:
+        return []
+    lines = [
+        "",
+        "## Against each variant's control",
+        "",
+        (
+            "Each variant against the cell it varies (`against` in the grid file), on the "
+            "answerable cases both answered: the difference (recall in points, MRR and nDCG@10 "
+            "as scores), its paired bootstrap interval and the p-value (McNemar's test, mid-p, "
+            "for recall; a sign-flip permutation test for MRR and nDCG@10). **Bold**: "
+            "significant at 5%."
+        ),
+        "",
+        "| cell | against | " + " | ".join(label for _, label in _CONTROL_TESTS) + " |",
+        "|---|---|" + "---|" * len(_CONTROL_TESTS),
+    ]
+    for name, versus in report.versus_control.items():
+        cells = [
+            paired_cell(versus.tests.get(metric), points=metric not in {"mrr", "ndcg_at_10"})
+            for metric, _ in _CONTROL_TESTS
+        ]
+        lines.append(f"| `{name}` | `{versus.configuration}` | " + " | ".join(cells) + " |")
+    return lines
 
 
 def local_embeddings(local: LocalModels) -> EmbeddingsFor:
@@ -633,8 +834,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--cells",
         default="*",
-        help="comma-separated cell names or shell patterns (default: every one; the defaults "
-        "always run)",
+        help="comma-separated cell names or shell patterns (default: every one; the defaults, and "
+        "the control of each cell picked, always run)",
     )
     parser.add_argument(
         "--models-dir",
@@ -674,6 +875,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     grid = load_grid(args.grid)
     patterns = [p.strip() for p in args.cells.split(",") if p.strip()]
     wanted = set(grid.defaults.values())
+    picked = [c for c in grid.cells if any(fnmatch.fnmatchcase(c.name, p) for p in patterns)]
+    wanted |= {c.against for c in picked if c.against}  # a variant runs with its control
     grid = grid.model_copy(
         update={
             "cells": [
