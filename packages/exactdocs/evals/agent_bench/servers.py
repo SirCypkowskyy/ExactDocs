@@ -88,7 +88,8 @@ SOURCE_LINE: Final[re.Pattern[str]] = re.compile(r"\A> Source: (\S+)")
 PART_NOTICE: Final[str] = "> Showing chunks "
 """How a ``read_page`` answer that holds only part of the page says so."""
 SERVER_SECONDS: Final[float] = 120.0
-"""How long one tool call to an HTTP server may take."""
+"""How long a server may take to start its MCP session, and a tool call to answer: pydantic-ai's
+default of 5 seconds for the first is too short on a busy machine."""
 
 
 def context7_home() -> Path:
@@ -150,7 +151,9 @@ def context7_toolset(node: Path, entry: Path, key: str, log_file: Path) -> MCPTo
         env=context7_environment(key),
         log_file=log_file,
     )
-    return MCPToolset(transport, process_tool_call=recorded_call, id=CONTEXT7)
+    return MCPToolset(
+        transport, process_tool_call=recorded_call, id=CONTEXT7, init_timeout=SERVER_SECONDS
+    )
 
 
 def _text(result: ToolResult) -> str:
@@ -251,6 +254,7 @@ def grounded_docs_toolset(
         url,
         process_tool_call=grounded_docs_hook(corpus, libraries),
         id=GROUNDED_DOCS,
+        init_timeout=SERVER_SECONDS,
         read_timeout=SERVER_SECONDS,
     )
 
