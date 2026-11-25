@@ -67,6 +67,7 @@ from exactdocs_kernel import (
     MAX_TAG_INPUT,
     MAX_TAGS,
     NOTICE,
+    REF_ARGUMENT,
     TOOL_HINTS,
     DomainError,
 )
@@ -129,7 +130,7 @@ def register_tools(
             str | None,
             Field(
                 max_length=MAX_NAME,
-                description="Exact imported ref, e.g. 'v19.1'; default version if empty",
+                description=REF_ARGUMENT,
             ),
         ] = None,
         path_prefix: Annotated[
@@ -205,7 +206,7 @@ def register_tools(
             str | None,
             Field(
                 max_length=MAX_NAME,
-                description="Exact imported ref, e.g. 'v19.1'; default version if empty",
+                description=REF_ARGUMENT,
             ),
         ] = None,
     ) -> ToolResult:
@@ -257,7 +258,7 @@ def register_tools(
             str | None,
             Field(
                 max_length=MAX_NAME,
-                description="Exact imported ref, e.g. 'v19.1'; default version if empty",
+                description=REF_ARGUMENT,
             ),
         ] = None,
     ) -> ToolResult:

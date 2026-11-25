@@ -71,7 +71,14 @@ from exactdocs.retrieval.ports.driving import (
     SearchAllLibraries,
     SearchDocs,
 )
-from exactdocs_kernel import CLAMPED, LIBRARY_ARGUMENT, NOTICE, TOOL_HINTS
+from exactdocs_kernel import (
+    CLAMPED,
+    LIBRARY_ARGUMENT,
+    NOTICE,
+    REF_ARGUMENT,
+    TOOL_HINTS,
+    respelled_note,
+)
 
 LibraryArgument = Annotated[
     str, Field(min_length=1, max_length=MAX_NAME, description=LIBRARY_ARGUMENT)
@@ -395,7 +402,7 @@ def register_tools(
             str | None,
             Field(
                 max_length=MAX_NAME,
-                description="Exact imported ref, e.g. 'v19.1'; default version if empty",
+                description=REF_ARGUMENT,
             ),
         ] = None,
         tags: Annotated[
@@ -474,7 +481,7 @@ def register_tools(
             str | None,
             Field(
                 max_length=MAX_NAME,
-                description="Exact imported ref, e.g. 'v19.1'; default version if empty",
+                description=REF_ARGUMENT,
             ),
         ] = None,
         tags: Annotated[
@@ -637,7 +644,7 @@ def register_tools(
             str | None,
             Field(
                 max_length=MAX_NAME,
-                description="Exact imported ref, e.g. 'v19.1'; default version if empty",
+                description=REF_ARGUMENT,
             ),
         ] = None,
     ) -> ArticleOutlineOut:
@@ -720,9 +727,11 @@ def register_tools(
                 description=(
                     "Exact library ID, e.g. '/owner/repo' or '/owner/repo/v1.2.0', from "
                     "'resolve-library-id' or given by the user. Without a version the default "
-                    "version answers; with one, only that version does. A library name is "
-                    "resolved to its ID when exactly one library matches it; otherwise the error "
-                    "lists the candidate IDs."
+                    "version answers; with one, only that version does (written with or without "
+                    "the leading v of its number, the one version imported the other way; a "
+                    "version that matches none is an error naming the library's versions). A "
+                    "library name is resolved to its ID when exactly one library matches it; "
+                    "otherwise the error lists the candidate IDs."
                 ),
             ),
         ],
@@ -767,9 +776,13 @@ def register_tools(
         found = await query_docs(
             QueryDocsQuery(library_id=libraryId, query=query, language=language), caller=caller()
         )
-        return ToolResult(
-            content=[
-                TextContent(type="text", text=NOTICE),
-                TextContent(type="text", text=format_docs(found)),
-            ]
-        )
+        content = [
+            TextContent(type="text", text=NOTICE),
+            TextContent(type="text", text=format_docs(found)),
+        ]
+        # The text names no version: say so when the ID's other `v` spelling answered (#606).
+        version = libraryId.split("/", 3)[3:]  # "", owner, repo, then the version if any
+        note = respelled_note(version[0] if version else None, found.version)
+        if note:
+            content.append(TextContent(type="text", text=f"Notes: {note}"))
+        return ToolResult(content=content)

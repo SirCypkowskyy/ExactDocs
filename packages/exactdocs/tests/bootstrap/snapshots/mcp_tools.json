@@ -33,7 +33,7 @@
             }
           ],
           "default": null,
-          "description": "Exact imported ref, e.g. 'v19.1'; default version if empty"
+          "description": "Exact imported ref, e.g. 'v19.1'; default version if empty. Written with or without the leading v of its number, it finds the one version imported the other way (noted); a ref that matches no version is an error naming the library's versions"
         }
       },
       "required": [
@@ -241,7 +241,7 @@
             }
           ],
           "default": null,
-          "description": "Exact imported ref, e.g. 'v19.1'; default version if empty"
+          "description": "Exact imported ref, e.g. 'v19.1'; default version if empty. Written with or without the leading v of its number, it finds the one version imported the other way (noted); a ref that matches no version is an error naming the library's versions"
         },
         "tags": {
           "anyOf": [
@@ -621,7 +621,7 @@
           "description": "Programming language the user writes, such as 'Python' or 'TypeScript'. Chunks with code in that language come first. Leave out when unknown."
         },
         "libraryId": {
-          "description": "Exact library ID, e.g. '/owner/repo' or '/owner/repo/v1.2.0', from 'resolve-library-id' or given by the user. Without a version the default version answers; with one, only that version does. A library name is resolved to its ID when exactly one library matches it; otherwise the error lists the candidate IDs.",
+          "description": "Exact library ID, e.g. '/owner/repo' or '/owner/repo/v1.2.0', from 'resolve-library-id' or given by the user. Without a version the default version answers; with one, only that version does (written with or without the leading v of its number, the one version imported the other way; a version that matches none is an error naming the library's versions). A library name is resolved to its ID when exactly one library matches it; otherwise the error lists the candidate IDs.",
           "maxLength": 768,
           "minLength": 1,
           "type": "string"
@@ -675,7 +675,7 @@
             }
           ],
           "default": null,
-          "description": "Exact imported ref, e.g. 'v19.1'; default version if empty"
+          "description": "Exact imported ref, e.g. 'v19.1'; default version if empty. Written with or without the leading v of its number, it finds the one version imported the other way (noted); a ref that matches no version is an error naming the library's versions"
         }
       },
       "required": [
@@ -1527,7 +1527,7 @@
             }
           ],
           "default": null,
-          "description": "Exact imported ref, e.g. 'v19.1'; default version if empty"
+          "description": "Exact imported ref, e.g. 'v19.1'; default version if empty. Written with or without the leading v of its number, it finds the one version imported the other way (noted); a ref that matches no version is an error naming the library's versions"
         },
         "tags": {
           "anyOf": [
@@ -1871,7 +1871,7 @@
             }
           ],
           "default": null,
-          "description": "Exact imported ref, e.g. 'v19.1'; default version if empty"
+          "description": "Exact imported ref, e.g. 'v19.1'; default version if empty. Written with or without the leading v of its number, it finds the one version imported the other way (noted); a ref that matches no version is an error naming the library's versions"
         }
       },
       "required": [
@@ -1929,7 +1929,7 @@
             }
           ],
           "default": null,
-          "description": "Exact imported ref, e.g. 'v19.1'; default version if empty"
+          "description": "Exact imported ref, e.g. 'v19.1'; default version if empty. Written with or without the leading v of its number, it finds the one version imported the other way (noted); a ref that matches no version is an error naming the library's versions"
         },
         "tags": {
           "anyOf": [
