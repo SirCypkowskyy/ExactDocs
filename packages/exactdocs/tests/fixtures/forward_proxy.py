@@ -9,9 +9,9 @@ refused with 403, as a corporate proxy's policy would.
 
 Plain HTTP keeps the client's connection open from one request to the next, as a real proxy does
 (#589): each request goes to its host on a connection of its own, and the proxy reads the next
-one from the client. It closes the client's connection only after an answer whose head says
-``Connection: close``: a refusal, an answer its head does not delimit, or one to a client that
-asked to close. A client that reuses its connections (httpx, curl) then never sends a request
+one from the client. It closes that connection only after saying so (``Connection: close``): after
+a refusal, or an answer no other can follow on it (no length in its head, HTTP/1.0, or the client
+asked to close). A client that reuses its connections (httpx, curl) then never sends a request
 into a connection the proxy is closing, which failed as "Server disconnected without sending a
 response".
 """
@@ -30,7 +30,7 @@ import pytest
 from exactdocs_kernel import OUTBOUND_VARIABLES
 
 HEAD_LIMIT = 64 * 1024
-"""Longest request head the proxy reads."""
+"""Longest head (or chunk size line) the proxy reads."""
 DENIED = (
     b"HTTP/1.1 407 Proxy Authentication Required\r\n"
     b'Proxy-Authenticate: Basic realm="test"\r\n'
