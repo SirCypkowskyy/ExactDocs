@@ -370,7 +370,8 @@ def _libsql_cases() -> list[BackendCase]:
 # ---------------------------------------------------------------- pinecone (#362)
 PINECONE_URL = os.environ.get("EXACTDOCS_TEST_PINECONE_URL") or None
 """An index's host: Pinecone Local's single-index image (amd64 only; the command is in
-docs/configuration.md, *Pinecone*), then ``EXACTDOCS_TEST_PINECONE_URL=http://localhost:5081``; or
+docs/configuration/index-backends/pinecone.md), then
+``EXACTDOCS_TEST_PINECONE_URL=http://localhost:5081``; or
 a real serverless ``dotproduct`` index of at least 256 dimensions (the manual ``pinecone.yml``
 workflow). Each test gets a namespace of its own, emptied after."""
 PINECONE_API_KEY = os.environ.get("EXACTDOCS_TEST_PINECONE_API_KEY") or "pclocal"

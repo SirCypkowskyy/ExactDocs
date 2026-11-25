@@ -14,9 +14,9 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
 | Integration | pytest + httpx `ASGITransport` / FastMCP `Client` | `packages/exactdocs/tests/bootstrap/` | wiring, HTTP status mapping, MCP tool schema and annotations | fast |
 | Adapter contract | pytest, parametrized over adapters | `packages/exactdocs/tests/<domain>/` | every driven adapter (memory, sqlite, postgres) behaves the same; the PostgreSQL and server cases are integration tests (below) | slower for DBs |
 | Service integration | pytest marker `integration`, behave tag `@integration` | next to the code they test | PostgreSQL, PgBouncer, Supabase, libSQL and every search or vector server, the local models; off by default (below) | minutes, needs containers |
-| Architecture | pytest + **ArchUnitPython** | `packages/exactdocs/tests/architecture/` | boundaries in `docs/architecture.md` | fast |
+| Architecture | pytest + **ArchUnitPython** | `packages/exactdocs/tests/architecture/` | boundaries in `docs/architecture/domains.md` | fast |
 | Web | vitest + Testing Library | `web/src/**/*.test.tsx` | components and query logic of a feature | fast |
-| Retrieval eval | Pydantic Evals, `just eval` | `packages/exactdocs/evals/` (tests in `tests/evals/`; the end-to-end ones are marked `eval`) | recall, wrong-version rate, latency and cost per retrieval mode; gates in docs/evals.md; runs on releases, not in CI | minutes |
+| Retrieval eval | Pydantic Evals, `just eval` | `packages/exactdocs/evals/` (tests in `tests/evals/`; the end-to-end ones are marked `eval`) | recall, wrong-version rate, latency and cost per retrieval mode; gates in docs/evals/gates.md; runs on releases, not in CI | minutes |
 | Ingestion benchmark | `just ingestion-bench` (needs the golden corpus cache) | `packages/exactdocs/evals/retrieval_eval/ingestion*.py` (tests in `tests/evals/test_ingestion.py`) | coverage, cut blocks, chunk sizes and heading paths per chunking configuration, with BM25 recall; `--check` against `evals/results/ingestion.json`; runs on releases, not in CI | about a minute per configuration |
 | Retrieval benchmark | `just retrieval-bench` (golden corpus cache; local models from `exactdocs models pull`) | `packages/exactdocs/evals/retrieval_eval/retrieval_bench*.py` (tests in `tests/evals/test_retrieval_bench.py`, `retrieval_bench.feature`) | recall, MRR, nDCG@10, wrong version, unanswerable handling, latency and cost of every mode, model and reranker at every chunking configuration, with the default per budget; BM25 at `default` is checked on releases; hosted models only through the manual real-providers workflow | a minute model-free; hours with every local model |
 | Retrieval grid | `just retrieval-grid` (golden corpus cache; local models for the embedding cells) | `packages/exactdocs/evals/retrieval_eval/grid*.py`, cells in `evals/golden/matrix.yaml` (tests in `tests/evals/test_retrieval_grid.py`, `retrieval_grid.feature`) | eval-only chunking, context and embedding variants and the grep and fixed-window RAG baselines, text-scored, each tested against its budget's shipped default; resumable per cell; by hand only | seconds per model-free cell; an embedding cell embeds the corpus |
@@ -54,7 +54,7 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   still give a step's own waits a timeout, and end a `SlowDatabase` stall (`release()`) before the
   app stops.
 - A test that imports the fixture and runs the retrieval eval suite end to end gets
-  `@pytest.mark.eval` (deselected by default, run at release; docs/evals.md).
+  `@pytest.mark.eval` (deselected by default, run at release; docs/evals/suite.md).
 - **A test that needs a container, a service, the network or a download is an integration test**
   (#507): deselected by default, so `uv run pytest` and `uv run behave` need nothing but the
   checkout, and the run ends saying how many it left out. Mark it from what it takes, in
@@ -72,7 +72,7 @@ description: Use when deciding what and how to test in ExactDocs, writing pytest
   `just test-durations` / `just bdd-durations` when many tests were added or became slower).
 - **The integration and end-to-end jobs run only when a maintainer starts them by hand** (#554):
   a manual CI run with the input `integration`, a manual run of the Integration workflow, or a
-  release dry run with `integration` ([docs/releasing.md](../../../docs/releasing.md#fast-and-integration-tests)).
+  release dry run with `integration` ([docs/releasing/tests.md](../../../docs/releasing/tests.md)).
   No pull request, push or tag starts them. **Agents never start them**, by any of those runs.
   Run the affected integration tests locally instead (`just test --integration`,
   `EXACTDOCS_INTEGRATION=1 uv run behave`) and, when the change touches an adapter on a server,

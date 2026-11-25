@@ -6,11 +6,11 @@
 #                                    (pre-release: pip/uvx skip it unless asked with --prerelease)
 # Every image tag also comes as -ai and -local (X.Y.Z-ai, latest-local, dev-ai, ...): the three
 # variants of deploy/Dockerfile (#246). Nothing is published before the retrieval eval (job `eval`,
-# docs/evals.md) passes. The integration and end-to-end jobs (job `integration`, integration.yml:
+# docs/evals/suite.md) passes. The integration and end-to-end jobs (job `integration`, integration.yml:
 # #507) run only in a manual run started with the input `integration` (#554): a tag push never
-# runs them and no publishing job waits for them. See docs/releasing.md.
+# runs them and no publishing job waits for them. See docs/releasing/release-workflow.md.
 #
-# Runners (#478, docs/releasing.md "CI/CD and runners"), switched by the repository variable
+# Runners (#478, docs/releasing/runners.md "CI/CD and runners"), switched by the repository variable
 # RUNNER_MODE (Settings -> Secrets and variables -> Actions -> Variables):
 #   hybrid (default, also when unset): the self-hosted ARM64 runner [self-hosted, linux, ARM64,
 #     exactdocs] runs the eval, the integration pytest and behave suites (when asked for), the web
@@ -103,7 +103,7 @@ jobs:
             echo "### $channel release $version from $branch" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  # The retrieval eval (docs/evals.md) runs here, not on pull requests: nothing is published
+  # The retrieval eval (docs/evals/suite.md) runs here, not on pull requests: nothing is published
   # unless it passes (`pypi-kernel` and `image` need it). Model-free gates first: wrong-version
   # rate 0 for every mode, BM25 recall@5 within 2 points of the baseline.json committed in this
   # tag's tree (--ratchet: that file must be recorded for this dataset), on SQLite with hybrid on
@@ -166,14 +166,14 @@ jobs:
         run: uv run pytest -m eval packages/exactdocs/tests/evals --junitxml=reports/pytest-eval.xml
       # Fetches the golden corpus (each pinned commit, --depth 1, about 65 MB), imports it with
       # every chunking configuration and fails when one measures worse than the recorded run in
-      # packages/exactdocs/evals/results/ (docs/evals.md#the-ingestion-benchmark). No model.
+      # packages/exactdocs/evals/results/ (docs/evals/ingestion.md). No model.
       - name: Ingestion benchmark (model-free, against the recorded run)
         run: >-
           uv run python packages/exactdocs/evals/run_ingestion_bench.py --check
           --out reports/evals
       # BM25 on the golden set at the default chunking, through the retrieval benchmark: fails on
       # a wrong version or when recall@5 or nDCG@10 drops more than 2 points below the recorded
-      # run (docs/evals.md#the-retrieval-benchmark). No model; about a minute.
+      # run (docs/evals/retrieval-benchmark.md). No model; about a minute.
       - name: Retrieval benchmark (BM25, model-free, against the recorded run)
         run: >-
           uv run python packages/exactdocs/evals/run_retrieval_bench.py --configs bm25
@@ -396,7 +396,7 @@ jobs:
           platforms: amd64
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       # Built and loaded. The gate fails on a fixable CRITICAL/HIGH finding; accepted
-      # ones are in .trivyignore (docs/releasing.md). The GitHub Actions cache, one scope per
+      # ones are in .trivyignore (docs/releasing/image-scan.md). The GitHub Actions cache, one scope per
       # variant and architecture, hands these layers to the build in `image`.
       - name: Build the image to scan
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0

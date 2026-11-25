@@ -5,7 +5,7 @@ at one chunking), eval-only cells and baselines through ``grid``; each finished 
 to ``<out>/cells/`` at once, and a later run with the same cell, golden set and projects reuses
 it. The report is the retrieval benchmark's (intervals, the paired test of every cell against the
 default its budget ships with), plus the text scorer's context numbers and the ingestion
-metrics (#346) of each eval-only chunker. See docs/evals.md#the-retrieval-grid.
+metrics (#346) of each eval-only chunker. See docs/evals/retrieval-grid.md.
 """
 
 import argparse
@@ -125,7 +125,7 @@ class CellRecord(_Model):
 
 
 class GridReport(_Model):
-    """The grid's JSON report (``retrieval-grid.json``), documented in docs/evals.md."""
+    """The grid's JSON report (``retrieval-grid.json``), see docs/evals/retrieval-grid.md."""
 
     schema_version: int = SCHEMA_VERSION
     grid: str
@@ -861,7 +861,9 @@ def _parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="retrieval-grid",
-        description="Every cell of a grid file measured on the golden set (docs/evals.md).",
+        description=(
+            "Every cell of a grid file measured on the golden set (docs/evals/retrieval-grid.md)."
+        ),
     )
     parser.add_argument("--grid", type=Path, default=GRID_FILE, help="the grid file")
     parser.add_argument(

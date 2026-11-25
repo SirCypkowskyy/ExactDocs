@@ -2,7 +2,7 @@ name: Grounded Docs benchmark
 
 # Manual only, never on a push or a pull request: Grounded Docs (arabold/docs-mcp-server, a pinned
 # npm release) indexes the golden corpus and answers the golden set, scored with the text scorer
-# next to ExactDocs' BM25 (docs/evals.md#grounded-docs, `just grounded-bench`). It downloads the
+# next to ExactDocs' BM25 (docs/evals/grounded-docs.md, `just grounded-bench`). It downloads the
 # package from npm, the corpus from GitHub and the embedding model from Hugging Face, calls no
 # hosted model and needs no secret. About half an hour on 4 CPUs, most of it embedding the corpus
 # for the vector configuration; `--configs full-text` takes a few minutes.
@@ -25,7 +25,7 @@ permissions:
 env:
   FORCE_COLOR: "1"
 
-# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing.md "CI/CD and
+# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing/runners.md "CI/CD and
 # runners"); it uses none of the GitHub-hosted minutes.
 jobs:
   bench:

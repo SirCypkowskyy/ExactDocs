@@ -1,5 +1,5 @@
 # The retrieval grid (#494): `just retrieval-grid` runs every cell on the golden set.
-# docs/evals.md#the-retrieval-grid explains each setting.
+# docs/evals/retrieval-grid.md explains each setting.
 #
 # An app cell (`app:`) is a retrieval-benchmark configuration that ExactDocs runs, scored by
 # chunk ID. Every other cell is eval-only: the grid cuts, indexes and searches the pinned

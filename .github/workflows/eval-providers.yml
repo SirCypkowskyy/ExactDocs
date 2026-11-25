@@ -1,7 +1,7 @@
 name: Retrieval eval (real providers)
 
 # Manual only: it calls hosted models with the repository's keys, so it never runs on a push or a
-# pull request. It runs the retrieval eval suite (docs/evals.md,
+# pull request. It runs the retrieval eval suite (docs/evals/suite.md,
 # `just eval --configured-models --allow-providers`)
 # with one provider profile, `eval`, configured the way an operator configures ExactDocs
 # (EXACTDOCS_AI__..., docs/decisions/ai-retrieval.md):
@@ -30,7 +30,7 @@ on:
       benchmark:
         description: >-
           Also run the retrieval benchmark's hosted configurations on the golden set
-          (docs/evals.md#the-retrieval-benchmark)
+          (docs/evals/retrieval-benchmark.md)
         type: boolean
         required: false
         default: false
@@ -44,7 +44,7 @@ on:
         default: ""
       context7:
         description: >-
-          Also measure Context7 on the golden set (docs/evals.md#context7); needs the
+          Also measure Context7 on the golden set (docs/evals/context7.md); needs the
           CONTEXT7_API_KEY secret
         type: boolean
         required: false
@@ -67,7 +67,7 @@ env:
   EVAL_LLM_MODEL: ${{ vars.EVAL_LLM_MODEL }}
   EVAL_JUDGE_MODEL: ${{ vars.EVAL_JUDGE_MODEL }}
 
-# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing.md "CI/CD and
+# Runner: the self-hosted ARM64 runner in both RUNNER_MODEs (docs/releasing/runners.md "CI/CD and
 # runners"); it uses none of the GitHub-hosted minutes.
 jobs:
   eval:

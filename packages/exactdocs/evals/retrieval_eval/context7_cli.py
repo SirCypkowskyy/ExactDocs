@@ -10,7 +10,7 @@ at ``default`` asked and scored the same way in the run (as the Grounded Docs ru
 
 Every raw response is kept in ``--responses`` (one JSON file per request), so ``--from-cache``
 scores again without calling Context7. Calling it needs ``CONTEXT7_API_KEY``: the run refuses to
-go out without one. CI never runs this: the quick tests use a stand-in. See docs/evals.md#context7.
+go out without one. CI never runs this: the quick tests use a stand-in. See docs/evals/context7.md.
 """
 
 import argparse
@@ -399,7 +399,7 @@ def _parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="context7-bench",
-        description="Context7 on the golden set, next to ExactDocs (docs/evals.md#context7).",
+        description="Context7 on the golden set, next to ExactDocs (docs/evals/context7.md).",
     )
     parser.add_argument(
         "--cache-dir",

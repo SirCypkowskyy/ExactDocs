@@ -8,7 +8,7 @@ in front of the text it embeds or indexes, searches it in process (BM25 in an in
 FTS5 table with ExactDocs' columns, weights and tokenizer; cosine over an embedding model's
 vectors; or both fused by RRF), may widen each hit to its parent section at read time, and is
 scored from its text with the text scorer (#491), as a keyword-grep baseline is. Nothing here
-changes what ExactDocs ships. See docs/evals.md#the-retrieval-grid.
+changes what ExactDocs ships. See docs/evals/retrieval-grid.md.
 """
 
 import bisect

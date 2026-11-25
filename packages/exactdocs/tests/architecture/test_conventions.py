@@ -1,6 +1,6 @@
 """Python conventions that ruff cannot check, enforced with an AST walk over ``packages/*/src``.
 
-See *Python conventions* in docs/architecture.md. Each rule has a "bad code" fixture in
+See docs/architecture/conventions.md. Each rule has a "bad code" fixture in
 ``fixtures/conventions/`` that the checker must report and a "good code" one it must accept.
 
 Rules (the name is printed in every failure, next to ``file:line``):
@@ -824,7 +824,7 @@ def _code_base() -> list[Violation]:
 def test_the_code_base_follows_the_conventions() -> None:
     violations = _code_base()
     assert not violations, (
-        f"{len(violations)} convention violation(s) (docs/architecture.md, Python conventions):\n"
+        f"{len(violations)} convention violation(s) (docs/architecture/conventions.md):\n"
         + "\n".join(map(str, violations))
     )
 

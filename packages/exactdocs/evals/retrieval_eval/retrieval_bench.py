@@ -4,7 +4,7 @@ Every configuration of the matrix (``retrieval_bench_cli``) answers the golden s
 chunking configuration; each answer becomes a ``Row``, and the rows give the metrics overall, by
 question kind and by project, each with its 95% interval, and the paired tests of a result
 against its budget's default (#489, ``stats``). Definitions are in
-docs/evals.md#the-retrieval-benchmark.
+docs/evals/retrieval-benchmark.md.
 """
 
 import math
@@ -520,7 +520,7 @@ class Recommendation(_Model):
 
 
 class RetrievalBenchReport(_Model):
-    """The benchmark's JSON report (``retrieval.json``), documented in docs/evals.md."""
+    """The benchmark's JSON report (``retrieval.json``), see docs/evals/retrieval-runs.md."""
 
     schema_version: int = SCHEMA_VERSION
     golden: str
@@ -791,7 +791,7 @@ def check(report: RetrievalBenchReport, recorded: RetrievalBenchReport) -> list[
             (
                 f"the recorded report measured golden set {recorded.golden} on "
                 f"{', '.join(recorded.projects)}, this run {report.golden} on "
-                f"{', '.join(report.projects)}: record this run (docs/evals.md)"
+                f"{', '.join(report.projects)}: record this run (docs/evals/retrieval-benchmark.md)"
             )
         ]
     before = {(r.configuration, r.chunking): r.metrics for r in recorded.results}
@@ -892,7 +892,7 @@ def markdown(report: RetrievalBenchReport) -> str:
             f"ExactDocs `{env.get('exactdocs_commit', '?')}`, {env.get('platform', '?')}. "
             "Recall, MRR and nDCG over answerable cases; unanswerable cases scored on returning "
             "nothing of another version (clean) and on coming back empty (no answer). "
-            "Definitions: docs/evals.md#the-retrieval-benchmark."
+            "Definitions: docs/evals/retrieval-benchmark.md."
         ),
         "",
         "## Recommended defaults",

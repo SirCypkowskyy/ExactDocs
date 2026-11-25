@@ -1,6 +1,6 @@
 # Text scorer calibration
 
-ExactDocs' BM25 results for the golden set's 321 cases (`sha256:a00997851150e3b0`) on starlette, pydantic, tanstack-query, zod, electron, scored by chunk ID and from their text alone: 5-word shingles, threshold 0.8, facts at 0.75 of their words. A decision is where an expected section is in the top 10 (its rank), or that it is not; the criterion is 98.0% agreement at `default`. ExactDocs `835928163d67231d453dc81791bf0e120727f8fc`. Definitions: docs/evals.md#scoring-text-results.
+ExactDocs' BM25 results for the golden set's 321 cases (`sha256:a00997851150e3b0`) on starlette, pydantic, tanstack-query, zod, electron, scored by chunk ID and from their text alone: 5-word shingles, threshold 0.8, facts at 0.75 of their words. A decision is where an expected section is in the top 10 (its rank), or that it is not; the criterion is 98.0% agreement at `default`. ExactDocs `835928163d67231d453dc81791bf0e120727f8fc`. Definitions: docs/evals/text-scoring.md.
 
 ## Agreement with chunk-ID scoring
 

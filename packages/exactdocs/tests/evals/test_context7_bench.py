@@ -1,7 +1,7 @@
 """Context7 on the golden set (#493): its responses, coverage, the budget, the cache and the run.
 
 Context7 is ``context7_stand_in``; nothing here reaches the network. The real run is
-``just context7-bench`` (docs/evals.md#context7).
+``just context7-bench`` (docs/evals/context7.md).
 """
 
 import json

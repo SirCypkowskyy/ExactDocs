@@ -7,7 +7,7 @@ with full-text search, and vector search too when an embedding model is configur
 into a pinned release of it, asks every golden question through its ``search_docs`` MCP tool with
 the case's library and version, and scores the text it returns with the text scorer (#491). This
 module holds what needs no process: reading ``search_docs``' response into results, the report,
-the paired tests against ExactDocs (#489) and the Markdown. See docs/evals.md#grounded-docs.
+the paired tests against ExactDocs (#489) and the Markdown. See docs/evals/grounded-docs.md.
 """
 
 import re
@@ -271,7 +271,7 @@ class Recorded(_Model):
 
 
 class GroundedDocsReport(_Model):
-    """The run's JSON report (``grounded-docs.json``), documented in docs/evals.md."""
+    """The run's JSON report (``grounded-docs.json``), documented in docs/evals/grounded-docs.md."""
 
     schema_version: int = SCHEMA_VERSION
     golden: str
@@ -918,7 +918,7 @@ def markdown(report: GroundedDocsReport) -> str:
                 "files the ExactDocs importer takes; every golden question went through its "
                 "search with the case's library and version, and the text it returned was scored "
                 "with the text scorer, next to ExactDocs' BM25 asked and scored the same way. "
-                "Definitions: docs/evals.md#grounded-docs."
+                "Definitions: docs/evals/grounded-docs.md."
             ),
             "",
             "## The run",

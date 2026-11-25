@@ -4,7 +4,7 @@
 ``golden/cases/<project>.yaml`` holds that project's cases in the retrieval dataset's own
 Pydantic Evals format (``dataset.py``). Nothing upstream is vendored: each pinned commit is
 fetched (``--depth 1``) into a cache outside the repository, and the section check reads the
-articles from there with the importer's own parser and chunker. See docs/evals.md.
+articles from there with the importer's own parser and chunker. See docs/evals/golden-set.md.
 """
 
 import difflib

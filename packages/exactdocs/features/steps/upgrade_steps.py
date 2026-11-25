@@ -30,9 +30,9 @@ from steps.http_steps import DEMO_COOKIE, OfflineGit, store_demo_catalog
 from steps.search_steps import LIBRARY, import_versions
 
 # The newest stable release and the schema revision it ships (its Alembic head). Move both on when
-# a release is tagged (docs/releasing.md). CI also runs that release itself from PyPI on a data
-# directory and starts this build on it (deploy/upgrade_check.py); this scenario is the in-process
-# half: the data is written now, then the schema is taken back to that revision.
+# a release is tagged (docs/releasing/upgrades.md). CI also runs that release itself from PyPI
+# on a data directory and starts this build on it (deploy/upgrade_check.py); this scenario is the
+# in-process half: the data is written now, then the schema is taken back to that revision.
 PREVIOUS_RELEASE, PREVIOUS_REVISION = "v0.2.0", "a1c9e4d7b352"
 CLI = "from exactdocs.bootstrap.cli import main; main()"
 QUERY = "retry_policy"
