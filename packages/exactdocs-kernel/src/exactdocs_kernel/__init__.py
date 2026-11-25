@@ -59,6 +59,7 @@ from exactdocs_kernel.pagination import (
     page_offset,
     paginate,
 )
+from exactdocs_kernel.paths import clean_path_prefix, inside
 from exactdocs_kernel.source_link import section_link
 from exactdocs_kernel.tags import normalize_tag
 
@@ -97,10 +98,12 @@ __all__ = [
     "SystemClock",
     "UnauthenticatedError",
     "ValidationError",
+    "clean_path_prefix",
     "decode_cursor",
     "decode_sort_cursor",
     "encode_cursor",
     "encode_sort_cursor",
+    "inside",
     "is_after",
     "like_pattern",
     "normalize_tag",

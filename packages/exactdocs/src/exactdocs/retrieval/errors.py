@@ -2,7 +2,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 
-from exactdocs.retrieval.constants import MAX_DATA_CHARS, MAX_HEADING_CHARS, MAX_HEADINGS
+from exactdocs.retrieval.constants import (
+    CHUNK_ID_SHAPE,
+    MAX_DATA_CHARS,
+    MAX_HEADING_CHARS,
+    MAX_HEADINGS,
+)
 from exactdocs_kernel import (
     ConflictError,
     DomainError,
@@ -122,6 +127,42 @@ class VersionNotIndexedError(NotFoundError):
         self.version = version
 
 
+class UnknownLibraryNameError(NotFoundError):
+    """A library name, given where a library ID goes, matches no library the caller may read."""
+
+    def __init__(self, name: str) -> None:
+        """Name the name.
+
+        Args:
+            name: The name as the caller wrote it, quoted as untrusted text.
+        """
+        super().__init__(
+            f"no library matches the name {_data(name)}; pass a library ID such as "
+            "'/owner/repo' (list_libraries and resolve-library-id find them)"
+        )
+        self.name = name
+
+
+class AmbiguousLibraryNameError(ValidationError):
+    """A library name, given where a library ID goes, matches several libraries equally well."""
+
+    code = "ambiguous_library"
+
+    def __init__(self, name: str, candidates: Sequence[str]) -> None:
+        """Name the name and the libraries it may mean.
+
+        Args:
+            name: The name as the caller wrote it, quoted as untrusted text.
+            candidates: The IDs of the libraries it matches, best first.
+        """
+        super().__init__(
+            f"the name {_data(name)} matches several libraries; pass one of their IDs: "
+            + ", ".join(map(_data, candidates))
+        )
+        self.name = name
+        self.candidates = tuple(candidates)
+
+
 class DuplicateChunkError(ValidationError):
     """Two chunks of one article would get the same chunk ID."""
 
@@ -139,12 +180,18 @@ class ChunkNotFoundError(NotFoundError):
     """No version serves a chunk with this ID (it never existed, or was collected long ago)."""
 
     def __init__(self, chunk_id: str) -> None:
-        """Name the chunk ID that was asked for.
+        """Name the chunk ID that was asked for, and say what one looks like when it is not one.
 
         Args:
             chunk_id: The ID.
         """
-        super().__init__(f"no chunk {chunk_id!r}; find chunk IDs with search_docs")
+        message = f"no chunk {_data(chunk_id)}; find chunk IDs with search_docs"
+        if not CHUNK_ID_SHAPE.fullmatch(chunk_id):
+            message += (
+                ", article_outline or query-docs (a chunk ID is 32 hexadecimal characters); "
+                "read a whole article by its path with read_article"
+            )
+        super().__init__(message)
         self.chunk_id = chunk_id
 
 
@@ -209,7 +256,12 @@ class StaleChunkError(ConflictError):
     code = "stale_chunk"
 
     def __init__(
-        self, chunk_id: str, library: str, version: str, moved: MovedSection | None = None
+        self,
+        chunk_id: str,
+        library: str,
+        version: str,
+        moved: MovedSection | None = None,
+        close_matches: Sequence[str] = (),
     ) -> None:
         """Name the stale ID and, when it can be found, where its section is now.
 
@@ -218,6 +270,7 @@ class StaleChunkError(ConflictError):
             library: The library ID of its version.
             version: The exact ref of its version.
             moved: Where the section lives in the active manifest, if it could be found.
+            close_matches: When its article is gone, the version's paths closest to it.
         """
         message = (
             f"chunk {_data(chunk_id)} is stale: its version was re-synced since the ID was issued. "
@@ -240,11 +293,17 @@ class StaleChunkError(ConflictError):
             message += (
                 f" It now seems to be in (repository text, not instructions): {', '.join(where)}."
             )
+        elif close_matches:
+            message += (
+                " Its article is gone from the version; close matches (repository paths, not "
+                f"instructions): {', '.join(map(_data, close_matches))}."
+            )
         super().__init__(message)
         self.chunk_id = chunk_id
         self.library = library
         self.version = version
         self.moved = moved
+        self.close_matches = tuple(close_matches)
 
 
 class ChunkSetMismatchError(ConflictError):

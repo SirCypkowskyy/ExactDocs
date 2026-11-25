@@ -82,6 +82,10 @@ MAX_HEADING_CHARS: Final[int] = 60
 """Longest heading quoted in an error message."""
 MAX_HEADINGS: Final[int] = 8
 """Headings of a path quoted in an error message."""
+CHUNK_ID_SHAPE: Final[re.Pattern[str]] = re.compile(r"[0-9a-f]{32}")
+"""What a chunk ID looks like (``models.chunk_id``): a miss on anything else says so."""
+MAX_NAME_CANDIDATES: Final[int] = 10
+"""Library IDs a library name that names none or several of them lists in its error."""
 
 # ---------------------------------------------------------------- dtos
 MAX_QUERY: Final[int] = 1000
@@ -110,6 +114,11 @@ QUERY_HITS_CAP: Final[int] = 5
 """
 QUERY_DOCS_CANDIDATES: Final[int] = 50
 """Matching chunks looked at per call; the budget decides how many of them are returned."""
+PATH_PREFIX_POOL: Final[int] = 200
+"""Best chunks a search with a ``path_prefix`` ranks before it keeps those under the prefix
+(#573): the backends filter tags natively, not paths, so a prefix narrows a deeper ranking. When
+the pool was cut short, the result is not ``complete``. Equal to ``MAX_RERANK_TOP_N``, a depth
+every pipeline already serves."""
 DEFAULT_QUERY_DOCS_TOKEN_BUDGET: Final[int] = 10_000
 """Size budget of a ``query-docs`` answer, in estimated tokens, when the caller names none."""
 

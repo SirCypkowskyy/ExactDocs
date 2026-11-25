@@ -56,6 +56,9 @@ MAX_INSTRUCTION_FILE_CHARS: Final[int] = 32_768
 """Characters of one kept instruction file."""
 MAX_CLOSE_MATCHES: Final[int] = 5
 """Paths suggested when an article does not exist."""
+MIN_PLURAL_WORD: Final[int] = 4
+"""A path word this long or longer loses a trailing ``s`` when paths are compared (``models``
+matches ``model``; ``css`` stays)."""
 
 # ---------------------------------------------------------------- dtos
 MAX_SUMMARY_REFS: Final[int] = 50

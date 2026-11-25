@@ -90,6 +90,7 @@ from exactdocs_kernel import (
     MAX_NAME,
     MAX_PATH,
     NOTICE,
+    clean_path_prefix,
     normalize_tag,
 )
 
@@ -144,6 +145,22 @@ class SearchDocsQuery(_Dto):
     """`bm25`, `vector`, `hybrid`, `hybrid_hyde` or `agentic`, if configured; default: the
     library's mode, else the instance's, else the best one configured.
     """
+    path_prefix: str = Field(default="", max_length=MAX_NAME)
+    """Only chunks of articles inside this directory, as `list_articles` filters: `guide` keeps
+    `guide/install.md`, not `guide-old/x.md`; empty keeps every article."""
+
+    @field_validator("path_prefix")
+    @classmethod
+    def _clean_path_prefix(cls, value: str) -> str:
+        """Drop `.` and empty segments; refuse `..` and backslashes.
+
+        Args:
+            value: The prefix as sent.
+
+        Returns:
+            The prefix, its segments joined by `/`.
+        """
+        return clean_path_prefix(value)
 
     @field_validator("ref", "mode", mode="before")
     @classmethod
@@ -193,6 +210,22 @@ class SearchAllQuery(_Dto):
     """`any`: at least one of `tags`; `all`: every one."""
     limit: int = Field(default=10, ge=1, le=50)
     """How many results to return, best first."""
+    path_prefix: str = Field(default="", max_length=MAX_NAME)
+    """Only chunks of articles inside this directory of their library, as `list_articles`
+    filters; empty keeps every article. The counts per library stay unfiltered."""
+
+    @field_validator("path_prefix")
+    @classmethod
+    def _clean_path_prefix(cls, value: str) -> str:
+        """Drop `.` and empty segments; refuse `..` and backslashes.
+
+        Args:
+            value: The prefix as sent.
+
+        Returns:
+            The prefix, its segments joined by `/`.
+        """
+        return clean_path_prefix(value)
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -1204,8 +1237,38 @@ class ResolveLibraryIdQuery(_Dto):
 
     library_name: str = Field(min_length=1, max_length=MAX_NAME)
     """Library name, e.g. 'Next.js'; matched against IDs, titles and descriptions."""
-    query: str = Field(min_length=1, max_length=MAX_QUERY)
-    """What the agent wants to look up; libraries documenting it rank higher."""
+    query: str | None = Field(default=None, max_length=MAX_QUERY)
+    """What the agent wants to look up; libraries documenting it rank higher. Blank or none:
+    the libraries are ranked by their name alone (context7 treats it as optional context)."""
+
+    @field_validator("query", mode="before")
+    @classmethod
+    def _blank_is_none(cls, value: object) -> object:
+        """Treat a blank query as none.
+
+        Args:
+            value: The raw field.
+
+        Returns:
+            ``None`` for blank text, otherwise the value unchanged.
+        """
+        return None if isinstance(value, str) and not value.strip() else value
+
+
+class ResolveLibraryNameQuery(_Dto):
+    """A library name given where a tool wants a library ID (#573)."""
+
+    name: str = Field(min_length=1, max_length=MAX_NAME)
+    """The name as the agent wrote it, e.g. 'TanStack Query'."""
+
+
+class ResolvedLibraryOut(_Dto):
+    """The one library a name means."""
+
+    name: str
+    """The name as it was given."""
+    id: str
+    """The library's ID, `/owner/repo`."""
 
 
 class LibraryMatchOut(_Dto):
