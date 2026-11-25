@@ -102,7 +102,7 @@ class ClaudeCode:
         if run.mcp is not None:
             servers[run.mcp.name] = {"type": "http", "url": run.mcp.url}
             if run.mcp.headers:
-                servers[run.mcp.name]["headers"] = run.mcp.headers
+                servers[run.mcp.name]["headers"] = dict(run.mcp.headers)
             disallowed += [prefix(run.mcp.name) + tool for tool in run.mcp.excluded]
         config = run.home / MCP_FILE
         config.write_text(json.dumps({"mcpServers": servers}, indent=2) + "\n", encoding="utf-8")

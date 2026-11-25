@@ -125,7 +125,7 @@ class GeminiCli:
             if run.mcp.excluded:
                 server["excludeTools"] = list(run.mcp.excluded)
             if run.mcp.headers:
-                server["headers"] = run.mcp.headers
+                server["headers"] = dict(run.mcp.headers)
             servers[run.mcp.name] = server
         settings = {
             "security": {

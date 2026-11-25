@@ -16,6 +16,7 @@ tunnels go through it, unless ``NO_PROXY`` names the host.
 import asyncio
 import base64
 import contextlib
+import ipaddress
 import urllib.request
 from collections import Counter
 from collections.abc import AsyncGenerator, Awaitable, Callable, Collection, Mapping
@@ -82,6 +83,38 @@ class OpenGate:
         return f"http://{host}:{port}{path}"
 
 
+def bypassed(host: str, no_proxy: str) -> bool:
+    """Tell whether ``NO_PROXY`` names a host.
+
+    Args:
+        host: The host (a name or an address).
+        no_proxy: ``NO_PROXY``: comma-separated names (a suffix matches its subdomains, with or
+            without a leading dot), addresses, networks (``10.0.0.0/8``) or ``*``.
+
+    Returns:
+        True when the host is reached directly.
+    """
+    host = host.lower().strip("[]")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        address = None
+    for entry in (e.strip().lower() for e in no_proxy.split(",")):
+        if not entry:
+            continue
+        if entry == "*":
+            return True
+        if address is not None and "/" in entry:
+            with contextlib.suppress(ValueError):
+                if address in ipaddress.ip_network(entry, strict=False):
+                    return True
+            continue
+        name = entry.removeprefix("*").removeprefix(".")
+        if host == name or host.endswith("." + name):
+            return True
+    return False
+
+
 def upstream_for(host: str) -> tuple[str, int, str | None] | None:
     """The proxy this process reaches a host through, if any.
 
@@ -94,7 +127,7 @@ def upstream_for(host: str) -> tuple[str, int, str | None] | None:
     """
     proxies = urllib.request.getproxies_environment()
     proxy = proxies.get("https")
-    if not proxy or urllib.request.proxy_bypass_environment(host, proxies):
+    if not proxy or bypassed(host, proxies.get("no", "")):
         return None
     parts = urlsplit(proxy if "://" in proxy else f"http://{proxy}")
     auth = None

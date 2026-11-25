@@ -172,6 +172,8 @@ ignore = [
 "packages/exactdocs/evals/coding_tasks/grading.py" = ["suspicious-xml-etree-import", "suspicious-xml-element-tree-usage"]
 # The coding tasks' runner script sits beside its package, like the other benchmark runners.
 "packages/exactdocs/evals/run_coding_tasks.py" = ["implicit-namespace-package"]
+# The harness benchmark's runner script (#497), likewise.
+"packages/exactdocs/evals/run_harness_bench.py" = ["implicit-namespace-package"]
 # The fixture builder runs git (a fixed binary, test-controlled arguments) on purpose.
 "**/tests/fixtures/fixture_repo.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
 # The CI artifact guard is a standalone stdlib script that runs docker and reports on stdout.

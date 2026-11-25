@@ -111,7 +111,7 @@ def config_of(run: HarnessRun) -> dict[str, Any]:
     if run.mcp is not None:
         mcp[run.mcp.name] = {"type": "remote", "url": run.mcp.url, "enabled": True}
         if run.mcp.headers:
-            mcp[run.mcp.name]["headers"] = run.mcp.headers
+            mcp[run.mcp.name]["headers"] = dict(run.mcp.headers)
         tools |= {prefix(run.mcp.name) + UNSAFE.sub("_", t): False for t in run.mcp.excluded}
     return {
         "$schema": "https://opencode.ai/config.json",

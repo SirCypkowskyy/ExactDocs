@@ -136,17 +136,8 @@ class McpServer:
     """The tools the arm gets."""
     excluded: tuple[str, ...] = ()
     """Tools the server lists that the arm must not get (Grounded Docs' ``fetch_url``)."""
-    token: str | None = None
-    """A bearer token the server wants (ExactDocs' API token over HTTP); ``None`` for none."""
-
-    @property
-    def headers(self) -> dict[str, str]:
-        """The HTTP headers every request to the server carries.
-
-        Returns:
-            ``Authorization: Bearer <token>`` when it wants a token, else nothing.
-        """
-        return {"Authorization": f"Bearer {self.token}"} if self.token else {}
+    headers: Mapping[str, str] = field(default_factory=dict)
+    """What every request to it carries (ExactDocs' API token, Context7's key)."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
