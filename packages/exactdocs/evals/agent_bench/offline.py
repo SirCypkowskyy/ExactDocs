@@ -60,6 +60,8 @@ C7_ID: Final[re.Pattern[str]] = re.compile(
     r"^- Context7-compatible library ID: (\S+)$", re.MULTILINE
 )
 """A library's ID line in that answer."""
+C7_NOT_FOUND: Final[str] = "Documentation not found"
+"""How Context7's ``query-docs`` starts its answer when its API returned no text."""
 C7_VERSIONS: Final[re.Pattern[str]] = re.compile(r"^- Versions: (.+)$", re.MULTILINE)
 """A library's versions line in that answer."""
 SOURCE_LINE: Final[re.Pattern[str]] = re.compile(r"\A> Source: \S+\n*")
@@ -254,7 +256,9 @@ def _context7_step(returns: dict[str, Any], asked: _Asked) -> TextPart | ToolCal
     if "query-docs" not in returns:
         return ToolCallPart("query-docs", {"libraryId": library_id, "query": asked.query})
     text = str(returns["query-docs"]).strip()
-    return TextPart(text[:ANSWER_CHARS] if text else NOT_COVERED.format(version=asked.version))
+    if not text or text.startswith(C7_NOT_FOUND):
+        return TextPart(NOT_COVERED.format(version=asked.version))
+    return TextPart(text[:ANSWER_CHARS])
 
 
 def _agent(*, read: bool, think: bool) -> FunctionDef:

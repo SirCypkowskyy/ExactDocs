@@ -2,12 +2,14 @@
 
 The benchmark runs in-process with the stand-in models of ``agent_bench.offline`` (pydantic-ai
 ``FunctionModel``s, ``offline:think`` returning thinking as a thinking model does) and the stand-in
-documentation tools of ``agent_bench_stand_ins`` (an in-process MCP server): no provider and no
-ExactDocs server, so every arm runs in a fraction of a second.
+documentation servers of ``agent_bench_stand_ins`` (in-process MCP servers shaped like ExactDocs',
+Context7's and Grounded Docs'): no provider and no real server, so every arm runs in a fraction of
+a second.
 """
 
 import asyncio
 import json
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -23,7 +25,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
-from agent_bench.arms import ARMS, NONE, parse_arms
+from agent_bench.arms import ARMS, EXACTDOCS, NONE, parse_arms
 from agent_bench.cli import JobKey, load_rows, run_bench
 from agent_bench.harness import AgentRun, RetrievalConfig, bench_dataset
 from agent_bench.judge import PROMPT_HEAD, AnswerJudge, judge_agent
@@ -38,6 +40,8 @@ MAX_REQUESTS = 8
 """The request limit every arm runs under here."""
 CASES = 3
 """Questions in the stand-in golden set."""
+STAND_IN_EXACTDOCS = frozenset({"list_libraries", "search_docs", "read_chunk"})
+"""The tools the stand-in ExactDocs lists (the arm takes every tool its server lists)."""
 
 
 @given("a golden set with answerable and unanswerable questions")
@@ -61,6 +65,7 @@ def step_flaky(context: Context) -> None:
 
 
 def _run(context: Context, arms: str, done: dict[JobKey, QuestionResult] | None = None) -> None:
+    context.arms = arms.split(",")
     context.report = asyncio.run(
         run_bench(
             context.cases,
@@ -81,33 +86,38 @@ def _run(context: Context, arms: str, done: dict[JobKey, QuestionResult] | None 
     )
 
 
-@when('the agent benchmark runs the arms "{first}" and "{second}"')
-def step_run(context: Context, first: str, second: str) -> None:
-    _run(context, f"{first},{second}")
+@when("the agent benchmark runs the arms {arms}")
+def step_run(context: Context, arms: str) -> None:
+    _run(context, ",".join(re.findall(r'"([^"]+)"', arms)))
 
 
 @then("each arm gets the same prompt, the same usage limits and only its own tools")
 def step_same_setup(context: Context) -> None:
     meta = context.report.meta
-    assert meta.arms == ["none", "exactdocs"]
+    assert meta.arms == context.arms
     assert "{title}" in meta.prompt  # one template for every arm
     assert meta.max_requests == MAX_REQUESTS
     for row in context.report.questions:
         names = {call.name for call in row.tool_calls}
         if row.arm == NONE:
             assert not names, row
-        else:
-            assert names <= {"list_libraries", "search_docs", "read_chunk"}, row
-            assert names, row
+            continue
+        own = ARMS[row.arm].tools
+        assert names, row
+        assert names <= (STAND_IN_EXACTDOCS if own is None else set(own)), row
 
 
 @then("the instructions of the arms differ only in the sentence about the documentation tool")
 def step_same_instructions(context: Context) -> None:
     given = context.report.meta.agent_instructions
+    assert set(given) == set(context.arms)
     none, exactdocs = given["none"].split("\n\n"), given["exactdocs"].split("\n\n")
     assert none[1:] == exactdocs[1:]
     assert none[0].split(". ")[0] == exactdocs[0].split(". ")[0]
-    assert ARMS["context7"].instructions == given["exactdocs"].replace("ExactDocs", "Context7")
+    for arm, text in given.items():
+        tool = ARMS[arm].tool
+        if tool is not None:
+            assert text == given["exactdocs"].replace("ExactDocs", tool), arm
 
 
 @then("the report gives accuracy per arm, question kind and project, with intervals")
@@ -119,17 +129,15 @@ def step_accuracy(context: Context) -> None:
         assert cell.by_project["demo"].interval is not None
 
 
-@then('the "{arm}" arm is compared with "{baseline}" by a paired test')
-def step_paired(context: Context, arm: str, baseline: str) -> None:
+@then('each arm is compared with "none" and with "exactdocs" by a paired test')
+def step_paired(context: Context) -> None:
     for cell in context.report.cells:
-        if cell.arm != arm:
-            assert not cell.versus, cell.arm
-            continue
-        [versus] = cell.versus
-        assert versus.against == baseline
-        assert versus.cases == CASES
-        assert versus.accuracy is not None
-        assert versus.accuracy.test == "mcnemar-mid-p"
+        expected = {NONE: [], EXACTDOCS: [NONE]}.get(cell.arm, [NONE, EXACTDOCS])
+        assert [v.against for v in cell.versus] == expected, cell.arm
+        for versus in cell.versus:
+            assert versus.cases == CASES
+            assert versus.accuracy is not None
+            assert versus.accuracy.test == "mcnemar-mid-p"
 
 
 @then(
@@ -177,7 +185,7 @@ def step_cost_paired(context: Context) -> None:
     for cell in context.report.cells:
         if cell.arm == NONE:
             continue
-        [versus] = cell.versus
+        versus = next(v for v in cell.versus if v.against == NONE)
         for test in (versus.seconds, versus.input_tokens, versus.output_tokens):
             assert test is not None
             assert test.test == "permutation"
@@ -239,7 +247,7 @@ def step_blind(context: Context) -> None:
 )
 def step_errors(context: Context) -> None:
     failed = [q for q in context.report.questions if q.grade == "error"]
-    assert {q.arm for q in failed} == {"none", "exactdocs"}
+    assert {q.arm for q in failed} == set(context.arms)
     assert all(FAILING in q.question for q in failed)
     assert not [q for q in context.report.questions if q.grade == "wrong" and FAILING in q.question]
     for cell in context.report.cells:
@@ -252,7 +260,7 @@ def step_resume(context: Context) -> None:
     done = load_rows(context.bench_dir / "rows.jsonl")
     kept = {k: r for k, r in done.items() if r.grade != "error"}
     context.models.failing = False
-    _run(context, "none,exactdocs", done=done)
+    _run(context, ",".join(context.arms), done=done)
     for row in context.report.questions:
         assert row.grade != "error", row
         key = (row.agent_model, row.arm, row.retrieval, row.case)
