@@ -19,9 +19,9 @@ from pathlib import Path
 from pydantic_ai.models import Model
 from pydantic_evals import Case, Dataset
 
-from agent_bench.arms import Arm
+from agent_bench.arms import EXACTDOCS, GROUNDED_DOCS, Arm
 from agent_bench.cli import Setup, setups_of
-from agent_bench.harness import PROMPT, ArmServers, ArmTools, RetrievalConfig
+from agent_bench.harness import PROMPT, ArmTools, RetrievalConfig, only_its_tools
 from agent_bench.models import (
     DEFAULT_RETRIES,
     chat_model,
@@ -30,6 +30,7 @@ from agent_bench.models import (
     thinking_setting,
 )
 from agent_bench.redact import recorded_settings
+from agent_bench.servers import DEFAULT_GROUNDED_DOCS, ArmServers, grounded_docs_config
 from coding_tasks.agent import DEFAULT_MAX_REQUESTS, ModelFor, TaskAgent, instructions
 from coding_tasks.environments import PreparedEnvironment
 from coding_tasks.evaluators import TaskInfo, TaskInput, task_dataset
@@ -219,7 +220,9 @@ async def run_tasks(
     dataset = task_dataset(list(tasks), corpus)
     projects = [p for p in corpus.projects if p.id in {t.spec.project for t in tasks}]
     servers = ArmServers(projects=projects, repos=repos or {}, work_dir=work_dir)
-    setups = setups_of(arms, retrieval)
+    setups = setups_of(
+        arms, {EXACTDOCS: retrieval, GROUNDED_DOCS: [grounded_docs_config(DEFAULT_GROUNDED_DOCS)]}
+    )
     resolve = models or functools.partial(_model, max_retries=max_retries)
     settings = model_settings(thinking_setting(thinking))
     asking = Asking(
@@ -239,7 +242,7 @@ async def run_tasks(
                     model_name=name,
                     models=resolve,
                     arm=setup.arm,
-                    toolsets=list(toolsets),
+                    toolsets=only_its_tools(setup.arm, toolsets),
                     tasks=asking.tasks,
                     prepared=prepared,
                     sandbox=sandbox,
@@ -263,7 +266,9 @@ async def run_tasks(
         agent_models=list(agent_models),
         arms=[arm.name for arm in arms],
         retrieval={
-            s.config.name: recorded_settings(s.config.env) for s in setups if s.config is not None
+            s.config.name: recorded_settings(s.config.env)
+            for s in setups
+            if s.config is not None and s.arm.name == EXACTDOCS
         },
         tasks=len(dataset.cases),
         selection=selection,

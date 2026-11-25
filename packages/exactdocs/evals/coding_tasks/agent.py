@@ -1,14 +1,15 @@
 """An agent completes a coding task with the workspace tools and one documentation arm.
 
 The arms are the agent benchmark's (``agent_bench.arms``): ``none`` has no documentation tool,
-``exactdocs`` has ExactDocs as shipped (``agent_bench.harness.ArmServers``), and the arms
-#492/#493 add come the same way. Every arm also gets the workspace tools (``workspace``). The
-agent is told what a coding agent knows from the project (the library and the version it pins)
-and the task; the instructions differ between arms only in the sentence about the documentation
-tool. A run records its tool calls (documentation and workspace), tokens, thinking, wall time
-and provider retries as the agent benchmark does (``agent_bench.harness.run_record``); the
-workspace is then graded in the sandbox (``grading``), unless the run failed on the provider's
-side, which is not graded and asked again with ``--resume``.
+``exactdocs`` has ExactDocs as shipped, ``context7`` and ``grounded-docs`` their servers' tools
+(``agent_bench.servers.ArmServers``, Grounded Docs in its default configuration). Every arm also
+gets the workspace tools (``workspace``). The agent is told what a coding agent knows from the
+project (the library and the version it pins) and the task; the instructions differ between arms
+only in the sentence about the documentation tool. A run records its tool calls (documentation
+and workspace), tokens, thinking, wall time and provider retries as the agent benchmark does
+(``agent_bench.harness.run_record``); the workspace is then graded in the sandbox (``grading``),
+unless the run failed on the provider's side, which is not graded and asked again with
+``--resume``.
 """
 
 import tempfile
