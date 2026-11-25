@@ -212,6 +212,13 @@ class CellSummary(_Model):
     """Questions where the agent read something of the asked library at another version."""
     tool_calls_per_question: float
     """Mean tool calls."""
+    tool_errors: int = 0
+    """Tool calls that failed (an argument refused, a path not found...), over the answered
+    questions (#573): each costs the agent a turn, and a tool that fails twice ends the run."""
+    runs_with_tool_errors: int = 0
+    """Answered questions where at least one tool call failed."""
+    tool_errors_by_tool: dict[str, int] = Field(default_factory=dict)
+    """``tool_errors`` per tool."""
     tokens_per_question: float
     """Mean input plus output tokens."""
     usd_per_question: float | None
@@ -612,6 +619,11 @@ def summarize(
         grounded_share=_share(sum(r.grounded is True for r in answerable), len(answerable)),
         read_other_versions=sum(bool(r.other_versions_read) for r in kept),
         tool_calls_per_question=_mean(len(r.tool_calls) for r in kept),
+        tool_errors=sum(1 for r in kept for call in r.tool_calls if call.error),
+        runs_with_tool_errors=sum(any(call.error for call in r.tool_calls) for r in kept),
+        tool_errors_by_tool=dict(
+            sorted(Counter(call.name for r in kept for call in r.tool_calls if call.error).items())
+        ),
         tokens_per_question=_mean(r.input_tokens + r.output_tokens for r in kept),
         usd_per_question=round(statistics.fmean(priced), 6)
         if kept and len(priced) == len(kept)
@@ -922,6 +934,40 @@ def _quality(report: BenchReport) -> list[str]:
     return lines
 
 
+def _tool_errors(report: BenchReport) -> list[str]:
+    """The failed tool calls of each arm with tools (#573).
+
+    Args:
+        report: The run.
+
+    Returns:
+        The lines; none for a run whose arms have no tools.
+    """
+    cells = [c for c in report.cells if (arm := ARMS.get(c.arm)) is None or arm.tool is not None]
+    if not cells:
+        return []
+    lines = [
+        "",
+        "## Tool errors",
+        "",
+        (
+            "Tool calls the server refused or could not answer (an argument it does not take, a "
+            "path the version lacks...), over the answered questions. Each costs the agent a turn, "
+            "and the harness ends a run whose tool fails twice."
+        ),
+        "",
+        "| Agent model | Arm | Runs with a tool error | Tool errors | By tool |",
+        "|---|---|---|---|---|",
+    ]
+    for c in cells:
+        by_tool = ", ".join(f"`{tool}` {n}" for tool, n in c.tool_errors_by_tool.items()) or "-"
+        lines.append(
+            f"| `{c.agent_model}` | {arm_label(c)} | {c.runs_with_tool_errors} of {c.answered} "
+            f"| {c.tool_errors} | {by_tool} |"
+        )
+    return lines
+
+
 def _thinking(c: CellSummary) -> str:
     """Show a cell's thinking tokens.
 
@@ -1169,6 +1215,7 @@ def markdown(report: BenchReport) -> str:
         ),
         "",
         *_quality(report),
+        *_tool_errors(report),
         "",
         *_costs(report),
     ]

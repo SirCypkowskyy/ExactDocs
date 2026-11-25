@@ -130,7 +130,7 @@ async def test_every_tool_the_skill_names_exists() -> None:
     async with container.running(), Client(build_mcp(container)) as mcp:
         tools = {tool.name for tool in await mcp.list_tools()}
     named = set(re.findall(r"`([a-z]+(?:[_-][a-z]+)+)`", SKILL_PATH.read_text()))
-    named -= {"next_cursor", "stale_chunk", "not_found"}  # fields and error codes, not tools
+    named -= {"next_cursor", "stale_chunk", "not_found", "path_prefix"}  # fields, arguments, codes
     assert named, "the skill names no tools?"
     assert named <= tools, named - tools
 

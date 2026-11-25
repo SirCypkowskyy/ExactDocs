@@ -86,6 +86,7 @@ from exactdocs.retrieval.constants import (
     MAX_JUDGE_DOCUMENT_CHARS,
     MAX_JUDGE_QUERY_CHARS,
     MAX_MODEL_NAME,
+    MAX_NAME_CANDIDATES,
     MAX_REQUEST_TIMEOUT,
     MAX_RETRIES,
     MICROS_PER_USD,
@@ -126,6 +127,7 @@ from exactdocs.retrieval.constants import (
     VECTOR_SNIPPET_WORDS,
 )
 from exactdocs.retrieval.errors import (
+    AmbiguousLibraryNameError,
     DuplicateChunkError,
     EmptySearchTextError,
     InvalidAgentBoundsError,
@@ -138,6 +140,7 @@ from exactdocs.retrieval.errors import (
     InvalidVectorError,
     LibraryBudgetAboveInstanceError,
     UnavailableModeError,
+    UnknownLibraryNameError,
     UnknownSpendKeyError,
     VectorDimensionError,
 )
@@ -2114,6 +2117,33 @@ def rank_matches(candidates: Sequence[Candidate]) -> list[Candidate]:
         )
 
     return sorted(candidates, key=key)
+
+
+def named_library(name: str, candidates: Sequence[Candidate]) -> CatalogLibrary:
+    """Pick the one library a name means, where a tool wanted its ID (#573).
+
+    The name means a library when it is the only one at the best tier of ``name_match`` (an ID
+    or exact name beats a prefix, a prefix beats a part), or when it is the only match at all. A
+    match on the description alone never picks one of several libraries.
+
+    Args:
+        name: The name as the caller wrote it.
+        candidates: The libraries whose name matched, with how (``hits`` are not used).
+
+    Returns:
+        The library.
+
+    Raises:
+        UnknownLibraryNameError: No library matches.
+        AmbiguousLibraryNameError: Several match equally well; the error lists their IDs.
+    """
+    if not candidates:
+        raise UnknownLibraryNameError(name)
+    ranked = rank_matches(candidates)
+    best = [c for c in ranked if c.match is ranked[0].match]
+    if len(ranked) == 1 or (len(best) == 1 and best[0].match < NameMatch.DESCRIPTION):
+        return ranked[0].library
+    raise AmbiguousLibraryNameError(name, [c.library.id for c in ranked[:MAX_NAME_CANDIDATES]])
 
 
 def canonical_language(name: str) -> str:

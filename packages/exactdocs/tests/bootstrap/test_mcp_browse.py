@@ -279,8 +279,7 @@ async def test_list_libraries_stays_small_with_many_versions(container: Containe
 @pytest.mark.parametrize(
     "arguments",
     [
-        {"library": "react"},
-        {"library": "/acme/payments/v1"},
+        # A name ("react") and a versioned ID are read since #573 (test_mcp_arguments.py).
         {"library": "/" + "a" * 256 + "/b"},
         {"library": "/acme/payments", "ref": "r" * 257},
         {"library": "/acme/payments", "path_prefix": "p" * 257},
@@ -288,8 +287,7 @@ async def test_list_libraries_stays_small_with_many_versions(container: Containe
         {"library": "/acme/payments", "tags": ["t" * 101]},
         {"library": "/acme/payments", "path_prefix": "../etc"},
         {"library": "/acme/payments", "path_prefix": "a\\b"},
-        {"library": "/acme/payments", "limit": 0},
-        {"library": "/acme/payments", "limit": 10_000},
+        {"library": "/acme/payments", "limit": "many"},  # out of range is clamped (#573), not this
         {"library": "/acme/payments", "cursor": "c" * 1025},
     ],
 )

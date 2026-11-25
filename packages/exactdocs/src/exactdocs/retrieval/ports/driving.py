@@ -45,8 +45,10 @@ from exactdocs.retrieval.dtos import (
     RebuiltVersionsOut,
     RemoveChunksCommand,
     RemovedChunks,
+    ResolvedLibraryOut,
     ResolveLibraryIdQuery,
     ResolveLibraryIdResult,
+    ResolveLibraryNameQuery,
     RetagArticlesCommand,
     RetaggedChunks,
     RoleListOut,
@@ -302,6 +304,26 @@ class ResolveLibraryId(Protocol):
 
         Returns:
             The matching libraries, best first.
+        """
+        ...
+
+
+class ResolveLibraryName(Protocol):
+    """Pick the one library a name means, where a tool wants a library ID (#573).
+
+    Names are matched as ``resolve-library-id`` matches them, among the libraries the caller may
+    read; the only library at the best match wins. No match, or several equal ones, is an error
+    that says so and lists the candidate IDs.
+    """
+
+    async def __call__(self, query: ResolveLibraryNameQuery) -> ResolvedLibraryOut:
+        """Run the use case.
+
+        Args:
+            query: The name.
+
+        Returns:
+            The library's ID.
         """
         ...
 
