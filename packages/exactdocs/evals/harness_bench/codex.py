@@ -181,7 +181,9 @@ class Codex:
         fields: dict[str, Any] = {"lines": 0, "unparsed": 0, "thinking_chars": 0}
         spent = dict.fromkeys(("input", "cached", "output", "reasoning", "turns", "reported"), 0)
         answer = ""
-        errors: list[str] = []
+        # What ended the turn, what the stream said on the way (reconnecting), and the warnings
+        # Codex gives as items (an unknown model's metadata): the first kind that has one.
+        errors: dict[str, list[str]] = {"turn.failed": [], "error": [], "item": []}
         for event in events(output):
             fields["lines"] += 1
             kind = event.get("type") if event else None
@@ -192,16 +194,16 @@ class Codex:
                 done = kind == "item.completed"
                 answer = _item(item, calls, fields, completed=done) or answer
                 if item.get("type") == "error" and done:
-                    errors.append(str(item.get("message", "")))
+                    errors["item"].append(str(item.get("message", "")))
             elif kind == "turn.completed":
                 _usage(event.get("usage") or {}, spent)
             elif kind in {"turn.failed", "error"}:
                 failure = event.get("error") or event
-                errors.append(str(failure.get("message", failure)))
+                errors[kind].append(str(failure.get("message", failure)))
             elif kind not in {"thread.started", "turn.started"}:
                 fields["unparsed"] += 1
         turns = spent["turns"]
-        error = "; ".join(e for e in errors if e) or None
+        error = _first(errors)
         if error is None and not answer and not turns:
             error = "the transcript has no turn"
         failed = error is not None and not answer
@@ -225,6 +227,20 @@ class Codex:
             provider_failure=failed and provider_failed(error),
             **fields,
         )
+
+
+def _first(errors: dict[str, list[str]]) -> str | None:
+    """The error that says best why a run ended.
+
+    Args:
+        errors: The messages of ``turn.failed``, of ``error`` events and of ``error`` items, in
+            that order of precedence.
+
+    Returns:
+        The first kind's messages that has one, joined; ``None`` for none.
+    """
+    said = next((found for found in errors.values() if any(found)), [])
+    return "; ".join(e for e in said if e) or None
 
 
 def _usage(usage: dict[str, Any], spent: dict[str, int]) -> None:

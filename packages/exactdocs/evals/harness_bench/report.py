@@ -536,7 +536,7 @@ def cells_of(
         baseline: The runs without a harness (``baseline_outcomes``).
 
     Returns:
-        One summary per cell, in the order the rows first name them.
+        One summary per cell: tasks first, by harness, model, then `none` before the other arms.
     """
     by_cell: dict[CellKey, list[HarnessResult]] = {}
     for row in rows:
@@ -544,7 +544,9 @@ def cells_of(
             (row.harness, row.agent_model, row.arm, row.retrieval, row.kind), []
         ).append(row)
     cells = []
-    for key, mine in by_cell.items():
+    order = sorted(by_cell, key=lambda k: (k[4] != "task", k[0], k[1], k[2] != NONE, k[2], k[3]))
+    for key in order:
+        mine = by_cell[key]
         cell = summarize(key, mine, method)
         versus = None
         nones = [k for k in by_cell if k[0:2] == key[0:2] and k[2] == NONE and k[4] == key[4]]
@@ -844,7 +846,7 @@ def _failures(report: HarnessReport) -> list[str]:
         return []
     lines = ["", "### Runs without an answer", ""]
     for row in failed[:SHOWN_FAILURES]:
-        why = (row.error or "").replace("\n", " ")[:200]
+        why = (row.error or "").replace("\n", " ")[-200:]  # the end says what failed last
         lines.append(
             f"- {row.harness} / {row.agent_model} / {row.arm} / {row.job}: {row.failure}: {why}"
         )
@@ -854,36 +856,49 @@ def _failures(report: HarnessReport) -> list[str]:
 
 
 def _every_job(report: HarnessReport) -> list[str]:
-    """Every job against every cell.
+    """Every job against every cell of its kind: one table for the tasks, one for the questions.
 
     Args:
         report: The run.
 
     Returns:
-        The table's lines.
+        The tables' lines.
     """
-    keys = [(c.harness, c.agent_model, c.arm, c.retrieval, c.kind) for c in report.cells]
     found = {
         (r.harness, r.agent_model, r.arm, r.retrieval, r.kind, r.job): r for r in report.results
     }
-    jobs = sorted({(r.kind, r.job) for r in report.results})
-    lines = [
-        "",
-        "### Every job",
-        "",
-        "| Job | " + " | ".join(_label(c) for c in report.cells) + " |",
-        "|---|" + "---|" * len(report.cells),
-    ]
-    for kind, job in jobs:
-        marks = []
-        for key in keys:
-            row = found.get((*key, job)) if key[4] == kind else None
-            if row is None:
-                marks.append("")
-                continue
-            mark = "error" if not row.counted else ("pass" if row.passed else row.outcome)
-            if row.task and row.task.forbidden:
-                mark += f" ({', '.join(row.task.forbidden)})"
-            marks.append(f"{mark}, {row.docs_calls} docs" if row.arm != NONE else mark)
-        lines.append(f"| {job} | " + " | ".join(marks) + " |")
+    lines = []
+    for kind, title in (("task", "Every task"), ("question", "Every question")):
+        cells = [c for c in report.cells if c.kind == kind]
+        jobs = sorted({r.job for r in report.results if r.kind == kind})
+        if not cells:
+            continue
+        lines += [
+            "",
+            f"### {title}",
+            "",
+            "| Job | " + " | ".join(_label(c) for c in cells) + " |",
+            "|---|" + "---|" * len(cells),
+        ]
+        for job in jobs:
+            marks = []
+            for c in cells:
+                row = found.get((c.harness, c.agent_model, c.arm, c.retrieval, kind, job))
+                marks.append("" if row is None else _mark(row))
+            lines.append(f"| {job} | " + " | ".join(marks) + " |")
     return lines
+
+
+def _mark(row: HarnessResult) -> str:
+    """Show how one run ended.
+
+    Args:
+        row: The run.
+
+    Returns:
+        ``pass``, the outcome (with the forbidden APIs used) or ``error``, and the docs calls.
+    """
+    mark = "error" if not row.counted else ("pass" if row.passed else row.outcome)
+    if row.task and row.task.forbidden:
+        mark += f" ({', '.join(row.task.forbidden)})"
+    return f"{mark}, {row.docs_calls} docs" if row.arm != NONE else mark

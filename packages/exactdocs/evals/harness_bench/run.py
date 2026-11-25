@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 import dataclasses
 import importlib.metadata
+import re
 import shutil
 import sys
 import tempfile
@@ -63,6 +64,25 @@ type JobKey = tuple[str, str, str, str, str, str]
 """``(harness, agent model, arm, retrieval, kind, job)``: one job run once."""
 
 LOOPBACK: Final[frozenset[str]] = frozenset({"127.0.0.1", "localhost", "::1"})
+UNSAFE: Final[re.Pattern[str]] = re.compile(r"[^A-Za-z0-9._-]+")
+"""What a run folder's name may not hold: a golden question's name has spaces, ``:`` and ``?``,
+and Docker reads ``:`` in a mount as a separator."""
+SLUG_LENGTH: Final[int] = 80
+"""The longest run folder name, before its random suffix."""
+
+
+def slug(text: str) -> str:
+    """Turn a name into one a folder (and a Docker mount) takes.
+
+    Args:
+        text: The name.
+
+    Returns:
+        Letters, digits, ``.``, ``_`` and ``-`` only, at most ``SLUG_LENGTH`` characters.
+    """
+    return UNSAFE.sub("-", text).strip("-")[:SLUG_LENGTH]
+
+
 """Hosts of a provider on this machine (a stand-in): forwarded, not tunnelled."""
 
 
@@ -321,7 +341,7 @@ class Running:
         Returns:
             The result.
         """
-        root = self._folder(f"{installed.harness.name}-{setup.arm.name}-{job.name}-")
+        root = self._folder(slug(f"{installed.harness.name}-{setup.arm.name}-{job.name}") + "-")
         place = job.place(root)
         run, cli = await self._execute(job, installed, model, setup, place, root / "home")
         (root / "transcript.jsonl").write_text(scrub(cli.output), encoding="utf-8")

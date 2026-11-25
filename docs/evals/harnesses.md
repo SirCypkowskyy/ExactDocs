@@ -230,4 +230,56 @@ read-only) is marked `integration`.
 
 ## A first run
 
-<!-- harness-bench-results -->
+One small run is recorded in `packages/exactdocs/evals/results/harness-bench.json` (and `.md`),
+made by several commands on one checkpoint and reported with `--report-only`:
+
+| Setting | Value |
+|---|---|
+| date | 2026-11-25 |
+| harnesses | OpenCode 1.19.6 and Codex CLI 0.171.0, each run in its own container behind the gate |
+| models | `ollama:gpt-oss:120b` and `ollama:glm-5.3` on Ollama Cloud, each with its default thinking |
+| arms | `none` and `exactdocs` (BM25) |
+| coding tasks | the six of the [no-harness run](coding-tasks.md#a-first-run), all pinning a version released after gpt-oss's cutoff |
+| golden questions | five `how-to` questions (the first of each project), OpenCode with `gpt-oss:120b` only, judged by `glm-5.3` |
+
+Coding tasks passed (of six) and documentation calls per task:
+
+| Harness / model | `none` | `exactdocs` | Docs calls | Output tokens, `exactdocs` / `none` | Wall time, `exactdocs` / `none` |
+|---|---|---|---|---|---|
+| OpenCode / gpt-oss:120b | 4 | 5 | 2.7 | x0.85 | x1.28 |
+| OpenCode / glm-5.3 | 6 | 6 | 5.7 | x0.76 | x0.81 |
+| Codex / glm-5.3 | 6 | 6 | 5.5 | x0.60 | x0.67 |
+| Codex / gpt-oss:120b | 1 of 1 graded | 0 of 1 graded | 0 | n/a | n/a |
+
+- Every run with a documentation server called it at least once. No CLI made a built-in web call.
+- OpenCode with gpt-oss gained `zod-error-messages-v4` with ExactDocs (it used Zod 3's
+  `required_error` without it) and failed `starlette-template-response-v1` in both arms: without
+  documentation with the name-first `TemplateResponse`; with it, after a `search_docs` call the
+  tool refused (the library ID sent with a leading space) and a search for route names only.
+  Against `none` on the same tasks: +1 task, p = 0.5 (McNemar, mid-p): six tasks show the plumbing
+  on real CLIs, not an effect size.
+- glm-5.3 passed every task in both harnesses; with ExactDocs it wrote less (output tokens x0.60 to
+  x0.76) and finished sooner, none of it significant on six tasks.
+- **Against the same model without a harness** (the pydantic-ai loop's run of the same six tasks):
+  OpenCode with gpt-oss passed 4 and 5 where the loop passed 2 and 4, and took 2.2 and 2.5 times
+  as long (p = 0.03, paired permutation) with about a quarter more output tokens.
+- **Codex with gpt-oss:120b**: 10 of 12 runs ended with server errors from Ollama Cloud's
+  Responses API (`stream disconnected before completion: Internal Server Error`, then *high demand*
+  on each of Codex's five retries), mid-task, and again for the three run once more with
+  `--resume`. The same
+  model through the Chat Completions API (OpenCode) and glm-5.3 through the same Responses API
+  (Codex) ran without one. They are counted as errors, not graded.
+- Golden questions, OpenCode with gpt-oss: 1 of 5 accurate without documentation, 3 of 5 with
+  ExactDocs (2 gained, p = 0.25), with 3.4 documentation calls per question and 1.55 times the wall
+  time. None of the five is in the agent benchmark's recorded sample, so there is no no-harness
+  comparison for them.
+- Thinking tokens are *not reported* for every run: both CLIs give 0 reasoning tokens for Ollama
+  models, which return their thinking as text. Every run is *unpriced* (Ollama Cloud).
+- The gate refused `registry.npmjs.org` (OpenCode) and `api.github.com` and `chatgpt.com` (Codex)
+  on every run, and nothing else.
+
+### What was not run
+
+There is no Anthropic, OpenAI or Gemini API key for this run, so Claude Code, Gemini CLI and Codex
+with OpenAI's models were not run. Their adapters are tested on transcripts built from their
+documented formats ([Tests](#tests)); a run is the manual workflow with the providers' keys.

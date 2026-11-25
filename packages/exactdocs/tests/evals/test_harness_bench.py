@@ -608,6 +608,7 @@ async def test_golden_questions_run_through_a_harness_and_are_judged_blind(
     assert grades[EXACTDOCS, install] == "correct"  # answered from the documentation it searched
     assert grades[NONE, install] == "refused"  # it does not know
     assert all(r.kind == "question" and r.question is not None for r in report.results)
+    assert not any(set(r.run_dir) & set(" :?") for r in report.results)  # Docker mounts it
     assert {c.kind for c in report.cells} == {"question"}
     assert "### Golden questions" in markdown(report)
 
