@@ -1,0 +1,92 @@
+# The retrieval grid (#494): `just retrieval-grid` runs every cell on the golden set.
+# docs/evals.md#the-retrieval-grid explains each setting.
+#
+# An app cell (`app:`) is a retrieval-benchmark configuration that ExactDocs runs, scored by
+# chunk ID. Every other cell is eval-only: the grid cuts, indexes and searches the pinned
+# versions itself and scores the text it returns (#491). Nothing here changes what ExactDocs
+# ships. Every cell is tested against the default of its budget, declared below: what ExactDocs
+# ships today (docs/benchmark/defaults.md).
+
+defaults:
+  none: bm25@default
+  local: bm25@default
+
+cells:
+  # ExactDocs itself, and the gaps of the #347 run
+  - app: bm25
+  - app: hybrid:bge-small-en-v1.5
+  - app: hybrid:bge-base-en-v1.5
+  - app: bm25+ce
+  - app: hybrid:bge-small-en-v1.5+ce
+  - app: hybrid:hosted  # skipped without --allow-providers
+
+  # Baselines: the floor
+  - name: grep
+    search: grep
+  - name: rag:window-256+64/bge-small
+    window: 256
+    overlap: 64
+    search: dense
+    embedding: BAAI/bge-small-en-v1.5
+
+  # The grid's own search at ExactDocs' chunking: how far it is from the app's
+  - name: default/bm25
+    search: bm25
+  - name: default/hybrid:bge-small
+    search: hybrid
+    embedding: BAAI/bge-small-en-v1.5
+
+  # Fixed token windows with overlap, two sizes
+  - name: window-256+64/bm25
+    window: 256
+    overlap: 64
+    search: bm25
+  - name: window-512+128/bm25
+    window: 512
+    overlap: 128
+    search: bm25
+  - name: window-256+64/hybrid:bge-small
+    window: 256
+    overlap: 64
+    search: hybrid
+    embedding: BAAI/bge-small-en-v1.5
+  - name: window-512+128/hybrid:bge-small
+    window: 512
+    overlap: 128
+    search: hybrid
+    embedding: BAAI/bge-small-en-v1.5
+
+  # Title and heading path in front of the text: indexed, then embedded
+  - name: default/bm25+context-indexed
+    search: bm25
+    prefix_indexed: true
+  - name: default/hybrid:bge-small+context-indexed
+    search: hybrid
+    embedding: BAAI/bge-small-en-v1.5
+    prefix_indexed: true
+  - name: default/hybrid:bge-small+context-embedded
+    search: hybrid
+    embedding: BAAI/bge-small-en-v1.5
+    prefix_embedded: true
+  - name: window-256+64/hybrid:bge-small+context-embedded
+    window: 256
+    overlap: 64
+    search: hybrid
+    embedding: BAAI/bge-small-en-v1.5
+    prefix_embedded: true
+
+  # Small heading chunks widened to their parent section when read
+  - name: h6/bm25+parent
+    chunking: h6
+    search: bm25
+    expand: parent
+  - name: h6/hybrid:bge-small+parent
+    chunking: h6
+    search: hybrid
+    embedding: BAAI/bge-small-en-v1.5
+    expand: parent
+
+  # A larger embedding model on the grid's own search
+  - name: default/hybrid:bge-base
+    search: hybrid
+    embedding: BAAI/bge-base-en-v1.5

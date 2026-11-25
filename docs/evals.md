@@ -833,6 +833,97 @@ or recall@5 or nDCG@10 more than 2 points below the recorded run (the same golde
 are required). The local and hosted parts never run in CI; refresh the recorded run by hand when
 ranking, chunking or a model changes. Pull request CI runs the quick tests only.
 
+## The retrieval grid
+
+The benchmark above tries heading chunking only. The grid (#494) cross-tests what it never
+tried: fixed token windows with overlap, the article title and heading path put in front of the
+text that is embedded or indexed, small heading chunks widened to their parent section when read,
+larger embedding models, and two plain baselines to read every number against: a keyword grep
+over the raw files and a fixed-window RAG. None of it changes what ExactDocs ships; a variant
+that wins significantly gets a follow-up issue to ship it.
+
+```bash
+just retrieval-grid --offline                      # every cell of evals/golden/matrix.yaml
+just retrieval-grid --offline --cells 'grep,window-*'
+EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-grid --offline
+```
+
+### The grid file
+
+`packages/exactdocs/evals/golden/matrix.yaml` declares the cells and, under `defaults`, the cell
+each budget is tested against: what ExactDocs ships for it (BM25 at `default` for both `none` and
+`local`, [Recommended defaults](benchmark/defaults.md)). A cell is one of:
+
+- **An app cell** (`app: <configuration>`, optional `chunking`): a configuration of the retrieval
+  benchmark (`bm25`, `hybrid:bge-base-en-v1.5`, `bm25+ce`, `hybrid:hosted`, ...), imported and
+  answered by ExactDocs itself and scored by chunk ID, exactly as `just retrieval-bench` runs it.
+  Hosted ones run only with `--allow-providers`.
+- **An eval-only cell** (`name` and `search`): the grid cuts, indexes and searches the pinned
+  versions itself, in process, and scores the text it returns with the
+  [text scorer](#scoring-text-results). Settings:
+    - `chunking`: a heading chunking of the ingestion benchmark (`default`, `h6`, `h2`,
+      `merge-400`), cut with ExactDocs' own chunker; or `window` and `overlap`: windows of whole
+      lines of about `window` estimated tokens, the next starting so that at most `overlap`
+      tokens are shared. Windows ignore headings, code blocks and tables; a window's heading path
+      is the one it starts in.
+    - `search`: `bm25` (an in-memory SQLite FTS5 table with the columns, weights and tokenizer
+      of ExactDocs' index, BM25 statistics over the whole corpus, each search filtered to the
+      version asked), `dense` (cosine to the query over the `embedding` model's vectors), `hybrid`
+      (both, fused by RRF as ExactDocs fuses them), or `grep`.
+    - `prefix_indexed` / `prefix_embedded`: put `title > heading > path` in front of the text
+      indexed for BM25, or of the text embedded. The text returned is never prefixed. (ExactDocs'
+      own index already weights the heading path in its own columns; the prefix adds the title
+      and puts the path in the text.)
+    - `expand: parent`: return each hit's parent section with its subsections instead of the hit
+      (a top-level section widens to itself); a widened text returned twice is returned once.
+    - `embedding`: a local model pulled with `exactdocs models pull`; a cell whose model is not
+      pulled is reported unavailable, with the command.
+
+`default/bm25`, the grid's own BM25 at ExactDocs' chunking, is the control: it should score as
+the app's `bm25@default` does, so a gap between an eval-only variant and the default comes from
+the variant, not from the grid's search.
+
+### The baselines
+
+- **`grep`**: `rg -i -w -C 3` over the raw Markdown files of the version asked, with the question's
+  content terms (`question_terms`, stop words left out). Overlapping matches merge; snippets rank
+  by the distinct terms they hold, then by their matching lines. It needs no index.
+- **`rag:window-256+64/bge-small`**: fixed windows embedded with the same model as hybrid search,
+  dense search only.
+
+### Reading the report
+
+`<out>/retrieval-grid.json` and `.md` (default `reports/evals/grid/`). `bench` is the retrieval
+benchmark's report: every cell with its metrics, 95% intervals, breakdowns and index cost
+(`index`: seconds and embedding tokens; eval-only cells count cutting and indexing too), and the
+paired test of every cell against its budget's declared default (#489). `recommendations` holds
+those declared defaults, not a pick. On top:
+
+- `text`: per text-scored cell, the text scorer's numbers (context tokens per question, tokens
+  to the first hit, facts found): widening to the parent or a larger window returns more text.
+- `ingestion`: per eval-only chunker, the ingestion benchmark's metrics (#346), so the report says
+  where windows cut code blocks, tables and lists. Coverage and lost characters say little of
+  windows (they start mid-section and overlap), so the summary shows the sections held instead.
+
+A text-scored cell searches only the version asked. A result the text scorer places only in
+another version is a text that crosses sections; it counts in the wrong-version rate and does
+not fail the run. A wrong version of an app cell fails it, as in the benchmark.
+
+### Resuming
+
+Each finished cell is written to `<out>/cells/<name>.json` with a key of its settings, the golden
+set and the pinned commits. A later run reuses a cell whose key matches (`resumed` in the report)
+and runs the others, so an interrupted run goes on where it stopped and a changed cell runs again.
+`--fresh` runs every cell; `--cells` runs some (the declared defaults always run).
+
+### When it runs
+
+By hand. The tests run the grid on the tiny corpus with the term-hash stand-in embedding
+(`tests/evals/test_retrieval_grid.py`, `retrieval_grid.feature`): no model is downloaded and
+their numbers are never results. A full grid embeds the corpus once per embedding cell (about
+50 minutes per chunking for `bge-base` on a 4-CPU runner, see the recorded run above), so it is
+meant for the self-hosted runner.
+
 ## Scoring text results
 
 The retrieval benchmark scores ExactDocs by reading each result's chunk ID back. Other
