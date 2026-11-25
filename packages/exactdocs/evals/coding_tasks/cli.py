@@ -18,14 +18,28 @@ from datetime import date
 from pathlib import Path
 from typing import Final
 
+from agent_bench.arms import DEFAULT_ARMS, parse_arms
+from agent_bench.harness import RetrievalConfig
+from agent_bench.models import DEFAULT_RETRIES, thinking_setting
+from coding_tasks.agent import DEFAULT_MAX_REQUESTS
 from coding_tasks.check import CheckReport, check_tasks, markdown, prepare_all
 from coding_tasks.environments import ENVIRONMENTS_DIR, default_cache_dir
+from coding_tasks.offline import OFFLINE_AGENTS, offline_model
+from coding_tasks.report import markdown as report_markdown
+from coding_tasks.run import load_rows, run_tasks
 from coding_tasks.sandbox import Limits, sandbox_named
 from coding_tasks.tasks import DEFAULT_CUTOFF, TASKS_DIR, CodingTask, load_tasks
-from retrieval_eval.golden import CORPUS_FILE, Corpus, load_corpus
+from retrieval_eval.golden import CORPUS_FILE, Corpus, fetch, load_corpus
+from retrieval_eval.golden import default_cache_dir as golden_cache_dir
 
 CHECK_REPORT: Final[Path] = Path("reports/evals/coding-tasks-check.json")
 """Where ``check`` writes its JSON report (the Markdown goes next to it)."""
+RUN_REPORT: Final[Path] = Path("reports/evals/coding-tasks.json")
+"""Where ``run`` writes its JSON report (the Markdown and the checkpoint go next to it)."""
+ROWS_SUFFIX: Final[str] = ".rows.jsonl"
+"""The checkpoint next to the run's report: one finished task per line, for ``--resume``."""
+DEFAULT_RETRIEVAL: Final[tuple[str, ...]] = ("bm25:mode=bm25",)
+"""The ``exactdocs`` arm's retrieval configuration when none is given."""
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -66,6 +80,53 @@ def _parser() -> argparse.ArgumentParser:
                 default=DEFAULT_CUTOFF,
                 help=f"training cutoff the tasks are counted against (default {DEFAULT_CUTOFF})",
             )
+    run = commands.add_parser("run", help="agents complete the tasks with each documentation arm")
+    _common(run)
+    run.add_argument(
+        "--agent-model",
+        action="append",
+        default=[],
+        help="pydantic-ai model name, repeat for several (ollama:<model> with OLLAMA_BASE_URL and "
+        "OLLAMA_API_KEY)",
+    )
+    run.add_argument(
+        "--offline",
+        action="store_true",
+        help=f"the scripted models instead ({', '.join(OFFLINE_AGENTS)}); no provider",
+    )
+    run.add_argument(
+        "--arm",
+        action="append",
+        default=[],
+        help=f"documentation arm, repeat or comma-separate (default: {','.join(DEFAULT_ARMS)})",
+    )
+    run.add_argument(
+        "--retrieval",
+        action="append",
+        default=[],
+        help="name[:key=value,...] of the exactdocs arm (default: bm25:mode=bm25)",
+    )
+    run.add_argument("--thinking", help="the agents' thinking (default: each model's own)")
+    run.add_argument("--limit", type=int, help="at most this many tasks per project")
+    run.add_argument("--max-requests", type=int, default=DEFAULT_MAX_REQUESTS)
+    run.add_argument("--max-retries", type=int, default=DEFAULT_RETRIES)
+    run.add_argument("--concurrency", type=int, default=1, help="tasks asked at once")
+    run.add_argument(
+        "--sandbox",
+        default="docker",
+        choices=["docker", "process"],
+        help="where the agent's code runs (default: docker; process needs a network namespace)",
+    )
+    run.add_argument(
+        "--cutoff",
+        type=date.fromisoformat,
+        default=DEFAULT_CUTOFF,
+        help=f"training cutoff the report counts tasks against (default {DEFAULT_CUTOFF})",
+    )
+    run.add_argument("--resume", action="store_true", help="continue from <report>.rows.jsonl")
+    run.add_argument("--golden-cache", type=Path, default=golden_cache_dir())
+    run.add_argument("--work-dir", type=Path, help="workspaces and server logs (default: temporary)")
+    run.add_argument("--report", type=Path, default=RUN_REPORT)
     return parser
 
 
@@ -217,6 +278,114 @@ def _write(report: CheckReport, path: Path) -> None:
             out.write(text)
 
 
+def _run(args: argparse.Namespace) -> int:
+    """Let agents complete the tasks, then write the report.
+
+    Args:
+        args: The parsed ``run`` arguments.
+
+    Returns:
+        2 for a usage error, 1 when an install or a fetch failed, else 0 (no gate).
+    """
+    agent_models = list(OFFLINE_AGENTS) if args.offline else args.agent_model
+    if not agent_models:
+        sys.stderr.write("coding-tasks: give --agent-model, or --offline\n")
+        return 2
+    try:
+        arms = parse_arms(args.arm)
+        retrieval = [RetrievalConfig.parse(t) for t in args.retrieval or DEFAULT_RETRIEVAL]
+        thinking_setting(args.thinking)
+    except ValueError as error:
+        sys.stderr.write(f"coding-tasks: {error}\n")
+        return 2
+    loaded = _load(args)
+    if loaded is None:
+        return 2
+    tasks, corpus = loaded
+    if args.limit is not None:
+        taken: dict[str, int] = {}
+        kept = []
+        for task in tasks:
+            if taken.get(task.spec.project, 0) < args.limit:
+                taken[task.spec.project] = taken.get(task.spec.project, 0) + 1
+                kept.append(task)
+        tasks = kept
+    try:
+        prepared = asyncio.run(prepare_all(tasks, args.cache_dir))
+        repos = (
+            {
+                p.id: fetch(p, args.golden_cache)
+                for p in corpus.projects
+                if p.id in {t.spec.project for t in tasks}
+            }
+            if any(arm.retrieval for arm in arms)
+            else {}
+        )
+    except RuntimeError as error:
+        sys.stderr.write(f"coding-tasks: {error}\n")
+        return 1
+    sandbox = sandbox_named(args.sandbox, require_network_isolation=True)
+    work_dir = args.work_dir or Path(tempfile.mkdtemp(prefix="exactdocs-coding-tasks-"))
+    work_dir.mkdir(parents=True, exist_ok=True)
+    args.report.parent.mkdir(parents=True, exist_ok=True)
+    checkpoint = args.report.with_suffix(ROWS_SUFFIX)
+    done = load_rows(checkpoint) if args.resume else {}
+    if not args.resume:
+        checkpoint.write_text("", encoding="utf-8")
+    report = asyncio.run(
+        run_tasks(
+            tasks,
+            corpus,
+            prepared,
+            sandbox,
+            agent_models=agent_models,
+            arms=arms,
+            retrieval=retrieval,
+            work_dir=work_dir,
+            repos=repos,
+            models=offline_model if args.offline else None,
+            max_requests=args.max_requests,
+            concurrency=args.concurrency,
+            thinking=args.thinking,
+            max_retries=args.max_retries,
+            cutoff=args.cutoff,
+            selection=_selection(args),
+            checkpoint=checkpoint,
+            done=done,
+        )
+    )
+    text = report_markdown(report)
+    args.report.write_text(report.model_dump_json(indent=2) + "\n", encoding="utf-8")
+    args.report.with_suffix(".md").write_text(text, encoding="utf-8")
+    sys.stdout.write(text)
+    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with Path(summary).open("a", encoding="utf-8") as out:
+            out.write(text)
+    if errors := sum(r.outcome == "error" for r in report.results):
+        sys.stdout.write(f"\n{errors} tasks failed on the provider's side; `--resume` asks them again\n")
+    sys.stdout.write(f"\nreport: {args.report}; work dir: {work_dir}\n")
+    return 0
+
+
+def _selection(args: argparse.Namespace) -> str:
+    """Describe how the tasks were picked, for the report.
+
+    Args:
+        args: The parsed ``run`` arguments.
+
+    Returns:
+        E.g. ``projects zod; at most 3 per project``, or ``all``.
+    """
+    parts = []
+    if args.tasks:
+        parts.append(f"tasks {args.tasks}")
+    if args.projects:
+        parts.append(f"projects {args.projects}")
+    if args.limit is not None:
+        parts.append(f"at most {args.limit} per project")
+    return "; ".join(parts) or "all"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     """Run a command.
 
@@ -229,6 +398,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "check":
         return _check(args)
+    if args.command == "run":
+        return _run(args)
     loaded = _load(args)
     if loaded is None:
         return 2
