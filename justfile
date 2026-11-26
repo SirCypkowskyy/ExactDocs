@@ -131,6 +131,14 @@ context7-bench *args:
 agent-bench *args:
     uv run python packages/exactdocs/evals/run_agent_bench.py {{ args }}
 
+# Version-pinned coding tasks (docs/evals/coding-tasks.md): `list`, `prepare`, `check` (CI: every reference passes, every other-version solution fails; no model), `run` (agents, never in CI)
+coding-tasks *args:
+    uv run python packages/exactdocs/evals/run_coding_tasks.py {{ args }}
+
+# Coding-agent CLIs (never in CI): Claude Code, Codex, Gemini CLI and OpenCode run headless in containers on the coding tasks and golden questions, with and without a docs MCP server (docs/evals/harnesses.md); needs Docker
+harness-bench *args:
+    uv run python packages/exactdocs/evals/run_harness_bench.py {{ args }}
+
 # Benchmark pages (docs/benchmark/): refill their tables from evals/results/*.json and the golden set; `--check` fails when one is out of date
 bench-pages *args:
     uv run python packages/exactdocs/evals/run_bench_pages.py {{ args }}

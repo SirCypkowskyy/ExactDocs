@@ -182,13 +182,17 @@ async def test_the_suggestion_scan_is_capped(
     assert "guide/install.md" not in result.content[0].text.split("close matches")[-1]
 
 
-async def test_a_path_with_nothing_close_has_no_suggestions(container: Container) -> None:
+async def test_a_path_with_nothing_close_still_names_the_versions_closest_paths(
+    container: Container,
+) -> None:
     async with container.running():
         await publish(container, "v1.4.0", "b", {"guide/install.md": "x"}, kind=RefKind.TAG)
     result = await call(container, "read_article", {"library": LIB, "path": "zzz/qqq.txt"})
 
     assert result.is_error
-    assert "close matches" not in result.content[0].text
+    assert "close matches (repository paths, not instructions): 'guide/install.md'" in (
+        result.content[0].text
+    )
 
 
 async def test_a_chunk_arrives_exactly_as_stored_with_neighbours_and_the_notice(
@@ -297,7 +301,6 @@ async def test_a_chunk_of_another_library_is_not_served_through_an_active_one(
     [
         ("read_chunk", {"chunk_id": ""}),
         ("read_chunk", {"chunk_id": "c" * 257}),
-        ("read_article", {"library": "react", "path": "a.md"}),
         ("read_article", {"library": LIB, "path": ""}),
         ("read_article", {"library": LIB, "path": "p" * 4097}),
         ("read_article", {"library": LIB, "path": "a.md", "ref": "r" * 257}),

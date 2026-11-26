@@ -8,6 +8,7 @@ from exactdocs_kernel import (
     ForbiddenError,
     NotFoundError,
     ValidationError,
+    name_versions,
 )
 
 
@@ -122,19 +123,35 @@ class LibraryNotFoundError(NotFoundError):
 class VersionNotFoundError(NotFoundError):
     """The library has no such version (or, without a ref, no version at all)."""
 
-    def __init__(self, library_id: str, ref: str | None) -> None:
-        """Name the library and the ref.
+    def __init__(
+        self,
+        library_id: str,
+        ref: str | None,
+        *,
+        versions: Sequence[str] = (),
+        default: str | None = None,
+    ) -> None:
+        """Name the library and the ref, and the versions it does have (#605).
 
         Args:
             library_id: The library ID.
             ref: The ref asked for; ``None`` when the default version was asked for.
+            versions: The library's imported refs, newest first; the first
+                ``MAX_NAMED_VERSIONS`` are named. None named when empty.
+            default: The default version's ref, named after them.
         """
         if ref is None:
             super().__init__(f"library {library_id!r} has no imported version")
+        elif versions:
+            super().__init__(
+                f"library {library_id!r} has no version {ref!r}; {name_versions(versions, default)}"
+            )
         else:
             super().__init__(f"library {library_id!r} has no version {ref!r}")
         self.library_id = library_id
         self.ref = ref
+        self.versions = tuple(versions)
+        self.default = default
 
 
 class InvalidBlobShaError(ValidationError):

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import operator
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import date, datetime
 from typing import Annotated, Any, Literal
@@ -78,6 +79,7 @@ from exactdocs.retrieval.models import (
     ModelRole,
     RepoGuidance,
     RerankWith,
+    ResultGrouping,
     SpendWindow,
     TagMatch,
     ThinkingLevel,
@@ -342,6 +344,9 @@ class C7ContextResponse(_Camel):
     """The chunks that fit the size budget, best first."""
     omitted: int
     """Matching chunks that did not fit the size budget."""
+    notes: list[str] = Field(default_factory=list, exclude_if=operator.not_)
+    """How the request was read where it differs from what was sent: a ref read as the one
+    imported version it names but for a leading `v`. Absent when it was read as sent."""
 
     @classmethod
     def from_result(cls, result: QueryDocsResult) -> C7ContextResponse:
@@ -366,7 +371,7 @@ class C7ContextResponse(_Camel):
                     chunk_id=s.chunk_id,
                 )
             )
-        return cls(info_snippets=snippets, omitted=result.omitted)
+        return cls(info_snippets=snippets, omitted=result.omitted, notes=result.notes)
 
 
 def build_router(
@@ -439,6 +444,16 @@ def build_router(
                 ),
             ),
         ] = None,
+        group_by: Annotated[
+            ResultGrouping,
+            Query(
+                description=(
+                    "`chunk` (default here): the results best first. `article`: the same results "
+                    "grouped by article, as MCP's `search_docs` returns them (each result's "
+                    "`group`)."
+                )
+            ),
+        ] = ResultGrouping.CHUNK,
     ) -> SearchDocsResult:
         """Search one exact version; never another one.
 
@@ -453,6 +468,7 @@ def build_router(
             tags_match: `any` or `all` of the tags.
             limit: How many results at most.
             mode: The retrieval mode; the default without one.
+            group_by: `chunk` (best first) or `article` (grouped by article).
             searcher: The account searching.
 
         Returns:
@@ -470,6 +486,7 @@ def build_router(
                 tags_match=tags_match,
                 limit=limit,
                 mode=mode,
+                group_by=group_by,
             )
         except ValidationError as error:  # what the Query() bounds above cannot see
             raise RequestValidationError(error.errors()) from error
@@ -508,6 +525,15 @@ def build_router(
                 ),
             ),
         ] = None,
+        group_by: Annotated[
+            ResultGrouping,
+            Query(
+                description=(
+                    "`chunk` (default here): the results best first. `article`: the same results "
+                    "grouped by library and article, as MCP's `search_all_docs` returns them."
+                )
+            ),
+        ] = ResultGrouping.CHUNK,
     ) -> SearchAllResult:
         """Search the default version of every library, or of the chosen ones, in one ranking.
 
@@ -522,6 +548,7 @@ def build_router(
             tags_match: `any` or `all` of the tags.
             limit: How many results at most.
             mode: The retrieval mode; `bm25` without one.
+            group_by: `chunk` (best first) or `article` (grouped by library and article).
             searcher: The account searching.
 
         Returns:
@@ -538,6 +565,7 @@ def build_router(
                 tags_match=tags_match,
                 limit=limit,
                 mode=mode,
+                group_by=group_by,
             )
         except ValidationError as error:
             raise RequestValidationError(error.errors()) from error
@@ -651,9 +679,11 @@ def build_router(
         found = await query_docs(request, caller=asker)
         if fmt == "json":
             return C7ContextResponse.from_result(found)
-        # The notice leads the body, as it leads the MCP result, and repeats in a header.
+        # The notice leads the body, as it leads the MCP result, and repeats in a header; the
+        # notes (#605) close it, as they close the MCP result.
+        notes = f"\n\nNotes: {' '.join(found.notes)}" if found.notes else ""
         return PlainTextResponse(
-            f"{NOTICE}\n\n{format_docs(found)}", headers={NOTICE_HEADER: NOTICE}
+            f"{NOTICE}\n\n{format_docs(found)}{notes}", headers={NOTICE_HEADER: NOTICE}
         )
 
     return router

@@ -1,0 +1,20 @@
+title: Read the lifespan state in an endpoint
+project: starlette
+version: 0.27.0
+environment: starlette-0.27.0
+other_version: 0.52.1
+other_environment: starlette-0.52.1
+api_since:
+  version: 0.52.0
+  released: '2026-01-18'
+files:
+- app/main.py
+prompt: |
+  The lifespan in `app/main.py` already connects a `Database` and yields it as the
+  lifespan state under `"database"`. Implement `count` (`GET /count`) to answer
+  `{"count": <the database's count()>}` using that database from the request, without
+  a module-level global.
+notes: |
+  Starlette 0.52 added dictionary-style access to the state (`request.state["database"]`,
+  typed with a `TypedDict`); 0.27 reads it as an attribute, `request.state.database`,
+  and its `State` cannot be indexed.

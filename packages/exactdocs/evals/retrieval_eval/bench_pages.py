@@ -21,6 +21,8 @@ from agent_bench.report import markdown as agent_markdown
 from retrieval_eval.dataset import GoldenKind
 from retrieval_eval.golden import load_cases, load_corpus
 from retrieval_eval.golden_review import load_review, review_block
+from retrieval_eval.grid_cli import GridReport
+from retrieval_eval.grid_cli import page_block as grid_block
 from retrieval_eval.grounded_docs import GroundedDocsReport, page_blocks
 from retrieval_eval.ingestion_cli import IngestionReport
 from retrieval_eval.ingestion_cli import markdown as ingestion_markdown
@@ -29,6 +31,10 @@ from retrieval_eval.retrieval_bench import markdown as retrieval_markdown
 
 RESULTS: Final[Path] = Path(__file__).parents[1] / "results"
 PAGES: Final[Path] = Path(__file__).parents[4] / "docs" / "benchmark"
+GRID_RESULTS: Final[str] = "retrieval-grid-rank1.json"
+"""The recorded run of the grid's rank-1 cells (#575), in ``RESULTS``."""
+GRID_GROUPED: Final[str] = "retrieval-grid-grouped.json"
+"""The recorded run of the grid's app cells grouped by article and not (#575), in ``RESULTS``."""
 BLOCK: Final[re.Pattern[str]] = re.compile(
     r"(<!-- bench:(?P<name>[a-z-]+) -->\n)(?:(?!<!-- bench:).)*?(^<!-- /bench -->)",
     re.DOTALL | re.MULTILINE,
@@ -204,6 +210,12 @@ def blocks(results: Path = RESULTS) -> dict[str, str]:
         if grounded.exists()
         else {}
     )
+    grids = {"retrieval-grid": GRID_RESULTS, "retrieval-grouping": GRID_GROUPED}
+    rank_one = {
+        name: grid_block(GridReport.model_validate_json((results / file).read_text("utf-8")))
+        for name, file in grids.items()
+        if (results / file).exists()
+    }
     return {
         "golden": golden_block(),
         "golden-review": review_block(load_review()),
@@ -211,6 +223,7 @@ def blocks(results: Path = RESULTS) -> dict[str, str]:
         **retrieval_blocks(retrieval),
         **agent_blocks(agent),
         **competitors,
+        **rank_one,
     }
 
 

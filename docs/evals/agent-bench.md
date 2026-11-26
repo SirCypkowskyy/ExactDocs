@@ -247,6 +247,17 @@ counts those separately (*Wrong for the version*). The judge's instructions are 
 - *Read another version*.
 - Tool calls per question.
 
+### Tool errors
+
+Per arm with tools (#573):
+
+- the runs with a tool call that failed: an argument the server refused, a path the version
+  lacks... (`runs_with_tool_errors`);
+- how many calls failed (`tool_errors`), and which tools (`tool_errors_by_tool`).
+
+Each costs the agent a turn, and the harness ends a run whose tool fails twice (pydantic-ai's one
+retry), so a tool's strictness shows up as `no_answer`.
+
 ### Cost per question
 
 Each as mean with its 95% interval, p50 and p95 (nearest rank):

@@ -19,6 +19,7 @@ The fast checks are the parallel jobs of `ci.yml`:
 | *Lint (ruff, ty, hadolint)* | `ruff format --check`, `ruff check`, `ty check`, hadolint on `deploy/Dockerfile` |
 | *pytest (1/6)* … *(6/6)* | `uv run pytest` in six groups of about the same time[^pytest]; each writes its coverage data |
 | *behave (1/3)* … *(3/3)* | `uv run behave`, every scenario but the `@integration` ones, the feature files in three groups of about the same time[^behave] |
+| *Coding tasks (references pass, other versions fail)* | `just coding-tasks check` (#496): installs each pinned environment of the [coding tasks](../evals/coding-tasks.md) from its lockfile (cached by the lockfiles' hash) and checks that every reference solution passes its hidden tests and every other-version solution fails, naming a forbidden API; no model |
 | *Python (ruff, ty, pytest, behave)* | waits for the jobs above and fails unless all passed; combines the shards' coverage into one report |
 | *Web (biome, fallow, react-doctor, vitest, build)* | the web client |
 

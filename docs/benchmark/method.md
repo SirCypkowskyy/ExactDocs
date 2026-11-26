@@ -69,6 +69,27 @@ Answerable cases are the 267 cases that name sections; unanswerable cases are th
 | p50 / p95 latency | every case | nearest-rank percentiles of the search alone,<br/>one question at a time, on the machine the run names |
 | tokens / USD per question | every case | what the spend ledger grew by during each search[^spend];<br/>USD from the configured prices or `genai-prices` |
 | index | per embedding model and chunking | seconds, tokens and USD of embedding the whole corpus once |
+| context tokens / question | every case | estimated tokens (characters / 4) of all the text returned: every chunk's content for ExactDocs, every result's text for a tool scored from text |
+| tokens to first hit | answerable cases with a hit in the top 10 | estimated tokens of the results up to and including the first that answers |
+| recall within 1,000 / 2,000 / 4,000 tokens | answerable cases | the result that first answers the case ends within the first 1,000, 2,000 or 4,000 estimated tokens of the text returned, the results read whole and in order |
+| the same, text cut | answerable cases, tools scored from text | the text returned, cut at the budget, answers the case: a result within the budget answers, or the result the budget cuts answers from its part within it |
+
+**At the same amount of context** (#575). Tools return very different amounts of text per result:
+an ExactDocs chunk at `default` holds about 350 estimated tokens, a Grounded Docs result about
+1,000. A tool whose results are longer finds the answer in its first result more often for that
+reason alone, so recall@1 and recall@5 do not compare tools at the same amount of context. Recall
+within a token budget does: how often the answer is among the first 1,000, 2,000 or 4,000 tokens
+a caller reads, the tokens the reports give as "context tokens / question". Neither way to read
+a budget is neutral, so both are measured:
+
+- *Whole results* counts a result only when all of it fits, the way a caller that takes results
+  one at a time reads them. It favours a tool whose results are short.
+- *Text cut* cuts the text at the budget and counts the result the budget cuts when its part
+  within the budget answers (it holds the section, or lies in it, by the text scorer's rule). It
+  favours a tool whose results are long, since the start of a long result can answer.
+- Chunk-ID scoring cannot cut a chunk, so ExactDocs' own benchmark reports whole results only; a
+  tool scored from its text gets both. Each comes with its interval and the paired test
+  (McNemar, mid-p).
 
 [^section-recall]: Each part is counted once, whichever of its alternatives answered it. Equal to
     recall@k for a case of one part, lower when a `cross-page` answer comes back only in part.
@@ -301,6 +322,19 @@ EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
 
 The second is the recorded retrieval run ([The recorded run](../evals/retrieval-runs.md#the-recorded-run)): 3 h
 17 min on a 4-CPU runner, most of it embedding the corpus and the cross-encoder.
+
+## Coding tasks
+
+The coding tasks (#496) check code, not prose: an agent with the workspace tools and one
+documentation arm completes a request in a small project that pins one library version, and the
+task passes only when its hidden tests pass in a sandbox with exactly that version installed. The
+report gives the **pass rate** (overall, per project, and over the tasks pinning a version
+released after the model's training cutoff), the share of tasks whose changed code uses an API the
+pinned version does not have (**forbidden-API rate**), and the **files changed** per task, each
+with its 95% interval as above; each arm's pass rate is tested against `none`'s on the same tasks
+by McNemar's test (mid-p). Most tasks come as version pairs, the same request pinned at two
+versions where the right code differs. The task format, the sandbox and the commands are in
+[Version-pinned coding tasks](../evals/coding-tasks.md).
 
 ## Refreshing these pages
 

@@ -86,6 +86,7 @@ from exactdocs.retrieval.constants import (
     MAX_JUDGE_DOCUMENT_CHARS,
     MAX_JUDGE_QUERY_CHARS,
     MAX_MODEL_NAME,
+    MAX_NAME_CANDIDATES,
     MAX_REQUEST_TIMEOUT,
     MAX_RETRIES,
     MICROS_PER_USD,
@@ -126,6 +127,7 @@ from exactdocs.retrieval.constants import (
     VECTOR_SNIPPET_WORDS,
 )
 from exactdocs.retrieval.errors import (
+    AmbiguousLibraryNameError,
     DuplicateChunkError,
     EmptySearchTextError,
     InvalidAgentBoundsError,
@@ -138,6 +140,7 @@ from exactdocs.retrieval.errors import (
     InvalidVectorError,
     LibraryBudgetAboveInstanceError,
     UnavailableModeError,
+    UnknownLibraryNameError,
     UnknownSpendKeyError,
     VectorDimensionError,
 )
@@ -1114,6 +1117,36 @@ class TagMatch(StrEnum):
     ALL = "all"
 
 
+class ResultGrouping(StrEnum):
+    """How a search orders the results it returns."""
+
+    ARTICLE = "article"
+    """One group per article, the groups ordered by their best result and each group's results
+    best first: the article that answers best comes first with everything of it that matched."""
+    CHUNK = "chunk"
+    """Each result on its own, best first."""
+
+
+def article_groups(articles: Sequence[str]) -> list[tuple[int, int]]:
+    """Group ranked results by article, as ``ResultGrouping.ARTICLE`` orders them.
+
+    The results are the same; only their order changes. An article's group takes the place of
+    its best result, and holds its results in their own order (best first).
+
+    Args:
+        articles: The article of each result, best result first (a key that names the article,
+            with its library when several are searched).
+
+    Returns:
+        ``(index of the result, 1-based rank of its group)`` for every result, in the new order.
+    """
+    rank: dict[str, int] = {}
+    for article in articles:
+        rank.setdefault(article, len(rank) + 1)
+    order = sorted(range(len(articles)), key=lambda i: (rank[articles[i]], i))
+    return [(i, rank[articles[i]]) for i in order]
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TagFilter:
     """Which chunks may be ranked: those whose article has any / all of ``tags``.
@@ -1573,6 +1606,20 @@ class SearchableVersion:
     """The repository's host, which decides how a source link is built."""
     rules: tuple[str, ...] = ()
     """The library's ``context7.json`` rules (LIB-06), untrusted repository text."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class KnownVersions:
+    """A library's imported versions as the catalog lists them, active manifest or not (#605).
+
+    A search reads a ref that names no version as the one of these it names but for a leading
+    ``v``; failing that, its error names them.
+    """
+
+    versions: tuple[str, ...]
+    """Every imported ref, the most recently imported first."""
+    default: str | None
+    """The default version's ref; ``None`` while nothing is imported."""
 
 
 def source_link(version: SearchableVersion, article_path: str, anchor: str) -> str | None:
@@ -2114,6 +2161,33 @@ def rank_matches(candidates: Sequence[Candidate]) -> list[Candidate]:
         )
 
     return sorted(candidates, key=key)
+
+
+def named_library(name: str, candidates: Sequence[Candidate]) -> CatalogLibrary:
+    """Pick the one library a name means, where a tool wanted its ID (#573).
+
+    The name means a library when it is the only one at the best tier of ``name_match`` (an ID
+    or exact name beats a prefix, a prefix beats a part), or when it is the only match at all. A
+    match on the description alone never picks one of several libraries.
+
+    Args:
+        name: The name as the caller wrote it.
+        candidates: The libraries whose name matched, with how (``hits`` are not used).
+
+    Returns:
+        The library.
+
+    Raises:
+        UnknownLibraryNameError: No library matches.
+        AmbiguousLibraryNameError: Several match equally well; the error lists their IDs.
+    """
+    if not candidates:
+        raise UnknownLibraryNameError(name)
+    ranked = rank_matches(candidates)
+    best = [c for c in ranked if c.match is ranked[0].match]
+    if len(ranked) == 1 or (len(best) == 1 and best[0].match < NameMatch.DESCRIPTION):
+        return ranked[0].library
+    raise AmbiguousLibraryNameError(name, [c.library.id for c in ranked[:MAX_NAME_CANDIDATES]])
 
 
 def canonical_language(name: str) -> str:

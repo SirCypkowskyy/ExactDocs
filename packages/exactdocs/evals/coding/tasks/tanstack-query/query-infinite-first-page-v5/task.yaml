@@ -1,0 +1,26 @@
+title: An infinite query that starts at page 1
+project: tanstack-query
+version: v5.0.0
+environment: query-core-5.0.0
+pair: query-infinite-first-page
+other_version: v4.36.1
+other_from: query-infinite-first-page-v4
+api_since:
+  version: 5.0.0
+  released: '2023-10-17'
+files:
+- src/feed.ts
+prompt: |
+  The project uses `@tanstack/query-core` (TanStack Query's framework-agnostic core). Export `feedOptions(fetchPage): FeedOptions` from
+  `src/feed.ts`: the options of an infinite query for the feed (key `["feed"]`) whose
+  first page is page 1 and whose next page is the previous page's `next` (no next page
+  when it is `null`), ready for `client.fetchInfiniteQuery(...)` and
+  `new InfiniteQueryObserver(client, ...)`.
+forbidden:
+- api: a default pageParam in queryFn
+  pattern: pageParam\s*=
+  reason: TanStack Query 4 defaults the first page in `queryFn`; v5 requires `initialPageParam` in the
+    options (its types reject a query without it)
+notes: |
+  TanStack Query 4 gives the first page `pageParam` undefined (default it in
+  `queryFn`); v5 requires `initialPageParam`, which v4 does not know.

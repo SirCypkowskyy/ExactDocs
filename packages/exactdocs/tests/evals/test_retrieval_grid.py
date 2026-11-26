@@ -5,6 +5,7 @@ on the retrieval benchmark's tiny corpus.
 """
 
 import itertools
+from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,8 @@ from pydantic import ValidationError
 
 from exactdocs.ingestion.models import ChunkingConfig, parse_article
 from exactdocs.retrieval.adapters.driven.memory import HashEmbeddingModels
+from exactdocs.retrieval.models import EmbeddedTexts
+from exactdocs.retrieval.ports.driven import Embeddings
 from retrieval_bench_stand_ins import tiny_corpus
 from retrieval_eval.grid import (
     Cell,
@@ -23,7 +26,14 @@ from retrieval_eval.grid import (
     passages_of,
     window_spans,
 )
-from retrieval_eval.grid_cli import REPORT_NAME, GridReport, main
+from retrieval_eval.grid_cli import (
+    CACHE_SLICE,
+    REPORT_NAME,
+    CachedEmbeddings,
+    GridReport,
+    main,
+    page_block,
+)
 from retrieval_eval.ingestion import Article, measure
 from retrieval_eval.retrieval_bench import Budget
 
@@ -145,6 +155,88 @@ async def test_widened_hits_that_repeat_are_returned_once() -> None:
     assert len(answer.texts) == len(set(answer.texts))
 
 
+async def test_hits_grouped_by_article_come_back_with_their_neighbours_once_per_article() -> None:
+    cell = _cell(chunking="h6", expand="article")
+    guide = _passages(cell, ChunkingConfig(max_chars=None))
+    other = passages_of(
+        cell, "demo", "v1", parse_article("docs/other.md", "# Other\n\nInstall nothing.\n"),
+        ChunkingConfig(max_chars=None),
+    )  # fmt: skip
+    index = await PassageIndex.build(cell, [*guide, *other], None)
+    try:
+        answer = await index.answer("demo", "v1", "install from source")
+    finally:
+        index.close()
+
+    # one result per article, ranked by its best hit: the guide's subsection, then the other page
+    assert len(answer.texts) == 2
+    first = answer.texts[0]
+    # its hits with one chunk on either side, in article order, each once
+    assert first.index("## Install") < first.index("### From source")
+    assert first.count("### From source") == 1
+    assert "## Configure" in first  # the neighbour after the subsection
+    assert answer.texts[1] == other[0].chunk.content
+    with pytest.raises(ValidationError, match="heading chunking"):
+        _cell(window=32, expand="article")
+
+
+async def test_hits_grouped_by_article_without_neighbours_hold_only_the_hits() -> None:
+    cell = _cell(chunking="h6", expand="article", neighbours=0)
+    passages = _passages(cell, ChunkingConfig(max_chars=None))
+    index = await PassageIndex.build(cell, passages, None)
+    try:
+        answer = await index.answer("demo", "v1", "clone the repository and build the wheel")
+    finally:
+        index.close()
+
+    (text,) = answer.texts  # one article
+    assert "### From source" in text
+    assert "## Configure" not in text  # it matches nothing, and no neighbour is taken
+    for bad in ({"neighbours": 1}, {"expand": "article", "neighbours": -1}):
+        with pytest.raises(ValidationError, match="neighbours"):
+            _cell(**bad)
+
+
+async def test_cells_that_embed_the_same_texts_embed_them_once(tmp_path: Path) -> None:
+    counted = _Counting(
+        HashEmbeddingModels(size=16).bind(None, name="local:m", dimensions=None, batch_size=4)
+    )
+    cached = CachedEmbeddings(inner=counted, folder=tmp_path)
+    distinct = [f"text {i}" for i in range(CACHE_SLICE + 3)]
+    texts = [*distinct, *distinct[:10]]  # the same chunk in two versions
+
+    first = await cached.embed_documents(texts)
+    again = await CachedEmbeddings(inner=counted, folder=tmp_path).embed_documents(texts)
+
+    assert counted.texts == len(distinct)  # each once, and the second run read them back
+    assert first.vectors[-1] == first.vectors[9]
+    assert len(first.vectors) == len(texts)
+    assert again.vectors == first.vectors
+    assert again.input_tokens == first.input_tokens
+    assert (await cached.embed_query("q")).vectors == (await counted.embed_query("q")).vectors
+
+
+class _Counting:
+    """Implements ``Embeddings``: counts the texts embedded as documents."""
+
+    def __init__(self, inner: Embeddings) -> None:
+        self.inner, self.texts = inner, 0
+
+    @property
+    def name(self) -> str:
+        return self.inner.name
+
+    async def dimensions(self) -> int:
+        return await self.inner.dimensions()
+
+    async def embed_documents(self, texts: Sequence[str]) -> EmbeddedTexts:
+        self.texts += len(texts)
+        return await self.inner.embed_documents(texts)
+
+    async def embed_query(self, text: str) -> EmbeddedTexts:
+        return await self.inner.embed_query(text)
+
+
 def test_grep_matches_whole_words_keeps_context_and_ranks_by_terms() -> None:
     files = {
         "a.md": "one\ntwo\ninstall here\nthree\n",
@@ -179,6 +271,10 @@ def test_a_cell_is_either_an_app_configuration_or_an_eval_only_search() -> None:
     ):
         with pytest.raises(ValidationError):
             Cell.model_validate(bad)
+    # an app cell may measure ExactDocs' search before it grouped its results (#575)
+    assert Cell(name="b", app="bm25", group_by="chunk").group_by == "chunk"
+    with pytest.raises(ValidationError, match="group_by"):
+        _cell(group_by="chunk")
     with pytest.raises(ValidationError, match="twice"):
         Grid.model_validate({"defaults": {}, "cells": [{"app": "bm25"}, {"app": "bm25"}]})
     with pytest.raises(ValidationError, match="name no cell"):
@@ -198,6 +294,10 @@ def test_the_recorded_grid_holds_every_variant_and_baseline_the_issue_asks_for()
     assert any(c.prefix_indexed for c in grid.cells)
     assert any(c.expand == "parent" for c in grid.cells)
     assert any(c.search == "grep" for c in grid.cells)
+    # #575: grouping by article, for BM25 and hybrid search, each variant with its control
+    grouped = [c for c in grid.cells if c.expand == "article"]
+    assert {c.search for c in grouped} == {"bm25", "hybrid"}
+    assert all(c.against in cells for c in grouped)
     rag = [c for c in grid.cells if c.window is not None and c.search == "dense"]
     assert rag
     assert all(c.embedding == "BAAI/bge-small-en-v1.5" for c in rag)
@@ -244,6 +344,41 @@ def test_the_command_runs_the_grid_and_resumes_per_cell(tmp_path: Path) -> None:
     assert main([*run, "--fresh"]) == 0
     fresh = GridReport.model_validate_json((out / f"{REPORT_NAME}.json").read_text("utf-8"))
     assert fresh.resumed == []
+
+
+def test_a_variant_runs_with_its_control_and_is_tested_against_it(tmp_path: Path) -> None:
+    args = tiny_corpus(tmp_path)
+    grid = tmp_path / "matrix.yaml"
+    grid.write_text(
+        yaml.safe_dump({
+            "defaults": {"none": "bm25@default"},
+            "cells": [
+                {"app": "bm25"},
+                {"name": "own", "search": "bm25"},
+                {"name": "grouped", "search": "bm25", "expand": "article", "against": "own"},
+            ],
+        }),
+        encoding="utf-8",
+    )  # fmt: skip
+    out = tmp_path / "out"
+
+    assert main([*args, "--grid", str(grid), "--out", str(out), "--cells", "grouped"]) == 0
+
+    report = GridReport.model_validate_json((out / f"{REPORT_NAME}.json").read_text("utf-8"))
+    assert [r.configuration for r in report.bench.results] == ["bm25", "own", "grouped"]
+    versus = report.versus_control["grouped"]
+    assert versus.configuration == "own"
+    assert {"recall_at_1", "recall_at_1k_tokens", "recall_at_1k_tokens_cut"} <= set(versus.tests)
+    summary = (out / f"{REPORT_NAME}.md").read_text("utf-8")
+    assert "## Against each variant's control" in summary
+    assert "| `grouped` | `own` |" in summary
+    assert "## Within a token budget" in summary
+    block = page_block(report)  # what the retrieval page shows of it
+    assert "#### Within a token budget" in block
+    assert "#### Against each variant's control" in block
+    assert "By question kind" not in block
+    with pytest.raises(ValidationError, match="controls that name no cell"):
+        Grid.model_validate({"defaults": {}, "cells": [{"app": "bm25", "against": "nope"}]})
 
 
 def test_the_command_refuses_an_unknown_configuration(tmp_path: Path) -> None:

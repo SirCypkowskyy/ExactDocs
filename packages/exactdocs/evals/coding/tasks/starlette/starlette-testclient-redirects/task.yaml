@@ -1,0 +1,20 @@
+title: A test client that does not follow redirects
+project: starlette
+version: 0.27.0
+environment: starlette-0.27.0
+other_version: 0.52.1
+other_environment: starlette-0.52.1
+api_since:
+  version: 0.29.0
+  released: '2023-07-13'
+files:
+- app/support.py
+prompt: |
+  Implement `make_client(app)` in `app/support.py`: a Starlette `TestClient` for `app`
+  that does not follow redirects, so a test sees the redirect response itself (its
+  status and `location` header); every request made with it behaves that way without
+  passing an argument per request.
+notes: |
+  Starlette 0.29 added `TestClient(app, follow_redirects=False)`; 0.27's TestClient
+  does not take it (an unexpected argument), but the underlying httpx client's
+  `follow_redirects` attribute can be set.

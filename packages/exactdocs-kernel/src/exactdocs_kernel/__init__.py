@@ -5,11 +5,14 @@ Keep it small, stable and framework-free. It must never import ``exactdocs``.
 
 from exactdocs_kernel.clock import Clock, SystemClock
 from exactdocs_kernel.constants import (
+    CLAMPED,
     DEFAULT_LIMIT,
+    LIBRARY_ARGUMENT,
     LIBRARY_ID_PATTERN,
     MAX_CURSOR,
     MAX_LIMIT,
     MAX_NAME,
+    MAX_NAMED_VERSIONS,
     MAX_OFFSET,
     MAX_PATH,
     MAX_TAG_INPUT,
@@ -59,15 +62,20 @@ from exactdocs_kernel.pagination import (
     page_offset,
     paginate,
 )
+from exactdocs_kernel.paths import clean_path_prefix, inside
+from exactdocs_kernel.refs import name_versions, respelled, respelled_note
 from exactdocs_kernel.source_link import section_link
 from exactdocs_kernel.tags import normalize_tag
 
 __all__ = [
+    "CLAMPED",
     "DEFAULT_LIMIT",
+    "LIBRARY_ARGUMENT",
     "LIBRARY_ID_PATTERN",
     "MAX_CURSOR",
     "MAX_LIMIT",
     "MAX_NAME",
+    "MAX_NAMED_VERSIONS",
     "MAX_OFFSET",
     "MAX_PATH",
     "MAX_TAGS",
@@ -97,12 +105,15 @@ __all__ = [
     "SystemClock",
     "UnauthenticatedError",
     "ValidationError",
+    "clean_path_prefix",
     "decode_cursor",
     "decode_sort_cursor",
     "encode_cursor",
     "encode_sort_cursor",
+    "inside",
     "is_after",
     "like_pattern",
+    "name_versions",
     "normalize_tag",
     "page_offset",
     "paginate",
@@ -110,6 +121,8 @@ __all__ = [
     "proxy_failure",
     "redact_url",
     "resolve_outbound",
+    "respelled",
+    "respelled_note",
     "section_link",
     "sorted_page",
 ]

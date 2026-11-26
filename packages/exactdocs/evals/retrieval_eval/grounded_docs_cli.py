@@ -612,12 +612,20 @@ def _node_version(node: Path) -> str:
     ).stdout.strip()
 
 
-def npm_install(prefix: Path, package: str, version: str, integrity: str, *, offline: bool) -> Path:
+def npm_install(
+    prefix: Path,
+    package: str,
+    version: str,
+    integrity: str,
+    *,
+    offline: bool,
+    entry: str = "dist/index.js",
+) -> Path:
     """Install a pinned npm release into ``prefix``, or check the one there.
 
     The registry's integrity hash in the lock file must be ``integrity``: another release, or a
-    tarball that changed, is refused. Grounded Docs is installed this way, and the Context7 MCP
-    server of the agent benchmark's ``context7`` arm (#495).
+    tarball that changed, is refused. Grounded Docs is installed this way, the Context7 MCP
+    server of the agent benchmark's ``context7`` arm (#495), and the coding-agent CLIs (#497).
 
     Args:
         prefix: The folder ``npm install`` runs in, one per release.
@@ -625,16 +633,22 @@ def npm_install(prefix: Path, package: str, version: str, integrity: str, *, off
         version: Its pinned release.
         integrity: The registry's integrity hash of that release's tarball.
         offline: Install nothing; check what is there.
+        entry: The file returned, relative to the package's folder (``dist/index.js``), or to
+            ``prefix`` when it starts with ``node_modules/`` (a command under ``.bin``).
 
     Returns:
-        The package's entry point, ``dist/index.js``.
+        The package's entry point.
 
     Raises:
         RuntimeError: npm is missing, the install failed, it is not there offline, or the
             installed package is not the pinned release.
     """
-    entry = prefix / "node_modules" / package / "dist" / "index.js"
-    if not entry.exists():
+    found_entry = (
+        prefix / entry
+        if entry.startswith("node_modules/")
+        else prefix / "node_modules" / package / entry
+    )
+    if not found_entry.exists():
         npm = shutil.which("npm")
         if offline or npm is None:
             why = "--offline" if offline else "npm is not on PATH"
@@ -660,7 +674,7 @@ def npm_install(prefix: Path, package: str, version: str, integrity: str, *, off
             f"not {version} ({integrity})"
         )
         raise RuntimeError(message)
-    return entry
+    return found_entry
 
 
 def install(home: Path, *, offline: bool) -> NodeGroundedDocs:

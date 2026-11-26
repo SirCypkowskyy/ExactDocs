@@ -16,6 +16,11 @@ Feature: Version-pinned documentation search
     Then the response status is 404
     And the error code is "not_found"
 
+  Scenario: A version written without its leading v is that version, and the response says so
+    When a user searches "/fixture/docs-repo/1.4.0" for "retry_policy"
+    Then the response says it searched version "v1.4.0"
+    And the response notes that ref "1.4.0" was read as "v1.4.0"
+
   Scenario: A result carries its location
     When a user searches "/fixture/docs-repo/v1.4.0" for "retry_policy"
     Then each result has chunk ID, article path, heading path, position of total, previous and next chunk IDs, commit SHA and a source link to the section anchor
@@ -25,6 +30,12 @@ Feature: Version-pinned documentation search
     When a user searches "/fixture/docs-repo" for "retry_policy"
     Then the response says it searched version "v1.4.0"
     And each result has chunk ID, article path, heading path, position of total, previous and next chunk IDs, commit SHA and a source link to the section anchor
+
+  Scenario: The REST search keeps its results best first unless asked to group them
+    When a user searches "/fixture/docs-repo/v1.4.0" for "retry_policy max_retries backoff client"
+    Then the results are best first and none names a group
+    When a user searches "/fixture/docs-repo/v1.4.0" for "retry_policy max_retries backoff client" grouped by article
+    Then the same results come grouped by article, as the MCP search returns them
 
   Scenario: Search with an all-of tag filter
     When a user searches "token" in "/fixture/docs-repo/v1.4.0" with all of tags "api, auth"

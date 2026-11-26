@@ -1,0 +1,27 @@
+# Starlette 0.52.1 (PyPI, 2026-01-18) with httpx for TestClient, and Jinja2; requirements.txt
+# compiled from requirements.in with `uv pip compile --python-version 3.12 --exclude-newer
+# 2026-02-28 --generate-hashes`.
+ecosystem: python
+package: starlette
+version: 0.52.1
+released: 2026-01-18
+python: "3.12"
+forbidden:
+- api: max_body_size
+  pattern: '\bmax_body_size\b'
+  reason: added to `Starlette` and the routes in 1.6.0 (2026-08-08)
+- api: Request.send_early_hints
+  pattern: '\bsend_early_hints\b'
+  reason: added in 1.8.0 (2026-10-13)
+- api: GZipMiddleware(exclude_content_types=...)
+  pattern: '\bexclude_content_types\b'
+  reason: added in 1.5.0 (2026-08-08)
+- api: pre-RFC 9110 status names
+  pattern: '\bHTTP_(413_REQUEST_ENTITY_TOO_LARGE|416_REQUESTED_RANGE_NOT_SATISFIABLE|422_UNPROCESSABLE_ENTITY)\b'
+  reason: deprecated in 0.48.0 (2025-09-13; warns, warnings are errors here); use HTTP_413_CONTENT_TOO_LARGE, HTTP_416_RANGE_NOT_SATISFIABLE, HTTP_422_UNPROCESSABLE_CONTENT
+- api: on_startup / on_shutdown / on_event / add_event_handler
+  pattern: '\bon_(startup|shutdown)\b|\.on_event\(|\.add_event_handler\('
+  reason: deprecated in 0.26.0 (warns; warnings are errors here) and removed in 1.0.0; use `lifespan`
+- api: '@app.route / @app.websocket_route / @app.middleware / @app.exception_handler'
+  pattern: '@\w+\.(route|websocket_route|middleware|exception_handler)\('
+  reason: decorators deprecated in 0.23.0 (warn; warnings are errors here) and removed in 1.0.0

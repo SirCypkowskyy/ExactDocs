@@ -1,0 +1,21 @@
+title: Build a model from an object's attributes
+project: pydantic
+version: v2.5.3
+environment: pydantic-2.5.3
+pair: pydantic-from-attributes
+other_version: v1.10.22
+other_from: pydantic-from-attributes-v1
+api_since:
+  version: 2.0.0
+  released: '2023-06-30'
+files:
+- app/users.py
+prompt: |
+  In `app/users.py`, configure `UserOut` so that Pydantic can build it, and any subclass
+  of it, directly from the attributes of an arbitrary object such as a `UserRow`, and
+  implement `to_api(row)` with that: validate the row's attributes into a `UserOut`
+  rather than copying the fields one by one. `password_hash` must not be in the result.
+notes: |
+  Pydantic 1 reads attributes with `class Config: orm_mode = True` and
+  `UserOut.from_orm(row)`; Pydantic 2 with `ConfigDict(from_attributes=True)` and
+  `UserOut.model_validate(row)`, and `orm_mode` / `from_orm` are deprecated.

@@ -1,0 +1,18 @@
+title: Answer errors as JSON
+project: starlette
+version: 1.10.0
+environment: starlette-1.10.0
+other_version: 0.27.0
+api_since:
+  version: 1.0.0
+  released: '2026-03-22'
+files:
+- app/main.py
+prompt: |
+  In `app/main.py`, create the app with the two routes (`GET /items/{item_id:int}` to
+  `item`, `GET /boom` to `boom`) and make it answer errors as JSON: an `HTTPException`
+  answers with its status code and `{"error": <its detail>}`; any other exception
+  answers 500 with `{"error": "internal error"}`.
+notes: |
+  Starlette 0.x code registers handlers with `@app.exception_handler(...)` (deprecated
+  since 0.23); Starlette 1.0 removed the decorator: `exception_handlers={...}`.

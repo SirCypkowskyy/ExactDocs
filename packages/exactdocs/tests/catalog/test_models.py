@@ -224,6 +224,45 @@ def test_an_ambiguous_short_sha_is_a_validation_error() -> None:
         COMMITS.find_version(VersionRef("abc1234"))
 
 
+SPELLINGS = library(
+    version("1.10.0", sha="b", age_days=1),
+    version("0.27.0", sha="c", age_days=3),
+    version("v2.0.0", sha="d", age_days=2),
+    version("next", RefKind.BRANCH, sha="e"),
+)
+
+
+@pytest.mark.parametrize(
+    ("ref", "found"),
+    [
+        ("v1.10.0", "1.10.0"),  # #605: the tag has no v, the agent wrote one
+        ("V1.10.0", "1.10.0"),
+        ("2.0.0", "v2.0.0"),  # and the other way round
+        ("v2.0.0", None),  # imported as given: find_version answers, not this
+        ("v2.1.0", None),  # never another version
+        ("v1.10", None),
+        ("vnext", None),  # the letter counts only before a digit
+    ],
+)
+def test_a_ref_names_the_one_version_it_matches_but_for_a_leading_v(
+    ref: str, found: str | None
+) -> None:
+    result = SPELLINGS.respelled_version(VersionRef(ref))
+
+    assert (result.ref.value if result else None) == found
+    assert SPELLINGS.find_version(VersionRef(ref)) is None or found is None  # exact stays exact
+
+
+def test_a_ref_matching_two_spellings_names_neither() -> None:
+    both = library(version("1.0", sha="a"), version("V1.0", sha="b"))
+
+    assert both.respelled_version(VersionRef("v1.0")) is None
+
+
+def test_versions_are_listed_newest_first() -> None:
+    assert [v.ref.value for v in SPELLINGS.newest_first()] == ["next", "1.10.0", "v2.0.0", "0.27.0"]
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [
@@ -294,7 +333,35 @@ def test_close_paths_prefer_the_same_file_name_then_typos_and_stop_at_five() -> 
 
     assert len(found) == MAX_CLOSE_MATCHES
     assert close_paths("install.md", paths)[:2] == ["api/install.md", "docs/guide/install.md"]
-    assert close_paths("zzz/qqq.txt", paths) == []
+    assert close_paths("zzz/qqq.txt", []) == []
+
+
+def test_close_paths_name_the_paths_sharing_words_when_nothing_is_a_typo() -> None:
+    # #573: gpt-oss asked pydantic v1.10.22 for an example file the docs only include.
+    paths = [
+        "docs/index.md",
+        "docs/install.md",
+        "docs/usage/models.md",
+        "docs/usage/model_config.md",
+        "docs/usage/validators.md",
+        "docs/usage/exporting_models.md",
+    ]
+
+    found = close_paths("tmp_examples/models_orm_mode.md", paths)
+
+    assert found[0] == "docs/usage/models.md"  # the file name's word counts double
+    assert set(found) == {
+        "docs/usage/models.md",
+        "docs/usage/model_config.md",
+        "docs/usage/exporting_models.md",
+    }
+
+
+def test_close_paths_always_name_some_paths_of_a_version_that_has_any() -> None:
+    paths = ["guide/install.md", "api/client.md"]
+
+    assert sorted(close_paths("zzz/qqq.txt", paths)) == sorted(paths)
+    assert close_paths("zzz/qqq.txt", paths, limit=1) in (["guide/install.md"], ["api/client.md"])
 
 
 def test_close_paths_on_a_large_tree_stay_fast_and_bounded() -> None:

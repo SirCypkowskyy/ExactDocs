@@ -167,6 +167,8 @@ nav = [
       { "Context7" = "evals/context7.md" },
       { "Agent benchmark" = "evals/agent-bench.md" },
       { "Running the agent benchmark" = "evals/agent-bench-running.md" },
+      { "Version-pinned coding tasks" = "evals/coding-tasks.md" },
+      { "Coding-agent CLIs" = "evals/harnesses.md" },
     ] },
     { "Branching and releases" = [
       "releasing/index.md",

@@ -88,7 +88,8 @@ SOURCE_LINE: Final[re.Pattern[str]] = re.compile(r"\A> Source: (\S+)")
 PART_NOTICE: Final[str] = "> Showing chunks "
 """How a ``read_page`` answer that holds only part of the page says so."""
 SERVER_SECONDS: Final[float] = 120.0
-"""How long one tool call to an HTTP server may take."""
+"""How long a server may take to start its MCP session, and a tool call to answer: pydantic-ai's
+default of 5 seconds for the first is too short on a busy machine."""
 
 
 def context7_home() -> Path:
@@ -150,7 +151,9 @@ def context7_toolset(node: Path, entry: Path, key: str, log_file: Path) -> MCPTo
         env=context7_environment(key),
         log_file=log_file,
     )
-    return MCPToolset(transport, process_tool_call=recorded_call, id=CONTEXT7)
+    return MCPToolset(
+        transport, process_tool_call=recorded_call, id=CONTEXT7, init_timeout=SERVER_SECONDS
+    )
 
 
 def _text(result: ToolResult) -> str:
@@ -251,6 +254,7 @@ def grounded_docs_toolset(
         url,
         process_tool_call=grounded_docs_hook(corpus, libraries),
         id=GROUNDED_DOCS,
+        init_timeout=SERVER_SECONDS,
         read_timeout=SERVER_SECONDS,
     )
 
@@ -373,11 +377,11 @@ class ArmServers:
             self.described[label(arm, config)] = {**about, "tools": ", ".join(offered)}
             yield [server]
 
-    def _context7(self) -> tuple[MCPToolset[Recorder], dict[str, str]]:
-        """Install the pinned Context7 MCP server (once) and build its toolset.
+    def context7_installed(self) -> tuple[Path, Path, str, dict[str, str]]:
+        """Install the pinned Context7 MCP server (once).
 
         Returns:
-            The toolset and what it is.
+            ``node``, the package's entry point, the API key, and what it is.
 
         Raises:
             RuntimeError: No API key, no Node.js, or the install failed.
@@ -395,19 +399,28 @@ class ArmServers:
             offline=False,
         )
         self.work_dir.mkdir(parents=True, exist_ok=True)
-        toolset = context7_toolset(node, entry, key, self.work_dir / "server-context7.log")
         api = os.environ.get(CONTEXT7_URL_VARIABLE) or API_BASE
         about = {
-            "server": f"{CONTEXT7_PACKAGE} {CONTEXT7_VERSION} (stdio)",
+            "server": f"{CONTEXT7_PACKAGE} {CONTEXT7_VERSION}",
             "integrity": CONTEXT7_INTEGRITY,
             "api": safe_url(api),
             "api_key": f"{API_KEY_VARIABLE} set",
         }
-        return toolset, about
+        return node, entry, key, about
 
-    async def _grounded_docs(
+    def _context7(self) -> tuple[MCPToolset[Recorder], dict[str, str]]:
+        """Install the pinned Context7 MCP server (once) and build its toolset.
+
+        Returns:
+            The toolset and what it is.
+        """
+        node, entry, key, about = self.context7_installed()
+        toolset = context7_toolset(node, entry, key, self.work_dir / "server-context7.log")
+        return toolset, {**about, "server": f"{about['server']} (stdio)"}
+
+    async def grounded_docs_served(
         self, stack: contextlib.AsyncExitStack, config: RetrievalConfig
-    ) -> tuple[MCPToolset[Recorder], dict[str, str]]:
+    ) -> tuple[str, Path, dict[str, str]]:
         """Index the asked projects for a Grounded Docs configuration and start its server.
 
         Args:
@@ -415,7 +428,7 @@ class ArmServers:
             config: The configuration (``grounded_docs_config``).
 
         Returns:
-            The toolset (not entered) and what it is.
+            The server's MCP URL (on loopback), the corpus folder it indexed and what it is.
         """
         configuration = next(c for c in grounded_docs.CONFIGURATIONS if c.name == config.name)
         home = self.grounded_home.resolve()
@@ -436,8 +449,6 @@ class ArmServers:
         url = await stack.enter_async_context(
             tool.listening(ready.store, {**ready.variables, **READ_ONLY})
         )
-        libraries = {p.id: p.library for p in self.projects}
-        toolset = grounded_docs_toolset(url, home / "corpus", libraries)
         about = {
             "server": f"{grounded_docs.PACKAGE} {grounded_docs.VERSION} (read-only, HTTP)",
             "integrity": grounded_docs.INTEGRITY,
@@ -448,4 +459,20 @@ class ArmServers:
             ),
             **tool.describe(),
         }
-        return toolset, about
+        return url, home / "corpus", about
+
+    async def _grounded_docs(
+        self, stack: contextlib.AsyncExitStack, config: RetrievalConfig
+    ) -> tuple[MCPToolset[Recorder], dict[str, str]]:
+        """Index the asked projects for a Grounded Docs configuration and build its toolset.
+
+        Args:
+            stack: Holds the embedding endpoint and the server for the block.
+            config: The configuration (``grounded_docs_config``).
+
+        Returns:
+            The toolset (not entered) and what it is.
+        """
+        url, corpus, about = await self.grounded_docs_served(stack, config)
+        libraries = {p.id: p.library for p in self.projects}
+        return grounded_docs_toolset(url, corpus, libraries), about

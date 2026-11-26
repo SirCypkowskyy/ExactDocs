@@ -20,6 +20,7 @@ from retrieval_eval.dataset import Answer, CaseInfo, Hit, Question
 from retrieval_eval.golden import fetch, load_corpus, load_golden
 from retrieval_eval.ingestion_cli import CONFIGURATIONS
 from retrieval_eval.retrieval_bench import (
+    TOKEN_BUDGETS,
     Budget,
     ConfigResult,
     Row,
@@ -148,6 +149,36 @@ def step_metrics(context: Context) -> None:
         assert m.usd_per_question >= 0
     hyde = next(r for r in context.ran if r.configuration == "hyde:hosted")
     assert hyde.metrics.usd_per_question > 0  # the priced stand-in reached the ledger
+
+
+@then(
+    "each configuration that ran reports the context it returned per question and recall within "
+    "the first 1,000, 2,000 and 4,000 tokens of it"
+)
+def step_budgets(context: Context) -> None:
+    for result in context.ran:
+        m = result.metrics
+        assert m.context_tokens_per_question is not None, result.configuration
+        assert m.context_tokens_per_question > 0
+        within = [getattr(m, name) for name in TOKEN_BUDGETS]
+        assert all(v is not None for v in within), result.configuration
+        assert within == sorted(within)  # a larger budget holds what a smaller one does
+        assert all(row.context_tokens is not None for row in result.rows)
+
+
+@then("each is tested against its budget's default")
+def step_budget_tests(context: Context) -> None:
+    tested = [r.versus_default for r in context.ran if r.versus_default is not None]
+    assert tested
+    for versus in tested:
+        assert set(TOKEN_BUDGETS) <= set(versus.tests)
+
+
+@then("the summary shows recall within each budget")
+def step_budget_summary(context: Context) -> None:
+    summary = markdown(context.report)
+    assert "## Within a token budget" in summary
+    assert "| within 1,000 | within 2,000 | within 4,000 |" in summary
 
 
 @then("each metric is broken down by question kind and by project")

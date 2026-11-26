@@ -354,6 +354,28 @@ HOST_TRUSTED: Final[str] = "exactdocs.host_trusted"
 RESOURCE_NOT_FOUND: Final[int] = -32002
 """JSON-RPC error code MCP uses for a resource that does not exist."""
 
+# ---------------------------------------------------------------- mcp_arguments
+LIBRARY_ARGUMENTS: Final[frozenset[str]] = frozenset({"library", "libraryId"})
+"""Tool arguments that name a library: a name given there is resolved to the library's ID."""
+VERSIONED_ID: Final[re.Pattern[str]] = re.compile(r"(/[^/]+/[^/]+)/(.+)")
+"""A library ID with its version after it, context7's ``/owner/repo/v1.2.0``."""
+WHOLE_NUMBER: Final[re.Pattern[str]] = re.compile(r"\s*[+-]?\d{1,18}\s*")
+"""A number sent as text (``"10"``): read as one before it is clamped."""
+NOTES: Final[str] = "notes"
+"""Key of the notes a lenient call adds to a tool's structured result."""
+NOTES_SCHEMA: Final[Mapping[str, object]] = MappingProxyType(
+    {
+        "description": (
+            "What the server changed in the call's arguments before answering: a number clamped "
+            "to its range, a library name resolved to its ID, a ref read as the one imported "
+            "version it names but for a leading v. Absent when nothing was changed."
+        ),
+        "items": {"type": "string"},
+        "type": "array",
+    }
+)
+"""The ``notes`` property every structured tool result may carry (#573)."""
+
 # ---------------------------------------------------------------- mcp_config
 CLIENTS: Final[tuple[str, ...]] = ("claude", "claude-desktop", "cursor", "vscode", "codex")
 """MCP clients ``exactdocs mcp-config`` writes a configuration for."""

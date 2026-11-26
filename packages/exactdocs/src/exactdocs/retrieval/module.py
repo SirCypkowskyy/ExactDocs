@@ -42,6 +42,7 @@ from exactdocs.retrieval.ports.driven import (
     InstructionFiles,
     Libraries,
     LibraryModes,
+    LibraryVersions,
     ModelFactory,
     ModelRoles,
     NativeHybrid,
@@ -99,6 +100,7 @@ from exactdocs.retrieval.ports.driving import (
     RebuildSearchIndex,
     RemoveChunks,
     ResolveLibraryId,
+    ResolveLibraryName,
     RetagArticles,
     SaveProvider,
     SearchAllLibraries,
@@ -162,6 +164,7 @@ from exactdocs.retrieval.use_cases import (
     RemoveChunksUseCase,
     Reranking,
     ResolveLibraryIdUseCase,
+    ResolveLibraryNameUseCase,
     RetagArticlesUseCase,
     RetrievalModes,
     SaveProviderUseCase,
@@ -316,6 +319,8 @@ class RetrievalModule:
     """An article's heading tree with chunk IDs (MCP, REST, and the agentic mode)."""
     resolve_library_id: ResolveLibraryId
     """Libraries matching a name (``resolve-library-id``)."""
+    resolve_library_name: ResolveLibraryName
+    """The one library a name means, for a tool given a name instead of an ID (#573)."""
     query_docs: QueryDocs
     """Whole chunks of one version within a size budget (``query-docs``)."""
     discard_pending_chunks: DiscardPendingChunks
@@ -411,6 +416,7 @@ class RetrievalModule:
         pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
         renames: RenamedPaths | None = None,
         suggestions: ArticleSuggestions | None = None,
+        known_versions: LibraryVersions | None = None,
         clock: Clock | None = None,
         query_docs_token_budget: int = DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
         tracer: SearchTracer | None = None,
@@ -482,7 +488,11 @@ class RetrievalModule:
             pipelines: Retrieval modes beside ``bm25``; an entry replaces the built-in pipeline
                 of its mode (tests).
             renames: Finds where a stale chunk's article went, for ``stale_chunk`` errors.
-            suggestions: Finds close article paths, for an outline of a path that is missing.
+            suggestions: Finds close article paths, for an outline of a path that is missing
+                and a stale chunk whose article is gone.
+            known_versions: Every library's imported versions: a ref with or without a leading
+                ``v`` finds its version, and a ref that names none is told them (#605). Without
+                it only the exact ref answers.
             clock: The time; the system clock without it.
             query_docs_token_budget: Size budget of a ``query-docs`` answer, in estimated tokens.
             tracer: Observes every search and its stages; nothing is recorded without it.
@@ -665,7 +675,12 @@ class RetrievalModule:
         )
         return cls(
             search_docs=SearchDocsUseCase(
-                versions=searchable, modes=modes, chunks=chunks, tracer=tracer, access=access
+                versions=searchable,
+                known=known_versions,
+                modes=modes,
+                chunks=chunks,
+                tracer=tracer,
+                access=access,
             ),
             search_all_libraries=SearchAllLibrariesUseCase(
                 defaults=defaults,
@@ -702,10 +717,15 @@ class RetrievalModule:
                 manifests=manifests,
                 chunks=chunks,
                 renames=renames,
+                suggestions=suggestions,
                 access=access,
             ),
             article_outline=ArticleOutlineUseCase(
-                versions=searchable, chunks=chunks, suggestions=suggestions, access=access
+                versions=searchable,
+                known=known_versions,
+                chunks=chunks,
+                suggestions=suggestions,
+                access=access,
             ),
             resolve_library_id=ResolveLibraryIdUseCase(
                 libraries=libraries,
@@ -715,8 +735,10 @@ class RetrievalModule:
                 tracer=tracer,
                 access=access,
             ),
+            resolve_library_name=ResolveLibraryNameUseCase(libraries=libraries, access=access),
             query_docs=QueryDocsUseCase(
                 versions=searchable,
+                known=known_versions,
                 modes=modes,
                 chunks=chunks,
                 token_budget=query_docs_token_budget,

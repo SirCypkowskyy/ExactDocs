@@ -49,9 +49,9 @@ It runs on your laptop or your own server, so private docs stay on your network.
 library IDs match context7's, so an agent already set up for context7 only needs a new URL.
 
 > [!NOTE]
-> The newest release is **v0.2.0** ([PyPI](https://pypi.org/project/exactdocs/), ghcr.io). This
-> README describes the `develop` branch. AI retrieval, PostgreSQL, user accounts and sign-in,
-> library sharing, webhooks, the sources file and the newer CLI commands ship in the next release.
+> The newest release is **v0.6.0** ([PyPI](https://pypi.org/project/exactdocs/), ghcr.io,
+> [release notes](https://github.com/SirCypkowskyy/ExactDocs/releases/tag/v0.6.0)). This README
+> describes the `develop` branch, which can be ahead of the release.
 
 ## Why ExactDocs
 
@@ -189,14 +189,15 @@ of failing. Articles are cut at their headings, never inside a code block or a t
 
 ExactDocs is measured on a [golden set](docs/benchmark/golden-set.md) of 321 questions about the
 docs of Starlette, Pydantic, TanStack Query, Zod and Electron, at three pinned versions each. With
-no model at all, BM25 puts a section that answers in the top 5 for 87.6% of the 267 answerable
-questions, at 52 ms p95. Hybrid search on a small local embedding model (bge-small) reaches up
-to 91.0%. Hosted retrieval models have not run yet. In the first run of the
+no model at all, BM25 puts a section that answers first for 70.4% of the 267 answerable
+questions and in the top 5 for 91.0%, at 133 ms p95 on 4 shared CPUs. Hybrid search on a small
+local embedding model (bge-small) reaches 76.0% and 92.5%. Hosted retrieval models have not run
+yet. In the
 [agent benchmark](docs/benchmark/agent.md) (60 questions, two open-weight models on Ollama Cloud,
-an LLM judge not yet checked against people), an agent with the ExactDocs MCP tools answered 43%
-(`gpt-oss:120b`) and 85% (`kimi-k3`) of the questions right, against 13% and 33% from memory, and
-none of its answers held only for another version. [Benchmark](docs/benchmark/index.md) has the
-method, every table and the known weak spots.
+an LLM judge not yet checked against people), an agent with the ExactDocs MCP tools answered 40%
+(`gpt-oss:120b`) and 83% (`kimi-k3`) of the questions right, against 13% and 33% from memory, and
+2 of its 120 answers held only for another version, against 20 from memory.
+[Benchmark](docs/benchmark/index.md) has the method, every table and the known weak spots.
 
 ## How it works
 
@@ -214,9 +215,9 @@ checks, upgrades, backups, PostgreSQL, Supabase and observability, and
 
 ## Roadmap
 
-v0.2.0 (MVP-1) has the main loop for one admin with no external services: import from any git
-URL, heading-based chunking, BM25 pinned to a version, the web UI and the MCP tools. `develop` adds
-everything this README lists beyond that. Later: `llms.txt` and website crawling, docs resolved
+v0.6.0, the first public release, has everything this README describes: version-pinned import and
+search, hybrid, vector and agentic retrieval, PostgreSQL, user accounts with sign-in and library
+roles, webhooks, the sources file and the CLI. Later: `llms.txt` and website crawling, docs resolved
 from package registries and lockfiles, prebuilt index snapshots, and AsciiDoc and notebooks. The
 [user stories](docs/user-stories.md) and the [delivery plan](docs/plan/index.md) have the details.
 

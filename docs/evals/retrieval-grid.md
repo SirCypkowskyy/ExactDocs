@@ -43,6 +43,12 @@ A cell is one of two kinds:
 An app cell is a configuration of the retrieval benchmark (`bm25`, `hybrid:bge-base-en-v1.5`,
 `bm25+ce`, `hybrid:hosted`, ...). Hosted ones run only with `--allow-providers`.
 
+ExactDocs' search groups its results by article (#575), and an app cell measures it so. An app
+cell with `group_by: chunk` (and a `name` of its own, such as `bm25@default+by-chunk`) measures
+the search before it grouped them, one chunk per result: the control of `bm25@default` and
+`hybrid:bge-small-en-v1.5@default` (`against`). A cell kept from before #575 is not told apart by
+its key: run it again (`--fresh`, or delete its file in `<out>/cells/`).
+
 ### Eval-only cells
 
 The grid cuts, indexes and searches the pinned versions itself, in process, and scores the text it
@@ -55,7 +61,9 @@ returns. Settings:
 | `search` | `bm25`, `dense`, `hybrid` or `grep` (below) |
 | `prefix_indexed` / `prefix_embedded` | put `title > heading > path` in front of the text indexed for BM25, or of the text embedded |
 | `expand: parent` | return each hit's parent section with its subsections instead of the hit |
+| `expand: article`, `neighbours` | group the top 10 hits by article, as Grounded Docs does (#575) |
 | `embedding` | a local model pulled with `exactdocs models pull` |
+| `against` | the cell this one is a variant of, its control (#575) |
 
 - **Windows** ignore headings, code blocks and tables. A window's heading path is the one it
   starts in.
@@ -67,9 +75,23 @@ returns. Settings:
     - `grep`: the baseline below.
 - **Prefixes**: the text returned is never prefixed. ExactDocs' own index already weights the
   heading path in its own columns; the prefix adds the title and puts the path in the text.
+  ExactDocs' own vector index already embeds the title and the heading path in front of each chunk
+  (embedding input format 1), so `prefix_embedded` is the eval-only form of what it ships.
 - **`expand: parent`**: a top-level section widens to itself, and a widened text returned twice is
   returned once.
+- **`expand: article`**: each article is one result, ranked by its best hit, holding its hits and
+  the `neighbours` chunks on either side of each (1 when not given, `ARTICLE_NEIGHBOURS`; 0 for the
+  hits alone), in article order, each chunk once. Heading chunkings only.
 - **`embedding`**: a cell whose model is not pulled is reported unavailable, with the command.
+- **`against`**: the report also tests the variant against its control, case by case, on recall@k,
+  MRR, nDCG@10 and recall within each token budget
+  ([Within a token budget](retrieval-benchmark.md#within-a-token-budget)). It changes nothing the
+  cell returns, and running a variant with `--cells` runs its control too.
+- **Embeddings are kept.** The grid embeds each distinct text once (a chunk that is the same in
+  several pinned versions is one text) and keeps every slice of 256 embedded texts in
+  `<out>/embeddings/`, under a hash of the model and the texts. A cell whose texts were embedded
+  before reads them back, and a cell interrupted while embedding takes up where it stopped. A
+  cell's index cost still counts the seconds embedding its texts took the first time.
 
 ### The control
 
@@ -102,6 +124,13 @@ The report is `<out>/retrieval-grid.json` and `.md` (default `reports/evals/grid
   where windows cut code blocks, tables and lists.
     - Coverage and lost characters say little of windows (they start mid-section and overlap), so
       the summary shows the sections held instead.
+- `versus_control`: per variant that names a control (`against`), the paired tests against it,
+  shown under *Against each variant's control*.
+- Every cell also reports recall within 1,000, 2,000 and 4,000 tokens, under *Within a token
+  budget*: whole results for every cell, and cut at the budget for the cells scored from text.
+- `just bench-pages` shows the recorded runs of the rank-1 cells
+  (`results/retrieval-grid-rank1.json`, #575) and of the app cells grouped by article and not
+  (`results/retrieval-grid-grouped.json`) on [Retrieval results](../benchmark/retrieval.md).
 
 !!! note "Wrong versions in text-scored cells"
     A text-scored cell searches only the version asked. A result the text scorer places only in

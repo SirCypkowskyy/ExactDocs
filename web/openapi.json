@@ -7556,6 +7556,17 @@
               "title": "Mode"
             },
             "description": "`bm25`, `vector`, `hybrid`, `hybrid_hyde` or `agentic`, if available (422 `mode_unavailable` otherwise). Default: the library's mode, else the instance's, else the best one configured."
+          },
+          {
+            "name": "group_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ResultGrouping",
+              "description": "`chunk` (default here): the results best first. `article`: the same results grouped by article, as MCP's `search_docs` returns them (each result's `group`).",
+              "default": "chunk"
+            },
+            "description": "`chunk` (default here): the results best first. `article`: the same results grouped by article, as MCP's `search_docs` returns them (each result's `group`)."
           }
         ],
         "responses": {
@@ -7747,6 +7758,17 @@
               "title": "Mode"
             },
             "description": "`bm25` (default), `vector` or `hybrid`; the vector modes need an embedding model (422 `mode_unavailable` otherwise)."
+          },
+          {
+            "name": "group_by",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ResultGrouping",
+              "description": "`chunk` (default here): the results best first. `article`: the same results grouped by library and article, as MCP's `search_all_docs` returns them.",
+              "default": "chunk"
+            },
+            "description": "`chunk` (default here): the results best first. `article`: the same results grouped by library and article, as MCP's `search_all_docs` returns them."
           }
         ],
         "responses": {
@@ -14337,6 +14359,14 @@
             "type": "string",
             "title": "Content",
             "description": "The article's Markdown, verbatim as imported."
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "How the request was read where it differs from what was sent: a ref read as the one\nimported version it names but for a leading `v`. Absent when it was read as sent."
           }
         },
         "additionalProperties": false,
@@ -14412,6 +14442,14 @@
             "type": "integer",
             "title": "Total",
             "description": "How many articles match the filters (`path_prefix`, `tags`, `q`), across every page."
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "How the request was read where it differs from what was sent: a ref read as the one\nimported version it names but for a leading `v`. Absent when it was read as sent."
           }
         },
         "additionalProperties": false,
@@ -14498,6 +14536,14 @@
             "type": "array",
             "title": "Sections",
             "description": "The top-level headings, in document order."
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "How the request was read where it differs from what was sent: a ref read as the one\nimported version it names but for a leading `v`. Absent when it was read as sent."
           }
         },
         "additionalProperties": false,
@@ -14902,6 +14948,14 @@
             "type": "integer",
             "title": "Omitted",
             "description": "Matching chunks that did not fit the size budget."
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "How the request was read where it differs from what was sent: a ref read as the one\nimported version it names but for a leading `v`. Absent when it was read as sent."
           }
         },
         "type": "object",
@@ -17917,6 +17971,18 @@
             "title": "Explored Path",
             "description": "Model output, untrusted: `agentic`: the read calls the LLM made up to the one that reached this chunk's article, in order, e.g. `search_docs(retry)`, `article_outline(guide/resilience.md)` (at most 50; each argument is the model's, control characters removed, at most 120 characters); empty for the other modes."
           },
+          "group": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group",
+            "description": "Grouped by article (`group_by` `article`): the 1-based rank of this result's article.\nAn article's results come together, best first, and its group takes the place of its best\nresult. Null when the results are not grouped."
+          },
           "library": {
             "type": "string",
             "title": "Library",
@@ -20091,6 +20157,14 @@
             "type": "string",
             "title": "Library",
             "description": "Library ID, `/owner/repo`."
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "How the request was read where it differs from what was sent: a ref read as the one\nimported version it names but for a leading `v`. Absent when it was read as sent."
           }
         },
         "additionalProperties": false,
@@ -20105,6 +20179,15 @@
         ],
         "title": "ResolvedVersion",
         "description": "The version an ID resolved to; always states which one was used."
+      },
+      "ResultGrouping": {
+        "type": "string",
+        "enum": [
+          "article",
+          "chunk"
+        ],
+        "title": "ResultGrouping",
+        "description": "How a search orders the results it returns."
       },
       "RetrievalMode": {
         "type": "string",
@@ -20360,7 +20443,7 @@
             },
             "type": "array",
             "title": "Results",
-            "description": "The results, best first, each naming its library and version."
+            "description": "The results, best first or grouped by library and article (`group`), each naming its\nlibrary and version."
           }
         },
         "additionalProperties": false,
@@ -20438,7 +20521,15 @@
             },
             "type": "array",
             "title": "Results",
-            "description": "The results, best first; empty when nothing matched."
+            "description": "The results, best first, or grouped by article (`group`); empty when nothing matched."
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "How the request was read where it differs from what was sent: a ref read as the one\nimported version it names but for a leading `v`. Absent when it was read as sent."
           }
         },
         "additionalProperties": false,
@@ -20579,6 +20670,18 @@
             "type": "array",
             "title": "Explored Path",
             "description": "Model output, untrusted: `agentic`: the read calls the LLM made up to the one that reached this chunk's article, in order, e.g. `search_docs(retry)`, `article_outline(guide/resilience.md)` (at most 50; each argument is the model's, control characters removed, at most 120 characters); empty for the other modes."
+          },
+          "group": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Group",
+            "description": "Grouped by article (`group_by` `article`): the 1-based rank of this result's article.\nAn article's results come together, best first, and its group takes the place of its best\nresult. Null when the results are not grouped."
           }
         },
         "additionalProperties": false,
@@ -21407,6 +21510,14 @@
             "type": "boolean",
             "title": "Truncated",
             "description": "True when the version has more tags than are listed."
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "How the request was read where it differs from what was sent: a ref read as the one\nimported version it names but for a leading `v`. Absent when it was read as sent."
           }
         },
         "additionalProperties": false,

@@ -1,0 +1,20 @@
+title: Hash a query key the way the cache does
+project: tanstack-query
+version: v5.0.0
+environment: query-core-5.0.0
+pair: query-key-hash
+other_version: v4.36.1
+other_from: query-key-hash-v4
+api_since:
+  version: 5.0.0
+  released: '2023-10-17'
+files:
+- src/keys.ts
+prompt: |
+  The project uses `@tanstack/query-core` (TanStack Query's framework-agnostic core). Implement `cacheIdOf(queryKey)` in `src/keys.ts`: the
+  string TanStack Query itself identifies a query key by in its cache (a cached
+  query's `queryHash`), computed with the library's own exported hashing function, not
+  reimplemented.
+notes: |
+  TanStack Query 4 exports the key hash function as `hashQueryKey`; v5 renamed it
+  `hashKey`. Importing the other name fails when the module loads.

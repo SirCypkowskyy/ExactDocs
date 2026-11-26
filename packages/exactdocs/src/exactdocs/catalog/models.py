@@ -1,10 +1,12 @@
 """Catalog entities and value objects. Pure Python: no frameworks, no I/O."""
 
 import hashlib
+import heapq
+import re
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from difflib import get_close_matches
+from difflib import SequenceMatcher, get_close_matches
 from enum import StrEnum
 from typing import Any, NewType, Self
 
@@ -25,6 +27,7 @@ from exactdocs.catalog.constants import (
     MAX_INSTRUCTION_FILES,
     MAX_LOGO_BYTES,
     MAX_SIMILARITY,
+    MIN_PLURAL_WORD,
 )
 from exactdocs.catalog.errors import (
     AmbiguousCommitError,
@@ -47,7 +50,7 @@ from exactdocs.catalog.errors import (
     RenameLinkMismatchError,
     SelfRenameError,
 )
-from exactdocs_kernel import MAX_TAG_LENGTH, MAX_TAGS, normalize_tag
+from exactdocs_kernel import MAX_TAG_LENGTH, MAX_TAGS, normalize_tag, respelled
 
 
 @dataclass(frozen=True, slots=True)  # conventions: allow-positional -- one-field value object
@@ -431,6 +434,31 @@ class Library:
         if len({v.commit_sha for v in matches}) > 1:  # refs of one commit are not ambiguous
             raise AmbiguousCommitError(prefix)
         return min(matches, key=lambda v: v.ref.value) if matches else None
+
+    def respelled_version(self, ref: VersionRef) -> Version | None:
+        """Find the one version ``ref`` names but for a leading ``v`` (#605): ``v1.2`` for ``1.2``.
+
+        Only reader-facing lookups ask for it, after ``find_version`` found nothing; the version
+        is never a nearby one (``exactdocs_kernel.respelled``).
+
+        Args:
+            ref: The ref asked for.
+
+        Returns:
+            The version; ``None`` when ``ref`` itself is imported, when no version matches, or
+            when several do.
+        """
+        other = respelled(ref.value, (v.ref.value for v in self.versions))
+        return next((v for v in self.versions if v.ref.value == other), None)
+
+    def newest_first(self) -> list[Version]:
+        """List the imported versions, the most recently imported first (ties by ref).
+
+        Returns:
+            Every version, newest first.
+        """
+        by_ref = sorted(self.versions, key=lambda v: v.ref.value)
+        return sorted(by_ref, key=lambda v: v.imported_at, reverse=True)
 
 
 def _stable_semver(tag: str) -> tuple[int, int, int] | None:
@@ -918,7 +946,12 @@ class GarbageCollected:
 
 
 def close_paths(wanted: str, paths: Sequence[str], limit: int = MAX_CLOSE_MATCHES) -> list[str]:
-    """Paths an agent may mean by ``wanted``: the same file name elsewhere, then near typos.
+    """The paths of a version closest to ``wanted``, which it does not have; never empty for none.
+
+    In order: the same file name elsewhere, near typos, then the paths sharing the most words with
+    it (its file name's words count double), then, when no word is shared, the paths most like it
+    character by character. A version with any path always gets some (#573: an agent that guessed
+    a path learns what the version has instead of only that the guess is wrong).
 
     Args:
         wanted: The path asked for.
@@ -926,14 +959,91 @@ def close_paths(wanted: str, paths: Sequence[str], limit: int = MAX_CLOSE_MATCHE
         limit: The most paths returned.
 
     Returns:
-        The close paths, best first, without repeats.
+        The closest paths, best first, without repeats; empty only when ``paths`` is.
     """
     name = wanted.rsplit("/", 1)[-1]
     same_name = sorted(p for p in paths if p.rsplit("/", 1)[-1] == name)
     # A typo changes a path a little: skip the (slow) fuzzy match for paths of another size.
     near = [p for p in paths if abs(len(p) - len(wanted)) <= max(3, len(wanted) * 3 // 10)]
     typos = get_close_matches(wanted, near, n=limit, cutoff=0.7)
-    return list(dict.fromkeys([*same_name, *typos]))[:limit]
+    found = list(dict.fromkeys([*same_name, *typos]))
+    if len(found) < limit:
+        found += [p for p in _sharing_words(wanted, paths, limit) if p not in found]
+    if not found:  # no word in common: the paths most like it, character by character
+        found = heapq.nlargest(
+            limit, sorted(paths), key=lambda p: SequenceMatcher(None, wanted, p).quick_ratio()
+        )
+    return found[:limit]
+
+
+def _path_words(path: str) -> tuple[frozenset[str], frozenset[str]]:
+    """Split a path into its words, without the file extension, a plural ``s`` dropped.
+
+    ``models_orm_mode.md`` and ``docs/usage/model.md`` share ``model``; case, ``_``, ``-``, ``.``
+    and camelCase all split words.
+
+    Args:
+        path: A repository path.
+
+    Returns:
+        The words of the whole path and those of its file name.
+    """
+
+    def words(text: str) -> frozenset[str]:
+        """Return the distinct normalized words of a text.
+
+        Args:
+            text: Part of a path.
+
+        Returns:
+            Its words, lower case, a trailing ``s`` dropped from words of
+            ``MIN_PLURAL_WORD`` letters or more.
+        """
+        split = re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", text)
+        lowered = (w.lower() for w in split)
+        return frozenset(
+            w[:-1] if len(w) >= MIN_PLURAL_WORD and w.endswith("s") else w for w in lowered
+        )
+
+    stem = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+    folder = path.rsplit("/", 1)[0] if "/" in path else ""
+    name = words(stem)
+    return words(folder) | name, name
+
+
+def _sharing_words(wanted: str, paths: Sequence[str], limit: int) -> list[str]:
+    """Rank the paths that share a word with ``wanted``: most shared first (file name's double).
+
+    Ties go to the more similar file name, then to the shorter, then to the smaller path.
+
+    Args:
+        wanted: The path asked for.
+        paths: The paths that exist.
+        limit: The most paths returned.
+
+    Returns:
+        At most ``limit`` paths that share a word with it, best first.
+    """
+    words, name_words = _path_words(wanted)
+    if not words:
+        return []
+    stem = wanted.rsplit("/", 1)[-1]
+    scored: list[tuple[int, str]] = []
+    for path in paths:
+        theirs, their_name = _path_words(path)
+        shared = len(words & theirs) + len(name_words & their_name)
+        if shared:
+            scored.append((shared, path))
+    best = heapq.nlargest(limit * 4, scored, key=lambda s: (s[0], -len(s[1])))
+    best.sort(
+        key=lambda s: (
+            -s[0],
+            -SequenceMatcher(None, stem, s[1].rsplit("/", 1)[-1]).ratio(),
+            len(s[1]),
+            s[1],
+        )
+    )
+    return [path for _, path in best[:limit]]
 
 
 class Access(StrEnum):

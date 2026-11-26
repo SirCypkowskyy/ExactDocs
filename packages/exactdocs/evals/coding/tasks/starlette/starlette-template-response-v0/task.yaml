@@ -1,0 +1,21 @@
+title: Render a template
+project: starlette
+version: 0.27.0
+environment: starlette-0.27.0
+pair: starlette-template-response
+other_version: 1.10.0
+other_from: starlette-template-response-v1
+api_since:
+  version: 0.29.0
+  released: '2023-07-13'
+files:
+- app/main.py
+prompt: |
+  Add a route `GET /hello/{name}`, named `greet`, to the app in `app/main.py` that
+  renders `app/templates/greeting.html` with Jinja2 through the `templates` object,
+  passing `name` from the path. The template also links back to the route with
+  `request.url_for`.
+notes: |
+  Starlette 0.27 renders with `TemplateResponse(name, {"request": request, ...})`;
+  0.29 added `TemplateResponse(request, name, context)` and deprecated the old form,
+  which 1.0 removed. Each form fails on the other version.

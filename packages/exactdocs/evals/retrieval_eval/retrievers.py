@@ -6,10 +6,11 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from exactdocs.retrieval.dtos import ReadChunkQuery, SearchDocsQuery
-from exactdocs.retrieval.models import AgentRead, TagMatch
+from exactdocs.retrieval.models import AgentRead, ResultGrouping, TagMatch
 from exactdocs.retrieval.ports.driving import ReadChunk, SearchDocs
 from retrieval_eval.dataset import Answer, Hit, Question, TracedRead
 from retrieval_eval.evaluators import RECALL_AT
+from retrieval_eval.ingestion import tokens as estimated_tokens
 
 
 class Retriever(Protocol):
@@ -93,6 +94,9 @@ class SearchDocsRetriever:
     the difference around a search is that search's cost (the query's embedding)."""
     reads: RecordedReads | None = None
     """The agentic explorer's reads, as the app records them; ``None``: no trace is checked."""
+    group_by: ResultGrouping = ResultGrouping.ARTICLE
+    """How the search groups its results (#575); by article, as it does by default. Each hit
+    keeps its group, so the hits of a group are scored as one result."""
 
     async def answer(self, question: Question) -> Answer:
         """Search the question's version in ``mode``, then read every hit back by its ID.
@@ -116,6 +120,7 @@ class SearchDocsRetriever:
                 tags_match=TagMatch(question.tags_match),
                 limit=max(RECALL_AT),
                 mode=self.mode,
+                group_by=self.group_by,
             )
         )
         elapsed_ms = (time.perf_counter() - started) * 1000
@@ -132,6 +137,8 @@ class SearchDocsRetriever:
                     heading_path=list(chunk.heading_path),
                     commit_sha=chunk.commit_sha,
                     chunk_id=chunk.chunk_id,
+                    tokens=estimated_tokens(chunk.content),
+                    group=found.group,
                 )
             )
         return Answer(

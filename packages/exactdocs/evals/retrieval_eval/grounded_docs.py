@@ -18,7 +18,9 @@ from pydantic import BaseModel, ConfigDict
 
 from exactdocs.bootstrap.constants import DEFAULT_LOCAL_EMBEDDING
 from retrieval_eval.retrieval_bench import (
+    CUT_BUDGETS,
     NDCG_AT,
+    TOKEN_BUDGETS,
     BenchMetrics,
     Budget,
     ConfigResult,
@@ -445,12 +447,15 @@ def _line(
     """
     spread = metrics.intervals
     neutral = _pct(text.version_neutral_share) if text else "-"
-    context = _count(text.context_tokens_per_question, tokens) if text else "-"
-    to_hit = (
-        "-"
-        if text is None or text.tokens_to_first_hit is None
-        else f"{text.tokens_to_first_hit:,.0f}"
+    context_tokens = (
+        text.context_tokens_per_question if text else metrics.context_tokens_per_question
     )
+    context = (
+        "-"
+        if context_tokens is None
+        else _count(context_tokens, tokens or spread.get("context_tokens_per_question"))
+    )
+    to_hit = text.tokens_to_first_hit if text else metrics.tokens_to_first_hit
     return (
         f"| {name} | {scored_by} | {_with(metrics.recall_at_1, spread.get('recall_at_1'))} "
         f"| {_with(metrics.recall_at_5, spread.get('recall_at_5'))} "
@@ -458,8 +463,67 @@ def _line(
         f"| {_ratio(metrics.mrr, spread.get('mrr'))} "
         f"| {_ratio(metrics.ndcg_at_10, spread.get('ndcg_at_10'))} "
         f"| {_with(metrics.wrong_version_rate, spread.get('wrong_version_rate'))} "
-        f"| {neutral} | {context} | {to_hit} |"
+        f"| {neutral} | {context} | {'-' if to_hit is None else f'{to_hit:,.0f}'} |"
     )
+
+
+def _results(report: GroundedDocsReport) -> list[tuple[str, str, BenchMetrics]]:
+    """Every result of the report: the baseline, the recorded ExactDocs runs, Grounded Docs.
+
+    Args:
+        report: The run.
+
+    Returns:
+        ``(name, scored by, metrics)`` of each, in the order of the comparison table.
+    """
+    return [
+        (report.baseline.name, "text", report.baseline.result.metrics.metrics),
+        *(
+            (f"ExactDocs {r.configuration} @ {r.chunking}", "chunk ID", r.metrics)
+            for r in report.recorded
+        ),
+        *(
+            (f"Grounded Docs {run.configuration}", "text", run.result.metrics.metrics)
+            for run in report.runs
+        ),
+    ]
+
+
+def budget_table(report: GroundedDocsReport) -> list[str]:
+    """Recall within each token budget, read whole and cut at the budget, of every result (#575).
+
+    Args:
+        report: The run.
+
+    Returns:
+        The lines; none for a report recorded before the budgets.
+    """
+    results = _results(report)
+    if all(m.recall_at_1k_tokens is None for _, _, m in results):
+        return []
+    budgets = [f"{b:,}" for b in TOKEN_BUDGETS.values()]
+    lines = [
+        (
+            "| Tool and configuration | Scored by | context tokens / question "
+            "| tokens to first hit | "
+            + " | ".join(f"within {b}, whole results" for b in budgets)
+            + " | "
+            + " | ".join(f"within {b}, text cut" for b in budgets)
+            + " |"
+        ),
+        "|---|---|---|---|" + "---|" * 2 * len(budgets),
+    ]
+    for name, scored_by, m in results:
+        spread = m.intervals
+        context = (
+            "-"
+            if m.context_tokens_per_question is None
+            else _count(m.context_tokens_per_question, spread.get("context_tokens_per_question"))
+        )
+        to_hit = "-" if m.tokens_to_first_hit is None else f"{m.tokens_to_first_hit:,.0f}"
+        cells = [_with(getattr(m, b), spread.get(b)) for b in (*TOKEN_BUDGETS, *CUT_BUDGETS)]
+        lines.append(f"| {name} | {scored_by} | {context} | {to_hit} | " + " | ".join(cells) + " |")
+    return lines
 
 
 def comparison(report: GroundedDocsReport) -> list[str]:
@@ -514,6 +578,11 @@ _METRICS: Final[tuple[tuple[str, str], ...]] = (
     ("ndcg_at_10", "nDCG@10"),
 )
 """The metrics the paired tests cover, and their labels."""
+_BUDGET_METRICS: Final[tuple[tuple[str, str], ...]] = (
+    *((name, f"within {budget:,}, whole results") for name, budget in TOKEN_BUDGETS.items()),
+    *((name, f"within {budget:,}, text cut") for name, budget in CUT_BUDGETS.items()),
+)
+"""The recall within a token budget the paired tests cover (#575), and their labels."""
 
 
 def _difference(name: str, test: PairedTest) -> str:
@@ -537,24 +606,28 @@ def _difference(name: str, test: PairedTest) -> str:
     )
 
 
-def tests_table(report: GroundedDocsReport) -> list[str]:
+def tests_table(report: GroundedDocsReport, metrics: Sequence[tuple[str, str]]) -> list[str]:
     """The paired tests of every configuration against ExactDocs.
 
     Args:
         report: The run.
+        metrics: The metrics shown, with their labels.
 
     Returns:
-        The lines: one per configuration and ExactDocs result, one column per metric.
+        The lines: one per configuration and ExactDocs result, one column per metric; none when
+        no test covers any of the metrics.
     """
+    if not any(name in v.tests for run in report.runs for v in run.versus for name, _ in metrics):
+        return []
     lines = [
-        "| Grounded Docs | against | " + " | ".join(label for _, label in _METRICS) + " |",
-        "|---|---|" + "---|" * len(_METRICS),
+        "| Grounded Docs | against | " + " | ".join(label for _, label in metrics) + " |",
+        "|---|---|" + "---|" * len(metrics),
     ]
     for run in report.runs:
         for versus in run.versus:
             cells = " | ".join(
                 _difference(name, versus.tests[name]) if name in versus.tests else "-"
-                for name, _ in _METRICS
+                for name, _ in metrics
             )
             lines.append(
                 f"| {run.configuration} | {versus.against} ({versus.scored_by}) | {cells} |"
@@ -749,6 +822,39 @@ def run_block(report: GroundedDocsReport) -> str:
     return "\n".join(lines)
 
 
+def _budget_block(report: GroundedDocsReport) -> list[str]:
+    """Recall within a token budget and its paired tests, when the report has them (#575).
+
+    Args:
+        report: The run.
+
+    Returns:
+        The lines, ending with a blank one; none for a report recorded before the budgets.
+    """
+    table = budget_table(report)
+    if not table:
+        return []
+    budgets = [f"{b:,}" for b in TOKEN_BUDGETS.values()]
+    return [
+        "### Within a token budget",
+        "",
+        (
+            f"Recall within the first {', '.join(budgets[:-1])} and {budgets[-1]} estimated tokens "
+            "(characters / 4) of the text each tool returned. Whole results: the result that "
+            "first answers the case ends within the budget. Text cut: the text is cut at the "
+            "budget, and the result the budget cuts counts when its part within the budget "
+            "answers (scored from text only)."
+        ),
+        "",
+        *table,
+        "",
+        "### Paired tests within a token budget",
+        "",
+        *tests_table(report, _BUDGET_METRICS),
+        "",
+    ]
+
+
 def results_block(report: GroundedDocsReport) -> str:
     """The results: the comparison, the paired tests, the breakdowns and the indexing.
 
@@ -765,8 +871,9 @@ def results_block(report: GroundedDocsReport) -> str:
         "",
         "### Paired tests against ExactDocs",
         "",
-        *tests_table(report),
+        *tests_table(report, _METRICS),
         "",
+        *_budget_block(report),
         "### Every metric scored from the text",
         "",
         *results_table([report.baseline.result, *(run.result for run in report.runs)]),

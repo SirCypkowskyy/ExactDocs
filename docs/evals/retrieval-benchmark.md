@@ -5,9 +5,11 @@
       golden set, at every chunking configuration of the ingestion benchmark.
     - It names the configuration to use by default for each budget: no models, local models only,
       hosted models ([Recommendation and statistics](statistics.md)).
-    - In the recorded run BM25 reaches recall@5 89.1% at `h2` and 87.6% at `default`. Hybrid on
-      bge-small reaches 91.0% at `merge-400`, 1.9 points over BM25 at `h2`: under the 5-point
-      margin and not significant (p 0.33), so BM25 stays the default
+    - It scores `search_docs` as an agent reads it: grouped by article since #575, each group one
+      result.
+    - In the recorded run BM25 reaches recall@5 92.5% at `h2` and 91.0% at `default`. Hybrid on
+      bge-small at `default` reaches 92.5%, as much as BM25 at `h2`: under the 5-point margin and
+      not significant (p 1), so BM25 stays the default
       ([The recorded run](retrieval-runs.md#the-recorded-run)).
     - A run exits with 1 on a result of another version, a read outside the version, or a failed
       question.
@@ -33,6 +35,14 @@ just retrieval-bench --configs bm25 --chunkings default --check   # what the Eva
 Hits are matched by the headings their chunk holds (`golden_run.held_match`, see
 [Matching a hit across chunking depths](ingestion.md#matching-a-hit-across-chunking-depths)), so a
 coarser or finer chunking is not penalised for cutting at another depth or merging sections.
+
+**Grouped results** (#575). `search_docs` groups its results by article: an article's results
+come together, best first, under its group's rank (`group`). The benchmark asks as the MCP tool
+does, so it scores each group as one result (`dataset.results_of`): a case's rank is the rank of
+the first group holding a hit that answers it, a group answers at most one part of a case (as a
+text result does), and a group's tokens are those of all its chunks. `bench(group_by=...)` and
+the grid's app cells with `group_by: chunk` measure the search before it grouped them, one chunk
+per result.
 
 It writes `retrieval.json` and `retrieval.md` to `reports/evals/` (or `--out`), prints the summary
 and appends it to `$GITHUB_STEP_SUMMARY`. It exits with 1 when a configuration:
@@ -105,6 +115,34 @@ Each metric is reported per configuration and chunking, over all cases, per ques
 | p50 / p95 latency | every case | nearest-rank percentiles of the search alone, one question at a time, on the machine named in the report |
 | tokens / USD per question | every case | what the spend ledger grew by during each search (an embedding, a judgment, a HyDE answer, an agent run); USD from the configured prices or `genai-prices` |
 | index | per embedding model and chunking | seconds, tokens and USD of embedding the whole corpus once |
+
+### Within a token budget
+
+| Metric | Over | Definition |
+|---|---|---|
+| context tokens / question | every case | estimated tokens (characters / 4, `CHARS_PER_TOKEN`) of the content of every chunk returned: what a caller holds once it has read the results |
+| tokens to first hit | answerable cases with a hit in the top 10 | estimated tokens of the chunks up to and including the first that answers |
+| recall within 1,000 / 2,000 / 4,000 tokens | answerable cases | the result that first answers the case ends within the first 1,000, 2,000 or 4,000 estimated tokens of the text returned, the results read whole and in order |
+
+Tools return very different amounts of text per result (#575): an ExactDocs chunk at `default`
+holds about 350 estimated tokens, a Grounded Docs result about 1,000, a section widened to its
+parent more. A tool whose results are longer finds the answer in its first result more often for
+that reason alone, so recall@k does not compare tools at the same amount of context. Recall within
+a budget does.
+
+- **Whole results.** The results are read in order, whole, and a case counts when the first result
+  that answers it ends within the first *B* estimated tokens of what was returned: its tokens to
+  the first hit are at most *B*. This favours a tool whose results are short.
+- **Text cut at the budget.** A tool scored from its text
+  ([Text scoring](text-scoring.md)) is also measured with its text cut at *B*: a case counts as
+  well when the result the budget cuts answers it from its part within the budget, by the text
+  scorer's own rule (the part holds the section, or lies in it). This is the literal "the answer
+  is in the first *B* tokens", and it favours a tool whose results are long. Chunk-ID scoring
+  cannot cut a chunk, so ExactDocs' own benchmark reports whole results only.
+- The budgets are `TOKEN_BUDGETS`; the tokens are those of "context tokens / question". Each comes
+  with its interval, and each result is tested against its budget's default by McNemar's test
+  (mid-p), as recall@k is.
+- A row recorded before #575 kept no sizes, and its result has no budget numbers.
 
 ### nDCG@10
 

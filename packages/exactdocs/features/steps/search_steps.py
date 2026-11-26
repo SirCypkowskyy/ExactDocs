@@ -19,6 +19,7 @@ from exactdocs.catalog.models import HostKind, Library, LibraryId, RefKind, Vers
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.models import parse_article
 from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkHeadingIn, ChunkIn, IndexManifestCommand
+from exactdocs_kernel import respelled_note
 from fixture_repo import git_bytes
 from steps.http_steps import step_running
 
@@ -187,6 +188,31 @@ def step_search_tags(context: Context, query: str, target: str, tags: str) -> No
     context.wanted_tags = wanted
 
 
+@when('a user searches "{target}" for "{query}" grouped by article')
+def step_search_grouped(context: Context, target: str, query: str) -> None:
+    context.ranked_results = context.response.json()["results"]
+    _search(context, target, {"q": query, "group_by": "article", "limit": 10})
+
+
+@then("the results are best first and none names a group")
+def step_best_first(context: Context) -> None:
+    results = context.response.json()["results"]
+    assert results, context.response.text
+    scores = [r["score"] for r in results]
+    assert scores == sorted(scores, reverse=True), scores
+    assert all(r["group"] is None for r in results), results
+
+
+@then("the same results come grouped by article, as the MCP search returns them")
+def step_grouped(context: Context) -> None:
+    grouped = context.response.json()["results"]
+    ranked = context.ranked_results
+    assert {r["chunk_id"] for r in grouped} >= {r["chunk_id"] for r in ranked}
+    order = list(dict.fromkeys(r["article_path"] for r in grouped))
+    assert [r["group"] for r in grouped] == [order.index(r["article_path"]) + 1 for r in grouped]
+    assert grouped[0]["chunk_id"] == ranked[0]["chunk_id"]
+
+
 @then('the result is explicitly empty for version "{ref}"')
 def step_empty(context: Context, ref: str) -> None:
     body = context.response.json()
@@ -225,6 +251,11 @@ def step_location(context: Context) -> None:
 @then('the response says it searched version "{ref}"')
 def step_searched(context: Context, ref: str) -> None:
     assert context.response.json()["version"] == ref, context.response.text
+
+
+@then('the response notes that ref "{asked}" was read as "{used}"')
+def step_ref_noted(context: Context, asked: str, used: str) -> None:
+    assert context.response.json()["notes"] == [respelled_note(asked, used)], context.response.text
 
 
 @then('the response states retrieval mode "{mode}", not reranked, and its coverage')

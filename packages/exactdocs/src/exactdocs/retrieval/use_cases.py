@@ -41,6 +41,7 @@ from exactdocs.retrieval.constants import (
     MAX_RESOLVED,
     MAX_SEARCHED_LIBRARIES,
     NO_VECTOR_STORE,
+    PATH_PREFIX_POOL,
     POINTER_TEXT,
     QUERY_DOCS,
     QUERY_DOCS_CANDIDATES,
@@ -118,8 +119,10 @@ from exactdocs.retrieval.dtos import (
     RebuiltVersionsOut,
     RemoveChunksCommand,
     RemovedChunks,
+    ResolvedLibraryOut,
     ResolveLibraryIdQuery,
     ResolveLibraryIdResult,
+    ResolveLibraryNameQuery,
     RetagArticlesCommand,
     RetaggedChunks,
     RoleListOut,
@@ -255,6 +258,7 @@ from exactdocs.retrieval.models import (
     RepoGuidance,
     RerankLimits,
     RerankWith,
+    ResultGrouping,
     RetrievalMode,
     RoleBinding,
     SearchableVersion,
@@ -277,6 +281,7 @@ from exactdocs.retrieval.models import (
     VectorHit,
     VersionDrift,
     article_chunk_rows,
+    article_groups,
     as_float32,
     bind_role,
     caller_audience,
@@ -294,6 +299,7 @@ from exactdocs.retrieval.models import (
     model_markdown,
     model_text,
     name_match,
+    named_library,
     outline,
     pick_reranker,
     rank_matches,
@@ -325,6 +331,7 @@ from exactdocs.retrieval.ports.driven import (
     InstructionFiles,
     Libraries,
     LibraryModes,
+    LibraryVersions,
     ModelFactory,
     ModelRoles,
     NativeHybrid,
@@ -348,7 +355,7 @@ from exactdocs.retrieval.ports.driven import (
     VectorIndex,
     VersionArticles,
 )
-from exactdocs_kernel import NOTICE, Clock, SystemClock
+from exactdocs_kernel import NOTICE, Clock, SystemClock, inside, respelled, respelled_note
 
 logger = logging.getLogger(__name__)
 
@@ -407,6 +414,45 @@ async def _require(access: AccessPolicy, library: str, needed: Access) -> None:
         raise UnknownLibraryError(library)
     if needed is not Access.READ and not await access.allows(library, needed):
         raise LibraryAccessDeniedError(library, needed.value)
+
+
+async def _asked_version(
+    versions: SearchableVersions,
+    known: LibraryVersions | None,
+    library: str,
+    ref: str | None,
+) -> tuple[SearchableVersion, list[str]]:
+    """Find the version a reader's ref names, forgiving only a leading ``v`` (#605).
+
+    Exactly ``ref`` (the default version without one) when it has an index; else the one
+    imported version ``ref`` names but for a leading ``v`` or ``V``, with a note saying so. Never
+    another version: a ref that names none is an error naming the library's versions.
+
+    Args:
+        versions: Resolves an exact ref to the manifest a search reads.
+        known: The library's imported versions; without it only the exact ref is found and the
+            error names no versions.
+        library: The library ID, any letter case.
+        ref: The ref as asked; ``None`` for the default version.
+
+    Returns:
+        The version and the notes on how the ref was read (none when as given).
+
+    Raises:
+        VersionNotIndexedError: No version has the ref or its other spelling, or it has no index.
+    """
+    version = await versions.find(library, ref)
+    if version is not None:
+        return version, []
+    if ref is None:
+        raise VersionNotIndexedError(library, "(default version)")
+    imported = None if known is None else await known.of(library)
+    if imported is None:
+        raise VersionNotIndexedError(library, ref)
+    other = respelled(ref, imported.versions)
+    if other is not None and (version := await versions.find(library, other)) is not None:
+        return version, [respelled_note(ref, other)]
+    raise VersionNotIndexedError(library, ref, versions=imported.versions, default=imported.default)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1888,6 +1934,30 @@ async def _chunks_of(
     return {**{k: v for k, v in read.items() if k in wanted}, **loaded}
 
 
+async def _inside_prefix(
+    chunks: ChunkRepository, version: SearchableVersion, answer: PipelineAnswer, prefix: str
+) -> tuple[PipelineAnswer, Mapping[ChunkId, StoredChunk]]:
+    """Keep the hits of articles inside ``prefix`` (``path_prefix``, as ``list_articles`` reads it).
+
+    Args:
+        chunks: The chunk store.
+        version: The version searched: chunks come from its manifest only.
+        answer: The ranking, deeper than shown.
+        prefix: The directory, cleaned (``clean_path_prefix``).
+
+    Returns:
+        The hits inside the directory, best first, still complete only when the ranking was (no
+        match was left out of it); and the chunks read, by ID, for the later stages.
+    """
+    stored = await _chunks_of(chunks, version, answer, {})
+    kept = tuple(
+        hit
+        for hit in answer.hits
+        if hit.chunk_id in stored and inside(stored[hit.chunk_id].row.article_path, prefix)
+    )
+    return replace(answer, hits=kept, candidates=len(kept)), stored
+
+
 def _fallen_back(answer: PipelineAnswer, reason: FallbackReason) -> PipelineAnswer:
     """Keep the answer's order and say why it was not reranked, unless a reason is given already.
 
@@ -1911,6 +1981,9 @@ class SearchDocsUseCase:
     """Picks the mode and runs its pipeline."""
     chunks: ChunkRepository
     """Reads the hits' chunks."""
+    known: LibraryVersions | None = None
+    """The library's imported versions: a ref with or without a leading ``v`` finds its version,
+    and a ref that names none is told them (#605); only the exact ref without it."""
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Observes the search and its stages (traces); records nothing by default."""
     access: AccessPolicy
@@ -1959,16 +2032,14 @@ class SearchDocsUseCase:
             caller: The account searching.
 
         Returns:
-            The results of the one version searched.
-
-        Raises:
-            VersionNotIndexedError: The version is not imported or has no active manifest.
+            The results of the one version searched; a ref that names no version raises
+            ``_asked_version``'s error.
         """
         mode = choice.mode.value
         with self.tracer.span(f"{SEARCH_DOCS}.version", mode=mode):
-            version = await self.versions.find(query.library, query.ref)
-        if version is None:
-            raise VersionNotIndexedError(query.library, query.ref or "(default version)")
+            version, notes = await _asked_version(
+                self.versions, self.known, query.library, query.ref
+            )
         # Only a search that will run counts against the caller's limits; every stage after this
         # one sees the same choice.
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
@@ -1982,15 +2053,25 @@ class SearchDocsUseCase:
             limit=query.limit,
         )
         mode = choice.mode.value
+        prefix = query.path_prefix
+        # A prefix narrows a deeper ranking (the backends filter tags, not paths); the agentic
+        # explorer is not asked for more picks than shown, only its picks are filtered.
+        pool = query.limit
+        if prefix and choice.mode is not RetrievalMode.AGENTIC:
+            pool = max(query.limit, PATH_PREFIX_POOL)
         with self.tracer.span(f"{SEARCH_DOCS}.rank", mode=mode) as rank:
-            answer = await self.modes.run(choice, version, text.value, tag_filter, query.limit)
+            answer = await self.modes.run(choice, version, text.value, tag_filter, pool)
             rank.answered_by(answer.mode.value)
         whole.answered_by(answer.mode.value)
         read: Mapping[ChunkId, StoredChunk] = {}
+        if prefix:
+            with self.tracer.span(f"{SEARCH_DOCS}.path_prefix", mode=answer.mode.value):
+                answer, read = await _inside_prefix(self.chunks, version, answer, prefix)
         if choice.rerank:  # a stage of its own; it records neither the query nor any text
             stage = "judge" if choice.reranker is RerankWith.JUDGE else "rerank"
             with self.tracer.span(f"{SEARCH_DOCS}.{stage}", mode=answer.mode.value):
-                answer, read = await self.modes.rerank(choice, version, text.value, answer)
+                answer, reread = await self.modes.rerank(choice, version, text.value, answer)
+            read = {**read, **reread}
         answer = answer.cut(query.limit)
         if answer.fallback_reason is not None:
             self.tracer.fallback(mode=answer.mode.value, reason=answer.fallback_reason.value)
@@ -2004,6 +2085,8 @@ class SearchDocsUseCase:
             if hit.chunk_id in stored
         ]
         vanished = len(answer.hits) - len(results)
+        if query.group_by is ResultGrouping.ARTICLE:
+            results = _grouped(results, lambda r: r.article_path)
         return SearchDocsResult(
             library=version.library,
             version=version.version,
@@ -2018,7 +2101,40 @@ class SearchDocsUseCase:
             fallback_reason=answer.fallback_reason,
             cache_hit=answer.cache_hit,
             results=results,
+            notes=notes,
         )
+
+
+def _grouped[R: SearchResultOut](results: Sequence[R], article: Callable[[R], str]) -> list[R]:
+    """Order results by article group (``ResultGrouping.ARTICLE``), each told its group.
+
+    Args:
+        results: The results, best first.
+        article: The article of a result (with its library when several are searched).
+
+    Returns:
+        The same results, each article's together, best first, with ``group`` set.
+    """
+    order = article_groups([article(r) for r in results])
+    return [results[i].model_copy(update={"group": group}) for i, group in order]
+
+
+def _shown_across(
+    query: SearchAllQuery, results: Sequence[LibrarySearchResultOut]
+) -> list[LibrarySearchResultOut]:
+    """Keep the results of a search across libraries that are shown, grouped as asked.
+
+    Args:
+        query: The search (its path prefix, limit and grouping).
+        results: The ranked results, best first.
+
+    Returns:
+        Those under the prefix, at most ``limit``, grouped by library and article when asked.
+    """
+    shown = [r for r in results if inside(r.article_path, query.path_prefix)][: query.limit]
+    if query.group_by is ResultGrouping.ARTICLE:
+        return _grouped(shown, lambda r: f"{r.library}\n{r.article_path}")
+    return shown
 
 
 def _cross_library_embedding_scopes(caller: str | None) -> tuple[tuple[str, str], ...]:
@@ -2246,36 +2362,37 @@ class SearchAllLibrariesUseCase:
         """
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
         scope, searched, omitted = await self._scope(query, mode)
+        # A prefix narrows a deeper ranking, as in a search of one version.
+        limit = max(query.limit, PATH_PREFIX_POOL) if query.path_prefix else query.limit
         near = _Nearest()
         if mode.needs_vectors:
-            depth = query.limit + 1 if mode is RetrievalMode.VECTOR else RRF_DEPTH
+            depth = limit + 1 if mode is RetrievalMode.VECTOR else RRF_DEPTH
             with self.tracer.span(f"{SEARCH_ALL}.vectors", mode=mode.value):
                 near = await self._nearest(
                     scope, text.value, tag_filter, depth, mode=mode, caller=caller
                 )
         answered = RetrievalMode.BM25 if near.reason is not None else mode
         # One more than is kept tells whether the answer was cut short.
-        bm25_depth = (
-            max(RRF_DEPTH, query.limit) if answered is RetrievalMode.HYBRID else query.limit
-        ) + 1
+        bm25_depth = (max(RRF_DEPTH, limit) if answered is RetrievalMode.HYBRID else limit) + 1
         with self.tracer.span(f"{SEARCH_ALL}.rank", mode=answered.value):
             found_hits, counts = await asyncio.gather(
                 self._bm25(answered, scope, text.value, tag_filter, bm25_depth),
                 self.search.count_many(list(searched), text.value, tag_filter),
             )
-        ranked, candidates, complete = _ranked_across(answered, found_hits, near, query.limit)
+        ranked, candidates, complete = _ranked_across(answered, found_hits, near, limit)
         results = await self._results(ranked, scope, text.value, answered)
-        vanished = len(ranked) - len(results)
         return SearchAllResult(
             retrieval_mode=answered,
             reranked=False,
-            coverage=CoverageOut(candidates=candidates - vanished, reranked=0, complete=complete),
+            coverage=_coverage_across(
+                query, results, candidates - (len(ranked) - len(results)), complete=complete
+            ),
             fallback_reason=near.reason,
             libraries_searched=len(searched),
             libraries_omitted=omitted,
             libraries_without_vectors=list(near.without),
             libraries=_facets(counts, searched),
-            results=results,
+            results=_shown_across(query, results),
         )
 
     async def _bm25(
@@ -2469,6 +2586,31 @@ async def _covered(
     return covered, tuple(sorted(without))
 
 
+def _coverage_across(
+    query: SearchAllQuery,
+    results: Sequence[LibrarySearchResultOut],
+    candidates: int,
+    *,
+    complete: bool,
+) -> CoverageOut:
+    """Say how much a search across libraries looked at, once its ``path_prefix`` is applied.
+
+    Args:
+        query: The search, with its limit and prefix.
+        results: The chunks read from the ranking, best first, before the prefix.
+        candidates: Matching chunks looked at (their chunks still there).
+        complete: Whether the ranking held every match.
+
+    Returns:
+        The coverage; with a prefix, the matches inside it, complete only when the deeper ranking
+        held every match and they all fit the limit.
+    """
+    if not query.path_prefix:
+        return CoverageOut(candidates=candidates, reranked=0, complete=complete)
+    kept = sum(1 for r in results if inside(r.article_path, query.path_prefix))
+    return CoverageOut(candidates=kept, reranked=0, complete=complete and kept <= query.limit)
+
+
 def _ranked_across(
     mode: RetrievalMode, found: Sequence[ManifestHit], near: _Nearest, limit: int
 ) -> tuple[list[_Ranked], int, bool]:
@@ -2641,6 +2783,8 @@ class ReadChunkUseCase:
     """Reads the chunk and the manifests that hold it."""
     renames: RenamedPaths | None = None
     """Where a stale chunk's article went; without it only the old path is tried."""
+    suggestions: ArticleSuggestions | None = None
+    """The version's paths closest to a stale chunk's article when that is gone; none without it."""
     access: AccessPolicy
     """Decides what the caller may do with the library."""
 
@@ -2686,8 +2830,34 @@ class ReadChunkUseCase:
             # Any superseded holder gives the same old chunk (the ID hashes its content); the
             # smallest ID keeps the choice deterministic.
             moved = await self._moved(version, ChunkId(query.chunk_id), min(superseded))
-            raise StaleChunkError(query.chunk_id, first.library, ref, moved)
+            close = (
+                await self._closest(version, ChunkId(query.chunk_id), min(superseded))
+                if moved is None
+                else ()
+            )
+            raise StaleChunkError(query.chunk_id, first.library, ref, moved, close)
         raise ChunkNotFoundError(query.chunk_id)  # only pending manifests hold it: not served yet
+
+    async def _closest(
+        self, version: SearchableVersion | None, chunk_id: ChunkId, old_manifest: str
+    ) -> Sequence[str]:
+        """Name the version's paths closest to a stale chunk's article, which it no longer has.
+
+        Args:
+            version: The version now, with its active manifest; ``None`` when it has none.
+            chunk_id: The stale chunk ID.
+            old_manifest: The manifest that held the chunk.
+
+        Returns:
+            The closest paths, best first; none when nothing is known.
+        """
+        if version is None or self.suggestions is None:
+            return ()
+        old = await self.chunks.get(old_manifest, chunk_id)
+        if old is None:
+            return ()
+        target = DocTarget(library=version.library, version=version.version)
+        return await self.suggestions.close_to(target, old.row.article_path)
 
     async def _moved(
         self, version: SearchableVersion | None, chunk_id: ChunkId, old_manifest: str
@@ -2741,6 +2911,9 @@ class ArticleOutlineUseCase:
     """The article's chunk rows in that version's active manifest."""
     suggestions: ArticleSuggestions | None = None
     """Close paths for a miss, as ``read_article`` lists them; none without it."""
+    known: LibraryVersions | None = None
+    """The library's imported versions: a ref with or without a leading ``v`` finds its version,
+    and a ref that names none is told them (#605); only the exact ref without it."""
     access: AccessPolicy
     """Decides what the caller may do with the library."""
 
@@ -2751,23 +2924,21 @@ class ArticleOutlineUseCase:
             query: The library, the exact ref (or none for the default version) and the path.
 
         Returns:
-            The heading tree with a chunk ID per heading and the version that answered.
+            The heading tree with a chunk ID per heading and the version that answered; a ref
+            that names no version raises ``_asked_version``'s error.
 
         Raises:
-            VersionNotIndexedError: The version is not imported or has no active manifest.
             ArticleNotFoundError: The version has no article at this path.
         """
         await _require(self.access, query.library, Access.READ)
-        version = await self.versions.find(query.library, query.ref)
-        if version is None:
-            raise VersionNotIndexedError(query.library, query.ref or "(default version)")
+        version, notes = await _asked_version(self.versions, self.known, query.library, query.ref)
         sections = await self.chunks.article(version.manifest_id, query.path)
         if not sections:
             target = DocTarget(library=version.library, version=version.version)
             close = await self.suggestions.close_to(target, query.path) if self.suggestions else ()
             raise ArticleNotFoundError(version.library, version.version, query.path, close)
         return ArticleOutlineOut.from_model(
-            version, query.path, outline(sections), chunks=len(sections)
+            version, query.path, outline(sections), chunks=len(sections), notes=notes
         )
 
 
@@ -3183,19 +3354,23 @@ class ResolveLibraryIdUseCase:
         Returns:
             The matching libraries, best first.
         """
-        # Both refuse blank text the same way (EmptySearchTextError).
-        text, name = SearchText(value=query.query), SearchText(value=query.library_name)
+        # A blank name is refused (EmptySearchTextError); no query ranks by name alone, as
+        # context7 does with an empty one (#573).
+        name = SearchText(value=query.library_name)
+        text = SearchText(value=query.query) if query.query else None
         mode = RetrievalMode.BM25.value
-        with self.tracer.span("resolve_library_id", mode=mode, query=text.value):
+        with self.tracer.span(
+            "resolve_library_id", mode=mode, query=text.value if text else name.value
+        ):
             return await self._resolve(text, name, mode)
 
     async def _resolve(
-        self, text: SearchText, name: SearchText, mode: str
+        self, text: SearchText | None, name: SearchText, mode: str
     ) -> ResolveLibraryIdResult:
         """Match the names, then rank them by their hits, one span per stage.
 
         Args:
-            text: The validated query text.
+            text: The validated query text; ``None``: no hits are counted.
             name: The validated library name.
             mode: The retrieval mode the hits are found in.
 
@@ -3222,6 +3397,8 @@ class ResolveLibraryIdUseCase:
                         TagFilter(tags=(), match=TagMatch.ANY),
                         QUERY_HITS_CAP,
                     )
+                    if text is not None
+                    else _no_hits()
                     for _, _, version in readable
                 )
             )
@@ -3264,6 +3441,43 @@ class ResolveLibraryIdUseCase:
             if len(found) >= MAX_RESOLVED:
                 break
         return found[:MAX_RESOLVED]
+
+
+async def _no_hits() -> Sequence[SearchHit]:
+    """Stand in for a search not made: a ``resolve-library-id`` without a query counts no hits.
+
+    Returns:
+        No hits.
+    """
+    return ()
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ResolveLibraryNameUseCase:
+    """Implements ``ports.driving.ResolveLibraryName``."""
+
+    libraries: Libraries
+    """The catalog's libraries, matched by name."""
+    access: AccessPolicy
+    """Decides what the caller may read: other libraries are never named or picked."""
+
+    async def __call__(self, query: ResolveLibraryNameQuery) -> ResolvedLibraryOut:
+        """Pick the one readable library the name means, as ``resolve-library-id`` matches names.
+
+        Args:
+            query: The name.
+
+        Returns:
+            The library's ID.
+        """
+        named = [
+            Candidate(library=lib, match=found)
+            for lib in await self.libraries.all()
+            if (found := name_match(query.name, lib)) is not None
+        ]
+        allowed = await self.access.readable([c.library.id for c in named])
+        readable = [c for c in named if c.library.id.casefold() in allowed]
+        return ResolvedLibraryOut(name=query.name, id=named_library(query.name, readable).id)
 
 
 def _cost(section: DocSectionOut) -> int:
@@ -3339,6 +3553,9 @@ class QueryDocsUseCase:
     """Picks the mode (the library's, else the instance's) and runs its pipeline."""
     chunks: ChunkRepository
     """Reads the hits' chunks."""
+    known: LibraryVersions | None = None
+    """The library's imported versions: a ref with or without a leading ``v`` finds its version,
+    and a ref that names none is told them (#605); only the exact ref without it."""
     token_budget: int = DEFAULT_QUERY_DOCS_TOKEN_BUDGET
     """Size budget of an answer, in estimated tokens."""
     tracer: SearchTracer = field(default_factory=UntracedSearches)
@@ -3399,16 +3616,12 @@ class QueryDocsUseCase:
             caller: The account asking.
 
         Returns:
-            The packed sections of the one version searched.
-
-        Raises:
-            VersionNotIndexedError: The version is not imported or has no active manifest.
+            The packed sections of the one version searched; a ref that names no version raises
+            ``_asked_version``'s error.
         """
         mode = choice.mode.value
         with self.tracer.span(f"{QUERY_DOCS}.version", mode=mode):
-            version = await self.versions.find(library, ref)
-        if version is None:
-            raise VersionNotIndexedError(library, ref or "(default version)")
+            version, notes = await _asked_version(self.versions, self.known, library, ref)
         # Only a request that will run counts against the caller's limits.
         everything = TagFilter(tags=(), match=TagMatch.ANY)
         choice = await self.modes.within_budget(
@@ -3445,7 +3658,7 @@ class QueryDocsUseCase:
         if query.language:
             sections = language_first(sections, lambda s: s.code_languages, query.language)
         budget = self.token_budget * CHARS_PER_TOKEN
-        room = budget - len(NOTICE) - FOOTER_CHARS
+        room = budget - len(NOTICE) - FOOTER_CHARS - sum(len(n) + 1 for n in notes)
         rules = _fit_rules(version.rules, room // RULES_SHARE)
         if rules:
             room -= RULES_FRAMING_CHARS + sum(RULE_FRAMING_CHARS + len(r) for r in rules)
@@ -3462,6 +3675,7 @@ class QueryDocsUseCase:
             omitted=len(sections) - len(kept),
             budget_chars=budget,
             rules=rules,
+            notes=notes,
         )
 
 

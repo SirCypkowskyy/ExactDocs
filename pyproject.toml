@@ -86,6 +86,10 @@ extend-exclude = [
     "packages/exactdocs/tests/fixtures/sphinx-docs",
     # Code that breaks the Python conventions on purpose, read (never imported) by test_conventions.py.
     "packages/exactdocs/tests/architecture/fixtures",
+    # The coding tasks' workspaces and solutions (#496): code for pinned library versions (Pydantic 1,
+    # Starlette 0.27, ...), run in their own environments, never by this project's interpreter.
+    "packages/exactdocs/evals/coding",
+    "packages/exactdocs/tests/fixtures/coding_tasks",
 ]
 
 [tool.ruff.lint]
@@ -160,6 +164,16 @@ ignore = [
 # The Grounded Docs benchmark (#492) runs node and npm, resolved to absolute paths, with fixed
 # arguments and a pinned package, on purpose.
 "packages/exactdocs/evals/retrieval_eval/grounded_docs_cli.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
+# The coding tasks' sandbox (#496) probes once whether `unshare -n` works (a fixed binary and
+# arguments); every task command runs through asyncio's subprocesses.
+"packages/exactdocs/evals/coding_tasks/sandbox.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
+# The coding tasks' grading reads the JUnit report that pytest or node's test runner wrote in the
+# sandbox (Python's expat refuses external entities and caps entity expansion).
+"packages/exactdocs/evals/coding_tasks/grading.py" = ["suspicious-xml-etree-import", "suspicious-xml-element-tree-usage"]
+# The coding tasks' runner script sits beside its package, like the other benchmark runners.
+"packages/exactdocs/evals/run_coding_tasks.py" = ["implicit-namespace-package"]
+# The harness benchmark's runner script (#497), likewise.
+"packages/exactdocs/evals/run_harness_bench.py" = ["implicit-namespace-package"]
 # The fixture builder runs git (a fixed binary, test-controlled arguments) on purpose.
 "**/tests/fixtures/fixture_repo.py" = ["suspicious-subprocess-import", "subprocess-without-shell-equals-true"]
 # The CI artifact guard is a standalone stdlib script that runs docker and reports on stdout.
@@ -216,6 +230,8 @@ exclude = [
     "packages/exactdocs/src/exactdocs/_web",
     "packages/exactdocs/tests/architecture/fixtures",
     "packages/exactdocs/tests/fixtures/sphinx-docs",
+    "packages/exactdocs/evals/coding",
+    "packages/exactdocs/tests/fixtures/coding_tasks",
 ]
 
 [tool.ty.rules]

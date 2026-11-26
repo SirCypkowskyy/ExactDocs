@@ -2703,6 +2703,12 @@ export interface components {
              * @description The article's Markdown, verbatim as imported.
              */
             readonly content: string;
+            /**
+             * Notes
+             * @description How the request was read where it differs from what was sent: a ref read as the one
+             *     imported version it names but for a leading `v`. Absent when it was read as sent.
+             */
+            readonly notes?: readonly string[];
         };
         /**
          * ArticleList
@@ -2750,6 +2756,12 @@ export interface components {
              * @description How many articles match the filters (`path_prefix`, `tags`, `q`), across every page.
              */
             readonly total: number;
+            /**
+             * Notes
+             * @description How the request was read where it differs from what was sent: a ref read as the one
+             *     imported version it names but for a leading `v`. Absent when it was read as sent.
+             */
+            readonly notes?: readonly string[];
         };
         /**
          * ArticleOutlineOut
@@ -2808,6 +2820,12 @@ export interface components {
              * @description The top-level headings, in document order.
              */
             readonly sections: readonly components["schemas"]["OutlineSectionOut"][];
+            /**
+             * Notes
+             * @description How the request was read where it differs from what was sent: a ref read as the one
+             *     imported version it names but for a leading `v`. Absent when it was read as sent.
+             */
+            readonly notes?: readonly string[];
         };
         /**
          * ArticleSummary
@@ -3035,6 +3053,12 @@ export interface components {
              * @description Matching chunks that did not fit the size budget.
              */
             readonly omitted: number;
+            /**
+             * Notes
+             * @description How the request was read where it differs from what was sent: a ref read as the one
+             *     imported version it names but for a leading `v`. Absent when it was read as sent.
+             */
+            readonly notes?: readonly string[];
         };
         /**
          * C7InfoSnippet
@@ -4858,6 +4882,13 @@ export interface components {
              */
             readonly explored_path?: readonly string[];
             /**
+             * Group
+             * @description Grouped by article (`group_by` `article`): the 1-based rank of this result's article.
+             *     An article's results come together, best first, and its group takes the place of its best
+             *     result. Null when the results are not grouped.
+             */
+            readonly group?: number | null;
+            /**
              * Library
              * @description Library ID, `/owner/repo`, of the library the result is from.
              */
@@ -6025,7 +6056,19 @@ export interface components {
              * @description Library ID, `/owner/repo`.
              */
             readonly library: string;
+            /**
+             * Notes
+             * @description How the request was read where it differs from what was sent: a ref read as the one
+             *     imported version it names but for a leading `v`. Absent when it was read as sent.
+             */
+            readonly notes?: readonly string[];
         };
+        /**
+         * ResultGrouping
+         * @description How a search orders the results it returns.
+         * @enum {string}
+         */
+        readonly ResultGrouping: "article" | "chunk";
         /**
          * RetrievalMode
          * @description How a search found its results. One result shape serves every mode.
@@ -6178,7 +6221,8 @@ export interface components {
             readonly libraries: readonly components["schemas"]["LibraryFacetOut"][];
             /**
              * Results
-             * @description The results, best first, each naming its library and version.
+             * @description The results, best first or grouped by library and article (`group`), each naming its
+             *     library and version.
              */
             readonly results: readonly components["schemas"]["LibrarySearchResultOut"][];
         };
@@ -6228,9 +6272,15 @@ export interface components {
             readonly cache_hit: boolean;
             /**
              * Results
-             * @description The results, best first; empty when nothing matched.
+             * @description The results, best first, or grouped by article (`group`); empty when nothing matched.
              */
             readonly results: readonly components["schemas"]["SearchResultOut"][];
+            /**
+             * Notes
+             * @description How the request was read where it differs from what was sent: a ref read as the one
+             *     imported version it names but for a leading `v`. Absent when it was read as sent.
+             */
+            readonly notes?: readonly string[];
         };
         /**
          * SearchResultOut
@@ -6317,6 +6367,13 @@ export interface components {
              * @description Model output, untrusted: `agentic`: the read calls the LLM made up to the one that reached this chunk's article, in order, e.g. `search_docs(retry)`, `article_outline(guide/resilience.md)` (at most 50; each argument is the model's, control characters removed, at most 120 characters); empty for the other modes.
              */
             readonly explored_path?: readonly string[];
+            /**
+             * Group
+             * @description Grouped by article (`group_by` `article`): the 1-based rank of this result's article.
+             *     An article's results come together, best first, and its group takes the place of its best
+             *     result. Null when the results are not grouped.
+             */
+            readonly group?: number | null;
         };
         /**
          * SessionState
@@ -6823,6 +6880,12 @@ export interface components {
              * @description True when the version has more tags than are listed.
              */
             readonly truncated: boolean;
+            /**
+             * Notes
+             * @description How the request was read where it differs from what was sent: a ref read as the one
+             *     imported version it names but for a leading `v`. Absent when it was read as sent.
+             */
+            readonly notes?: readonly string[];
         };
         /**
          * TagOrigin
@@ -12077,6 +12140,8 @@ export interface operations {
                 readonly limit?: number;
                 /** @description `bm25`, `vector`, `hybrid`, `hybrid_hyde` or `agentic`, if available (422 `mode_unavailable` otherwise). Default: the library's mode, else the instance's, else the best one configured. */
                 readonly mode?: string | null;
+                /** @description `chunk` (default here): the results best first. `article`: the same results grouped by article, as MCP's `search_docs` returns them (each result's `group`). */
+                readonly group_by?: components["schemas"]["ResultGrouping"];
             };
             readonly header?: never;
             readonly path: {
@@ -12165,6 +12230,8 @@ export interface operations {
                 readonly limit?: number;
                 /** @description `bm25` (default), `vector` or `hybrid`; the vector modes need an embedding model (422 `mode_unavailable` otherwise). */
                 readonly mode?: string | null;
+                /** @description `chunk` (default here): the results best first. `article`: the same results grouped by library and article, as MCP's `search_all_docs` returns them. */
+                readonly group_by?: components["schemas"]["ResultGrouping"];
             };
             readonly header?: never;
             readonly path?: never;
