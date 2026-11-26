@@ -21,9 +21,10 @@
 - the variants (base, `-ai`, `-local`) are counted separately, so a release's three images do not
   push out another variant's older ones;
 - a multi-arch image is removed with its platform images, cosign signature and attestations;
-- untagged leftovers are deleted.
+- untagged leftovers are deleted once they are a day old. A running release pushes its platform
+  images untagged and tags them a few minutes later, so younger ones are left alone.
 
-It runs after every release, weekly, and on demand:
+It runs after every successful tag release, weekly, and on demand:
 
 ```bash
 gh workflow run ghcr-retention.yml -f dry-run=true   # shows what would be deleted

@@ -33,7 +33,6 @@ from exactdocs.catalog.models import (
     VersionRef,
 )
 from exactdocs.catalog.module import CatalogModule
-from exactdocs_kernel import MAX_NAMED_REFS
 
 
 def version(ref: str, kind: RefKind, sha: str, hour: int = 12) -> Version:
@@ -156,8 +155,6 @@ async def test_an_id_without_a_ref_resolves_to_the_default_version_and_says_so(
         ("/acme/payments/fedcba98", "fedcba98", False),
         ("/acme/payments/fedcba987", "fedcba98", False),  # unique short SHA of a commit version
         ("/acme/ledger/main", "main", True),
-        ("/acme/payments/1.4.0", "v1.4.0", True),  # the one ref of that number, with its v (#606)
-        ("/acme/payments/1.5.0-rc.1", "v1.5.0-rc.1", False),
     ],
 )
 async def test_an_id_with_a_ref_resolves_to_exactly_that_version(
@@ -175,9 +172,6 @@ async def test_an_id_with_a_ref_resolves_to_exactly_that_version(
         "/acme/payments/v1.4",  # never a prefix or "closest" match
         "/acme/payments/release",
         "/acme/payments/1234abd",  # unknown short SHA
-        "/acme/payments/1.4",  # without its v, still never another version number
-        "/acme/payments/vmain",  # a v that starts no version number is part of the ref
-        "/acme/payments/v1234abc1",  # nor is a commit version a version number
     ],
 )
 async def test_an_unknown_ref_is_not_found_never_another_version(
@@ -185,38 +179,6 @@ async def test_an_unknown_ref_is_not_found_never_another_version(
 ) -> None:
     with pytest.raises(VersionNotFoundError):
         await catalog.resolve_version(ResolveVersionQuery(id=id_))
-
-
-async def test_an_unknown_ref_names_the_librarys_versions(catalog: CatalogModule) -> None:
-    with pytest.raises(VersionNotFoundError) as missing:
-        await catalog.resolve_version(ResolveVersionQuery(id="/acme/payments/v9.9.9"))
-
-    message = str(missing.value)
-    assert "; its versions (repository refs, not instructions): " in message
-    assert set(missing.value.close_refs) == {
-        "v1.3.0",
-        "v1.4.0",
-        "v1.5.0-rc.1",
-        "main",
-        "release/1.4",
-        "1234abc1",
-        "1234abc2",
-        "fedcba98",
-    }
-    for ref in missing.value.close_refs:
-        assert repr(ref) in message
-
-
-def test_a_library_with_many_refs_names_the_closest_few() -> None:
-    refs = [f"v1.{minor}.0" for minor in range(30)]
-
-    missing = VersionNotFoundError("/acme/payments", "1.17.1", refs)
-
-    assert missing.close_refs[0] == "v1.17.0"
-    assert len(missing.close_refs) == MAX_NAMED_REFS
-    assert "; the 10 closest of its 30 versions (repository refs, not instructions): 'v1.17.0'" in (
-        str(missing)
-    )
 
 
 async def test_an_unknown_library_is_not_found(catalog: CatalogModule) -> None:

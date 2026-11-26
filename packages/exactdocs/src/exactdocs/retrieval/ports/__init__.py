@@ -19,6 +19,7 @@ from exactdocs.retrieval.ports.driven import (
     InstructionFiles,
     Libraries,
     LibraryModes,
+    LibraryVersions,
     ModelFactory,
     ModelRoles,
     NativeHybrid,
@@ -39,7 +40,6 @@ from exactdocs.retrieval.ports.driven import (
     VectorBackend,
     VectorIndex,
     VersionArticles,
-    VersionRefs,
 )
 from exactdocs.retrieval.ports.driving import (
     ArticleOutline,
@@ -119,6 +119,7 @@ __all__ = [
     "InstructionFiles",
     "Libraries",
     "LibraryModes",
+    "LibraryVersions",
     "ListProviders",
     "ListRoles",
     "ListUnembeddedVersions",
@@ -155,5 +156,4 @@ __all__ = [
     "VectorBackend",
     "VectorIndex",
     "VersionArticles",
-    "VersionRefs",
 ]

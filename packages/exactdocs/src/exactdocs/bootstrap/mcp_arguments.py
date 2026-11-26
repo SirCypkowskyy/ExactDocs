@@ -11,12 +11,12 @@ those into a lost turn. This middleware, run on every ``tools/call`` before vali
   the candidate IDs. A ``library`` holding ``/owner/repo/<ref>`` is split into the ID and ``ref``
   when the call gives no ``ref``;
 - still refuses an argument the tool does not have, never ignoring it, but names the tool's real
-  arguments in the error;
-- says, after the call, when the version that answered is the asked ``ref`` written with or
-  without its leading ``v`` (#606): the domain finds that spelling, the note makes it visible.
+  arguments in the error.
 
 Notes go in the result: a last text block, and ``notes`` in the structured content of a tool that
-has an output schema (each listed output schema declares it).
+has an output schema (each listed output schema declares it). The tool's own answer may carry
+notes too, in its structured ``notes``: a ref read as the version it names but for a leading
+``v`` (#605), resolved where every caller gets it, REST included. They join the middleware's.
 """
 
 import re
@@ -37,7 +37,7 @@ from exactdocs.bootstrap.constants import (
 )
 from exactdocs.retrieval.dtos import ResolveLibraryNameQuery
 from exactdocs.retrieval.ports.driving import ResolveLibraryName
-from exactdocs_kernel import LIBRARY_ID_PATTERN, DomainError, respelled_note
+from exactdocs_kernel import LIBRARY_ID_PATTERN, DomainError
 
 
 class LenientArguments(Middleware):
@@ -72,7 +72,6 @@ class LenientArguments(Middleware):
         arguments, notes = await self.normalized(tool, dict(context.message.arguments or {}))
         message = context.message.model_copy(update={"arguments": arguments})
         result = await call_next(context.copy(message=message))
-        notes += answered_version(arguments.get("ref"), result.structured_content)
         return with_notes(result, notes, structured=tool.output_schema is not None)
 
     async def on_list_tools(
@@ -165,24 +164,6 @@ class LenientArguments(Middleware):
             raise ToolError(str(error)) from error
         arguments[name] = found.id
         return [f"{name} {text!r} is a name, not an ID: resolved to {found.id!r}."]
-
-
-def answered_version(asked: object, data: object) -> list[str]:
-    """Note the version that answered when it is the asked ref's other ``v`` spelling (#606).
-
-    Args:
-        asked: The call's ``ref``, as normalized.
-        data: The result's structured content; the version is its ``version`` (searches,
-            outlines) or its ``ref`` (articles, article lists).
-
-    Returns:
-        The note, or none.
-    """
-    if not isinstance(asked, str) or not isinstance(data, Mapping):
-        return []
-    answered = data.get("version", data.get("ref"))
-    note = respelled_note(asked, answered) if isinstance(answered, str) else None
-    return [note] if note else []
 
 
 def _blank(value: object) -> bool:
@@ -288,20 +269,26 @@ def _type_of(spec: Mapping[str, Any]) -> str:
 def with_notes(result: ToolResult, notes: Sequence[str], *, structured: bool) -> ToolResult:
     """Add the notes to a result: a last text block, and ``notes`` in its structured content.
 
+    The notes the tool's answer carries itself (its structured ``notes``) follow the middleware's,
+    in the text block and in ``notes``.
+
     Args:
         result: The tool's result.
-        notes: What was changed in the arguments; none leaves the result as it is.
+        notes: What was changed in the arguments.
         structured: Whether the tool has an output schema (that declares ``notes``).
 
     Returns:
-        The result with the notes.
+        The result with the notes; as it is when there are none.
     """
-    if not notes:
-        return result
-    content = [*result.content, mt.TextContent(type="text", text="Notes: " + " ".join(notes))]
     data = result.structured_content
-    if structured and isinstance(data, dict):
-        data = {**data, NOTES: list(notes)}
+    told = data.get(NOTES) if isinstance(data, dict) else None
+    own = [str(note) for note in told] if isinstance(told, list) else []
+    every = [*notes, *own]
+    if not every:
+        return result
+    content = [*result.content, mt.TextContent(type="text", text="Notes: " + " ".join(every))]
+    if isinstance(data, dict) and (structured or own):
+        data = {**data, NOTES: every}
     return ToolResult(content=content, structured_content=data, meta=result.meta)
 
 

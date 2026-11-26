@@ -1,7 +1,7 @@
 Feature: The MCP tools take the arguments agents actually send
   As an AI coding agent, maybe a weaker model
   I want a loosely written tool call to be answered as I meant it, or refused with what to send
-  So that an empty string, a large limit or a library's name does not cost me a turn
+  So that an empty string, a large limit, a library's name or a guessed "v" does not cost me a turn
 
   Background:
     Given ExactDocs is running with the fixture docs repository imported at "v1.3.0" and "v1.4.0"
@@ -37,20 +37,14 @@ Feature: The MCP tools take the arguments agents actually send
     When an agent calls "search_all_docs" with an argument "ref" it does not have
     Then the tool error names the real arguments "query", "library" and "path_prefix"
 
-  Scenario: A version written without its leading v answers from the version written with it
-    When an agent calls "search_docs" on "/fixture/docs-repo/1.4.0" for "retry_policy"
-    Then version "v1.4.0" answers and a note says ref "1.4.0" was read as it
-    When an agent reads "docs/guide/resilience.md" of "/fixture/docs-repo/1.4.0"
-    Then version "v1.4.0" answers and a note says ref "1.4.0" was read as it
-    When an agent calls "article_outline" for "docs/guide/resilience.md" of "/fixture/docs-repo/1.4.0"
-    Then version "v1.4.0" answers and a note says ref "1.4.0" was read as it
-    When a user searches "/fixture/docs-repo/1.4.0" for "retry_policy"
-    Then the response says it searched version "v1.4.0"
+  Scenario: A ref that differs from an imported version only by a leading v reads that version
+    When an agent calls "search_docs" for "/fixture/docs-repo" version "1.4.0" and "retry_policy"
+    Then it searches version "v1.4.0"
+    And the result carries a note that ref "1.4.0" was read as "v1.4.0"
+    When an agent calls "query-docs" for "/fixture/docs-repo/1.3.0" and "connection_pool"
+    Then the docs come from version "v1.3.0" with a note that ref "1.3.0" was read as "v1.3.0"
 
-  Scenario: A version the library does not have is refused, naming the versions it has
-    When an agent calls "search_docs" on "/fixture/docs-repo/v9.9.9" for "retry_policy"
-    Then the tool error names the library's versions "v1.4.0" and "v1.3.0"
-    When an agent reads "docs/guide/resilience.md" of "/fixture/docs-repo/v9.9.9"
-    Then the tool error names the library's versions "v1.4.0" and "v1.3.0"
-    When a user searches "/fixture/docs-repo/v9.9.9" for "retry_policy"
-    Then the error response names the library's versions "v1.4.0" and "v1.3.0"
+  Scenario: A ref that names no version is refused, naming the versions
+    When an agent calls "search_docs" for "/fixture/docs-repo" version "2.0.0" and "retry_policy"
+    Then the tool error says version "2.0.0" is not imported and lists "v1.4.0" and "v1.3.0", newest first
+    And the tool error names "v1.4.0" as the default version

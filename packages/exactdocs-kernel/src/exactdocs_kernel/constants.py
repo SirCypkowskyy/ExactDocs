@@ -32,19 +32,6 @@ LIBRARY_ARGUMENT: Final[str] = (
 """What an MCP tool's ``library`` argument takes (#573): an ID, or a name the server resolves."""
 CLAMPED: Final[str] = "a value outside is clamped to the range, and the result's notes say so"
 """How an MCP tool treats a number outside its range (#573), for the argument's description."""
-REF_ARGUMENT: Final[str] = (
-    "Exact imported ref, e.g. 'v19.1'; default version if empty. Written with or without the "
-    "leading v of its number, it finds the one version imported the other way (noted); a ref that "
-    "matches no version is an error naming the library's versions"
-)
-"""What an MCP tool's ``ref`` argument takes (#606): an exact ref, or its other ``v`` spelling."""
-
-# ---------------------------------------------------------------- refs
-VERSION_NUMBER: Final[re.Pattern[str]] = re.compile(r"\d+(?:[.\-+_].*)?", re.DOTALL)
-"""A ref that is a version number: digits, then nothing or a separator and anything (``2``,
-``1.10.0``, ``1.5.0-rc.1``). A short SHA such as ``1234abc`` is not one (#606)."""
-MAX_NAMED_REFS: Final[int] = 10
-"""Refs an error names when a library lacks the one asked for: the closest, when it has more."""
 
 # ---------------------------------------------------------------- notice
 NOTICE: Final[str] = (
@@ -57,6 +44,10 @@ NOTICE: Final[str] = (
 )
 """The notice every MCP result starts with: what follows is untrusted repository data, or model
 output written from it."""
+
+# ---------------------------------------------------------------- refs
+MAX_NAMED_VERSIONS: Final[int] = 20
+"""Versions a "no such version" error names, newest first (#605)."""
 
 # ---------------------------------------------------------------- tags
 MAX_TAG_LENGTH: Final[int] = 40

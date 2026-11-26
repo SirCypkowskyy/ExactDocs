@@ -62,3 +62,13 @@ def test_no_pattern_excludes_digests_or_signature_tags(pass_: tuple[str, str]) -
 
     assert not re.search(pattern, DIGEST)
     assert not re.search(pattern, SIGNATURE)
+
+
+def test_untagged_images_of_a_running_release_are_kept() -> None:
+    """A release pushes untagged platform images before it tags them (#607)."""
+    jobs = yaml.safe_load(WORKFLOW.read_text())["jobs"]
+    (leftovers,) = jobs["leftovers"]["steps"]
+
+    assert "github.event.workflow_run.conclusion == 'success'" in jobs["cleanup"]["if"]
+    assert leftovers["with"]["delete-untagged"] is True
+    assert leftovers["with"]["older-than"] == "1 day"

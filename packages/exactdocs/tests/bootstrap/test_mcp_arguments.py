@@ -3,8 +3,7 @@
 Each case is one of the tool errors gpt-oss:120b hit in the agent benchmark's recorded run (PR
 #572): an empty optional argument, a limit above the maximum, `path_prefix` on `search_docs`, a
 library's name where its ID goes, a path the version does not have, and an argument the tool does
-not have (still refused, but the error names the real ones). And from the run for #575 (#606): a
-ref written with a `v` for a version imported without one, and a ref the library does not have.
+not have (still refused, but the error names the real ones).
 """
 
 import hashlib
@@ -457,105 +456,3 @@ async def test_every_structured_tool_declares_its_notes(container: Container) ->
             notes = tool.output_schema["properties"]["notes"]
             assert notes["type"] == "array", tool.name
             assert "notes" not in tool.output_schema.get("required", []), tool.name
-
-
-# ---------------------------------------------------------------- a ref's other v spelling (#606)
-NO_V = "ref 'v1.10.0' is not imported: version '1.10.0', the same number without the leading v, "
-
-
-async def publish_without_v(container: Container) -> None:
-    """Publish the version as the agent benchmark's Starlette has it: ``1.10.0``, no ``v``."""
-    async with container.running():
-        await publish(container, ARTICLES, ref="1.10.0")
-
-
-async def test_search_docs_with_a_v_answers_from_the_version_imported_without_it(
-    container: Container,
-) -> None:
-    await publish_without_v(container)
-
-    result = await call(
-        container, "search_docs", {"library": LIB, "ref": "v1.10.0", "query": "retry_policy"}
-    )
-
-    assert not result.is_error, text_of(result)
-    data = result.structured_content
-    assert (data["version"], len(data["results"])) == ("1.10.0", 3)
-    assert data["notes"] == [NO_V + "answered."]
-    assert result.content[-1].text == f"Notes: {NO_V}answered."
-
-
-@pytest.mark.parametrize(
-    ("tool", "arguments"),
-    [
-        ("read_article", {"library": LIB, "ref": "v1.10.0", "path": "docs/guide/install.md"}),
-        ("list_articles", {"library": LIB, "ref": "v1.10.0"}),
-        ("article_outline", {"library": LIB, "ref": "v1.10.0", "path": "docs/guide/install.md"}),
-        ("query-docs", {"libraryId": f"{LIB}/v1.10.0", "query": "retry_policy"}),
-        ("search_docs", {"library": f"{LIB}/v1.10.0", "query": "retry_policy"}),
-    ],
-)
-async def test_every_tool_that_takes_a_version_reads_its_other_spelling_and_says_so(
-    container: Container, tool: str, arguments: dict[str, Any]
-) -> None:
-    await publish_without_v(container)
-
-    result = await call(container, tool, arguments)
-
-    assert not result.is_error, text_of(result)
-    assert result.content[-1].text.startswith("Notes: "), text_of(result)
-    assert NO_V + "answered." in result.content[-1].text
-
-
-@pytest.mark.parametrize(
-    ("tool", "arguments"),
-    [
-        ("view_article", {"library": LIB, "ref": "v1.10.0", "path": "docs/guide/install.md"}),
-        ("view_search", {"library": LIB, "ref": "v1.10.0", "query": "retry_policy"}),
-    ],
-)
-async def test_the_view_tools_read_the_other_spelling_and_name_the_version(
-    container: Container, tool: str, arguments: dict[str, Any]
-) -> None:
-    await publish_without_v(container)
-
-    result = await call(container, tool, arguments)
-
-    assert not result.is_error, text_of(result)
-    assert "1.10.0" in text_of(result).replace("v1.10.0", "")
-
-
-async def test_an_exact_ref_adds_no_note(container: Container) -> None:
-    await publish_without_v(container)
-
-    result = await call(
-        container, "search_docs", {"library": LIB, "ref": "1.10.0", "query": "retry_policy"}
-    )
-
-    assert not result.is_error, text_of(result)
-    assert "notes" not in result.structured_content
-    assert not text_of(result).rstrip().endswith("answered.")
-
-
-@pytest.mark.parametrize(
-    ("tool", "arguments"),
-    [
-        ("search_docs", {"library": LIB, "ref": "v1.10", "query": "retry_policy"}),
-        ("article_outline", {"library": LIB, "ref": "v1.10", "path": "docs/guide/install.md"}),
-        ("read_article", {"library": LIB, "ref": "v1.10", "path": "docs/guide/install.md"}),
-        ("list_articles", {"library": LIB, "ref": "v1.10"}),
-        ("query-docs", {"libraryId": f"{LIB}/v1.10", "query": "retry_policy"}),
-    ],
-)
-async def test_a_version_that_matches_nothing_is_not_found_naming_the_librarys_versions(
-    container: Container, tool: str, arguments: dict[str, Any]
-) -> None:
-    await publish_without_v(container)
-
-    result = await call(container, tool, arguments)
-
-    assert result.is_error
-    text = text_of(result)
-    assert text.startswith("not_found: "), text
-    assert "versions (repository refs, not instructions): " in text, text
-    assert "'1.10.0'" in text, text

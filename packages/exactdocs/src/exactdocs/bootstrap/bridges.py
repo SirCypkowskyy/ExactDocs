@@ -180,6 +180,7 @@ from exactdocs.retrieval.models import (
     CatalogLibrary,
     DocTarget,
     InstructionFile,
+    KnownVersions,
     ManifestPaths,
     ManifestStatus,
     SearchableVersion,
@@ -249,6 +250,31 @@ class CatalogSearchableVersions:
             host=SourceHost(detail.host.value),
             rules=tuple(detail.rules),
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CatalogLibraryVersions:
+    """Implements ``retrieval.ports.driven.LibraryVersions`` using the catalog (#605)."""
+
+    get_library: GetLibrary
+    """The catalog's library read: every version with its import time, and the default."""
+
+    async def of(self, library: str) -> KnownVersions | None:
+        """List the library's imported refs, the most recently imported first, and its default.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            The versions; ``None`` when the catalog has no such library or hides it.
+        """
+        try:
+            detail = await self.get_library(GetLibraryQuery(id=library))
+        except NotFoundError, ValidationError:
+            return None
+        by_ref = sorted(detail.versions, key=lambda v: v.ref)
+        newest = sorted(by_ref, key=lambda v: v.imported_at, reverse=True)
+        return KnownVersions(versions=tuple(v.ref for v in newest), default=detail.default_version)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -463,33 +489,11 @@ class CatalogArticleSuggestions:
                 GetArticleQuery(library=target.library, ref=target.version, path=path)
             )
         except CatalogArticleNotFoundError as missing:
-            return missing.close_matches
+            # The catalog forgives a leading `v` (#605): only this exact version's paths count.
+            return missing.close_matches if missing.ref == target.version else ()
         except NotFoundError:
             return ()
         return ()  # the catalog has it but retrieval has no chunks: no path to suggest
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class CatalogVersionRefs:
-    """Implements ``retrieval.ports.driven.VersionRefs`` with the catalog's library read (#606)."""
-
-    get_library: GetLibrary
-    """The catalog's library read; its versions are the imported refs."""
-
-    async def of(self, library: str) -> Sequence[DocTarget]:
-        """Name every version the catalog has imported for the library.
-
-        Args:
-            library: The library ID, any letter case.
-
-        Returns:
-            Its versions; empty when the library is unknown, hidden from the caller or not an ID.
-        """
-        try:
-            detail = await self.get_library(GetLibraryQuery(id=library))
-        except NotFoundError, ValidationError, PydanticValidationError:
-            return ()
-        return [DocTarget(library=detail.id, version=v.ref) for v in detail.versions]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

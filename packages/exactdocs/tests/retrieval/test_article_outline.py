@@ -79,15 +79,6 @@ class FakeVersions:
         return {}
 
 
-@dataclass(slots=True)
-class FakeRefs:
-    """Plays the catalog's list of a library's imported refs."""
-
-    async def of(self, library: str) -> list[DocTarget]:
-        refs = ("v1.3.0", "v1.4.0") if library.lower() == LIB else ()
-        return [DocTarget(library=LIB, version=r) for r in refs]
-
-
 def article(path: str, sections: list[tuple[list[str], str]]) -> ArticleChunksIn:
     return ArticleChunksIn(
         path=path,
@@ -119,7 +110,6 @@ async def retrieval() -> RetrievalModule:
         search=index,
         maintenance=index,
         library_modes=InMemoryLibraryModes(),
-        version_refs=FakeRefs(),
     )
     for manifest, ref, articles in [
         ("m13", "v1.3.0", [article("docs/guide/setup.md", [(["Setup"], "# Setup")])]),
@@ -249,21 +239,8 @@ async def test_a_wrong_path_lists_the_close_matches_of_that_version() -> None:
 
 
 async def test_a_version_that_is_not_imported_gets_nothing(retrieval: RetrievalModule) -> None:
-    with pytest.raises(VersionNotIndexedError) as missing:
+    with pytest.raises(VersionNotIndexedError):
         await get(retrieval, INSTALL, "v9.9.9")
-
-    assert set(missing.value.close_refs) == {"v1.3.0", "v1.4.0"}
-
-
-async def test_a_ref_without_its_leading_v_outlines_the_version_with_it(
-    retrieval: RetrievalModule,
-) -> None:
-    found = await get(retrieval, INSTALL, "1.4.0")
-
-    assert found.version == "v1.4.0"
-    assert found == await get(retrieval, INSTALL, "v1.4.0")
-    with pytest.raises(ArticleNotFoundError):  # 1.3.0 is v1.3.0, which has no install guide
-        await get(retrieval, INSTALL, "1.3.0")
 
 
 @pytest.mark.parametrize(

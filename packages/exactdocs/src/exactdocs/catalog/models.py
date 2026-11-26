@@ -50,7 +50,7 @@ from exactdocs.catalog.errors import (
     RenameLinkMismatchError,
     SelfRenameError,
 )
-from exactdocs_kernel import MAX_TAG_LENGTH, MAX_TAGS, leading_v_twin, normalize_tag
+from exactdocs_kernel import MAX_TAG_LENGTH, MAX_TAGS, normalize_tag, respelled
 
 
 @dataclass(frozen=True, slots=True)  # conventions: allow-positional -- one-field value object
@@ -435,22 +435,30 @@ class Library:
             raise AmbiguousCommitError(prefix)
         return min(matches, key=lambda v: v.ref.value) if matches else None
 
-    def spelled_version(self, ref: VersionRef) -> Version | None:
-        """Find the version a ref names that is not imported as written: its other ``v`` spelling.
+    def respelled_version(self, ref: VersionRef) -> Version | None:
+        """Find the one version ``ref`` names but for a leading ``v`` (#605): ``v1.2`` for ``1.2``.
 
-        ``v1.10.0`` names the version imported as ``1.10.0`` and the other way round (#606), when
-        the library has no ref spelled as asked. Only a ``v`` in front of a version number counts,
-        never another number, and never a commit version (its ref is a SHA, not a number).
+        Only reader-facing lookups ask for it, after ``find_version`` found nothing; the version
+        is never a nearby one (``exactdocs_kernel.respelled``).
 
         Args:
-            ref: The ref asked for, which ``find_version`` did not find.
+            ref: The ref asked for.
 
         Returns:
-            The version; ``None`` when no tag or branch is the ref with its ``v`` dropped or added.
+            The version; ``None`` when ``ref`` itself is imported, when no version matches, or
+            when several do.
         """
-        named = {v.ref.value: v for v in self.versions if v.kind is not RefKind.COMMIT}
-        twin = leading_v_twin(ref.value, named)
-        return None if twin is None else named[twin]
+        other = respelled(ref.value, (v.ref.value for v in self.versions))
+        return next((v for v in self.versions if v.ref.value == other), None)
+
+    def newest_first(self) -> list[Version]:
+        """List the imported versions, the most recently imported first (ties by ref).
+
+        Returns:
+            Every version, newest first.
+        """
+        by_ref = sorted(self.versions, key=lambda v: v.ref.value)
+        return sorted(by_ref, key=lambda v: v.imported_at, reverse=True)
 
 
 def _stable_semver(tag: str) -> tuple[int, int, int] | None:

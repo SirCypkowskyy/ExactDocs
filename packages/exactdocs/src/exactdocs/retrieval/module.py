@@ -42,6 +42,7 @@ from exactdocs.retrieval.ports.driven import (
     InstructionFiles,
     Libraries,
     LibraryModes,
+    LibraryVersions,
     ModelFactory,
     ModelRoles,
     NativeHybrid,
@@ -62,7 +63,6 @@ from exactdocs.retrieval.ports.driven import (
     VectorBackend,
     VectorIndex,
     VersionArticles,
-    VersionRefs,
 )
 from exactdocs.retrieval.ports.driving import (
     AnswerQuestion,
@@ -416,7 +416,7 @@ class RetrievalModule:
         pipelines: Mapping[RetrievalMode, RetrievalPipeline] | None = None,
         renames: RenamedPaths | None = None,
         suggestions: ArticleSuggestions | None = None,
-        version_refs: VersionRefs | None = None,
+        known_versions: LibraryVersions | None = None,
         clock: Clock | None = None,
         query_docs_token_budget: int = DEFAULT_QUERY_DOCS_TOKEN_BUDGET,
         tracer: SearchTracer | None = None,
@@ -490,9 +490,9 @@ class RetrievalModule:
             renames: Finds where a stale chunk's article went, for ``stale_chunk`` errors.
             suggestions: Finds close article paths, for an outline of a path that is missing
                 and a stale chunk whose article is gone.
-            version_refs: A library's imported refs: a ref asked with or without its leading
-                ``v`` finds the other spelling, and a ref that matches nothing names them (#606).
-                Without it, only the exact ref answers and the error names no refs.
+            known_versions: Every library's imported versions: a ref with or without a leading
+                ``v`` finds its version, and a ref that names none is told them (#605). Without
+                it only the exact ref answers.
             clock: The time; the system clock without it.
             query_docs_token_budget: Size budget of a ``query-docs`` answer, in estimated tokens.
             tracer: Observes every search and its stages; nothing is recorded without it.
@@ -676,7 +676,7 @@ class RetrievalModule:
         return cls(
             search_docs=SearchDocsUseCase(
                 versions=searchable,
-                refs=version_refs,
+                known=known_versions,
                 modes=modes,
                 chunks=chunks,
                 tracer=tracer,
@@ -722,7 +722,7 @@ class RetrievalModule:
             ),
             article_outline=ArticleOutlineUseCase(
                 versions=searchable,
-                refs=version_refs,
+                known=known_versions,
                 chunks=chunks,
                 suggestions=suggestions,
                 access=access,
@@ -738,7 +738,7 @@ class RetrievalModule:
             resolve_library_name=ResolveLibraryNameUseCase(libraries=libraries, access=access),
             query_docs=QueryDocsUseCase(
                 versions=searchable,
-                refs=version_refs,
+                known=known_versions,
                 modes=modes,
                 chunks=chunks,
                 token_budget=query_docs_token_budget,

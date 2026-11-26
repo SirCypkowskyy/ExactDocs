@@ -367,7 +367,8 @@ NOTES_SCHEMA: Final[Mapping[str, object]] = MappingProxyType(
     {
         "description": (
             "What the server changed in the call's arguments before answering: a number clamped "
-            "to its range, a library name resolved to its ID. Absent when nothing was changed."
+            "to its range, a library name resolved to its ID, a ref read as the one imported "
+            "version it names but for a leading v. Absent when nothing was changed."
         ),
         "items": {"type": "string"},
         "type": "array",

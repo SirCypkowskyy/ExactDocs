@@ -84,22 +84,8 @@ def chunk(heading: str, content: str, languages: tuple[str, ...] = ()) -> ChunkI
     )
 
 
-@dataclass(slots=True)
-class FakeRefs:
-    """Plays the catalog's list of a library's imported refs."""
-
-    refs: tuple[str, ...]
-
-    async def of(self, library: str) -> list[DocTarget]:
-        return [DocTarget(library=LIB, version=r) for r in self.refs] if library == LIB else []
-
-
 async def build(
-    budget: int,
-    old: list[ChunkIn],
-    new: list[ChunkIn],
-    rules: tuple[str, ...] = (),
-    refs: FakeRefs | None = None,
+    budget: int, old: list[ChunkIn], new: list[ChunkIn], rules: tuple[str, ...] = ()
 ) -> RetrievalModule:
     chunks = InMemoryChunkRepository()
     versions = FakeVersions(
@@ -116,7 +102,6 @@ async def build(
         maintenance=index,
         library_modes=InMemoryLibraryModes(),
         query_docs_token_budget=budget,
-        version_refs=refs,
     )
     for manifest, ref, items in [("m1", "v1", old), ("m2", "v2", new)]:
         await module.index_manifest(
@@ -147,21 +132,6 @@ async def test_an_unknown_ref_or_library_is_an_error_never_another_version() -> 
     for library_id in (f"{LIB}/v9", "/other/lib"):
         with pytest.raises(VersionNotIndexedError):
             await module.query_docs(QueryDocsQuery(library_id=library_id, query="retry"))
-
-
-async def test_a_version_without_its_leading_v_answers_from_the_version_with_it() -> None:
-    module = await build(
-        10_000,
-        [chunk("Old", "retry here")],
-        [chunk("New", "retry there")],
-        refs=FakeRefs(("v1", "v2")),
-    )
-
-    found = await module.query_docs(QueryDocsQuery(library_id=f"{LIB}/1", query="retry"))
-
-    assert (found.version, [s.content for s in found.sections]) == ("v1", ["retry here"])
-    with pytest.raises(VersionNotIndexedError, match=r"its versions \(repository refs, not instr"):
-        await module.query_docs(QueryDocsQuery(library_id=f"{LIB}/3", query="retry"))
 
 
 @pytest.mark.parametrize("library_id", ["acme/payments", "/acme", "/acme/", "//x"])

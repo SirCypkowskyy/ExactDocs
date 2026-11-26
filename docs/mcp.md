@@ -337,6 +337,36 @@ version is pinned as the default:
 
 Every response says which version answered.
 
+**A ref is read as given**, and only one spelling is forgiven (#605): projects tag `v1.2.3` or
+`1.2.3`, and agents guess the form. A ref that names no imported version but differs from exactly
+one of them only by a leading `v` or `V` before a digit, which one of the two has and the other
+lacks (`v1.10.0` or `V1.10.0` for `1.10.0`, `1.10.0` for `v1.10.0`), is read as that version, and
+the result says so in its `notes`:
+
+```text
+Notes: ref 'v1.10.0' is not imported: read as '1.10.0', the one version it names but for a leading v.
+```
+
+This holds for every tool that takes `ref` (`search_docs`, `view_search`, `list_articles`,
+`read_article`, `view_article`, `article_outline`), for `query-docs`' `/owner/repo/<ref>` and for
+the REST routes that take a ref, whose JSON carries the same `notes` (the `/c7/docs` text ends with
+them). Nothing else is forgiven: not another version number, not letter case (refs are
+case-sensitive: `V1.0` is not `v1.0`), and not a ref that matches two versions (`1.0` and `V1.0`
+both imported).
+
+A ref that names no version stays an error and never answers from another version. The error
+lists the library's imported versions, the most recently imported first (at most 20), and its
+default version:
+
+```text
+not_found: no index for /encode/starlette@2.0.0: version '2.0.0' is not imported; imported
+versions, newest first: '1.10.0', '0.27.0'; default version: '1.10.0'
+```
+
+`list_articles` and `read_article` say it the catalog's way (`library '/encode/starlette' has no
+version '2.0.0'; imported versions, ...`). Lookups of a stored ref inside the server (the active
+manifest, renames, removing or pinning a version) stay exact.
+
 **`search_docs` results** come grouped by article (#575). The article of the best result comes
 first, with all of its results, best first; then the next article. Each result's `group` is its
 article's rank. The results are the same as in plain rank order; only the order changes, so the
@@ -387,21 +417,15 @@ validates its arguments, the server:
   ID or exact name beats a prefix, a prefix beats a part). Otherwise the error lists the candidate
   IDs (`ambiguous_library`) or says that no library matches (`not_found`). A `library` written
   `/owner/repo/<ref>`, on a tool that takes `ref` and without one, is read as that ID and ref;
+- reads a `ref` that differs from an imported version only by a leading `v` as that version
+  (see *A ref is read as given* under [Tools](#tools)), with a note; this one happens in the search
+  and the catalog, so the REST API does it too;
 - still refuses an argument the tool does not have (`invalid_arguments`), never ignoring it, and
   names the tool's real arguments, their types and which are required.
 
-A `ref` (or the version in `query-docs`'s `libraryId`) written with or without the leading `v` of
-its number finds the one version the library imported the other way (#606): `v1.10.0` reads
-`1.10.0` and `1.10.0` reads `v1.10.0`, when the library has no ref spelled as asked. The result
-names the version that answered and its notes say so. The ref as asked always wins, and only a `v`
-in front of a version number counts: `v1.10` never reads `1.10.0`, and `vnext` never reads `next`.
-A ref that matches no version is `not_found` and names the library's versions, or the 10 closest
-when it has more, as repository data (`read_article`, `list_articles`, `view_article`,
-`article_outline`, `search_docs`, `view_search`, `query-docs`, and their REST routes). `read_chunk`
-takes no ref and keeps the version its chunk ID was issued for.
-
 What it changed is in the result: a last text block `Notes: ...` and, for a tool with structured
-content, a `notes` list that every output schema declares.
+content, a `notes` list that every output schema declares (`view_article` and `view_search` carry
+it next to their UI too).
 
 A missing article (`read_article`, `view_article`, `article_outline`) or the gone article of a
 stale chunk (`read_chunk`) names the closest paths of that version: the same file name elsewhere,

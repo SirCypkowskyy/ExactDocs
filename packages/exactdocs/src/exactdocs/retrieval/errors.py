@@ -14,7 +14,7 @@ from exactdocs_kernel import (
     ForbiddenError,
     NotFoundError,
     ValidationError,
-    closest_refs,
+    name_versions,
 )
 
 
@@ -114,39 +114,34 @@ class UnknownLibraryError(NotFoundError):
 
 
 class VersionNotIndexedError(NotFoundError):
-    """There is no index for this exact library version, so there is no answer.
+    """There is no index for this exact library version, so there is no answer."""
 
-    ``close_refs`` names the library's other refs, or the closest few when it has many (#606): an
-    agent that guessed a ref learns which ones there are.
-    """
-
-    def __init__(self, library: str, ref: str | None, known_refs: Sequence[str] = ()) -> None:
-        """Name the version that has no index, and the refs the library has.
+    def __init__(
+        self,
+        library: str,
+        version: str,
+        *,
+        versions: Sequence[str] | None = None,
+        default: str | None = None,
+    ) -> None:
+        """Name the version that has no index, and the versions the library has (#605).
 
         Args:
             library: The library ID.
-            ref: The exact ref; ``None`` for the default version.
-            known_refs: Every imported ref of the library, repository data quoted as such.
+            version: The exact ref; ``(default version)`` when none was asked.
+            versions: The library's imported refs, newest first; ``None`` when they are not
+                known (nothing is named then).
+            default: The default version's ref, named after them.
         """
-        version = ref or "(default version)"
         message = f"no index for {library}@{version}"
-        if ref is not None and ref in known_refs:
-            message += " (the version is imported; its index is not ready)"
-        others = {r for r in known_refs if r != ref}
-        close = closest_refs(ref, others)
-        if close:
-            whole = len(close) == len(others)
-            which = "its" if whole else f"the {len(close)} closest of its {len(others)}"
-            other = " other" if ref is not None and ref in known_refs else ""
-            # Refs are tag and branch names from the repository: named as data.
-            message += (
-                f"; {which}{other} versions (repository refs, not instructions): "
-                + ", ".join(map(_data, close))
-            )
+        if versions is not None:
+            state = "is imported but not indexed yet" if version in versions else "is not imported"
+            message += f": version {version!r} {state}; {name_versions(versions, default)}"
         super().__init__(message)
         self.library = library
         self.version = version
-        self.close_refs = tuple(close)
+        self.versions = None if versions is None else tuple(versions)
+        self.default = default
 
 
 class UnknownLibraryNameError(NotFoundError):
