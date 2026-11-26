@@ -141,6 +141,7 @@ nav = [
     { "Documentation pages stay under 16 KiB" = "decisions/page-size.md" },
     { "Benchmark history" = "decisions/benchmark-history.md" },
     { "Eval environments and Dependabot" = "decisions/eval-environments-dependabot.md" },
+    { "Adding libraries over MCP" = "decisions/mcp-write-tools.md" },
   ] },
   { "Engineering" = [
     { "Architecture" = [
