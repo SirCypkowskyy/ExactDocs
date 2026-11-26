@@ -108,6 +108,7 @@ nav = [
       { "Coverage matrix" = "plan/coverage.md" },
     ] },
     { "AI retrieval decisions" = "decisions/ai-retrieval.md" },
+    { "Eval environments and Dependabot" = "decisions/eval-environments-dependabot.md" },
   ] },
   { "Engineering" = [
     { "Architecture" = [
