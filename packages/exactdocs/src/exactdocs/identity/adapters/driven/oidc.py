@@ -43,6 +43,7 @@ from joserfc import jws, jwt
 from joserfc.errors import BadSignatureError, InvalidKeyIdError, JoseError
 from joserfc.jwk import KeySet
 
+from exactdocs.identity.adapters.driven.oauth2 import claim_strings
 from exactdocs.identity.constants import (
     _BAD_REQUEST,
     _SUCCESS,
@@ -78,6 +79,9 @@ class OidcClaimNames:
     """The email claim; its local part names an account when there is no username."""
     groups: str = "groups"
     """The groups claim, a dotted path (Keycloak: ``realm_access.roles``; ADFS: ``group``)."""
+    roles: str | None = None
+    """The role claim, a dotted path (Entra ID: ``roles``; Keycloak:
+    ``resource_access.<client>.roles``); ``None`` reads none."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -266,9 +270,6 @@ class OidcProvider:
         Returns:
             The issuer, subject, username, email and groups.
         """
-        groups = _claim(claims, self.claims.groups)
-        if isinstance(groups, str):
-            groups = [groups]
         username = _claim(claims, self.claims.username)
         email = _claim(claims, self.claims.email)
         return ExternalClaims(
@@ -276,9 +277,10 @@ class OidcProvider:
             subject=str(claims["sub"]),
             username=username if isinstance(username, str) and username.strip() else None,
             email=email if isinstance(email, str) and email.strip() else None,
-            groups=frozenset(g for g in groups if isinstance(g, str) and g)
-            if isinstance(groups, list)
-            else frozenset(),
+            groups=claim_strings(_claim(claims, self.claims.groups)),
+            roles=frozenset()
+            if self.claims.roles is None
+            else claim_strings(_claim(claims, self.claims.roles)),
         )
 
     async def _with_userinfo(
@@ -309,7 +311,9 @@ class OidcProvider:
             ProviderUnavailableError: Userinfo was needed and could not be read.
         """
         missing = force or any(
-            _claim(claims, path) is None for path in (self.claims.groups, self.claims.username)
+            _claim(claims, path) is None
+            for path in (self.claims.groups, self.claims.username, self.claims.roles)
+            if path is not None
         )
         if not missing or discovery.userinfo_endpoint is None:
             return claims

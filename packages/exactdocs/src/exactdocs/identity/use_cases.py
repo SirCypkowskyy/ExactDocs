@@ -78,6 +78,7 @@ from exactdocs.identity.dtos import (
     ListLibraryAccessLogQuery,
     ListLibraryGrantsQuery,
     LoginForTokenCommand,
+    MarkLibraryPrivateCommand,
     PasswordReset,
     ProviderIconFile,
     ResetPasswordCommand,
@@ -148,12 +149,16 @@ from exactdocs.identity.models import (
     Account,
     AccountId,
     ApiToken,
+    ExternalClaims,
     ExternalGrant,
     ExternalIdentity,
     LibraryCreationPolicy,
     LibraryGrant,
     LibraryRole,
+    Memberships,
     Role,
+    RoleRule,
+    RuleGrant,
     Session,
     SignInAttempt,
     SignInPolicy,
@@ -164,6 +169,7 @@ from exactdocs.identity.models import (
     address_key,
     effective_role,
     hash_token,
+    instance_role_by_rules,
     known_sign_in_key,
     safe_return_to,
     username_candidates,
@@ -177,6 +183,8 @@ from exactdocs.identity.ports.driven import (
     LibraryGrantRepository,
     PasswordHasher,
     PreferencesRepository,
+    PrivateLibraries,
+    RoleRuleRepository,
     SecretBox,
     SessionRepository,
     SignInAttemptRepository,
@@ -1485,6 +1493,8 @@ class IdentifyExternalTokenUseCase:
     """The links of external identities to accounts."""
     clock: Clock
     """The current time, for the linked account's last activity."""
+    rules: RoleRules | None = None
+    """The role rules in force, for the role."""
 
     async def __call__(self, provider: str, token: str) -> ExternalTokenIdentity:
         """Validate the token and return who it acts as.
@@ -1516,11 +1526,13 @@ class IdentifyExternalTokenUseCase:
         if link is None and not policy.auto_create_users:
             logger.info("MCP OAuth through %s refused: no account is linked", policy.name)
             raise NoLinkedAccountError
-        role = policy.role_for(claims.groups).value
-        groups = policy.stored_groups(claims.groups)
+        role = (await _policy_role(self.rules, policy, claims)).value
+        memberships = Memberships(
+            provider=policy.name, groups=policy.stored_groups(claims.groups), roles=claims.roles
+        )
         if account is not None and link is not None and not link.is_origin:
             # A linked identity only signs in: the account's own role and groups stand.
-            role, groups = account.role.value, await self.externals.groups_of(account.id)
+            role, memberships = account.role.value, await self.externals.memberships_of(account.id)
         if account is not None:
             await _record_activity(self.accounts, account, self.clock.now())
             caller = AccountSummary(
@@ -1535,7 +1547,13 @@ class IdentifyExternalTokenUseCase:
             caller = AccountSummary(
                 id=f"{policy.name}:{claims.subject}", username=username, role=role
             )
-        return ExternalTokenIdentity(account=caller, groups=groups, linked=link is not None)
+        return ExternalTokenIdentity(
+            account=caller,
+            groups=memberships.groups,
+            linked=link is not None,
+            provider=memberships.provider,
+            roles=memberships.roles,
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1654,6 +1672,8 @@ class FinishExternalSignInUseCase:
     """Seals the refresh token before it is stored."""
     clock: Clock
     """The current time."""
+    rules: RoleRules | None = None
+    """The role rules in force, for the role."""
 
     async def __call__(
         self, command: FinishExternalSignInCommand, previous_token: str | None = None
@@ -1813,7 +1833,7 @@ class FinishExternalSignInUseCase:
                 await self._end_access(account.id, now)
             logger.info("external sign-in through %s refused: not in an allowed group", policy.name)
             raise NotAllowedError
-        role = policy.role_for(claims.groups)
+        role = await _policy_role(self.rules, policy, claims)
         groups = policy.stored_groups(claims.groups)
         sealed = None if grant.refresh_token is None else self.box.seal(grant.refresh_token)
         identity = ExternalIdentity(
@@ -1829,7 +1849,10 @@ class FinishExternalSignInUseCase:
         )
         if account is not None:
             await self.externals.record_check(
-                replace(identity, account_id=account.id), role=role, groups=groups
+                replace(identity, account_id=account.id),
+                role=role,
+                groups=groups,
+                roles=claims.roles,
             )
             return replace(account, role=role)
         return await self._create_account(policy, grant, identity, role=role, groups=groups)
@@ -1912,7 +1935,9 @@ class FinishExternalSignInUseCase:
                 created_at=identity.signed_in_at,
             )
             linked = replace(identity, account_id=account.id)
-            outcome = await self.externals.create_linked_account(account, linked, groups)
+            outcome = await self.externals.create_linked_account(
+                account, linked, groups, grant.claims.roles
+            )
             if outcome == "created":
                 return account
             if outcome == "already_linked":
@@ -2219,6 +2244,8 @@ class RevalidateExternalAccountsUseCase:
     """Opens the stored refresh tokens and seals rotated ones."""
     clock: Clock
     """The current time."""
+    rules: RoleRules | None = None
+    """The role rules in force, for the role."""
 
     async def __call__(self) -> RevalidationReport:
         """Check every due link, a batch at a time, until none is due.
@@ -2271,8 +2298,9 @@ class RevalidateExternalAccountsUseCase:
                 next_check_at=now + policy.revalidate_every,
                 access_until=policy.access_until(now, refreshable=True),
             ),
-            role=policy.role_for(claims.groups),
+            role=await _policy_role(self.rules, policy, claims),
             groups=policy.stored_groups(claims.groups),
+            roles=claims.roles,
         )
         if not stored:
             # A disable, a revocation or a sign-in changed the link while the provider
@@ -2334,6 +2362,140 @@ class RevalidateExternalAccountsUseCase:
         return "revoked"
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RoleRules:
+    """The role rules in force (#577): the configuration file's, then the stored ones."""
+
+    policies: Mapping[str, SignInPolicy]
+    """The configured providers, by name: their configured rules and how they match."""
+    stored: RoleRuleRepository | None = None
+    """The rules admins added; ``None`` for none."""
+    library_creation: LibraryCreationPolicy | None = None
+    """``[library_creation]``, whose groups show as ``create_libraries`` rules."""
+    private: PrivateLibraries | None = None
+    """Which libraries are private; ``None`` treats every library as private, so a rule for
+    every library reaches none (fails closed)."""
+
+    async def in_force(self) -> list[RoleRule]:
+        """Return every rule: each provider's configured ones, ``[library_creation]``'s, stored.
+
+        Returns:
+            The rules.
+        """
+        configured = [rule for p in self.policies.values() for rule in p.configured_role_rules]
+        creation = () if self.library_creation is None else self.library_creation.role_rules
+        stored = [] if self.stored is None else await self.stored.stored()
+        return [*configured, *creation, *stored]
+
+    async def matching(self, memberships: Memberships) -> list[RoleRule]:
+        """Return the rules that apply to an account with these memberships.
+
+        Args:
+            memberships: The account's provider, groups and roles.
+
+        Returns:
+            The rules.
+        """
+        if memberships.provider is None and not memberships.groups:
+            return []
+        return [r for r in await self.in_force() if r.matches(memberships, self.policies)]
+
+    async def instance_role(self, memberships: Memberships) -> Role:
+        """Return the account role the rules give (``admin_groups`` among them).
+
+        Args:
+            memberships: The account's provider, groups and roles.
+
+        Returns:
+            ``admin`` or ``user``.
+        """
+        return instance_role_by_rules(await self.in_force(), memberships, self.policies)
+
+    async def library_roles(
+        self, memberships: Memberships, libraries: set[str]
+    ) -> dict[str, LibraryRole]:
+        """Return the highest library role the rules give on each of these libraries.
+
+        Args:
+            memberships: The account's provider, groups and roles.
+            libraries: Library IDs, lower-case.
+
+        Returns:
+            The role on each library a rule gives one on.
+        """
+        matched = [r for r in await self.matching(memberships) if r.grant.library_role]
+        hidden: frozenset[str] | set[str] = frozenset()
+        if any(rule.libraries is None for rule in matched):
+            hidden = (
+                libraries if self.private is None else await self.private.private_among(libraries)
+            )
+        roles: dict[str, LibraryRole] = {}
+        for rule in matched:
+            role = rule.grant.library_role
+            reached = libraries - hidden if rule.libraries is None else libraries & rule.libraries
+            for library in reached:
+                if role is not None and (library not in roles or role.rank > roles[library].rank):
+                    roles[library] = role
+        return roles
+
+
+async def _policy_role(
+    rules: RoleRules | None, policy: SignInPolicy, claims: ExternalClaims
+) -> Role:
+    """Return the account role a provider's claims give: its ``admin_groups`` and the rules.
+
+    Args:
+        rules: The role rules in force; ``None`` for ``admin_groups`` alone.
+        policy: The provider's policy.
+        claims: The validated claims.
+
+    Returns:
+        ``admin`` or ``user``.
+    """
+    if rules is None:
+        return policy.role_for(claims.groups)
+    return await rules.instance_role(
+        Memberships(
+            provider=policy.name, groups=policy.stored_groups(claims.groups), roles=claims.roles
+        )
+    )
+
+
+async def _caller_memberships(
+    accounts: AccountRepository,
+    externals: ExternalIdentityRepository,
+    account_id: str,
+    external_identity: ExternalTokenIdentity | None,
+) -> tuple[bool, Memberships] | None:
+    """Return whether a caller is an operator, and its memberships, if it may act at all.
+
+    OAuth requests use only their verified token's policy role, groups and roles, without
+    reading stored web-account state; others use the stored account's.
+
+    Args:
+        accounts: Where accounts are stored.
+        externals: The links of external accounts, for their memberships.
+        account_id: The account.
+        external_identity: The verified caller of this OAuth request, if any.
+
+    Returns:
+        Operator or not, and the memberships; ``None`` for a disabled account, a missing
+        linked account or an unknown ordinary caller.
+    """
+    account = await accounts.get_by_id(AccountId(account_id))
+    if external_identity is not None:
+        if (
+            external_identity.account.id != account_id
+            or (account is None and external_identity.linked)
+            or (account is not None and account.is_disabled)
+        ):
+            return None
+        return external_identity.account.role == Role.ADMIN.value, external_identity.memberships
+    if account is None or account.is_disabled:
+        return None
+    return account.is_operator, await externals.memberships_of(account.id)
+
+
 async def _library_roles(
     *,
     accounts: AccountRepository,
@@ -2342,6 +2504,7 @@ async def _library_roles(
     account_id: str,
     libraries: Collection[str],
     external_identity: ExternalTokenIdentity | None = None,
+    rules: RoleRules | None = None,
 ) -> dict[str, LibraryRole]:
     """Work out an account's effective role on each library: the highest one it holds.
 
@@ -2357,32 +2520,29 @@ async def _library_roles(
         account_id: The account.
         libraries: Library IDs; compared lower-case.
         external_identity: The verified caller and groups of this OAuth request, if any.
+        rules: The role rules in force; ``None`` for none.
 
     Returns:
         The role on each library the account has one on, by lower-case library ID.
     """
     wanted = {library.casefold() for library in libraries}
-    account = await accounts.get_by_id(AccountId(account_id))
-    if external_identity is not None:
-        if external_identity.account.id != account_id:
-            return {}
-        if account is None and external_identity.linked:
-            return {}
-        if account is not None and account.is_disabled:
-            return {}
-        operator = external_identity.account.role == Role.ADMIN.value
-        groups = external_identity.groups
-    else:
-        if account is None or account.is_disabled:
-            return {}
-        operator = account.is_operator
-        groups = await externals.groups_of(account.id)
+    caller = await _caller_memberships(accounts, externals, account_id, external_identity)
+    if caller is None:
+        return {}
+    operator, memberships = caller
     if operator:
         return dict.fromkeys(wanted, LibraryRole.CREATOR)
     held: dict[str, list[LibraryGrant]] = {}
-    for grant in await grants.matching(wanted, account_id=AccountId(account_id), groups=groups):
+    for grant in await grants.matching(
+        wanted, account_id=AccountId(account_id), groups=memberships.groups
+    ):
         held.setdefault(grant.library, []).append(grant)
-    return {library: role for library, found in held.items() if (role := effective_role(found))}
+    roles = {library: role for library, found in held.items() if (role := effective_role(found))}
+    if rules is not None:
+        for library, role in (await rules.library_roles(memberships, wanted)).items():
+            if library not in roles or role.rank > roles[library].rank:
+                roles[library] = role
+    return roles
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2395,6 +2555,8 @@ class ResolveLibraryRolesUseCase:
     """The links of external accounts, for their groups."""
     grants: LibraryGrantRepository
     """Who holds which role on which library."""
+    rules: RoleRules | None = None
+    """The role rules in force."""
 
     async def __call__(self, query: LibraryRolesQuery) -> LibraryRoles:
         """Return the account's effective role on each library it has one on.
@@ -2412,6 +2574,7 @@ class ResolveLibraryRolesUseCase:
             account_id=query.account_id,
             libraries=query.libraries,
             external_identity=query.external_identity,
+            rules=self.rules,
         )
         return LibraryRoles(roles={library: role.value for library, role in roles.items()})
 
@@ -2492,18 +2655,40 @@ class DropLibraryGrantsUseCase:
     """The access log."""
     clock: Clock
     """The current time."""
+    private: PrivateLibraries | None = None
+    """Which libraries are private: a removed one is not any more."""
 
     async def __call__(self, command: DropLibraryGrantsCommand) -> None:
-        """Drop every grant on the library and log its deletion.
+        """Drop every grant on the library, forget it was private and log its deletion.
 
         Args:
             command: The library and who removed it.
         """
         library = command.library.casefold()
         await self.grants.clear(library)
+        if self.private is not None:
+            await self.private.set_private(library, private=False)
         await self.log.record(
             _access_event(self.clock, library, command.actor_id, AccessChange.LIBRARY_DELETED)
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class MarkLibraryPrivateUseCase:
+    """Implements ``ports.driving.MarkLibraryPrivate``."""
+
+    private: PrivateLibraries | None = None
+    """Which libraries are private; ``None`` notes nothing (and then no library is reached by
+    a rule for every library)."""
+
+    async def __call__(self, command: MarkLibraryPrivateCommand) -> None:
+        """Note whether the library is private.
+
+        Args:
+            command: The library and whether it is private.
+        """
+        if self.private is not None:
+            await self.private.set_private(command.library.casefold(), private=command.private)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2520,6 +2705,8 @@ class Sharing:
     """The access log."""
     clock: Clock
     """The current time."""
+    rules: RoleRules | None = None
+    """The role rules in force: a rule's ``admin`` shares too."""
 
     async def caller_role(self, caller_id: str, library: str) -> LibraryRole:
         """Return the caller's role on the library, if it may share it at all.
@@ -2540,6 +2727,7 @@ class Sharing:
             grants=self.grants,
             account_id=caller_id,
             libraries=[library],
+            rules=self.rules,
         )
         role = roles.get(library)
         if role is None or not role.allows(LibraryRole.ADMIN):
@@ -3013,6 +3201,8 @@ class CanCreateLibraryUseCase:
     """Current stored provider groups for ordinary credentials."""
     policy: LibraryCreationPolicy | None = None
     """None preserves creation by every authenticated caller; empty allows operators only."""
+    rules: RoleRules | None = None
+    """The role rules in force: a matching ``create_libraries`` rule allows it too."""
 
     async def __call__(self, query: LibraryCreationQuery) -> bool:
         """Resolve permission without accepting display names or stale OAuth groups.
@@ -3023,27 +3213,19 @@ class CanCreateLibraryUseCase:
         Returns:
             Whether the valid caller is an operator or matches the creation policy.
         """
-        account = await self.accounts.get_by_id(AccountId(query.account_id))
-        principal = query.external_identity
-        if principal is not None:
-            if principal.account.id != query.account_id:
-                return False
-            if account is None and principal.linked:
-                return False
-            if account is not None and account.is_disabled:
-                return False
-            operator = principal.account.role == Role.ADMIN.value
-            groups = principal.groups
-        else:
-            if account is None or account.is_disabled:
-                return False
-            operator = account.is_operator
-            groups = await self.externals.groups_of(account.id)
-        return (
-            operator
-            or self.policy is None
-            or query.account_id in self.policy.users
-            or bool(self.policy.groups.intersection(groups))
+        caller = await _caller_memberships(
+            self.accounts, self.externals, query.account_id, query.external_identity
+        )
+        if caller is None:
+            return False
+        operator, memberships = caller
+        if operator or self.policy is None or query.account_id in self.policy.users:
+            return True
+        if self.policy.groups.intersection(memberships.groups):
+            return True
+        return self.rules is not None and any(
+            rule.grant is RuleGrant.CREATE_LIBRARIES
+            for rule in await self.rules.matching(memberships)
         )
 
 

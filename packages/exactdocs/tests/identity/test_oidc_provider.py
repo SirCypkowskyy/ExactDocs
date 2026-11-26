@@ -601,3 +601,26 @@ async def test_extra_authorization_params_never_replace_the_flows_own(setup: Set
 
     query = {k: v[0] for k, v in parse_qs(urlsplit(url).query).items()}
     assert (query["access_type"], query["state"]) == ("offline", "s-1")
+
+
+async def test_a_role_claim_is_read_beside_the_groups(setup: Setup) -> None:
+    setup.provider.claims = OidcClaimNames(roles="roles")  # Entra ID app roles
+    setup.issuer.tamper = tamper_claims(roles=["ExactDocs.Reader"])
+
+    grant = await sign_in(setup)
+
+    assert grant.claims.roles == frozenset({"ExactDocs.Reader"})
+    assert grant.claims.groups == frozenset({"payments"})
+
+
+async def test_a_dotted_role_claim_reads_keycloak_client_roles(setup: Setup) -> None:
+    setup.provider.claims = OidcClaimNames(roles="resource_access.exactdocs.roles")
+    setup.issuer.tamper = tamper_claims(resource_access={"exactdocs": {"roles": ["writer"]}})
+
+    assert (await sign_in(setup)).claims.roles == frozenset({"writer"})
+
+
+async def test_without_a_role_claim_no_role_is_read(setup: Setup) -> None:
+    setup.issuer.tamper = tamper_claims(roles=["ExactDocs.Admin"])
+
+    assert (await sign_in(setup)).claims.roles == frozenset()

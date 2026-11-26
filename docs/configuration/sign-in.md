@@ -7,6 +7,8 @@
     - Each provider admits people by `allowed_groups`, by GitHub membership filters, or by `allow_any_user = true`.
     - Behind Cloudflare Access, ExactDocs can sign people in by the identity Access already checked.
     - `[auth.library_creation]` limits who may create libraries; by default every signed-in user may.
+    - [Role rules](#role-rules) map a provider's groups, role values, GitHub organizations and teams to
+      instance admin, library creation, or a library role on every library or on chosen ones.
 
 ## Sign-in providers
 
@@ -33,6 +35,9 @@ not valid stops the server at start, with a message naming the field.
 | `allowed_groups` | `[]` | Groups, as the provider names them, whose members may sign in |
 | `allow_any_user` | `false` | Admit everyone the provider vouches for.<br/>Either this, `allowed_groups`, or GitHub membership filters is required |
 | `admin_groups` | `[]` | Members of these groups get the role `admin`, everyone else `user`, decided again at every sign-in and revalidation |
+| `role_claim` | unset | OIDC and OAuth2: a claim, a dotted path, whose values [role rules](#role-rules) can name (Entra ID app roles: `roles`; Keycloak client roles: `resource_access.<client>.roles`).<br/>Read beside the groups claim, from userinfo when the ID token lacks it |
+| `rules` | `[]` | [Role rules](#role-rules) for the provider's accounts, `[[auth.providers.<name>.rules]]` |
+| `configured_rules_only` | `false` | Only `admin_groups` and `rules` apply to this provider; rules stored for it are ignored |
 | `groups_claim` | `groups` | The claim holding the groups, a dotted path (Keycloak: `realm_access.roles`; ADFS: `group`).<br/>Read from userinfo when the ID token lacks it |
 | `group_prefix` | empty | Put before each group name ExactDocs stores for the account (for example `corp:`).<br/>Matching against `allowed_groups` and `admin_groups` uses the provider's names |
 | `username_claim` | `preferred_username` | The claim that names a new account (ADFS: `upn` or `unique_name`); without it, the local part of the email.<br/>Read only when the account is created |
@@ -214,6 +219,68 @@ How a request is checked and linked:
   the Access identity.
 - An account created by Access keeps its API tokens working for 30 days after its owner last
   came through Access (Access itself keeps a removed person away from the origin).
+
+## Role rules
+
+A role rule gives everyone with one membership at a provider a role in ExactDocs. It pairs a
+**source** with a **grant**:
+
+| Source | Matches |
+|---|---|
+| `group` | members of a group of the groups claim, named as the provider sends it (without `group_prefix`) |
+| `role` | holders of a value of the provider's `role_claim` |
+| `github_org` | active members of a GitHub organization (GitHub providers only) |
+| `github_team` | active members of a GitHub team, `org/team-slug` (GitHub providers only) |
+
+| Grant | Gives |
+|---|---|
+| `instance_admin` | the account role `admin`, decided at every sign-in and membership check, like `admin_groups` |
+| `create_libraries` | creating libraries where [`[auth.library_creation]`](#who-may-create-libraries) restricts it |
+| `viewer`, `contributor`, `admin` | that role on every library that is not private, or only on `libraries` |
+
+```toml
+[auth.providers.entra]
+kind = "microsoft"
+tenant = "00000000-0000-0000-0000-000000000000"
+client_id = "your-client-id"
+role_claim = "roles"
+configured_rules_only = true
+
+[[auth.providers.entra.rules]]
+role = "ExactDocs.Admin"
+grant = "instance_admin"
+
+[[auth.providers.entra.rules]]
+role = "ExactDocs.Reader"
+grant = "viewer"
+
+[[auth.providers.entra.rules]]
+group = "docs-writers"
+grant = "contributor"
+libraries = ["/acme/handbook"]
+```
+
+How rules combine with everything else:
+
+- A rule only adds. An account's access is the highest of what it was given directly (the Users
+  page, a library's access page) and what its rules give; removing a rule never takes away a role
+  given directly.
+- A rule matches only accounts created through its provider. A group never matches a `role`
+  rule, and a role value never matches a `group` rule or a library shared with a group.
+- Library roles from rules are worked out at every request: a library created after the rule is
+  covered at once.
+- "Every library" leaves out private libraries (imported with a token or a deploy key). A rule
+  reaches a private library only by naming it in `libraries`, so it stays its creator's to share.
+- `instance_admin` takes effect at the next sign-in or membership check (`revalidate_minutes`).
+- `admin_groups` and `[auth.library_creation].groups` keep working unchanged; they count as rules
+  of the configuration file.
+- On GitHub, every organization and team a rule names is checked like `allowed_teams` (active
+  membership, restricted organizations), and the active ones become groups `github:<org>` and
+  `github:<org>/<team>`. They never decide who signs in: that stays `allowed_orgs` and
+  `allowed_teams`, and a restricted organization a rule names only gives no group. Organizations
+  and teams named in no rule and no filter are not stored.
+- A rule of the configuration file that could match nobody (a malformed GitHub name, a library ID
+  that is not `/owner/repo`, `libraries` on an instance grant) stops the server at start.
 
 ## Who may create libraries
 

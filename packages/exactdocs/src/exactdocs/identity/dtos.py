@@ -43,6 +43,7 @@ from exactdocs.identity.models import (
     Language,
     LibraryGrant,
     LibraryRole,
+    Memberships,
     Motion,
     Preferences,
     SignInPolicy,
@@ -165,6 +166,19 @@ class ExternalTokenIdentity(_Dto):
     """Groups from this signed ID token, mapped with the provider's group prefix."""
     linked: bool
     """Whether this caller must still have its linked account in the repository."""
+    provider: str | None = None
+    """The provider whose role rules apply (the account's origin's)."""
+    roles: frozenset[str] = frozenset()
+    """Role claim values from this signed ID token."""
+
+    @property
+    def memberships(self) -> Memberships:
+        """What role rules can match about this caller.
+
+        Returns:
+            Its provider, groups and roles.
+        """
+        return Memberships(provider=self.provider, groups=self.groups, roles=self.roles)
 
 
 class SetupState(_Dto):
@@ -809,6 +823,15 @@ class ClaimLibraryCommand(_Dto):
     """The account that created the library."""
     library: str
     """The library ID."""
+
+
+class MarkLibraryPrivateCommand(_Dto):
+    """Note whether a library is private, so a role rule for every library leaves it out."""
+
+    library: str
+    """The library ID."""
+    private: bool
+    """Whether ingestion stores a token or deploy key for it."""
 
 
 class DropLibraryGrantsCommand(_Dto):

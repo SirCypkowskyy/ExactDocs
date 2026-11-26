@@ -1,6 +1,6 @@
 """GitHub OAuth App provider, including Enterprise Server and data-residency Cloud."""
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from urllib.parse import quote, urlsplit
@@ -59,6 +59,11 @@ class GithubProvider:
     """Teams in org/slug form; at least one is mandatory when configured."""
     client: httpx2.AsyncClient = field(repr=False)
     """Bootstrap's timeout-bound provider HTTP client."""
+    watched: Callable[[], Awaitable[tuple[frozenset[str], frozenset[str]]]] | None = field(
+        default=None, repr=False
+    )
+    """The organizations and ``org/team`` names role rules name (case folded), read at every
+    check; their active memberships become groups without deciding admission."""
 
     def _oauth(self) -> OAuth2Provider:
         """Return the authorization-code protocol adapter for this OAuth App.
@@ -188,41 +193,113 @@ class GithubProvider:
     async def _membership_groups(self, token: str, login: str) -> frozenset[str]:
         """Check organization admission before teams and map configured memberships.
 
+        The filters (``allowed_orgs``, ``allowed_teams``) decide admission. Organizations and
+        teams that role rules name only add groups: a restriction there means no group, never
+        a refusal.
+
         Args:
             token: The verified user's access token.
             login: The current login for fallback membership calls.
 
         Returns:
-            Verified groups from allowed teams.
+            Verified groups: ``github:<org>`` for organizations rules name, and
+            ``github:<org>/<team>`` for allowed teams and teams rules name.
 
         Raises:
             GithubAccessDeniedError: No configured membership admits the user.
-            ProviderUnavailableError: An API response is unusable.
         """
         active = await self._active_orgs(token)
-        groups: set[str] = set()
+        rule_orgs, rule_teams = (
+            (frozenset(), frozenset()) if self.watched is None else await self.watched()
+        )
+        filters = {org.casefold() for org in self.allowed_orgs} | {
+            team.split("/", 1)[0].casefold() for team in self.allowed_teams
+        }
+        wanted = rule_orgs | {team.split("/", 1)[0] for team in rule_teams}
+        active |= await self._rule_orgs(token, wanted - filters)
+        groups = {f"github:{org}" for org in rule_orgs if org in active}
+        found = await self._teams(token) if self.allowed_teams or rule_teams else set()
         if self.allowed_teams:
-            found = await self._teams(token)
-            for team in self.allowed_teams:
-                org, slug = team.split("/", 1)
-                if org.casefold() not in active:
-                    continue
-                matched = team.casefold() in found
-                if not matched:
-                    path = (
-                        f"/orgs/{quote(org, safe='')}/teams/{quote(slug, safe='')}"
-                        f"/memberships/{quote(login, safe='')}"
-                    )
-                    status, _, membership = await self._get(path, token, org=org)
-                    matched = status == HTTPStatus.OK and _active_membership(membership)
-                    if status not in {HTTPStatus.OK, HTTPStatus.NOT_FOUND}:
-                        raise ProviderUnavailableError
-                if matched:
-                    groups.add(f"github:{team}")
-            if not groups:
+            allowed = {
+                f"github:{team}"
+                for team in self.allowed_teams
+                if team.split("/", 1)[0].casefold() in active
+                and await self._in_team(token, login, team, found, admits=True)
+            }
+            if not allowed:
                 message = "not a member of an allowed team"
                 raise GithubAccessDeniedError(message, refusal_code="github_team_required")
+            groups |= allowed
+        named = {team.casefold() for team in self.allowed_teams}
+        for team in sorted(rule_teams - named):
+            if team.split("/", 1)[0] in active and await self._in_team(
+                token, login, team, found, admits=False
+            ):
+                groups.add(f"github:{team}")
         return frozenset(groups)
+
+    async def _rule_orgs(self, token: str, orgs: frozenset[str] | set[str]) -> set[str]:
+        """Check the organizations only role rules name; a restricted one counts as none.
+
+        Args:
+            token: The verified user's access token.
+            orgs: The organizations, case folded.
+
+        Returns:
+            Those with an active membership.
+
+        Raises:
+            ProviderUnavailableError: A membership response cannot be read.
+        """
+        active: set[str] = set()
+        for org in sorted(orgs):
+            try:
+                status, _, membership = await self._get(
+                    f"/user/memberships/orgs/{quote(org, safe='')}", token, org=org
+                )
+            except GithubAccessDeniedError:
+                continue
+            if status == HTTPStatus.OK and _active_membership(membership):
+                active.add(org)
+            elif status not in {HTTPStatus.OK, HTTPStatus.NOT_FOUND}:
+                raise ProviderUnavailableError
+        return active
+
+    async def _in_team(
+        self, token: str, login: str, team: str, found: set[str], *, admits: bool
+    ) -> bool:
+        """Check one team membership: the listed teams first, then the membership API.
+
+        Args:
+            token: The verified user's access token.
+            login: The current login.
+            team: ``org/team-slug``.
+            found: The teams ``/user/teams`` listed, case folded.
+            admits: Whether the team decides admission (a restriction then refuses).
+
+        Returns:
+            Whether the membership is active.
+
+        Raises:
+            GithubAccessDeniedError: An admitting team's organization restricts access.
+            ProviderUnavailableError: A membership response cannot be read.
+        """
+        if team.casefold() in found:
+            return True
+        org, slug = team.split("/", 1)
+        path = (
+            f"/orgs/{quote(org, safe='')}/teams/{quote(slug, safe='')}"
+            f"/memberships/{quote(login, safe='')}"
+        )
+        try:
+            status, _, membership = await self._get(path, token, org=org)
+        except GithubAccessDeniedError:
+            if admits:
+                raise
+            return False
+        if status not in {HTTPStatus.OK, HTTPStatus.NOT_FOUND}:
+            raise ProviderUnavailableError
+        return status == HTTPStatus.OK and _active_membership(membership)
 
     async def refresh(self, refresh_token: str, *, subject: str) -> ExternalGrant:
         """Revalidate the stored non-expiring access token and every membership.

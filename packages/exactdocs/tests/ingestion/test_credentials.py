@@ -45,6 +45,7 @@ from exactdocs.ingestion.models import (
 )
 from exactdocs.ingestion.module import IngestionModule
 from exactdocs_kernel import SystemClock
+from library_access import FakeAccess
 
 KEY = "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----"
 TOKEN = "ghp_s3cretvalue"
@@ -201,7 +202,10 @@ class UnreadableVault(InMemoryCredentialVault):
 
 
 def build(
-    remote: FakeRemote, vault: InMemoryCredentialVault, catalog: Catalog | None = None
+    remote: FakeRemote,
+    vault: InMemoryCredentialVault,
+    catalog: Catalog | None = None,
+    access: FakeAccess | None = None,
 ) -> IngestionModule:
     catalog = catalog or Catalog()
     source = ImportSource(
@@ -219,6 +223,7 @@ def build(
         removals=NoRemovals(),
         index=NoIndex(),
         handlers={JobKind("import"): _run},
+        **({} if access is None else {"access": access}),
     )
 
 
@@ -411,3 +416,42 @@ async def test_an_unknown_library_has_no_access_answer() -> None:
 
     with pytest.raises(UnknownLibraryError):
         await module.get_library_access(GetLibraryAccessQuery(library="/no/such"))
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class _PrivateBeforeStored(InMemoryCredentialVault):
+    """Fails unless identity heard the library is private before its credential landed."""
+
+    access: FakeAccess
+
+    async def save(self, library: str, scope: str, credential: Credential) -> None:
+        assert library in self.access.private
+        await InMemoryCredentialVault.save(self, library, scope, credential)
+
+
+async def test_a_library_is_said_private_before_its_credential_is_stored() -> None:
+    access = FakeAccess(role="creator")
+    vault = _PrivateBeforeStored(access=access)
+    command = AddLibraryCommand(
+        url="https://github.com/acme/orders",
+        credential=AccessTokenIn(kind="token", token=TOKEN),
+    )
+
+    added = await build(FakeRemote(), vault, access=access).add_library(command)
+    await build(FakeRemote(), vault, access=access).add_version(
+        AddVersionCommand(
+            library="/acme/orders", ref="main", credential=AccessTokenIn(kind="token", token=TOKEN)
+        )
+    )
+
+    assert access.private == {added.library_id, "/acme/orders"}
+
+
+async def test_a_public_library_is_said_not_private() -> None:
+    access = FakeAccess(role="creator", private={"/acme/orders"})
+
+    await build(FakeRemote(), InMemoryCredentialVault(), access=access).add_library(
+        AddLibraryCommand(url="https://other.example.com/acme/orders")
+    )
+
+    assert access.private == set()

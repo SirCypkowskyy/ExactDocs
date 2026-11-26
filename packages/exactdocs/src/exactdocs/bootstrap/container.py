@@ -135,6 +135,8 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteFailedSignInLog,
     SqliteLibraryGrantRepository,
     SqlitePreferencesRepository,
+    SqlitePrivateLibraries,
+    SqliteRoleRuleRepository,
     SqliteSessionRepository,
     SqliteSignInAttemptRepository,
     SqliteTokenRepository,
@@ -477,7 +479,8 @@ def _identity(settings: Settings, engine: AsyncEngine, stand_ins: SignInStandIns
     clock = stand_ins.clock or SystemClock()
     wanted = settings.auth.providers or settings.auth.cloudflare_access is not None
     client = sign_in_client(stand_ins.transport, outbound_network(settings)) if wanted else None
-    providers, policies = sign_in_providers(settings, client, clock) if client else ({}, {})
+    rules = SqliteRoleRuleRepository(engine=engine)
+    providers, policies = sign_in_providers(settings, client, clock, rules) if client else ({}, {})
     access = cloudflare_access(settings, client, clock) if client else None
     creation = settings.auth.library_creation
     identity = IdentityModule.build(
@@ -503,6 +506,8 @@ def _identity(settings: Settings, engine: AsyncEngine, stand_ins: SignInStandIns
         policies=policies,
         access_verifier=None if access is None else access[0],
         access_policy=None if access is None else access[1],
+        role_rules=rules,
+        private_libraries=SqlitePrivateLibraries(engine=engine),
     )
     return _Identity(module=identity, client=client)
 
@@ -521,6 +526,7 @@ def _access_policy(identity: IdentityModule) -> IdentityAccessPolicy:
         can_create_library=identity.can_create_library,
         claim_library=identity.claim_library,
         drop_library_grants=identity.drop_library_grants,
+        mark_library_private=identity.mark_library_private,
         caller=current_account_id,
         external_identity=current_external_identity,
         api_identity=current_api_identity,
