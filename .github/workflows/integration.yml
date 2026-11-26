@@ -14,7 +14,7 @@ name: Integration
 #   hybrid (default, also when unset): every job on GitHub-hosted ubuntu-24.04 (amd64), except that
 #     the release (input `release`) runs the Python job on the self-hosted ARM64 runner, as it does
 #     its eval and builds.
-#   self-hosted: every job on the self-hosted ARM64 runner [self-hosted, linux, ARM64, exactdocs].
+#   self-hosted (the current setting: docs/decisions/ci-runners.md): every job on the GCP ARM64 runners [self-hosted, linux, ARM64, exactdocs, gcp].
 #     Pinecone Local is amd64-only, so wherever the Python job runs on ARM64 its service is not
 #     started and its cases skip; the libSQL local-file cases skip without the x86-only `libsql`
 #     wheel; every other service image is multi-arch. The images are built for arm64.
@@ -43,7 +43,7 @@ env:
 jobs:
   python:
     name: Python integration (pytest, behave; PostgreSQL, search and vector servers)
-    runs-on: ${{ (inputs.release || vars.RUNNER_MODE == 'self-hosted') && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ (inputs.release || vars.RUNNER_MODE == 'self-hosted') && fromJSON('["self-hosted","linux","ARM64","exactdocs","gcp"]') || 'ubuntu-24.04' }}
     # GitHub-hosted (#468): a smaller machine than the old self-hosted VM. With the E14 backends'
     # service containers (#351) the whole pytest suite took 53 minutes; the integration part alone
     # is shorter.
@@ -342,7 +342,7 @@ jobs:
   # hadolint needs no image build: it runs in ci.yml's Lint job, on every pull request.
   image:
     name: Docker image (build, scan, smoke test)
-    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs","gcp"]') || 'ubuntu-24.04' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -493,7 +493,7 @@ jobs:
   # `-local` one also searches with `--network none`, on the models baked into the image.
   image-variants:
     name: Docker image variants (-ai, -local)
-    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs","gcp"]') || 'ubuntu-24.04' }}
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -626,7 +626,7 @@ jobs:
   # this job (runner.temp is per job). Not --no-cache: the --offline step needs a filled cache.
   uvx:
     name: uvx smoke, upgrade + browser end-to-end (built wheel)
-    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs","gcp"]') || 'ubuntu-24.04' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

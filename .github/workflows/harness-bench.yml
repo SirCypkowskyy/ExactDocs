@@ -59,7 +59,7 @@ env:
 jobs:
   bench:
     name: Harness benchmark with real providers
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
     timeout-minutes: 360
     environment: eval-providers # its protection rules decide who may spend the keys
     env:
