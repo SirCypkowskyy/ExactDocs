@@ -313,7 +313,7 @@ Taken from an earlier run: `bm25@default`, `hybrid:bge-small-en-v1.5@default`, `
 ## Grouped by article (#575)
 
 `search_docs` groups its results by article since #575: the article of the best result comes
-first with all of its results, best first, then the next article ([MCP](../mcp.md)). It returns
+first with all of its results, best first, then the next article ([MCP](../mcp/index.md)). It returns
 the same chunks as before; only their order changes. The grid ran ExactDocs' own search both ways
 on the same code and machine: the app cells `bm25@default` and `hybrid:bge-small-en-v1.5@default`,
 which group, each against its `+by-chunk` control, which returns one chunk per result as the

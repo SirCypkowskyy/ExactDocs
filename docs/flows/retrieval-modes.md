@@ -97,4 +97,4 @@ flowchart TD
     style planned stroke-dasharray: 5 5
 ```
 
-The internals of each mode are in [AI retrieval](../architecture/ai-retrieval.md).
+The internals of each mode are in [AI retrieval](../architecture/ai-retrieval/index.md).

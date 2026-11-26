@@ -28,7 +28,7 @@
 
 `catalog_library_logos` keeps one logo per library (its bytes, type, digest and where it was found),
 deleted with the library. It is written through the `LibraryLogos` port and read into `Library.logo`
-by the library repository. See [Project logos](import.md#project-logos-504) under the import.
+by the library repository. See [Project logos](import/images.md#project-logos-504) under the import.
 
 ## Manual tags (E4-06)
 
