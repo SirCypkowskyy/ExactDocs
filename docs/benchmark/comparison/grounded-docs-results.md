@@ -1,5 +1,11 @@
 # Grounded Docs: every table
 
+!!! abstract "TL;DR"
+    - Every table of the recorded Grounded Docs run, scored the same way as ExactDocs on the same
+      questions.
+    - `just bench-pages` writes them from `grounded-docs.json`. The findings, with their numbers,
+      are on [Comparison with other tools](index.md).
+
 The tables of the recorded run (`packages/exactdocs/evals/results/grounded-docs.json`), measured as
 [How Grounded Docs was measured](grounded-docs.md) says.
 

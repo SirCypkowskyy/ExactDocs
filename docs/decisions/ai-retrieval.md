@@ -29,7 +29,7 @@ This record fixes, for embeddings, rerankers and LLMs on top of BM25:
 
 Each issue of the milestone points here instead of deciding these again.
 
-- The short form is in the [Decisions](../user-stories.md#decisions) table.
+- The short form is in the [Decisions](index.md#all-decisions) table.
 - The architecture of what is built today is in [Architecture](../architecture/index.md).
 
 ## Pages
