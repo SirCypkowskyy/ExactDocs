@@ -2655,19 +2655,18 @@ class DropLibraryGrantsUseCase:
     """The access log."""
     clock: Clock
     """The current time."""
-    private: PrivateLibraries | None = None
-    """Which libraries are private: a removed one is not any more."""
 
     async def __call__(self, command: DropLibraryGrantsCommand) -> None:
-        """Drop every grant on the library, forget it was private and log its deletion.
+        """Drop every grant on the library and log its deletion.
+
+        A removed private library stays marked private (it fails closed until ingestion adds a
+        library of that ID again and says what it is).
 
         Args:
             command: The library and who removed it.
         """
         library = command.library.casefold()
         await self.grants.clear(library)
-        if self.private is not None:
-            await self.private.set_private(library, private=False)
         await self.log.record(
             _access_event(self.clock, library, command.actor_id, AccessChange.LIBRARY_DELETED)
         )

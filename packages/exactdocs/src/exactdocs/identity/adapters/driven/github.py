@@ -218,7 +218,7 @@ class GithubProvider:
         wanted = rule_orgs | {team.split("/", 1)[0] for team in rule_teams}
         active |= await self._rule_orgs(token, wanted - filters)
         groups = {f"github:{org}" for org in rule_orgs if org in active}
-        found = await self._teams(token) if self.allowed_teams or rule_teams else set()
+        found = await self._listed_teams(token, rule_teams)
         if self.allowed_teams:
             allowed = {
                 f"github:{team}"
@@ -238,6 +238,26 @@ class GithubProvider:
                 groups.add(f"github:{team}")
         return frozenset(groups)
 
+    async def _listed_teams(self, token: str, rule_teams: frozenset[str]) -> set[str]:
+        """Read ``/user/teams`` when a team is configured or named by a rule.
+
+        Args:
+            token: The verified user's access token.
+            rule_teams: The teams role rules name.
+
+        Returns:
+            The listed teams; for rule teams alone, none when the list cannot be read (each is
+            then asked on its own), so a rule never blocks a sign-in the filters admit.
+        """
+        if self.allowed_teams:
+            return await self._teams(token)
+        if not rule_teams:
+            return set()
+        try:
+            return await self._teams(token)
+        except ProviderUnavailableError, GithubAccessDeniedError:
+            return set()
+
     async def _rule_orgs(self, token: str, orgs: frozenset[str] | set[str]) -> set[str]:
         """Check the organizations only role rules name; a restricted one counts as none.
 
@@ -246,10 +266,8 @@ class GithubProvider:
             orgs: The organizations, case folded.
 
         Returns:
-            Those with an active membership.
-
-        Raises:
-            ProviderUnavailableError: A membership response cannot be read.
+            Those with an active membership. An organization that refuses, cannot be read or
+            answers oddly counts as none: a rule never blocks a sign-in the filters admit.
         """
         active: set[str] = set()
         for org in sorted(orgs):
@@ -257,12 +275,10 @@ class GithubProvider:
                 status, _, membership = await self._get(
                     f"/user/memberships/orgs/{quote(org, safe='')}", token, org=org
                 )
-            except GithubAccessDeniedError:
+                if status == HTTPStatus.OK and _active_membership(membership):
+                    active.add(org)
+            except GithubAccessDeniedError, ProviderUnavailableError:
                 continue
-            if status == HTTPStatus.OK and _active_membership(membership):
-                active.add(org)
-            elif status not in {HTTPStatus.OK, HTTPStatus.NOT_FOUND}:
-                raise ProviderUnavailableError
         return active
 
     async def _in_team(
@@ -293,13 +309,11 @@ class GithubProvider:
         )
         try:
             status, _, membership = await self._get(path, token, org=org)
-        except GithubAccessDeniedError:
+            return _member(status, membership)
+        except GithubAccessDeniedError, ProviderUnavailableError:
             if admits:
                 raise
             return False
-        if status not in {HTTPStatus.OK, HTTPStatus.NOT_FOUND}:
-            raise ProviderUnavailableError
-        return status == HTTPStatus.OK and _active_membership(membership)
 
     async def refresh(self, refresh_token: str, *, subject: str) -> ExternalGrant:
         """Revalidate the stored non-expiring access token and every membership.
@@ -425,3 +439,21 @@ def _active_membership(membership: object) -> bool:
     if not isinstance(state, str) or state not in {"active", "pending"}:
         raise ProviderUnavailableError
     return state == "active"
+
+
+def _member(status: int, membership: object) -> bool:
+    """Read a team membership answer.
+
+    Args:
+        status: The HTTP status.
+        membership: The JSON response.
+
+    Returns:
+        Whether the membership is active; 404 means none.
+
+    Raises:
+        ProviderUnavailableError: Any other status, or an unusable membership.
+    """
+    if status not in {HTTPStatus.OK, HTTPStatus.NOT_FOUND}:
+        raise ProviderUnavailableError
+    return status == HTTPStatus.OK and _active_membership(membership)

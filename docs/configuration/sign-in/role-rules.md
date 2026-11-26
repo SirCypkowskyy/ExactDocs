@@ -61,8 +61,10 @@ How rules combine with everything else:
   of the configuration file.
 - On GitHub, every organization and team a rule names is checked like `allowed_teams` (active
   membership, restricted organizations), and the active ones become groups `github:<org>` and
-  `github:<org>/<team>`. They never decide who signs in: that stays `allowed_orgs` and
-  `allowed_teams`, and a restricted organization a rule names only gives no group. Organizations
-  and teams named in no rule and no filter are not stored.
+  `github:<org>/<team>`. Who signs in stays with `allowed_orgs` and `allowed_teams` (and with
+  `allowed_groups`, which can name these groups too). An organization or team that only a rule
+  names never refuses a sign-in: when it restricts the app, or GitHub cannot say, it just gives
+  no group. Organizations and teams named in no rule and no filter are not stored. Each one a
+  rule names costs one more GitHub API call at every sign-in and membership check.
 - A rule of the configuration file that could match nobody (a malformed GitHub name, a library ID
   that is not `/owner/repo`, `libraries` on an instance grant) stops the server at start.

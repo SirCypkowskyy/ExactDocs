@@ -1575,7 +1575,7 @@ class IdentityAccessPolicy:
     """Identity's record of a library's creator."""
     drop_library_grants: DropLibraryGrants
     """Identity's drop of every grant on a removed library."""
-    mark_library_private: MarkLibraryPrivate | None = None
+    mark_library_private: MarkLibraryPrivate
     """Identity's note of which libraries are private, for role rules."""
     caller: Callable[[], str | None]
     """The account ID of the current request; ``None`` when no person made it."""
@@ -1687,10 +1687,7 @@ class IdentityAccessPolicy:
             library: The library ID.
             private: Whether a credential is stored for it.
         """
-        if self.mark_library_private is not None:
-            await self.mark_library_private(
-                MarkLibraryPrivateCommand(library=library, private=private)
-            )
+        await self.mark_library_private(MarkLibraryPrivateCommand(library=library, private=private))
 
     async def claim(self, library: str) -> None:
         """Make the caller, if there is one, the creator of the library just created.

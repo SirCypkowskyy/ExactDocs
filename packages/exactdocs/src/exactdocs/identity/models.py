@@ -1159,10 +1159,15 @@ class RoleRule:
             ),
             RuleSource.GITHUB_TEAM: (GITHUB_TEAM_PATTERN, "a GitHub team is org/team-slug"),
         }
-        if not self.value or self.value != self.value.strip():
+        # The configuration file's group names (admin_groups) are taken as they are written.
+        if not self.configured and (not self.value or self.value != self.value.strip()):
             return "the source must not be blank or padded"
-        if self.provider is None and self.source is not RuleSource.GROUP:
-            return "only a group rule may apply to every provider"
+        if self.provider is None and not (
+            self.configured
+            and self.source is RuleSource.GROUP
+            and self.grant is RuleGrant.CREATE_LIBRARIES
+        ):
+            return "only [auth.library_creation].groups apply to every provider"
         if self.source in patterns and not re.fullmatch(patterns[self.source][0], self.value):
             return patterns[self.source][1]
         if self.libraries is not None and self.grant.library_role is None:

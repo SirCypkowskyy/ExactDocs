@@ -347,7 +347,7 @@ async def test_a_rule_reaches_a_private_library_it_names() -> None:
     assert await world.roles(member, DOCS, SECRET) == {SECRET: "viewer"}
 
 
-async def test_a_removed_library_is_no_longer_private() -> None:
+async def test_a_removed_private_library_stays_private_until_added_again() -> None:
     world = build()
     await world.add(RuleSource.GROUP, "w", RuleGrant.VIEWER)
     await world.identity.mark_library_private(
@@ -355,8 +355,41 @@ async def test_a_removed_library_is_no_longer_private() -> None:
     )
     await world.identity.drop_library_grants(DropLibraryGrantsCommand(library=SECRET))
     member = await world.sign_in("u1", groups=frozenset({"w"}))
+    assert await world.roles(member, SECRET) == {}
+
+    await world.identity.mark_library_private(
+        MarkLibraryPrivateCommand(library=SECRET, private=False)
+    )
 
     assert await world.roles(member, SECRET) == {SECRET: "viewer"}
+
+
+async def test_odd_admin_group_names_of_the_configuration_still_sign_people_in() -> None:
+    world = build(corp(admin_groups=frozenset({"Docs Admins ", ""})))
+
+    admin = await world.sign_in("u1", groups=frozenset({"Docs Admins "}))
+
+    assert await world.role(admin) is Role.ADMIN
+
+
+def test_only_the_library_creation_groups_apply_to_every_provider() -> None:
+    with pytest.raises(InvalidRoleRuleError):
+        RoleRule(
+            id="r",
+            provider=None,
+            source=RuleSource.GROUP,
+            value="g",
+            grant=RuleGrant.INSTANCE_ADMIN,
+            configured=True,
+        )
+    with pytest.raises(InvalidRoleRuleError):
+        RoleRule(
+            id="r",
+            provider=None,
+            source=RuleSource.GROUP,
+            value="g",
+            grant=RuleGrant.CREATE_LIBRARIES,
+        )
 
 
 async def test_the_highest_of_a_direct_grant_and_the_rules_counts() -> None:

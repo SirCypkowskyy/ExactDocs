@@ -404,7 +404,7 @@ class IdentityModule:
             ),
             claim_library=ClaimLibraryUseCase(grants=library_grants, log=access_log, clock=clock),
             drop_library_grants=DropLibraryGrantsUseCase(
-                grants=library_grants, log=access_log, clock=clock, private=private_libraries
+                grants=library_grants, log=access_log, clock=clock
             ),
             mark_library_private=MarkLibraryPrivateUseCase(private=private_libraries),
             grant_library_role=GrantLibraryRoleUseCase(sharing=sharing),

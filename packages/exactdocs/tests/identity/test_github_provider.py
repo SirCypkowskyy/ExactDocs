@@ -224,3 +224,28 @@ async def test_a_rules_organization_its_member_left_gives_no_group(setup) -> Non
     p = provider(client, fake, rules=({"gone"}, {"gone/team"}))
 
     assert (await sign_in(p, fake)).claims.groups == {"github:acme/docs-readers"}
+
+
+async def test_a_rules_organization_that_cannot_be_read_never_blocks_a_sign_in(setup) -> None:
+    fake, _, client = setup
+    fake.membership_state = "unexpected"  # every organization's answer is unusable
+    p = GithubProvider(
+        base_url=fake.issuer,
+        api_url=fake.api_url,
+        client_id=CLIENT_ID,
+        client_secret=lambda: CLIENT_SECRET,
+        redirect_uri="https://docs.example.com/callback",
+        allowed_orgs=(),
+        allowed_teams=(),
+        client=client,
+        watched=lambda: _targets({"acme"}, {"acme/docs-readers"}),
+    )
+    fake.fail_teams = True
+    fake.fallback_active = True
+    fake.fallback_state = "unexpected"
+
+    assert (await sign_in(p, fake)).claims.groups == frozenset()
+
+
+async def _targets(orgs: set[str], teams: set[str]) -> tuple[frozenset[str], frozenset[str]]:
+    return frozenset(orgs), frozenset(teams)
