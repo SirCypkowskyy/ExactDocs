@@ -84,7 +84,7 @@ article's rank. The results are the same as in plain rank order; only the order 
 first result is still the best one. On the golden set the first article holds a section that
 answers 12 points more often than the first result did, with BM25 and with hybrid search; an
 answer in an article's second or third result then sits further into the text
-([Retrieval results](../benchmark/retrieval.md#grouped-by-article-575)). Each result carries:
+([Retrieval results](../benchmark/retrieval/grouping.md)). Each result carries:
 
 - its location and its neighbours (`prev_chunk_id`, `next_chunk_id`);
 - `group`;

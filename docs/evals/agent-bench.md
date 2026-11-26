@@ -16,7 +16,7 @@
     - No Context7 number is published until Upstash permits it
       ([Terms of service](context7.md#terms-of-service)).
     - It never runs in CI with a model. The recorded runs and their caveats are on
-      [Agent results](../benchmark/agent.md); flags and the workflow are on
+      [Agent results](../benchmark/agent/index.md); flags and the workflow are on
       [Running the agent benchmark](agent-bench-running.md).
 
 It lives in

@@ -1,4 +1,4 @@
-"""The benchmark pages' tables: ``just bench-pages`` (docs/benchmark/method.md).
+"""The benchmark pages' tables: ``just bench-pages`` (docs/benchmark/method/runs.md).
 
 As in ``run_golden.py``, the test-support directory (the importer wiring) is put on the path
 before the module is imported.

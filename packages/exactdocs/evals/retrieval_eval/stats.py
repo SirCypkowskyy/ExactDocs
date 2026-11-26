@@ -16,7 +16,7 @@ always give the same numbers.
   differences. Under no difference, each difference is as likely to have either sign.
 - Both tests also give the paired bootstrap interval of the difference.
 
-Definitions: docs/benchmark/method.md#intervals-and-significance.
+Definitions: docs/benchmark/method/metrics.md#intervals-and-significance.
 """
 
 import math

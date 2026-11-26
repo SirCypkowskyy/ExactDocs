@@ -130,7 +130,7 @@ The report is `<out>/retrieval-grid.json` and `.md` (default `reports/evals/grid
   budget*: whole results for every cell, and cut at the budget for the cells scored from text.
 - `just bench-pages` shows the recorded runs of the rank-1 cells
   (`results/retrieval-grid-rank1.json`, #575) and of the app cells grouped by article and not
-  (`results/retrieval-grid-grouped.json`) on [Retrieval results](../benchmark/retrieval.md).
+  (`results/retrieval-grid-grouped.json`) on [Retrieval results](../benchmark/retrieval/index.md).
 
 !!! note "Wrong versions in text-scored cells"
     A text-scored cell searches only the version asked. A result the text scorer places only in

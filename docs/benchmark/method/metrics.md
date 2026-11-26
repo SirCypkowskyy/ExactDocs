@@ -1,56 +1,15 @@
-# Method
+# Metrics and statistics
 
 !!! abstract "TL;DR"
-    - Covers the three benchmarks' metrics, the statistics, how a default is chosen, what runs where,
-      and how to reproduce a run and refresh these pages.
-    - Every reported number has a 95% bootstrap interval, and every comparison a paired test;
-      a difference is significant when p is under 5%.
-    - A dearer budget gets its own default only with at least 5 points more recall@5 **and** a
-      significant difference.
-    - No CI or release run calls a hosted model or needs a secret.
+    - Retrieval: recall@k, MRR, nDCG@10, section recall, recall within a token budget, the
+      wrong-version rate; a hit on any section a case lists counts.
+    - Every number has a 95% percentile bootstrap interval over cases, every comparison a paired
+      test (McNemar's mid-p or a sign-flip permutation).
+    - Agent: accuracy graded by a blind LLM judge, answers true of another version only, tool calls
+      and cost per question.
 
-Three benchmarks run on the [golden set](golden-set.md), each over every pinned version:
-
-- the **ingestion benchmark** (#346) imports the corpus under each chunking configuration and
-  measures the chunks against the source;
-- the **retrieval benchmark** (#347) asks every question through `search_docs` in every retrieval
-  configuration at every chunking, and names a default per budget;
-- the **agent benchmark** (#348) starts ExactDocs as shipped and lets an agent whose only tools
-  are the ExactDocs MCP tools answer the questions; an LLM judge grades the answers.
-
-Their full reference (every flag, field and rule) is in [Retrieval evals](../evals/index.md). This page
-gives the definitions the result pages rely on.
-
-## Chunking configurations
-
-| Name | Settings | What it does |
-|---|---|---|
-| `default` | split level 3, `max_chars` 4,000 | today's default (#381): `#` to `###` start a chunk; a longer one is cut again at deeper headings |
-| `h6` | split level 6, no merging, no bound | every heading starts a chunk (the default before #381) |
-| `h2` | split level 2, no bound | only `#` and `##` start a chunk; deeper sections stay inside their parent |
-| `merge-400` | split level 6, `min_chars` 400, `max_chars` 4,000 | every heading starts a chunk;<br/>a chunk under 400 characters is then merged with the next while the result stays within 4,000 |
-
-`default` is what a new library gets, so it follows the shipped default. Until #381 it was `h6`,
-and the recorded runs took the new names when it changed.
-
-The golden set names sections as `h6` cuts them: every heading. A configuration that cuts coarser
-or finer would lose every hit to a heading path that no longer exists, so a returned chunk of the
-right version and article answers an expected section when:
-
-- its heading path is the expected one;
-- it is a section inside the expected one (a finer cut);
-- or the chunk holds the expected section's heading.
-
-What a chunk holds is what the chunker recorded for it, read by chunk ID (#503). All of these
-count:
-
-| Chunking | How the expected section ends up in the chunk |
-|---|---|
-| `h2` | kept inside its parent |
-| `default` | kept with a sibling when a long section is cut again at 4,000 characters |
-| `merge-400` | merged with its neighbours |
-
-The ingestion results also show recall@5 with exact paths only, for comparison.
+The definitions the result pages rely on, for each benchmark, and how their intervals and tests
+are computed.
 
 ## Retrieval metrics
 
@@ -109,7 +68,7 @@ How a case lists its sections (#501):
 - Section recall and nDCG@10 count each part once, its alternatives counting as that part, so
   they show how much of a multi-page answer came back.
 
-The [golden set](golden-set.md) marks as alternatives the sections its review (#490) added
+The [golden set](../golden-set.md) marks as alternatives the sections its review (#490) added
 because they answer as well as the one listed.
 
 ## Intervals and significance
@@ -149,7 +108,7 @@ What is tested against what:
 
 - Each result of the retrieval benchmark is tested against its budget's default, on the
   answerable cases both answered. The table is under *Against the budget's default* on
-  [Retrieval results](retrieval.md).
+  [Retrieval results](../retrieval/index.md).
 - In the agent benchmark, each agent model's accuracy under a retrieval configuration is tested
   against its accuracy under the run's first configuration.
 
@@ -184,8 +143,8 @@ The scorer was calibrated on ExactDocs' own BM25 results for the whole golden se
 ways. At the `default` chunking it takes 99.8% of the hit and miss decisions (each expected
 section's rank in the top 10, or a miss) as chunk-ID scoring does, against a criterion of 98%.
 The threshold, the sweep that chose it and every disagreement are in
-[Scoring text results](../evals/text-scoring.md).
-[Comparison with other tools](comparison.md) scores other tools with it.
+[Scoring text results](../../evals/text-scoring.md).
+[Comparison with other tools](../comparison/index.md) scores other tools with it.
 
 ## Ingestion metrics
 
@@ -201,7 +160,7 @@ inside a bigger chunk is "held", not covered). Next to it:
 - headings the chunks miss or invent;
 - MkDocs-specific losses.
 
-The definitions are in [The ingestion benchmark](../evals/ingestion.md).
+The definitions are in [The ingestion benchmark](../../evals/ingestion.md).
 
 ## Agent metrics and the judge
 
@@ -217,7 +176,7 @@ The same agent model answers each case with each **documentation arm** (#495):
 The arms get the same prompt, the same request limit and the same instructions apart from the
 sentence about the documentation tool, and each agent is offered its arm's tools and nothing
 else. No Context7 number is published until Upstash permits it
-([Terms of service](../evals/context7.md#terms-of-service)).
+([Terms of service](../../evals/context7.md#terms-of-service)).
 
 The judge is an LLM given the question, version, kind, reference answer, facts and the agent's
 answer. It does not see the docs or the arm: every arm's product and tool names are removed from
@@ -261,94 +220,6 @@ permutation test, with the ratio of the means.
 !!! warning "Judge agreement with hand labels: not measured yet"
     The judge is checked by labelling at least 50 answers of a real-model run by hand and
     comparing (`just agent-bench sample`, then `just agent-bench agreement`; see
-    [Judge agreement](../evals/agent-bench-running.md#judge-agreement)). The first real-model run
-    ([Agent results](agent.md)) is not labelled yet, so its accuracies rest on an unchecked
+    [Judge agreement](../../evals/agent-bench-running.md#judge-agreement)). The first real-model run
+    ([Agent results](../agent/index.md)) is not labelled yet, so its accuracies rest on an unchecked
     judge.
-
-## How a default is chosen
-
-The retrieval benchmark names a default for each budget, cheapest first: `none` (no model),
-`local` (models that run on the instance) and `hosted` (models behind a provider). For each
-budget:
-
-1. The candidates are the configurations of that budget that ran with no result of another
-   version, no read outside the version, no error and no reranker fallback.
-2. The best candidate is the one with the highest recall@5, then nDCG@10, then MRR, then the lower
-   USD per question, then the lower p95 latency. Every chunking counts, so the best chunking is
-   chosen with the configuration.
-3. It becomes the budget's default only when its recall@5 beats the cheaper budget's default by
-   **at least 5 points** (`DEFAULT_MARGIN_POINTS`, the same margin the eval suite asks of any new
-   default mode) **and** the difference is **significant**: McNemar's test (mid-p) of the two on
-   the same cases gives a p-value under 5% ([Intervals and
-   significance](#intervals-and-significance)). Otherwise the cheaper default stays, and the
-   reason says which it missed: how far the dearer one fell short of the margin, or its p-value.
-   A dearer configuration recorded without its per-case outcomes cannot be tested, so it does not
-   become a default either.
-
-A budget nothing of which ran is "not measured yet". The margin and the test apply between
-budgets; between chunkings of one budget the best one wins outright.
-
-## What runs where
-
-| Run | Where | Models |
-|---|---|---|
-| quick tests of all three benchmarks and the text scorer | every pull request (`uv run pytest`, `uv run behave`) | stand-ins only, tiny local corpora |
-| `just golden-validate` rules | every pull request (pytest) | none |
-| ingestion benchmark `--check` | by hand: the manual *Eval* workflow (`eval.yml`) | none |
-| retrieval benchmark, BM25 at `default`, `--check` | by hand: the manual *Eval* workflow (`eval.yml`) | none |
-| retrieval benchmark with local models | by hand (`just retrieval-bench --offline`) | local, pulled with `exactdocs models pull` |
-| retrieval benchmark, hosted configurations | by hand: the manual *Retrieval eval (real providers)* workflow (`eval-providers.yml`),<br/>with the `benchmark` input ticked | hosted |
-| text scorer calibration | by hand (`just text-bench --offline`), when the matcher or the chunker changes | none |
-| agent benchmark, quick tests of every arm | every pull request (`uv run pytest`, `uv run behave`) | stand-ins, stand-in documentation tools |
-| Grounded Docs on the golden set | by hand (`just grounded-bench --offline`),<br/>or the manual *Grounded Docs benchmark* workflow (`grounded-bench.yml`);<br/>quick tests replay recorded responses on every pull request | local, `BAAI/bge-small-en-v1.5`<br/>pulled with `exactdocs models pull` |
-| agent benchmark | by hand: the manual *Agent benchmark (real providers)* workflow (`agent-bench.yml`),<br/>or `just agent-bench run` locally | hosted (Ollama Cloud for the recorded run) |
-
-No CI or release run calls a hosted model or needs a secret.
-
-## Reproducing a run
-
-Each JSON report records what a rerun needs. `retrieval.json` holds the golden set's
-fingerprint, every pinned commit, the ExactDocs commit, the machine, the library versions, each
-model with its Hub revision, the AI settings of each configuration, every case's outcome, and
-the seed and resamples of the intervals
-([Reproducing a result](../evals/retrieval-runs.md#reproducing-a-result)). The commands:
-
-```bash
-just ingestion-bench --offline --out packages/exactdocs/evals/results
-EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
-  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@h6,bm25+ce@h2,bm25+ce@default,hybrid:bge-small-en-v1.5+ce@h6,hybrid:bge-small-en-v1.5+ce@default,hybrid:snowflake-arctic-embed-s@h6' \
-  --out packages/exactdocs/evals/results
-```
-
-The second is the recorded retrieval run ([The recorded run](../evals/retrieval-runs.md#the-recorded-run)): 3 h
-17 min on a 4-CPU runner, most of it embedding the corpus and the cross-encoder.
-
-## Coding tasks
-
-The coding tasks (#496) check code, not prose: an agent with the workspace tools and one
-documentation arm completes a request in a small project that pins one library version, and the
-task passes only when its hidden tests pass in a sandbox with exactly that version installed. The
-report gives the **pass rate** (overall, per project, and over the tasks pinning a version
-released after the model's training cutoff), the share of tasks whose changed code uses an API the
-pinned version does not have (**forbidden-API rate**), and the **files changed** per task, each
-with its 95% interval as above; each arm's pass rate is tested against `none`'s on the same tasks
-by McNemar's test (mid-p). Most tasks come as version pairs, the same request pinned at two
-versions where the right code differs. The task format, the sandbox and the commands are in
-[Version-pinned coding tasks](../evals/coding-tasks.md).
-
-## Refreshing these pages
-
-The tables on the benchmark pages are not typed by hand. Each page holds generated blocks between
-`<!-- bench:<name> -->` and `<!-- /bench -->` markers, and `just bench-pages` refills them from
-`packages/exactdocs/evals/results/ingestion.json`, `retrieval.json`, `agent.json`,
-`grounded-docs.json` and the golden set, with the benchmarks' own Markdown renderers. Everything
-outside the markers is prose.
-
-```bash
-just bench-pages            # rewrite the blocks after a new recorded run
-just bench-pages --check    # fail when a page differs from the reports
-```
-
-A pull request test runs the check, so a recorded run or a golden-set change that does not
-refresh the pages fails CI. The prose around the tables (the findings on
-[Recommended defaults](defaults.md), the run dates) is updated by hand in the same pull request.
