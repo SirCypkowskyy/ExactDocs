@@ -143,7 +143,7 @@ source = "uv-dynamic-versioning"
 # The kernel is released in lockstep with the app.
 dependencies = [
     "exactdocs-kernel=={{ version }}",
-    "aiosqlite>=0.21",
+    "aiosqlite>=0.22",
     "argon2-cffi>=25",
     # External sign-in (#105): PKCE and OIDC claim rules (Authlib), JWT and JWKS (joserfc,
     # Authlib's own JOSE library). Both came in through FastMCP already. joserfc 1.8.0 refuses
