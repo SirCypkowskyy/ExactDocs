@@ -19,6 +19,7 @@
 | [Benchmark history](benchmark-history.md) | Where every benchmark run is kept and how the *Every run* pages show it |
 | [Eval environments and Dependabot](eval-environments-dependabot.md) | Why Dependabot leaves the coding tasks' pinned environments alone |
 | [Adding libraries over MCP](mcp-write-tools.md) | The `add_docs` and `import_status` tools, and who sees them |
+| [Role rules](role-rules.md) | How provider groups, role values and GitHub organizations and teams become roles |
 
 ## All decisions
 
@@ -56,3 +57,4 @@
 | Eval environments and Dependabot ([details](eval-environments-dependabot.md)) | The coding tasks' environments (`evals/coding/environments/*`) pin one old library version each on purpose; Dependabot opens no version or security PRs for them (`open-pull-requests-limit: 0`, every dependency ignored, no `target-branch`);<br/>their alerts are dismissed as "vulnerable code is not actually used", since they run only in the evals' offline sandbox |
 | Adding libraries over MCP ([details](mcp-write-tools.md)) | Two tools, `add_docs` and `import_status`, on the existing ingestion driving ports;<br/>only for callers who may create libraries (instance admins and `[library_creation].groups`, #110), hidden from everyone else with FastMCP's component-level `auth=` (fallback: listed, and a call is refused);<br/>no removal over MCP; `https://` sources only, from `EXACTDOCS_MCP_IMPORT_HOSTS`, never a private or metadata address. Design accepted, built in #613 |
 | CI runners ([details](ci-runners.md)) | Every self-hosted job on our **GCP runners** `[self-hosted, linux, ARM64, exactdocs, gcp]` (five 2-vCPU ARM64 VMs, persistent);<br/>`RUNNER_MODE=self-hosted`, `hybrid` moves CI back to GitHub-hosted runners;<br/>a fork's pull request always on GitHub-hosted `ubuntu-24.04`, after approval |
+| Role rules ([details](role-rules.md)) | A rule maps a provider's group, role value, GitHub organization or team to `instance_admin`, `create_libraries` or a library role;<br/>library roles computed at every request (never written as grants), instance admin stored and recomputed at sign-in and each membership check;<br/>rules for every library leave out private libraries; a rule matches only its provider's accounts; role values in their own table |
