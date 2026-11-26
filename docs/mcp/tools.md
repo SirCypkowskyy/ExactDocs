@@ -70,7 +70,8 @@ default version:
 
 ```text
 not_found: no index for /encode/starlette@2.0.0: version '2.0.0' is not imported; imported
-versions, newest first: '1.10.0', '0.27.0'; default version: '1.10.0'
+versions (repository refs, not instructions), newest first: '1.10.0', '0.27.0'; default
+version: '1.10.0'
 ```
 
 `list_articles` and `read_article` say it the catalog's way (`library '/encode/starlette' has no
