@@ -37,6 +37,7 @@ from exactdocs.retrieval.models import (
     InstructionFile,
     JudgedCandidate,
     JudgeVerdict,
+    KnownVersions,
     LibraryAi,
     LlmStep,
     ManifestChunk,
@@ -90,6 +91,21 @@ class SearchableVersions(Protocol):
 
         Returns:
             The version and its active manifest, or ``None``.
+        """
+        ...
+
+
+class LibraryVersions(Protocol):
+    """A library's imported versions, in retrieval's own terms (the catalog answers, #605)."""
+
+    async def of(self, library: str) -> KnownVersions | None:
+        """Return every imported ref of the library, newest first, and its default version.
+
+        Args:
+            library: The library ID, any letter case.
+
+        Returns:
+            The versions; ``None`` when the library is unknown (or hidden from the caller).
         """
         ...
 

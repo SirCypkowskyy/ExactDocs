@@ -1,7 +1,7 @@
 Feature: The MCP tools take the arguments agents actually send
   As an AI coding agent, maybe a weaker model
   I want a loosely written tool call to be answered as I meant it, or refused with what to send
-  So that an empty string, a large limit or a library's name does not cost me a turn
+  So that an empty string, a large limit, a library's name or a guessed "v" does not cost me a turn
 
   Background:
     Given ExactDocs is running with the fixture docs repository imported at "v1.3.0" and "v1.4.0"
@@ -36,3 +36,15 @@ Feature: The MCP tools take the arguments agents actually send
   Scenario: An argument the tool does not have is still refused, naming the real ones
     When an agent calls "search_all_docs" with an argument "ref" it does not have
     Then the tool error names the real arguments "query", "library" and "path_prefix"
+
+  Scenario: A ref that differs from an imported version only by a leading v reads that version
+    When an agent calls "search_docs" for "/fixture/docs-repo" version "1.4.0" and "retry_policy"
+    Then it searches version "v1.4.0"
+    And the result carries a note that ref "1.4.0" was read as "v1.4.0"
+    When an agent calls "query-docs" for "/fixture/docs-repo/1.3.0" and "connection_pool"
+    Then the docs come from version "v1.3.0" with a note that ref "1.3.0" was read as "v1.3.0"
+
+  Scenario: A ref that names no version is refused, naming the versions
+    When an agent calls "search_docs" for "/fixture/docs-repo" version "2.0.0" and "retry_policy"
+    Then the tool error says version "2.0.0" is not imported and lists "v1.4.0" and "v1.3.0", newest first
+    And the tool error names "v1.4.0" as the default version

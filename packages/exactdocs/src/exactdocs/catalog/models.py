@@ -50,7 +50,7 @@ from exactdocs.catalog.errors import (
     RenameLinkMismatchError,
     SelfRenameError,
 )
-from exactdocs_kernel import MAX_TAG_LENGTH, MAX_TAGS, normalize_tag
+from exactdocs_kernel import MAX_TAG_LENGTH, MAX_TAGS, normalize_tag, respelled
 
 
 @dataclass(frozen=True, slots=True)  # conventions: allow-positional -- one-field value object
@@ -434,6 +434,31 @@ class Library:
         if len({v.commit_sha for v in matches}) > 1:  # refs of one commit are not ambiguous
             raise AmbiguousCommitError(prefix)
         return min(matches, key=lambda v: v.ref.value) if matches else None
+
+    def respelled_version(self, ref: VersionRef) -> Version | None:
+        """Find the one version ``ref`` names but for a leading ``v`` (#605): ``v1.2`` for ``1.2``.
+
+        Only reader-facing lookups ask for it, after ``find_version`` found nothing; the version
+        is never a nearby one (``exactdocs_kernel.respelled``).
+
+        Args:
+            ref: The ref asked for.
+
+        Returns:
+            The version; ``None`` when ``ref`` itself is imported, when no version matches, or
+            when several do.
+        """
+        other = respelled(ref.value, (v.ref.value for v in self.versions))
+        return next((v for v in self.versions if v.ref.value == other), None)
+
+    def newest_first(self) -> list[Version]:
+        """List the imported versions, the most recently imported first (ties by ref).
+
+        Returns:
+            Every version, newest first.
+        """
+        by_ref = sorted(self.versions, key=lambda v: v.ref.value)
+        return sorted(by_ref, key=lambda v: v.imported_at, reverse=True)
 
 
 def _stable_semver(tag: str) -> tuple[int, int, int] | None:

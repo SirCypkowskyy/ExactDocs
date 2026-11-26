@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import operator
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import date, datetime
 from typing import Annotated, Any, Literal
@@ -343,6 +344,9 @@ class C7ContextResponse(_Camel):
     """The chunks that fit the size budget, best first."""
     omitted: int
     """Matching chunks that did not fit the size budget."""
+    notes: list[str] = Field(default_factory=list, exclude_if=operator.not_)
+    """How the request was read where it differs from what was sent: a ref read as the one
+    imported version it names but for a leading `v`. Absent when it was read as sent."""
 
     @classmethod
     def from_result(cls, result: QueryDocsResult) -> C7ContextResponse:
@@ -367,7 +371,7 @@ class C7ContextResponse(_Camel):
                     chunk_id=s.chunk_id,
                 )
             )
-        return cls(info_snippets=snippets, omitted=result.omitted)
+        return cls(info_snippets=snippets, omitted=result.omitted, notes=result.notes)
 
 
 def build_router(
@@ -675,9 +679,11 @@ def build_router(
         found = await query_docs(request, caller=asker)
         if fmt == "json":
             return C7ContextResponse.from_result(found)
-        # The notice leads the body, as it leads the MCP result, and repeats in a header.
+        # The notice leads the body, as it leads the MCP result, and repeats in a header; the
+        # notes (#605) close it, as they close the MCP result.
+        notes = f"\n\nNotes: {' '.join(found.notes)}" if found.notes else ""
         return PlainTextResponse(
-            f"{NOTICE}\n\n{format_docs(found)}", headers={NOTICE_HEADER: NOTICE}
+            f"{NOTICE}\n\n{format_docs(found)}{notes}", headers={NOTICE_HEADER: NOTICE}
         )
 
     return router

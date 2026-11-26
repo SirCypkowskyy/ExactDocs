@@ -4,12 +4,14 @@ import pytest
 
 from exactdocs.bootstrap.bridges import (
     CatalogActiveManifests,
+    CatalogArticleSuggestions,
     CatalogDefaultVersions,
     CatalogImportedTags,
     CatalogLibraries,
     CatalogLibraryIds,
     CatalogLibrarySettings,
     CatalogLibrarySources,
+    CatalogLibraryVersions,
     CatalogSearchableVersions,
     CatalogStoredArticles,
     CatalogVersionCopier,
@@ -57,7 +59,7 @@ from exactdocs.ingestion.models import (
 )
 from exactdocs.ingestion.models import RefKind as IngestionRefKind
 from exactdocs.ingestion.models import VersionOrigin as IngestionOrigin
-from exactdocs.retrieval.models import DocTarget, ManifestStatus, SourceHost
+from exactdocs.retrieval.models import DocTarget, KnownVersions, ManifestStatus, SourceHost
 from exactdocs_kernel import MAX_LIMIT
 
 PAYMENTS = Library(
@@ -194,6 +196,86 @@ async def test_a_searchable_version_needs_an_active_manifest_and_names_its_sourc
     assert await SEARCHABLE.find("/acme/payments", "abc12340") is None  # not an exact ref
     assert await SEARCHABLE.find("/vuejs/docs", None) is None
     assert await SEARCHABLE.find("/acme/payments", "v 1") is None  # not a ref at all
+
+
+def _starlette() -> CatalogModule:
+    """A catalog with Starlette's tags `0.27.0` (older) and `1.10.0`: no `v` (#605)."""
+    versions = [("0.27.0", 3), ("1.10.0", 1), ("main", 1)]
+    repository = InMemoryLibraryRepository.of(
+        [
+            Library(
+                id=LibraryId("/encode/starlette"),
+                title="Starlette",
+                source_url="https://github.com/encode/starlette",
+                host=HostKind.GITHUB,
+                default_branch=VersionRef("main"),
+                versions=frozenset(
+                    Version(
+                        ref=VersionRef(ref),
+                        kind=RefKind.BRANCH if ref == "main" else RefKind.TAG,
+                        commit_sha=str(days) * 40,
+                        imported_at=datetime(2026, 11, 10 - days, tzinfo=UTC),
+                    )
+                    for ref, days in versions
+                ),
+            )
+        ]
+    )
+    manifests = InMemoryManifestRepository(libraries=repository)
+    return CatalogModule.build(
+        repository=repository,
+        manifests=manifests,
+        imported_tags=InMemoryImportedTags(repository=manifests),
+        copier=InMemoryManifestCopier(repository=manifests),
+        stored_articles=InMemoryStoredArticles(repository=manifests),
+    )
+
+
+async def test_a_librarys_versions_come_newest_first_with_the_default() -> None:
+    known = CatalogLibraryVersions(get_library=_starlette().get_library)
+
+    assert await known.of("/Encode/Starlette") == KnownVersions(
+        versions=("1.10.0", "main", "0.27.0"), default="1.10.0"
+    )
+    assert await known.of("/encode/other") is None
+    assert await known.of("not an id") is None
+
+
+async def test_the_exact_version_is_still_the_only_searchable_one() -> None:
+    catalog = _starlette()
+    searchable = CatalogSearchableVersions(
+        get_library=catalog.get_library, get_active_manifest=catalog.get_active_manifest
+    )
+
+    assert await searchable.find("/encode/starlette", "v1.10.0") is None  # retrieval respells
+
+
+async def test_close_paths_come_from_the_exact_version_only() -> None:
+    catalog = _starlette()
+    stored = await catalog.store_manifest(
+        StoreManifestCommand(
+            library="/encode/starlette",
+            ref="1.10.0",
+            kind=RefKind.TAG,
+            commit_sha="1" * 40,
+            articles=[
+                ArticleIn(
+                    path="docs/routing.md",
+                    blob_sha="2" * 40,
+                    content_version=1,
+                    title="R",
+                    content="r",
+                )
+            ],
+        )
+    )
+    await catalog.activate_manifest(ActivateManifestCommand(manifest_id=stored.manifest_id))
+    suggestions = CatalogArticleSuggestions(get_article=catalog.get_article)
+
+    exact = DocTarget(library="/encode/starlette", version="1.10.0")
+    respelled = DocTarget(library="/encode/starlette", version="v1.10.0")
+    assert await suggestions.close_to(exact, "docs/routes.md") == ("docs/routing.md",)
+    assert await suggestions.close_to(respelled, "docs/routes.md") == ()
 
 
 async def test_the_library_bridge_reads_every_page_and_skips_libraries_without_a_version() -> None:

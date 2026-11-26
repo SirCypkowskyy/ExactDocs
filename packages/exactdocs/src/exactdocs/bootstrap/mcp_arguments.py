@@ -14,7 +14,9 @@ those into a lost turn. This middleware, run on every ``tools/call`` before vali
   arguments in the error.
 
 Notes go in the result: a last text block, and ``notes`` in the structured content of a tool that
-has an output schema (each listed output schema declares it).
+has an output schema (each listed output schema declares it). The tool's own answer may carry
+notes too, in its structured ``notes``: a ref read as the version it names but for a leading
+``v`` (#605), resolved where every caller gets it, REST included. They join the middleware's.
 """
 
 import re
@@ -267,20 +269,26 @@ def _type_of(spec: Mapping[str, Any]) -> str:
 def with_notes(result: ToolResult, notes: Sequence[str], *, structured: bool) -> ToolResult:
     """Add the notes to a result: a last text block, and ``notes`` in its structured content.
 
+    The notes the tool's answer carries itself (its structured ``notes``) follow the middleware's,
+    in the text block and in ``notes``.
+
     Args:
         result: The tool's result.
-        notes: What was changed in the arguments; none leaves the result as it is.
+        notes: What was changed in the arguments.
         structured: Whether the tool has an output schema (that declares ``notes``).
 
     Returns:
-        The result with the notes.
+        The result with the notes; as it is when there are none.
     """
-    if not notes:
-        return result
-    content = [*result.content, mt.TextContent(type="text", text="Notes: " + " ".join(notes))]
     data = result.structured_content
-    if structured and isinstance(data, dict):
-        data = {**data, NOTES: list(notes)}
+    told = data.get(NOTES) if isinstance(data, dict) else None
+    own = [str(note) for note in told] if isinstance(told, list) else []
+    every = [*notes, *own]
+    if not every:
+        return result
+    content = [*result.content, mt.TextContent(type="text", text="Notes: " + " ".join(every))]
+    if isinstance(data, dict) and (structured or own):
+        data = {**data, NOTES: every}
     return ToolResult(content=content, structured_content=data, meta=result.meta)
 
 
