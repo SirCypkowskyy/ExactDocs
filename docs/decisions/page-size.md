@@ -33,8 +33,11 @@ those PRs get no delete/modify conflict. Anchors of sections that moved stay on 
 a *Moved sections* list that links on, because a redirect plugin would be a new dependency.
 Outside bookmarks to old anchors on the other eight split pages land at the top of the page.
 
-`user-stories.md` is a known exception (over 17 KiB), because of the Decisions table. The
-follow-up is to move that table to its own page under `docs/decisions/`.
+The Decisions table that made `user-stories.md` the one exception now has its own page,
+`decisions/index.md`, and `user-stories.md#decisions` points there. Only the tables `just
+bench-pages` writes may go over 16 KiB (`benchmark/retrieval/results.md`, `rank-one-tables.md`
+and `history.md`): they are generated from the recorded runs, and splitting them would mean
+changing the generator.
 
 ## Considered options
 

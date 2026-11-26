@@ -16,7 +16,7 @@
 | MVP-1 | `type: feature`<br/>`status: ready`<br/>`area: backend` | backend / catalog | RUN-01 (data location) | - | M |
 
 **Context.** Today the catalog is an in-memory demo, so nothing survives a restart. Every later
-story (imports, tokens, sync) needs durable storage in the place the Decisions table promises:
+story (imports, tokens, sync) needs durable storage in the place the [Decisions](../decisions/index.md) table promises:
 `/data` in Docker, the platform user-data directory for `uvx`, the same path for stdio MCP.
 
 **Expected behavior** (pytest integration tests)

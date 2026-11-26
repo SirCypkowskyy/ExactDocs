@@ -102,7 +102,7 @@ nav = [
   ] },
   { "Product" = [
     { "User stories" = [
-      { "Terms, decisions and actors" = "user-stories.md" },
+      { "Terms and actors" = "user-stories.md" },
       { "MVP: setup, libraries and imports" = "user-stories/mvp-libraries.md" },
       { "MVP: browsing, search, sync and running" = "user-stories/mvp-search.md" },
       { "Next: AI-powered retrieval" = "user-stories/ai-retrieval.md" },
@@ -131,19 +131,22 @@ nav = [
       { "E12 Teams & integrations" = "plan/e12-teams.md" },
       { "Coverage matrix" = "plan/coverage.md" },
     ] },
-    { "AI retrieval decisions" = [
-      { "Context, summary and consequences" = "decisions/ai-retrieval.md" },
-      { "Databases and providers" = "decisions/ai-retrieval/providers.md" },
-      { "Local models and the vector store" = "decisions/ai-retrieval/local-models.md" },
-      { "Configuration and no outbound" = "decisions/ai-retrieval/configuration.md" },
-      { "Cost, telemetry and evaluation" = "decisions/ai-retrieval/cost.md" },
-      { "Code, order of work, dependencies" = "decisions/ai-retrieval/delivery.md" },
-      { "Sign-in for Teams" = "decisions/ai-retrieval/sign-in.md" },
+    { "Decisions" = [
+      "decisions/index.md",
+      { "AI retrieval decisions" = [
+        { "Context, summary and consequences" = "decisions/ai-retrieval.md" },
+        { "Databases and providers" = "decisions/ai-retrieval/providers.md" },
+        { "Local models and the vector store" = "decisions/ai-retrieval/local-models.md" },
+        { "Configuration and no outbound" = "decisions/ai-retrieval/configuration.md" },
+        { "Cost, telemetry and evaluation" = "decisions/ai-retrieval/cost.md" },
+        { "Code, order of work, dependencies" = "decisions/ai-retrieval/delivery.md" },
+        { "Sign-in for Teams" = "decisions/ai-retrieval/sign-in.md" },
+      ] },
+      { "Documentation pages stay under 16 KiB" = "decisions/page-size.md" },
+      { "Benchmark history" = "decisions/benchmark-history.md" },
+      { "Eval environments and Dependabot" = "decisions/eval-environments-dependabot.md" },
+      { "Adding libraries over MCP" = "decisions/mcp-write-tools.md" },
     ] },
-    { "Documentation pages stay under 16 KiB" = "decisions/page-size.md" },
-    { "Benchmark history" = "decisions/benchmark-history.md" },
-    { "Eval environments and Dependabot" = "decisions/eval-environments-dependabot.md" },
-    { "Adding libraries over MCP" = "decisions/mcp-write-tools.md" },
   ] },
   { "Engineering" = [
     { "Architecture" = [
@@ -222,8 +225,10 @@ nav = [
       { "Context7" = "evals/context7.md" },
       { "Agent benchmark" = "evals/agent-bench.md" },
       { "Running the agent benchmark" = "evals/agent-bench-running.md" },
+      { "The agent benchmark's report" = "evals/agent-bench-report.md" },
       { "Version-pinned coding tasks" = "evals/coding-tasks.md" },
       { "Coding-agent CLIs" = "evals/harnesses.md" },
+      { "Running the harness benchmark" = "evals/harnesses-running.md" },
     ] },
     { "Branching and releases" = [
       "releasing/index.md",
@@ -262,6 +267,7 @@ nav = [
     { "Agent results" = [
       "benchmark/agent/index.md",
       { "Every table" = "benchmark/agent/results.md" },
+      { "What each run found" = "benchmark/agent/findings.md" },
       { "Runs" = "benchmark/agent/runs.md" },
       { "Every run" = "benchmark/agent/history.md" },
     ] },

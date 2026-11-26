@@ -1,5 +1,11 @@
 # Rank 1: every table
 
+!!! abstract "TL;DR"
+    - Every table of the grid run: each configuration, against the budget's default, within a token
+      budget, and against each variant's control.
+    - `just bench-pages` writes them from `retrieval-grid-rank1.json`. The findings, with their
+      numbers, are on [Rank 1 at no more context](rank-one.md).
+
 The tables of the grid run behind [Rank 1 at no more context](rank-one.md), from `packages/exactdocs/evals/results/retrieval-grid-rank1.json`.
 
 <!-- bench:retrieval-grid -->
