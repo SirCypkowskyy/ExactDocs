@@ -112,6 +112,7 @@ nav = [
       { "Coverage matrix" = "plan/coverage.md" },
     ] },
     { "AI retrieval decisions" = "decisions/ai-retrieval.md" },
+    { "Benchmark history" = "decisions/benchmark-history.md" },
   ] },
   { "Engineering" = [
     { "Architecture" = [
