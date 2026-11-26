@@ -11,9 +11,11 @@ repo_url = "https://github.com/SirCypkowskyy/ExactDocs"
 repo_name = "SirCypkowskyy/ExactDocs"
 edit_uri = "edit/develop/docs/"
 # bench-history.js: the benchmark history tables' sorting, filters and chart (docs/benchmark/*/history.md).
+# scroll-regions.js: a wide table's scrolling box takes keyboard focus (#619).
 extra_javascript = [
   "https://unpkg.com/mermaid@12.3.0/dist/mermaid.min.js",
   "javascripts/bench-history.js",
+  "javascripts/scroll-regions.js",
 ]
 # The web UI's colours (web/DESIGN.md, "The Headlamp"), the logo swap for the dark scheme, and the
 # home page's hero and grid.
