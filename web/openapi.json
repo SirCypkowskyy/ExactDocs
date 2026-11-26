@@ -14359,6 +14359,14 @@
             "type": "string",
             "title": "Content",
             "description": "The article's Markdown, verbatim as imported."
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "How the request was read where it differs from what was sent: a ref read as the one\nimported version it names but for a leading `v`. Absent when it was read as sent."
           }
         },
         "additionalProperties": false,
@@ -14434,6 +14442,14 @@
             "type": "integer",
             "title": "Total",
             "description": "How many articles match the filters (`path_prefix`, `tags`, `q`), across every page."
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "How the request was read where it differs from what was sent: a ref read as the one\nimported version it names but for a leading `v`. Absent when it was read as sent."
           }
         },
         "additionalProperties": false,
@@ -14520,6 +14536,14 @@
             "type": "array",
             "title": "Sections",
             "description": "The top-level headings, in document order."
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "How the request was read where it differs from what was sent: a ref read as the one\nimported version it names but for a leading `v`. Absent when it was read as sent."
           }
         },
         "additionalProperties": false,
@@ -14924,6 +14948,14 @@
             "type": "integer",
             "title": "Omitted",
             "description": "Matching chunks that did not fit the size budget."
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "How the request was read where it differs from what was sent: a ref read as the one\nimported version it names but for a leading `v`. Absent when it was read as sent."
           }
         },
         "type": "object",
@@ -20125,6 +20157,14 @@
             "type": "string",
             "title": "Library",
             "description": "Library ID, `/owner/repo`."
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "How the request was read where it differs from what was sent: a ref read as the one\nimported version it names but for a leading `v`. Absent when it was read as sent."
           }
         },
         "additionalProperties": false,
@@ -20482,6 +20522,14 @@
             "type": "array",
             "title": "Results",
             "description": "The results, best first, or grouped by article (`group`); empty when nothing matched."
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "How the request was read where it differs from what was sent: a ref read as the one\nimported version it names but for a leading `v`. Absent when it was read as sent."
           }
         },
         "additionalProperties": false,
@@ -21462,6 +21510,14 @@
             "type": "boolean",
             "title": "Truncated",
             "description": "True when the version has more tags than are listed."
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes",
+            "description": "How the request was read where it differs from what was sent: a ref read as the one\nimported version it names but for a leading `v`. Absent when it was read as sent."
           }
         },
         "additionalProperties": false,

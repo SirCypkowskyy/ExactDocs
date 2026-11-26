@@ -331,6 +331,7 @@ from exactdocs.retrieval.ports.driven import (
     InstructionFiles,
     Libraries,
     LibraryModes,
+    LibraryVersions,
     ModelFactory,
     ModelRoles,
     NativeHybrid,
@@ -354,7 +355,7 @@ from exactdocs.retrieval.ports.driven import (
     VectorIndex,
     VersionArticles,
 )
-from exactdocs_kernel import NOTICE, Clock, SystemClock, inside
+from exactdocs_kernel import NOTICE, Clock, SystemClock, inside, respelled, respelled_note
 
 logger = logging.getLogger(__name__)
 
@@ -413,6 +414,45 @@ async def _require(access: AccessPolicy, library: str, needed: Access) -> None:
         raise UnknownLibraryError(library)
     if needed is not Access.READ and not await access.allows(library, needed):
         raise LibraryAccessDeniedError(library, needed.value)
+
+
+async def _asked_version(
+    versions: SearchableVersions,
+    known: LibraryVersions | None,
+    library: str,
+    ref: str | None,
+) -> tuple[SearchableVersion, list[str]]:
+    """Find the version a reader's ref names, forgiving only a leading ``v`` (#605).
+
+    Exactly ``ref`` (the default version without one) when it has an index; else the one
+    imported version ``ref`` names but for a leading ``v`` or ``V``, with a note saying so. Never
+    another version: a ref that names none is an error naming the library's versions.
+
+    Args:
+        versions: Resolves an exact ref to the manifest a search reads.
+        known: The library's imported versions; without it only the exact ref is found and the
+            error names no versions.
+        library: The library ID, any letter case.
+        ref: The ref as asked; ``None`` for the default version.
+
+    Returns:
+        The version and the notes on how the ref was read (none when as given).
+
+    Raises:
+        VersionNotIndexedError: No version has the ref or its other spelling, or it has no index.
+    """
+    version = await versions.find(library, ref)
+    if version is not None:
+        return version, []
+    if ref is None:
+        raise VersionNotIndexedError(library, "(default version)")
+    imported = None if known is None else await known.of(library)
+    if imported is None:
+        raise VersionNotIndexedError(library, ref)
+    other = respelled(ref, imported.versions)
+    if other is not None and (version := await versions.find(library, other)) is not None:
+        return version, [respelled_note(ref, other)]
+    raise VersionNotIndexedError(library, ref, versions=imported.versions, default=imported.default)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1941,6 +1981,9 @@ class SearchDocsUseCase:
     """Picks the mode and runs its pipeline."""
     chunks: ChunkRepository
     """Reads the hits' chunks."""
+    known: LibraryVersions | None = None
+    """The library's imported versions: a ref with or without a leading ``v`` finds its version,
+    and a ref that names none is told them (#605); only the exact ref without it."""
     tracer: SearchTracer = field(default_factory=UntracedSearches)
     """Observes the search and its stages (traces); records nothing by default."""
     access: AccessPolicy
@@ -1989,16 +2032,14 @@ class SearchDocsUseCase:
             caller: The account searching.
 
         Returns:
-            The results of the one version searched.
-
-        Raises:
-            VersionNotIndexedError: The version is not imported or has no active manifest.
+            The results of the one version searched; a ref that names no version raises
+            ``_asked_version``'s error.
         """
         mode = choice.mode.value
         with self.tracer.span(f"{SEARCH_DOCS}.version", mode=mode):
-            version = await self.versions.find(query.library, query.ref)
-        if version is None:
-            raise VersionNotIndexedError(query.library, query.ref or "(default version)")
+            version, notes = await _asked_version(
+                self.versions, self.known, query.library, query.ref
+            )
         # Only a search that will run counts against the caller's limits; every stage after this
         # one sees the same choice.
         tag_filter = TagFilter(tags=tuple(query.tags), match=query.tags_match)
@@ -2060,6 +2101,7 @@ class SearchDocsUseCase:
             fallback_reason=answer.fallback_reason,
             cache_hit=answer.cache_hit,
             results=results,
+            notes=notes,
         )
 
 
@@ -2869,6 +2911,9 @@ class ArticleOutlineUseCase:
     """The article's chunk rows in that version's active manifest."""
     suggestions: ArticleSuggestions | None = None
     """Close paths for a miss, as ``read_article`` lists them; none without it."""
+    known: LibraryVersions | None = None
+    """The library's imported versions: a ref with or without a leading ``v`` finds its version,
+    and a ref that names none is told them (#605); only the exact ref without it."""
     access: AccessPolicy
     """Decides what the caller may do with the library."""
 
@@ -2879,23 +2924,21 @@ class ArticleOutlineUseCase:
             query: The library, the exact ref (or none for the default version) and the path.
 
         Returns:
-            The heading tree with a chunk ID per heading and the version that answered.
+            The heading tree with a chunk ID per heading and the version that answered; a ref
+            that names no version raises ``_asked_version``'s error.
 
         Raises:
-            VersionNotIndexedError: The version is not imported or has no active manifest.
             ArticleNotFoundError: The version has no article at this path.
         """
         await _require(self.access, query.library, Access.READ)
-        version = await self.versions.find(query.library, query.ref)
-        if version is None:
-            raise VersionNotIndexedError(query.library, query.ref or "(default version)")
+        version, notes = await _asked_version(self.versions, self.known, query.library, query.ref)
         sections = await self.chunks.article(version.manifest_id, query.path)
         if not sections:
             target = DocTarget(library=version.library, version=version.version)
             close = await self.suggestions.close_to(target, query.path) if self.suggestions else ()
             raise ArticleNotFoundError(version.library, version.version, query.path, close)
         return ArticleOutlineOut.from_model(
-            version, query.path, outline(sections), chunks=len(sections)
+            version, query.path, outline(sections), chunks=len(sections), notes=notes
         )
 
 
@@ -3510,6 +3553,9 @@ class QueryDocsUseCase:
     """Picks the mode (the library's, else the instance's) and runs its pipeline."""
     chunks: ChunkRepository
     """Reads the hits' chunks."""
+    known: LibraryVersions | None = None
+    """The library's imported versions: a ref with or without a leading ``v`` finds its version,
+    and a ref that names none is told them (#605); only the exact ref without it."""
     token_budget: int = DEFAULT_QUERY_DOCS_TOKEN_BUDGET
     """Size budget of an answer, in estimated tokens."""
     tracer: SearchTracer = field(default_factory=UntracedSearches)
@@ -3570,16 +3616,12 @@ class QueryDocsUseCase:
             caller: The account asking.
 
         Returns:
-            The packed sections of the one version searched.
-
-        Raises:
-            VersionNotIndexedError: The version is not imported or has no active manifest.
+            The packed sections of the one version searched; a ref that names no version raises
+            ``_asked_version``'s error.
         """
         mode = choice.mode.value
         with self.tracer.span(f"{QUERY_DOCS}.version", mode=mode):
-            version = await self.versions.find(library, ref)
-        if version is None:
-            raise VersionNotIndexedError(library, ref or "(default version)")
+            version, notes = await _asked_version(self.versions, self.known, library, ref)
         # Only a request that will run counts against the caller's limits.
         everything = TagFilter(tags=(), match=TagMatch.ANY)
         choice = await self.modes.within_budget(
@@ -3616,7 +3658,7 @@ class QueryDocsUseCase:
         if query.language:
             sections = language_first(sections, lambda s: s.code_languages, query.language)
         budget = self.token_budget * CHARS_PER_TOKEN
-        room = budget - len(NOTICE) - FOOTER_CHARS
+        room = budget - len(NOTICE) - FOOTER_CHARS - sum(len(n) + 1 for n in notes)
         rules = _fit_rules(version.rules, room // RULES_SHARE)
         if rules:
             room -= RULES_FRAMING_CHARS + sum(RULE_FRAMING_CHARS + len(r) for r in rules)
@@ -3633,6 +3675,7 @@ class QueryDocsUseCase:
             omitted=len(sections) - len(kept),
             budget_chars=budget,
             rules=rules,
+            notes=notes,
         )
 
 

@@ -2703,6 +2703,12 @@ export interface components {
              * @description The article's Markdown, verbatim as imported.
              */
             readonly content: string;
+            /**
+             * Notes
+             * @description How the request was read where it differs from what was sent: a ref read as the one
+             *     imported version it names but for a leading `v`. Absent when it was read as sent.
+             */
+            readonly notes?: readonly string[];
         };
         /**
          * ArticleList
@@ -2750,6 +2756,12 @@ export interface components {
              * @description How many articles match the filters (`path_prefix`, `tags`, `q`), across every page.
              */
             readonly total: number;
+            /**
+             * Notes
+             * @description How the request was read where it differs from what was sent: a ref read as the one
+             *     imported version it names but for a leading `v`. Absent when it was read as sent.
+             */
+            readonly notes?: readonly string[];
         };
         /**
          * ArticleOutlineOut
@@ -2808,6 +2820,12 @@ export interface components {
              * @description The top-level headings, in document order.
              */
             readonly sections: readonly components["schemas"]["OutlineSectionOut"][];
+            /**
+             * Notes
+             * @description How the request was read where it differs from what was sent: a ref read as the one
+             *     imported version it names but for a leading `v`. Absent when it was read as sent.
+             */
+            readonly notes?: readonly string[];
         };
         /**
          * ArticleSummary
@@ -3035,6 +3053,12 @@ export interface components {
              * @description Matching chunks that did not fit the size budget.
              */
             readonly omitted: number;
+            /**
+             * Notes
+             * @description How the request was read where it differs from what was sent: a ref read as the one
+             *     imported version it names but for a leading `v`. Absent when it was read as sent.
+             */
+            readonly notes?: readonly string[];
         };
         /**
          * C7InfoSnippet
@@ -6032,6 +6056,12 @@ export interface components {
              * @description Library ID, `/owner/repo`.
              */
             readonly library: string;
+            /**
+             * Notes
+             * @description How the request was read where it differs from what was sent: a ref read as the one
+             *     imported version it names but for a leading `v`. Absent when it was read as sent.
+             */
+            readonly notes?: readonly string[];
         };
         /**
          * ResultGrouping
@@ -6245,6 +6275,12 @@ export interface components {
              * @description The results, best first, or grouped by article (`group`); empty when nothing matched.
              */
             readonly results: readonly components["schemas"]["SearchResultOut"][];
+            /**
+             * Notes
+             * @description How the request was read where it differs from what was sent: a ref read as the one
+             *     imported version it names but for a leading `v`. Absent when it was read as sent.
+             */
+            readonly notes?: readonly string[];
         };
         /**
          * SearchResultOut
@@ -6844,6 +6880,12 @@ export interface components {
              * @description True when the version has more tags than are listed.
              */
             readonly truncated: boolean;
+            /**
+             * Notes
+             * @description How the request was read where it differs from what was sent: a ref read as the one
+             *     imported version it names but for a leading `v`. Absent when it was read as sent.
+             */
+            readonly notes?: readonly string[];
         };
         /**
          * TagOrigin

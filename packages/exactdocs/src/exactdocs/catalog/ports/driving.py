@@ -109,9 +109,10 @@ class GetLibrary(Protocol):
 class ResolveVersion(Protocol):
     """Resolve a context7-style ID to the one version it names.
 
-    Raises ``LibraryNotFoundError`` / ``VersionNotFoundError`` for unknown targets and a
-    validation error for a malformed ID or an ambiguous short SHA. Never falls back to another
-    version.
+    Raises ``LibraryNotFoundError`` / ``VersionNotFoundError`` (naming the library's versions)
+    for unknown targets and a validation error for a malformed ID or an ambiguous short SHA. Never
+    falls back to another version; a ref that differs from an imported one only by a leading ``v``
+    is that version, with a note (#605).
     """
 
     async def __call__(self, query: ResolveVersionQuery) -> ResolvedVersion:
@@ -184,7 +185,9 @@ class ListVersions(Protocol):
 class ListArticles(Protocol):
     """List the articles of a version (default version without a ref), sorted by path.
 
-    Raises ``ArticleNotFoundError`` when the version has no active manifest.
+    A ref that differs from an imported one only by a leading ``v`` is that version, with a note
+    (#605). Raises ``VersionNotFoundError`` for a ref that names no version (naming the library's
+    versions) and ``ArticleNotFoundError`` when the version has no active manifest.
     """
 
     async def __call__(self, query: ListArticlesQuery) -> ArticleList:
@@ -202,7 +205,8 @@ class ListArticles(Protocol):
 class ListTags(Protocol):
     """Count the tags of a version's articles (default version without a ref), most used first.
 
-    Raises ``ArticleNotFoundError`` when the version has no active manifest.
+    A ref is read as ``ListArticles`` reads it (#605). Raises ``ArticleNotFoundError`` when the
+    version has no active manifest.
     """
 
     async def __call__(self, query: ListTagsQuery) -> TagList:
@@ -303,7 +307,8 @@ class GetLogo(Protocol):
 class GetArticle(Protocol):
     """Read one article of a version (default version without a ref).
 
-    Raises ``ArticleNotFoundError`` when the version has no active manifest or no such path.
+    A ref is read as ``ListArticles`` reads it (#605). Raises ``ArticleNotFoundError`` when the
+    version has no active manifest or no such path.
     """
 
     async def __call__(self, query: GetArticleQuery) -> Article:

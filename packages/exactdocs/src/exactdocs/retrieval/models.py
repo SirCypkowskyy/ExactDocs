@@ -1608,6 +1608,20 @@ class SearchableVersion:
     """The library's ``context7.json`` rules (LIB-06), untrusted repository text."""
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class KnownVersions:
+    """A library's imported versions as the catalog lists them, active manifest or not (#605).
+
+    A search reads a ref that names no version as the one of these it names but for a leading
+    ``v``; failing that, its error names them.
+    """
+
+    versions: tuple[str, ...]
+    """Every imported ref, the most recently imported first."""
+    default: str | None
+    """The default version's ref; ``None`` while nothing is imported."""
+
+
 def source_link(version: SearchableVersion, article_path: str, anchor: str) -> str | None:
     """Link to the section at the version's commit, or ``None`` for hosts we cannot build one for.
 

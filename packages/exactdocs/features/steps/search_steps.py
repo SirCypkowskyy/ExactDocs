@@ -19,6 +19,7 @@ from exactdocs.catalog.models import HostKind, Library, LibraryId, RefKind, Vers
 from exactdocs.ingestion.adapters.driven.markdown_chunker import MarkdownChunker
 from exactdocs.ingestion.models import parse_article
 from exactdocs.retrieval.dtos import ArticleChunksIn, ChunkHeadingIn, ChunkIn, IndexManifestCommand
+from exactdocs_kernel import respelled_note
 from fixture_repo import git_bytes
 from steps.http_steps import step_running
 
@@ -250,6 +251,11 @@ def step_location(context: Context) -> None:
 @then('the response says it searched version "{ref}"')
 def step_searched(context: Context, ref: str) -> None:
     assert context.response.json()["version"] == ref, context.response.text
+
+
+@then('the response notes that ref "{asked}" was read as "{used}"')
+def step_ref_noted(context: Context, asked: str, used: str) -> None:
+    assert context.response.json()["notes"] == [respelled_note(asked, used)], context.response.text
 
 
 @then('the response states retrieval mode "{mode}", not reranked, and its coverage')

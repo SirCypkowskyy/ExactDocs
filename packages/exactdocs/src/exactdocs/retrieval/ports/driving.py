@@ -74,8 +74,10 @@ from exactdocs.retrieval.ports.driven import AnswerProgress
 class SearchDocs(Protocol):
     """Search within one library version (the default one without a ref).
 
-    Raises ``VersionNotIndexedError`` for an unknown version; a known version without matches
-    gives an empty ``results``. Never answers from another version.
+    Raises ``VersionNotIndexedError`` for an unknown version, naming the library's versions; a
+    known version without matches gives an empty ``results``. Never answers from another version:
+    a ref that differs from an imported one only by a leading ``v`` is that version, with a note
+    (#605).
     """
 
     async def __call__(
@@ -224,7 +226,8 @@ class ArticleOutline(Protocol):
 
     Version is a hard filter: raises ``VersionNotIndexedError`` for a version that is not
     imported and ``ArticleNotFoundError`` for a path the version does not have, never answering
-    from another version. Needs no AI configuration: it reads only stored chunk rows.
+    from another version (a ref that differs from an imported one only by a leading ``v`` is that
+    version, with a note; #605). Needs no AI configuration: it reads only stored chunk rows.
     """
 
     async def __call__(self, query: ArticleOutlineQuery) -> ArticleOutlineOut:
@@ -331,8 +334,9 @@ class ResolveLibraryName(Protocol):
 class QueryDocs(Protocol):
     """Return documentation for a context7-style library ID, within a size budget.
 
-    `/owner/repo` is the default version, `/owner/repo/<ref>` exactly that ref; raises
-    ``VersionNotIndexedError`` for a version that is not imported and never answers from another.
+    `/owner/repo` is the default version, `/owner/repo/<ref>` exactly that ref (or the version it
+    names but for a leading ``v``, with a note; #605); raises ``VersionNotIndexedError`` for a
+    version that is not imported and never answers from another.
     Only whole chunks are returned, best first, within the configured budget; one too large to fit
     is listed as a pointer for ``read_chunk``. ``language`` only reorders the best matches (chunks
     with code in it first); it never filters, and a chunk ranked beyond the candidates is not seen.

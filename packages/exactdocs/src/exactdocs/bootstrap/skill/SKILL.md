@@ -37,9 +37,11 @@ Typical flow: `list_libraries` -> `search_docs` -> `read_chunk` (a hit) or `read
 
 A library ID is `/owner/repo`; a version is an exact ref (tag, branch or commit). Pass the version
 the project actually uses (check its lockfile). With no ref you get the default version, which may
-not be the one in use. A version that is not imported is a `not_found` error: it never falls back
-to another one. A successful empty result with `coverage.complete` true means no match in that
-version.
+not be the one in use. A ref that differs from an imported version only by a leading `v`
+(`v1.2.3` for `1.2.3`) is read as that version, and the result's notes say so. A version that is
+not imported is a `not_found` error that lists the library's versions: pick one of them; it never
+falls back to another one. A successful empty result with `coverage.complete` true means no match
+in that version.
 A `stale_chunk` error means the version was re-synced: search again for current chunk IDs.
 
 ## Budgets

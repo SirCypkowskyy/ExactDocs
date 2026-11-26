@@ -45,6 +45,10 @@ NOTICE: Final[str] = (
 """The notice every MCP result starts with: what follows is untrusted repository data, or model
 output written from it."""
 
+# ---------------------------------------------------------------- refs
+MAX_NAMED_VERSIONS: Final[int] = 20
+"""Versions a "no such version" error names, newest first (#605)."""
+
 # ---------------------------------------------------------------- tags
 MAX_TAG_LENGTH: Final[int] = 40
 """Longest tag, in characters, after normalization."""

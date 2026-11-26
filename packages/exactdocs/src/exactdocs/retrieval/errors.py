@@ -14,6 +14,7 @@ from exactdocs_kernel import (
     ForbiddenError,
     NotFoundError,
     ValidationError,
+    name_versions,
 )
 
 
@@ -115,16 +116,32 @@ class UnknownLibraryError(NotFoundError):
 class VersionNotIndexedError(NotFoundError):
     """There is no index for this exact library version, so there is no answer."""
 
-    def __init__(self, library: str, version: str) -> None:
-        """Name the version that has no index.
+    def __init__(
+        self,
+        library: str,
+        version: str,
+        *,
+        versions: Sequence[str] | None = None,
+        default: str | None = None,
+    ) -> None:
+        """Name the version that has no index, and the versions the library has (#605).
 
         Args:
             library: The library ID.
-            version: The exact ref.
+            version: The exact ref; ``(default version)`` when none was asked.
+            versions: The library's imported refs, newest first; ``None`` when they are not
+                known (nothing is named then).
+            default: The default version's ref, named after them.
         """
-        super().__init__(f"no index for {library}@{version}")
+        message = f"no index for {library}@{version}"
+        if versions is not None:
+            state = "is imported but not indexed yet" if version in versions else "is not imported"
+            message += f": version {version!r} {state}; {name_versions(versions, default)}"
+        super().__init__(message)
         self.library = library
         self.version = version
+        self.versions = None if versions is None else tuple(versions)
+        self.default = default
 
 
 class UnknownLibraryNameError(NotFoundError):
