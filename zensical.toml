@@ -108,6 +108,7 @@ nav = [
       { "Coverage matrix" = "plan/coverage.md" },
     ] },
     { "AI retrieval decisions" = "decisions/ai-retrieval.md" },
+    { "Adding libraries over MCP" = "decisions/mcp-write-tools.md" },
   ] },
   { "Engineering" = [
     { "Architecture" = [
