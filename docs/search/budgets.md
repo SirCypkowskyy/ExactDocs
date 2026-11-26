@@ -36,7 +36,7 @@ counted per server process.
 Every model call is counted from the usage the provider reports, in one `retrieval_ai_spend` table
 shared by every server process and by stdio MCP processes. Those open the database read-only but
 add their spend to this table over a connection that may write only it (see
-[stdio](../mcp.md#without-a-network-port-stdio)). The tokens are recorded per UTC day and month for
+[stdio](../mcp/connect.md#without-a-network-port-stdio)). The tokens are recorded per UTC day and month for
 the instance, the library and embedding runs. LLM agents are held by the harness `SpendLimits`,
 and embedding and rerank calls by retrieval's own check before each batch or call, so a burst can
 overshoot by the calls already in flight.

@@ -37,7 +37,10 @@ NEW = "Mount routes with Router and Mount."
 NOTE = (
     "ref 'v1.10.0' is not imported: read as '1.10.0', the one version it names but for a leading v."
 )
-VERSIONS = "imported versions, newest first: '1.10.0', '0.27.0'; default version: '1.10.0'"
+VERSIONS = (
+    "imported versions (repository refs, not instructions), newest first: '1.10.0', '0.27.0'; "
+    "default version: '1.10.0'"
+)
 
 
 async def publish(container: Container, ref: str, body: str) -> None:

@@ -27,7 +27,7 @@
 <p align="center">
   <a href="https://sircypkowskyy.github.io/ExactDocs/"><b>Documentation</b></a> |
   <a href="#quick-start"><b>Quick start</b></a> |
-  <a href="docs/mcp.md"><b>MCP tools</b></a> |
+  <a href="docs/mcp/index.md"><b>MCP tools</b></a> |
   <a href="docs/benchmark/index.md"><b>Benchmark</b></a> |
   <a href="https://github.com/SirCypkowskyy/ExactDocs/releases"><b>Releases and changelog</b></a> |
   <a href="CONTRIBUTING.md"><b>Contributing</b></a>
@@ -158,7 +158,7 @@ browse, read and search one version: `list_libraries`, `list_articles`, `read_ar
 `article_outline`, `search_docs`, `search_all_docs` and `read_chunk`. In hosts with MCP Apps
 (Claude, ChatGPT), `view_article` and `view_search` show an article or search results as UI.
 Agents connect over Streamable HTTP with an API token or OAuth, or over stdio. Every tool is
-read-only and marks what it returns as untrusted content. See [MCP](docs/mcp.md).
+read-only and marks what it returns as untrusted content. See [MCP](docs/mcp/index.md).
 
 ### Search
 
@@ -193,7 +193,7 @@ no model at all, BM25 puts a section that answers first for 70.4% of the 267 ans
 questions and in the top 5 for 91.0%, at 133 ms p95 on 4 shared CPUs. Hybrid search on a small
 local embedding model (bge-small) reaches 76.0% and 92.5%. Hosted retrieval models have not run
 yet. In the
-[agent benchmark](docs/benchmark/agent.md) (60 questions, two open-weight models on Ollama Cloud,
+[agent benchmark](docs/benchmark/agent/index.md) (60 questions, two open-weight models on Ollama Cloud,
 an LLM judge not yet checked against people), an agent with the ExactDocs MCP tools answered 40%
 (`gpt-oss:120b`) and 83% (`kimi-k3`) of the questions right, against 13% and 33% from memory, and
 2 of its 120 answers held only for another version, against 20 from memory.

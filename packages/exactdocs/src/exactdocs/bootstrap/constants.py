@@ -731,7 +731,7 @@ PROMPT_SPAN_ATTRIBUTES: Final[frozenset[str]] = frozenset(
 )
 """What a model was sent and answered, and what an agent's tools were called with and returned
 (pydantic-ai's instrumentation): always left out, even with the query text opted in.
-``include_content=False`` is the first guard, this the second (docs/decisions/ai-retrieval.md,
+``include_content=False`` is the first guard, this the second (docs/decisions/ai-retrieval/cost.md,
 *Telemetry*)."""
 GEN_AI_PREFIX: Final[str] = "gen_ai."
 """OpenTelemetry's generative AI attributes: any ``gen_ai.<...>.messages`` one is a prompt too."""

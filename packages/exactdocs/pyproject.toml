@@ -37,7 +37,7 @@ ai = [
     # provider only (`azure.identity.aio` would need aiohttp).
     "azure-identity==1.27.0",
 ]
-# Local models (docs/decisions/ai-retrieval.md, *Local and offline models*): an embedding model and
+# Local models (docs/decisions/ai-retrieval/local-models.md, *Local and offline models*): an embedding model and
 # a cross-encoder in this process, on CPU, without torch. Imported only once a role names a
 # `local` profile; models load from EXACTDOCS_MODELS_DIR, filled by `exactdocs models pull`.
 local = [

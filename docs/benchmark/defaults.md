@@ -12,12 +12,12 @@
       again on 25 November, with `search_docs` grouping its results by article (#575).
 
 The configuration ExactDocs recommends for each budget, from the recorded
-[retrieval run](retrieval.md) on the [golden set](golden-set.md).
+[retrieval run](retrieval/index.md) on the [golden set](golden-set.md).
 
 !!! note "When a dearer budget gets its own default"
     Only when it beats the cheaper one by at least 5 points of recall@5 **and** the difference is
     significant on the same cases (McNemar's test, p under 5%;
-    [How a default is chosen](method.md#how-a-default-is-chosen)).
+    [How a default is chosen](method/index.md#how-a-default-is-chosen)).
 
 <!-- bench:defaults -->
 | budget | configuration | chunking | USD / 1000 questions | why |
@@ -36,7 +36,7 @@ BM25 at `h2` comes first in the table above, but its lead does not change the de
 - BM25 at `h2` (only `#` and `##` start a chunk) reaches 92.5% recall@5 against 91.0% at
   `default`. That is a lead of 4 questions out of 267, and it is not significant on any metric:
   recall@5 p 0.27, recall@1 p 0.62, MRR p 0.65, nDCG@10 p 0.57
-  ([Retrieval results](retrieval.md#against-the-budgets-default)).
+  ([Retrieval results](retrieval/results.md#against-the-budgets-default)).
 - `h2` also returns about twice the text per question: 7,065 estimated tokens in ten results
   against 3,464. Within the first 1,000 estimated tokens of what it returns, the answer is there
   in 24.0% of the cases against 42.7% at `default`, within 2,000 in 49.4% against 71.2% (both
@@ -81,7 +81,7 @@ Keep **BM25 at `default`**.
       4-CPU runner) and has a p95 of 214 ms on 4 shared CPUs.
 - **Hybrid at `h6`, `h2` and `merge-400`, and the cross-encoder**, were not run again since the
   results are grouped by article, so their numbers are those of the search before it
-  ([Retrieval results](retrieval.md#the-recorded-run)). Then hybrid at `merge-400` reached 91.0%
+  ([Retrieval results](retrieval/index.md#the-recorded-run)). Then hybrid at `merge-400` reached 91.0%
   recall@5, and the cross-encoder on BM25 at `default` 89.5% (not significantly above BM25,
   p 0.36) at about 2.5 s per question.
 
@@ -94,7 +94,7 @@ Keep **BM25 at `default`**.
 
 Until then, the local recommendation applies.[^agent-results]
 
-[^agent-results]: The first [agent results](agent.md), open-weight agents on Ollama Cloud with
+[^agent-results]: The first [agent results](agent/index.md), open-weight agents on Ollama Cloud with
     ExactDocs on BM25, measure the agent, not a hosted retrieval model.
 
 ## Known weak spots

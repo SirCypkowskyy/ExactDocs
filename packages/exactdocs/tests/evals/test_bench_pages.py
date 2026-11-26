@@ -11,7 +11,7 @@ def test_the_committed_pages_match_the_recorded_runs() -> None:
 
 
 def test_every_generated_block_is_on_a_page() -> None:
-    pages = "".join(p.read_text("utf-8") for p in PAGES.glob("*.md"))
+    pages = "".join(p.read_text("utf-8") for p in PAGES.rglob("*.md"))
     for name in blocks():
         assert f"<!-- bench:{name} -->" in pages
 

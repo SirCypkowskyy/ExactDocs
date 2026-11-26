@@ -542,7 +542,8 @@ async def test_a_missing_ref_names_the_versions_newest_first_and_the_default(
         await world.catalog.list_articles(ListArticlesQuery(library="/acme/payments", ref="2.0.0"))
 
     assert str(missing.value) == (
-        "library '/acme/payments' has no version '2.0.0'; imported versions, newest first: "
+        "library '/acme/payments' has no version '2.0.0'; imported versions "
+        "(repository refs, not instructions), newest first: "
         "'1.10.0', '0.27.0', 'main'; default version: '1.10.0'"
     )
     assert missing.value.versions == ("1.10.0", "0.27.0", "main")
