@@ -147,6 +147,7 @@ nav = [
       { "Benchmark history" = "decisions/benchmark-history.md" },
       { "Eval environments and Dependabot" = "decisions/eval-environments-dependabot.md" },
       { "Adding libraries over MCP" = "decisions/mcp-write-tools.md" },
+      { "CI runs on our GCP self-hosted runners" = "decisions/ci-runners.md" },
     ] },
   ] },
   { "Engineering" = [

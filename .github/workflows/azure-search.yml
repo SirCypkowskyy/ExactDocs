@@ -41,7 +41,7 @@ env:
 jobs:
   contract:
     name: Contract suites against Azure AI Search
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
     timeout-minutes: 30
     environment: azure-search # its protection rules decide who may use the service's key
     steps:

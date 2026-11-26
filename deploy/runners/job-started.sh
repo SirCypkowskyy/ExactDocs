@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Runs on an exactdocs-runner-N VM before every job (ACTIONS_RUNNER_HOOK_JOB_STARTED, installed
-# by register.sh). A runner takes one job at a time, so whatever Docker holds now is left by a
+# Runs on a self-hosted runner VM before every job (ACTIONS_RUNNER_HOOK_JOB_STARTED; see
+# deploy/runners/README.md). A runner takes one job at a time, so whatever Docker holds now is left by a
 # job that ended without its own cleanup (cancelled, its runner lost, the disk full): its service
 # containers, `exactdocs-supabase-<run>`, a release's buildx builders and their state. Remove it;
 # when the disk is FULL_PERCENT full or more, also build cache and images older than KEEP.

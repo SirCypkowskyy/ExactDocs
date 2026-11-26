@@ -2,8 +2,8 @@
 #
 # Runners (docs/releasing/runners.md "CI/CD and runners"), switched by the repository variable RUNNER_MODE
 # (Settings -> Secrets and variables -> Actions -> Variables): GitHub-hosted ubuntu-24.04 in
-# `hybrid` (the default, also when unset), the self-hosted ARM64 runner [self-hosted, linux, ARM64,
-# exactdocs] in `self-hosted` (when the GitHub-hosted minutes ran out).
+# `hybrid` (the default, also when unset), our GCP self-hosted ARM64 runners [self-hosted, linux,
+# ARM64, exactdocs, gcp] in `self-hosted` (the current setting: docs/decisions/ci-runners.md).
 #   A pull request from a fork always runs on GitHub-hosted runners, whatever RUNNER_MODE says: a
 #   fork's code never reaches the self-hosted machines through these jobs. (A fork can still edit
 #   runs-on in its own copy, so approval for outside contributors stays on in the settings.)
@@ -47,7 +47,7 @@ concurrency:
 jobs:
   build:
     name: Build site
-    runs-on: ${{ (vars.RUNNER_MODE == 'self-hosted' && !github.event.pull_request.head.repo.fork) && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ (vars.RUNNER_MODE == 'self-hosted' && !github.event.pull_request.head.repo.fork) && fromJSON('["self-hosted","linux","ARM64","exactdocs","gcp"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
@@ -73,7 +73,7 @@ jobs:
     name: Deploy to GitHub Pages
     if: github.event_name != 'pull_request'
     needs: build
-    runs-on: ${{ (vars.RUNNER_MODE == 'self-hosted' && !github.event.pull_request.head.repo.fork) && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ (vars.RUNNER_MODE == 'self-hosted' && !github.event.pull_request.head.repo.fork) && fromJSON('["self-hosted","linux","ARM64","exactdocs","gcp"]') || 'ubuntu-24.04' }}
     permissions:
       pages: write
       id-token: write

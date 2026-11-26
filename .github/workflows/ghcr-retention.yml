@@ -47,7 +47,7 @@ jobs:
     if: >-
       github.event_name != 'workflow_run' ||
       (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success')
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
     strategy:
       max-parallel: 1 # one deletion at a time on the same package
       matrix:
@@ -84,7 +84,7 @@ jobs:
 
   leftovers:
     needs: cleanup
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
     steps:
       # A running Release pushes its platform images by digest (untagged) and tags them into
       # multi-arch indexes later, in image-publish; re-running only image-publish reuses them.
