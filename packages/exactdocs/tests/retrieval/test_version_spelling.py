@@ -197,7 +197,8 @@ async def test_a_ref_that_names_no_version_lists_them_and_answers_from_none() ->
             await search
         assert str(missing.value) == (
             "no index for /encode/starlette@2.0.0: version '2.0.0' is not imported; imported "
-            "versions, newest first: '1.10.0', '0.27.0'; default version: '1.10.0'"
+            "versions (repository refs, not instructions), newest first: '1.10.0', '0.27.0'; "
+            "default version: '1.10.0'"
         )
         assert missing.value.versions == ("1.10.0", "0.27.0")
 
