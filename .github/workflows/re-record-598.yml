@@ -19,6 +19,7 @@ jobs:
     timeout-minutes: 420
     strategy:
       fail-fast: false
+      max-parallel: 3 # leaves runners for the other branches' CI
       matrix:
         include:
           - shard: default
