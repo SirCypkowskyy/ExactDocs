@@ -223,7 +223,7 @@ def build(
         removals=NoRemovals(),
         index=NoIndex(),
         handlers={JobKind("import"): _run},
-        **({} if access is None else {"access": access}),
+        access=access or FakeAccess(role="creator"),
     )
 
 
