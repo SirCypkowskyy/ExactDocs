@@ -186,12 +186,12 @@ What this means for the results:
   the 17 cases. 4 of those cases still need two parts.
 - recall@k and MRR count a hit on any section a case lists, and section recall and nDCG@10 count
   each part once. A configuration or tool that returns the other answering section (often an API
-  reference page) is not scored a miss ([Method](method.md#retrieval-metrics)).
+  reference page) is not scored a miss ([Method](method/metrics.md#retrieval-metrics)).
 - Until #501, recall@k counted only the first listed section, and these sections counted for
   nDCG@10 and section recall as parts the answer also needed.
 
-The golden set's fingerprint changed three times. The [ingestion run](ingestion.md) and the
-[retrieval run](retrieval.md) were recorded again after the first two:
+The golden set's fingerprint changed three times. The [ingestion run](ingestion/index.md) and the
+[retrieval run](retrieval/index.md) were recorded again after the first two:
 
 | Change | Fingerprint |
 |---|---|
@@ -202,12 +202,12 @@ The golden set's fingerprint changed three times. The [ingestion run](ingestion.
 
 Since #571 the chunker cuts a heading's attribute list (`{#config-both}`) out of its heading path,
 so one Pydantic v2.5.3 case now names its section `[Config and model_config both defined]`. The
-recorded runs still carry `sha256:a00997851150e3b0`: they were measured with the earlier chunker,
-which kept the attribute list in the heading, so the case matched there (every configuration of
-the retrieval run and every tool of the Grounded Docs run found its section at rank 1), and their
-numbers stand. The ingestion and retrieval benchmarks' `--check` refuses a run on another
-fingerprint, so both runs are to be recorded again, with #571's chunker, before they are checked
-next.
+ingestion run and the text scorer's calibration were recorded again on it (#591). The retrieval
+run and the [Grounded Docs run](comparison/index.md) still carry `sha256:a00997851150e3b0`. Their results
+measured with the earlier chunker, which kept the attribute list in the heading, found that
+section at rank 1 and stand; the results run again on 25 November with #571's chunker miss it, one
+answerable case lower at every k. The retrieval benchmark's `--check` refuses a run on another
+fingerprint, so the retrieval run is to be recorded again before it is checked next.
 
 ### Wording
 
@@ -241,4 +241,4 @@ framework pages, Zod's MDX, Pydantic's includes) are in [Adding a case](../evals
 
 !!! note
     Adding or changing a case changes the golden set's fingerprint, so the recorded runs and these
-    pages are refreshed in the same pull request ([Method](method.md#refreshing-these-pages)).
+    pages are refreshed in the same pull request ([Method](method/runs.md#refreshing-these-pages)).

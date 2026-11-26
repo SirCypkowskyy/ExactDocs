@@ -44,4 +44,4 @@ sequenceDiagram
 - its one write is AI spend, added to the shared ledger over a second connection that may write that
   table alone (#274).
 
-Sessions, tokens and external sign-in are described in [Identity](../architecture/identity.md).
+Sessions, tokens and external sign-in are described in [Identity](../architecture/identity/index.md).

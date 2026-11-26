@@ -11,7 +11,7 @@
 
 Adding a library, adding another version and re-syncing a branch all end in the same worker. The
 HTTP call only validates and queues; the work happens in a job
-([Background jobs](../architecture/jobs.md)).
+([Background jobs](../architecture/jobs/index.md)).
 
 ```mermaid
 sequenceDiagram

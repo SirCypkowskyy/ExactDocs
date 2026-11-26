@@ -1,6 +1,6 @@
 """Run the dataset through each mode, aggregate the metrics and apply the gates.
 
-The gates (docs/decisions/ai-retrieval.md, *Evaluation*):
+The gates (docs/decisions/ai-retrieval/cost.md, *Evaluation*):
 
 - the wrong-version rate must be 0 for every mode that ran, whatever its recall;
 - the gating mode's recall@5 may not drop more than ``MAX_RECALL_DROP_POINTS`` below the baseline

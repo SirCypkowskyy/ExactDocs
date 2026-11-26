@@ -88,13 +88,13 @@ flowchart TD
 | [Version storage](versions.md) | manifests, logos, manual tags, renames between versions |
 | [Vectors, embedding and budgets](embeddings.md) | the vector store, background embedding, AI spend and budgets |
 | [Data model](data-model.md) | the tables of every domain and the states of manifests and jobs |
-| [Identity](identity.md) | accounts, the setup guard, sessions, external sign-in, library roles |
+| [Identity](identity/index.md) | accounts, the setup guard, sessions, external sign-in, library roles |
 | [Usage counts](usage.md) | daily counts, reports and leaderboards |
-| [Background jobs](jobs.md) | the DBOS worker, durable steps, several processes, schedules, push webhooks |
-| [The import](import.md) | how a version is imported, re-chunked, re-tagged, and what it keeps |
+| [Background jobs](jobs/index.md) | the DBOS worker, durable steps, several processes, schedules, push webhooks |
+| [The import](import/index.md) | how a version is imported, re-chunked, re-tagged, and what it keeps |
 | [Telemetry](telemetry.md) | traces, metrics, scrubbing, Prometheus |
 | [External index backends](index-backends.md) | moving the search or vector index to another engine |
-| [AI retrieval](ai-retrieval.md) | provider profiles, mode selection, hybrid, HyDE, reranker, LLM judge, local models |
+| [AI retrieval](ai-retrieval/index.md) | provider profiles, mode selection, hybrid, HyDE, reranker, LLM judge, local models |
 | [Agentic search](agentic.md) | the search agent, its answer cache, repo guidance |
 | [Python conventions](conventions.md) | coding rules and the tests that enforce them |
 | [Web client](web-client.md) | vertical slices in the React client |

@@ -18,7 +18,7 @@ on the fixture docs repository imported for real. Per mode it reports:
 - how often anything of another version does;
 - what it cost and how long it took.
 
-The decisions behind it are in [AI retrieval decisions](../decisions/ai-retrieval.md#evaluation).
+The decisions behind it are in [AI retrieval decisions](../decisions/ai-retrieval/cost.md#evaluation).
 
 The benchmarks (the golden set, ingestion, retrieval and agent) are published with the defaults
 they recommend in the [Benchmark](../benchmark/index.md) section.

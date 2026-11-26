@@ -764,7 +764,7 @@ class PriceBook:
 class AiSpend:
     """Records what AI calls spend and enforces the budgets and the LLM search rate limit.
 
-    One ledger for everything (docs/decisions/ai-retrieval.md, *Cost and budgets*): LLM agents
+    One ledger for everything (docs/decisions/ai-retrieval/cost.md, *Cost and budgets*): LLM agents
     write to it through the harness ``SpendLimits`` (its ``BatchSpendStore`` adapter), the
     embedding job and rerank calls through ``record``. Every check runs before the call or batch,
     so a burst can overshoot by the calls already in flight. A limit never fails a search: it

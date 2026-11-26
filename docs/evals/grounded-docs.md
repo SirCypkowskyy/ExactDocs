@@ -9,7 +9,7 @@
     - Answers are scored with the [text scorer](text-scoring.md), next to ExactDocs' BM25 at
       `default` in the same run, with paired tests.
     - A full run takes about half an hour on 4 CPUs. It runs by hand, never in pull request CI.
-      Results are on [Comparison with other tools](../benchmark/comparison.md).
+      Results are on [Comparison with other tools](../benchmark/comparison/index.md).
 
 `@arabold/docs-mcp-server` (MIT) is a self-hosted MCP server that:
 
@@ -166,7 +166,7 @@ How the vector configuration reaches the model:
 ## The Grounded Docs report
 
 `grounded-docs.json` (`schema_version` 1, in `reports/evals/` or `--out`). `grounded-docs.md` is
-the summary, and `just bench-pages` fills [Comparison with other tools](../benchmark/comparison.md)
+the summary, and `just bench-pages` fills [Comparison with other tools](../benchmark/comparison/index.md)
 from the recorded run. Since #575 the summary also compares every result within 1,000, 2,000 and
 4,000 tokens of the text it returned, read whole and cut at the budget
 ([Within a token budget](retrieval-benchmark.md#within-a-token-budget)), with the paired tests of

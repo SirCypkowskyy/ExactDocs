@@ -41,7 +41,7 @@ exists almost everything answers 403 `setup_required`. The details are on
 | [Users, roles and access log](users-and-access.md) | operator user management, library roles and grants, transfers, the access log |
 | [Lists: pagination, sorting, filters](pagination.md) | `limit` and `cursor`, `offset`, `sort`, filters and `total` |
 | [Errors](errors.md) | the error shape, status codes, `close_matches`, `library_id` |
-| [Libraries and versions](libraries.md) | adding, editing, logos, `context7.json`, private repositories, default version, versions, removal |
+| [Libraries and versions](libraries/index.md) | adding, editing, logos, `context7.json`, private repositories, default version, versions, removal |
 | [Library settings](library-settings.md) | include and exclude paths, tag rules, chunking, the re-processing jobs |
 | [Articles, outlines and tags](articles.md) | outlines, tags, manual tags, tag origins, renames |
 | [Syncing, schedules and webhooks](sync.md) | re-syncing, re-importing a moved tag, the scheduled check, push webhooks, the sources file |

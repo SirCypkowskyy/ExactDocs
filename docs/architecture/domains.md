@@ -36,7 +36,7 @@ flowchart TD
 - Dotted arrows are runtime calls through a bridge that lives in `bootstrap`, so the domains stay
   unaware of each other.
 - `identity` asks for nothing. The other four ask it what the caller may do with a library
-  ([Library roles](identity.md#library-roles)).
+  ([Library roles](identity/library-roles.md)).
 - `usage` also asks who opted in to the people leaderboard ([Usage counts](usage.md)).
 
 | From \ may import | own domain | other domain | `bootstrap` | `exactdocs_kernel` |
