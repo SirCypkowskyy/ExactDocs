@@ -62,9 +62,8 @@ def test_the_integration_workflow_runs_only_by_hand_or_when_called() -> None:
     triggers = _triggers(workflow)
 
     assert set(triggers) == {"workflow_dispatch", "workflow_call"}
-    assert "release" not in triggers["workflow_dispatch"].get("inputs", {})  # its own run: off
-    release = triggers["workflow_call"]["inputs"]["release"]
-    assert (release["type"], release["default"]) == ("boolean", False)
+    # #533: every caller gets the same jobs on the same hosted runners: no trigger has inputs.
+    assert all("inputs" not in config for config in triggers.values())
 
 
 def test_no_integration_job_looks_at_a_pull_request_or_a_label() -> None:
