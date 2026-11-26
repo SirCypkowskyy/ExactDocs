@@ -1,9 +1,13 @@
 """Provider-kind configuration defaults and fail-closed admission."""
 
+import httpx2
 import pytest
 from pydantic import ValidationError
 
-from exactdocs.bootstrap.settings import SignInProviderSettings
+from exactdocs.bootstrap.database import StartupError
+from exactdocs.bootstrap.settings import Settings, SignInProviderSettings
+from exactdocs.bootstrap.sign_in import sign_in_providers
+from exactdocs_kernel import SystemClock
 
 
 def test_oauth2_requires_endpoints_and_defaults_to_token_origin_including_port() -> None:
@@ -189,3 +193,86 @@ def test_icons_are_built_in_or_the_operators_own_not_both(tmp_path) -> None:
     )
     with pytest.raises(ValidationError, match="icon"):
         preset("google", icon="google", icon_file=tmp_path / "icon.svg")
+
+
+OIDC = {
+    "kind": "oidc",
+    "client_id": "docs",
+    "issuer": "https://corp.example",
+    "allow_any_user": True,
+}
+
+
+@pytest.mark.parametrize(
+    ("changes", "rule"),
+    [
+        ({}, {"grant": "viewer"}),
+        ({}, {"group": "a", "role": "b", "grant": "viewer"}),
+        ({}, {"role": "ExactDocs.Reader", "grant": "viewer"}),
+        ({"role_claim": "roles"}, {"github_org": "acme", "grant": "viewer"}),
+        ({"role_claim": "roles"}, {"group": "a", "grant": "creator"}),
+    ],
+)
+def test_a_configured_rule_names_one_source_its_provider_can_match(
+    changes: dict, rule: dict
+) -> None:
+    with pytest.raises(ValidationError):
+        SignInProviderSettings.model_validate({**OIDC, **changes, "rules": [rule]})
+
+
+def test_github_has_no_role_claim() -> None:
+    with pytest.raises(ValidationError, match="role_claim"):
+        SignInProviderSettings(
+            kind="github", client_id="docs", allowed_orgs=["acme"], role_claim="roles"
+        )
+
+
+def test_configured_rules_for_entra_app_roles() -> None:
+    settings = SignInProviderSettings.model_validate(
+        {
+            **OIDC,
+            "role_claim": "roles",
+            "configured_rules_only": True,
+            "rules": [
+                {"role": "ExactDocs.Admin", "grant": "instance_admin"},
+                {"role": "ExactDocs.Reader", "grant": "viewer", "libraries": ["/acme/docs"]},
+            ],
+        }
+    )
+
+    assert [rule.source for rule in settings.rules] == [
+        ("role", "ExactDocs.Admin"),
+        ("role", "ExactDocs.Reader"),
+    ]
+
+
+def _policies(rules: list[dict], **changes: object) -> dict:
+    settings = Settings.model_validate(
+        {
+            "public_url": "https://docs.example.com",
+            "auth": {
+                "providers": {"corp": {**OIDC, "role_claim": "roles", "rules": rules, **changes}}
+            },
+        }
+    )
+    return sign_in_providers(settings, httpx2.AsyncClient(), SystemClock())[1]
+
+
+def test_configured_rules_become_read_only_domain_rules() -> None:
+    policy = _policies(
+        [{"role": "ExactDocs.Reader", "grant": "viewer", "libraries": ["/Acme/Docs"]}],
+        admin_groups=["ops"],
+        configured_rules_only=True,
+    )["corp"]
+
+    assert policy.configured_rules_only
+    assert [(r.id, r.value, r.grant.value, r.libraries) for r in policy.configured_role_rules] == [
+        ("config:corp:admin_groups:ops", "ops", "instance_admin", None),
+        ("config:corp:1", "ExactDocs.Reader", "viewer", frozenset({"/acme/docs"})),
+    ]
+    assert all(rule.configured for rule in policy.configured_role_rules)
+
+
+def test_a_configured_rule_that_can_match_nobody_stops_the_start() -> None:
+    with pytest.raises(StartupError, match="rule 1"):
+        _policies([{"group": "a", "grant": "instance_admin", "libraries": ["/acme/docs"]}])

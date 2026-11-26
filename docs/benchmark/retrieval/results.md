@@ -1,5 +1,11 @@
 # Every retrieval result
 
+!!! abstract "TL;DR"
+    - Every configuration of the recorded retrieval run at every chunking, by question kind and by
+      project, with the models it used.
+    - `just bench-pages` writes these tables from `retrieval.json`. The findings, with their
+      numbers, are on [Retrieval results](index.md).
+
 Every configuration of the recorded run
 ([Retrieval results](index.md)) at every chunking, from `packages/exactdocs/evals/results/retrieval.json`. The metrics are defined in
 [Metrics and statistics](../method/metrics.md#retrieval-metrics).

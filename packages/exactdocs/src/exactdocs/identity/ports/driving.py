@@ -34,6 +34,7 @@ from exactdocs.identity.dtos import (
     ListLibraryAccessLogQuery,
     ListLibraryGrantsQuery,
     LoginForTokenCommand,
+    MarkLibraryPrivateCommand,
     PasswordReset,
     ProviderIconFile,
     ResetPasswordCommand,
@@ -574,6 +575,18 @@ class DropLibraryGrants(Protocol):
 
         Args:
             command: The library.
+        """
+        ...
+
+
+class MarkLibraryPrivate(Protocol):
+    """Note whether a library is private (ingestion stores a credential for it)."""
+
+    async def __call__(self, command: MarkLibraryPrivateCommand) -> None:
+        """Run the use case.
+
+        Args:
+            command: The library and whether it is private.
         """
         ...
 

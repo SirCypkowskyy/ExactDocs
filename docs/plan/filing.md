@@ -17,7 +17,7 @@ Each issue in the epic pages is ready to paste into the **Feature** form (`.gith
 | Expected behavior | *Expected behavior*: backend Gherkin becomes the behave scenario as written; E8 (web) Gherkin becomes vitest tests; foundation issues list testable statements verified by pytest (see the ground rules) |
 | Criteria of success | *Criteria of success*: checkbox list as-is |
 | Area | *Area* dropdown values |
-| Notes, Depends on | *Notes*: hints (citing the [Decisions](../user-stories.md#decisions)), out-of-scope, `Depends on #<n>` once the dependencies have issue numbers |
+| Notes, Depends on | *Notes*: hints (citing the [Decisions](../decisions/index.md)), out-of-scope, `Depends on #<n>` once the dependencies have issue numbers |
 
 Labels: one type (`type: feature`, or `type: chore` for E1-06 and E6-01), one status, and one or
 more of `area: backend`, `area: web`, `area: infra`. The status in each issue's *Labels* line is

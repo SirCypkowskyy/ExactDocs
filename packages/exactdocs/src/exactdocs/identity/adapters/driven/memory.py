@@ -18,8 +18,10 @@ from exactdocs.identity.models import (
     FailedSignIns,
     LibraryGrant,
     LibraryRole,
+    Memberships,
     Preferences,
     Role,
+    RoleRule,
     Session,
     SignInAttempt,
     SubjectKind,
@@ -517,6 +519,8 @@ class InMemoryExternalIdentityRepository:
     """The links, by (issuer, subject)."""
     groups: dict[AccountId, frozenset[str]] = field(default_factory=dict)
     """Each linked account's groups."""
+    roles: dict[AccountId, frozenset[str]] = field(default_factory=dict)
+    """Each linked account's role claim values."""
 
     async def get(self, issuer: str, subject: str) -> ExternalIdentity | None:
         """Return the link of this identity, or ``None``.
@@ -614,14 +618,19 @@ class InMemoryExternalIdentityRepository:
             )
 
     async def create_linked_account(
-        self, account: Account, identity: ExternalIdentity, groups: frozenset[str]
+        self,
+        account: Account,
+        identity: ExternalIdentity,
+        groups: frozenset[str],
+        roles: frozenset[str] = frozenset(),
     ) -> LinkOutcome:
-        """Store a new account, its link and its groups, all or nothing.
+        """Store a new account, its link, its groups and its roles, all or nothing.
 
         Args:
             account: The new account.
             identity: Its link.
             groups: Its groups.
+            roles: Its role claim values.
 
         Returns:
             ``created``, ``username_taken`` or ``already_linked``.
@@ -632,10 +641,16 @@ class InMemoryExternalIdentityRepository:
             return "username_taken"
         self.links[identity.issuer, identity.subject] = identity
         self.groups[account.id] = groups
+        self.roles[account.id] = roles
         return "created"
 
     async def record_check(
-        self, identity: ExternalIdentity, *, role: Role, groups: frozenset[str]
+        self,
+        identity: ExternalIdentity,
+        *,
+        role: Role,
+        groups: frozenset[str],
+        roles: frozenset[str] = frozenset(),
     ) -> None:
         """Store a successful sign-in or revalidation.
 
@@ -643,9 +658,11 @@ class InMemoryExternalIdentityRepository:
             identity: The link as it is now.
             role: The account's role now.
             groups: The account's groups now.
+            roles: The account's role claim values now.
         """
         self.links[identity.issuer, identity.subject] = identity
         self.groups[identity.account_id] = groups
+        self.roles[identity.account_id] = roles
         account = await self.accounts.get_by_id(identity.account_id)
         if account is not None:
             self.accounts.accounts[account.username] = replace(account, role=role)
@@ -657,6 +674,7 @@ class InMemoryExternalIdentityRepository:
         *,
         role: Role,
         groups: frozenset[str],
+        roles: frozenset[str] = frozenset(),
     ) -> bool:
         """Store a successful revalidation, unless the link changed since it was claimed.
 
@@ -665,6 +683,7 @@ class InMemoryExternalIdentityRepository:
             checked: The link after the check.
             role: The account's role now.
             groups: The account's groups now.
+            roles: The account's role claim values now.
 
         Returns:
             ``True`` when stored; ``False`` when the link had changed.
@@ -675,7 +694,7 @@ class InMemoryExternalIdentityRepository:
             return False
         if _revision(current) != _revision(claimed):
             return False
-        await self.record_check(checked, role=role, groups=groups)
+        await self.record_check(checked, role=role, groups=groups, roles=roles)
         return True
 
     async def revoke(self, account_id: AccountId, now: datetime) -> None:
@@ -691,6 +710,7 @@ class InMemoryExternalIdentityRepository:
                 link, access_until=now, sealed_tokens=None
             )
         self.groups.pop(account_id, None)
+        self.roles.pop(account_id, None)
 
     async def forget_tokens(self, account_id: AccountId) -> None:
         """Drop the account's sealed tokens.
@@ -749,6 +769,113 @@ class InMemoryExternalIdentityRepository:
             Its groups.
         """
         return self.groups.get(account_id, frozenset())
+
+    async def memberships_of(self, account_id: AccountId) -> Memberships:
+        """Return the account's origin provider, groups and role claim values.
+
+        Args:
+            account_id: The account.
+
+        Returns:
+            Its memberships; no provider for a local account.
+        """
+        origin = await self.get_for_account(account_id)
+        return Memberships(
+            provider=None if origin is None else origin.provider,
+            groups=self.groups.get(account_id, frozenset()),
+            roles=self.roles.get(account_id, frozenset()),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryRoleRuleRepository:
+    """Implements ``ports.driven.RoleRuleRepository``. For tests."""
+
+    rules: dict[str, RoleRule] = field(default_factory=dict)
+    """The stored rules, by ID, oldest first."""
+
+    async def stored(self) -> list[RoleRule]:
+        """Return every stored rule, oldest first.
+
+        Returns:
+            The rules.
+        """
+        return list(self.rules.values())
+
+    async def add(self, rule: RoleRule) -> bool:
+        """Store a rule unless its provider has the same source and grant stored.
+
+        Args:
+            rule: The rule.
+
+        Returns:
+            Whether it was stored.
+        """
+        if any(_same_rule(rule, other) for other in self.rules.values()):
+            return False
+        self.rules[rule.id] = rule
+        return True
+
+    async def remove(self, rule_id: str) -> RoleRule | None:
+        """Remove a rule.
+
+        Args:
+            rule_id: Its ID.
+
+        Returns:
+            The rule removed, or ``None``.
+        """
+        return self.rules.pop(rule_id, None)
+
+
+def _same_rule(one: RoleRule, other: RoleRule) -> bool:
+    """Tell whether two rules match the same people and give the same thing.
+
+    Args:
+        one: A rule.
+        other: Another rule.
+
+    Returns:
+        Whether their provider, source, value, grant and libraries are equal.
+    """
+    return (one.provider, one.source, one.value, one.grant, one.libraries) == (
+        other.provider,
+        other.source,
+        other.value,
+        other.grant,
+        other.libraries,
+    )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class InMemoryPrivateLibraries:
+    """Implements ``ports.driven.PrivateLibraries``. For tests."""
+
+    private: set[str] = field(default_factory=set)
+    """The private libraries, lower-case."""
+
+    async def set_private(self, library: str, *, private: bool) -> None:
+        """Note whether a library is private.
+
+        Args:
+            library: The library ID, lower-case.
+            private: Whether it is.
+        """
+        if private:
+            self.private.add(library)
+        else:
+            self.private.discard(library)
+
+    async def private_among(self, libraries: Collection[str]) -> frozenset[str]:
+        """Return the private libraries among these.
+
+        Args:
+            libraries: Library IDs, lower-case.
+
+        Returns:
+            The private ones.
+        """
+        return frozenset(self.private.intersection(libraries))
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

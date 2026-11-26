@@ -21,6 +21,8 @@ from exactdocs.identity.constants import (
     FIRST_WAIT,
     FORGET_FAILURES_AFTER,
     FREE_FAILURES,
+    GITHUB_ORG_PATTERN,
+    GITHUB_TEAM_PATTERN,
     IDLE_TIMEOUT,
     LONGEST_WAIT,
     MAX_RETURN_TO_LENGTH,
@@ -33,9 +35,11 @@ from exactdocs.identity.constants import (
 )
 from exactdocs.identity.errors import (
     InvalidPreferencesError,
+    InvalidRoleRuleError,
     InvalidTokenNameError,
     InvalidUsernameError,
 )
+from exactdocs_kernel import LIBRARY_ID_PATTERN
 
 AccountId = NewType("AccountId", str)
 
@@ -494,6 +498,12 @@ class SignInPolicy:
     """The built-in icon its buttons show; ``None`` for none (or for ``icon_file``)."""
     icon_file: ProviderIcon | None = None
     """The operator's own icon, served by ExactDocs; not together with ``icon``."""
+    github: bool = False
+    """Whether the provider is GitHub, whose organizations and teams rules may name."""
+    rules: tuple[RoleRule, ...] = ()
+    """The role rules the configuration file sets for this provider (``admin_groups`` apart)."""
+    configured_rules_only: bool = False
+    """Only the configuration file's rules apply to this provider; stored ones are ignored."""
 
     def __post_init__(self) -> None:
         """Check the name, that the policy admits someone on purpose, and its one icon.
@@ -548,6 +558,26 @@ class SignInPolicy:
         """
         return frozenset(f"{self.group_prefix}{group}" for group in groups)
 
+    @property
+    def configured_role_rules(self) -> tuple[RoleRule, ...]:
+        """The configuration file's rules: ``admin_groups`` first, then ``rules``.
+
+        Returns:
+            The rules, read-only (``configured``).
+        """
+        admins = tuple(
+            RoleRule(
+                id=f"config:{self.name}:admin_groups:{group}",
+                provider=self.name,
+                source=RuleSource.GROUP,
+                value=group,
+                grant=RuleGrant.INSTANCE_ADMIN,
+                configured=True,
+            )
+            for group in sorted(self.admin_groups)
+        )
+        return admins + self.rules
+
     def access_until(self, now: datetime, *, refreshable: bool) -> datetime:
         """Return until when a check at ``now`` grants access.
 
@@ -578,6 +608,8 @@ class ExternalClaims:
     """The email address, if the provider sends one (only its local part names an account)."""
     groups: frozenset[str] = frozenset()
     """The person's groups, as the provider names them."""
+    roles: frozenset[str] = frozenset()
+    """The values of the provider's role claim (Entra ID app roles, Keycloak client roles)."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1003,6 +1035,221 @@ class LibraryCreationPolicy:
     """Exact stable account IDs, including verified unlinked provider:subject IDs."""
     groups: frozenset[str] = frozenset()
     """Exact mapped group names, including any provider prefix."""
+
+    @property
+    def role_rules(self) -> tuple[RoleRule, ...]:
+        """``groups`` as read-only rules of any provider.
+
+        Returns:
+            One ``create_libraries`` rule per group.
+        """
+        return tuple(
+            RoleRule(
+                id=f"config:library_creation:{group}",
+                provider=None,
+                source=RuleSource.GROUP,
+                value=group,
+                grant=RuleGrant.CREATE_LIBRARIES,
+                configured=True,
+            )
+            for group in sorted(self.groups)
+        )
+
+
+class RuleSource(StrEnum):
+    """What a role rule matches: a GitHub organization or team, a group, or a role value."""
+
+    GITHUB_ORG = "github_org"
+    """Active members of a GitHub organization (group ``github:<org>``)."""
+    GITHUB_TEAM = "github_team"
+    """Active members of a GitHub team, ``org/team-slug`` (group ``github:<org>/<team>``)."""
+    GROUP = "group"
+    """Members of a group of the provider's groups claim, as the provider names it."""
+    ROLE = "role"
+    """Holders of a value of the provider's role claim."""
+
+
+class RuleGrant(StrEnum):
+    """What a role rule gives: an instance role, or a role on libraries."""
+
+    INSTANCE_ADMIN = "instance_admin"
+    """The account role ``admin``: an operator."""
+    CREATE_LIBRARIES = "create_libraries"
+    """May create libraries where ``[library_creation]`` restricts it."""
+    VIEWER = "viewer"
+    CONTRIBUTOR = "contributor"
+    ADMIN = "admin"
+
+    @property
+    def library_role(self) -> LibraryRole | None:
+        """The library role this grant gives.
+
+        Returns:
+            The role, or ``None`` for an instance grant.
+        """
+        if self in {RuleGrant.INSTANCE_ADMIN, RuleGrant.CREATE_LIBRARIES}:
+            return None
+        return LibraryRole(self.value)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class Memberships:
+    """What role rules can match about one account: its origin provider, groups and roles."""
+
+    provider: str | None
+    """The provider the account was created through; ``None`` for a local account."""
+    groups: frozenset[str] = frozenset()
+    """Its groups, as ExactDocs stores them (``group_prefix`` included)."""
+    roles: frozenset[str] = frozenset()
+    """Its role claim values, as the provider sends them."""
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RoleRule:
+    """Who gets what from their memberships at a sign-in provider (#577).
+
+    A rule pairs a source (a GitHub organization or team, a group, a role value) with a grant
+    (instance admin, may create libraries, or a library role on every library or on some). It
+    only ever adds: an account's access is the highest of its own and its rules'. "Every
+    library" leaves out private libraries, which a rule reaches only by naming them.
+    """
+
+    id: str
+    """Unique; ``config:...`` for a rule of the configuration file."""
+    provider: str | None
+    """The sign-in provider whose accounts it matches; ``None`` for any (only
+    ``[library_creation].groups``, whose names carry their prefix already)."""
+    source: RuleSource
+    """What kind of membership it matches."""
+    value: str
+    """The organization, ``org/team``, group or role value, as the provider names it."""
+    grant: RuleGrant
+    """What it gives."""
+    libraries: frozenset[str] | None = None
+    """The libraries a library role is given on (lower-case IDs); ``None`` for every library
+    that is not private. Always ``None`` for an instance grant."""
+    configured: bool = False
+    """Set by the configuration file, so read-only."""
+    created_by: AccountId | None = None
+    """Who added a stored rule."""
+    created_at: datetime | None = None
+    """When a stored rule was added."""
+
+    def __post_init__(self) -> None:
+        """Check the value's form and that only a library role names libraries.
+
+        Raises:
+            InvalidRoleRuleError: The value is blank or not a GitHub name where one is needed,
+                libraries are named for an instance grant or are not library IDs, or a rule of
+                any provider is not a group rule.
+        """
+        if problem := self._problem():
+            raise InvalidRoleRuleError(problem)
+
+    def _problem(self) -> str | None:
+        """Say what makes the rule unusable.
+
+        Returns:
+            The reason, or ``None`` for a usable rule.
+        """
+        patterns = {
+            RuleSource.GITHUB_ORG: (
+                GITHUB_ORG_PATTERN,
+                "a GitHub organization is a name like acme",
+            ),
+            RuleSource.GITHUB_TEAM: (GITHUB_TEAM_PATTERN, "a GitHub team is org/team-slug"),
+        }
+        # The configuration file's group names (admin_groups) are taken as they are written.
+        if not self.configured and (not self.value or self.value != self.value.strip()):
+            return "the source must not be blank or padded"
+        if self.provider is None and not (
+            self.configured
+            and self.source is RuleSource.GROUP
+            and self.grant is RuleGrant.CREATE_LIBRARIES
+        ):
+            return "only [auth.library_creation].groups apply to every provider"
+        if self.source in patterns and not re.fullmatch(patterns[self.source][0], self.value):
+            return patterns[self.source][1]
+        if self.libraries is not None and self.grant.library_role is None:
+            return "only a library role is given on chosen libraries"
+        if self.libraries is not None and (
+            not self.libraries
+            or any(
+                library != library.casefold() or not re.fullmatch(LIBRARY_ID_PATTERN, library)
+                for library in self.libraries
+            )
+        ):
+            return "libraries must be lower-case /owner/repo IDs"
+        return None
+
+    def matches(self, memberships: Memberships, policies: Mapping[str, SignInPolicy]) -> bool:
+        """Tell whether the rule applies to an account with these memberships.
+
+        A rule applies only to accounts of its provider, while that provider is configured; a
+        stored rule not at all while the provider takes only configured rules. GitHub names
+        compare without case, as GitHub's do.
+
+        Args:
+            memberships: The account's provider, groups and roles.
+            policies: The configured providers, by name (for ``group_prefix``).
+
+        Returns:
+            Whether it applies.
+        """
+        if self.provider is None:
+            return self.value in memberships.groups
+        policy = policies.get(self.provider)
+        if (
+            policy is None
+            or memberships.provider != self.provider
+            or (policy.configured_rules_only and not self.configured)
+        ):
+            return False
+        if self.source is RuleSource.ROLE:
+            return self.value in memberships.roles
+        if self.source is RuleSource.GROUP:
+            return f"{policy.group_prefix}{self.value}" in memberships.groups
+        name = f"{policy.group_prefix}github:{self.value}".casefold()
+        return policy.github and any(group.casefold() == name for group in memberships.groups)
+
+
+def github_rule_targets(
+    rules: Iterable[RoleRule], provider: str
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Return the GitHub organizations and teams the rules of a provider name.
+
+    Args:
+        rules: The rules in force.
+        provider: The GitHub provider's name.
+
+    Returns:
+        The organizations and the ``org/team`` names, case folded.
+    """
+    mine = [rule for rule in rules if rule.provider == provider]
+    return (
+        frozenset(r.value.casefold() for r in mine if r.source is RuleSource.GITHUB_ORG),
+        frozenset(r.value.casefold() for r in mine if r.source is RuleSource.GITHUB_TEAM),
+    )
+
+
+def instance_role_by_rules(
+    rules: Iterable[RoleRule], memberships: Memberships, policies: Mapping[str, SignInPolicy]
+) -> Role:
+    """Return the account role the rules give these memberships.
+
+    Args:
+        rules: The rules in force.
+        memberships: The account's provider, groups and roles.
+        policies: The configured providers, by name.
+
+    Returns:
+        ``admin`` while an ``instance_admin`` rule matches, else ``user``.
+    """
+    admin = any(
+        rule.grant is RuleGrant.INSTANCE_ADMIN and rule.matches(memberships, policies)
+        for rule in rules
+    )
+    return Role.ADMIN if admin else Role.USER
 
 
 class Theme(StrEnum):

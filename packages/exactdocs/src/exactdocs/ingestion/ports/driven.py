@@ -1526,3 +1526,15 @@ class AccessPolicy(Protocol):
             The lower-case IDs among them the caller may read.
         """
         ...
+
+    async def set_private(self, library: str, *, private: bool) -> None:
+        """Say whether the library is private (a credential is stored for it).
+
+        A role for every library leaves private libraries out (#577), so this is said before a
+        credential is stored.
+
+        Args:
+            library: The library ID.
+            private: Whether it is.
+        """
+        ...

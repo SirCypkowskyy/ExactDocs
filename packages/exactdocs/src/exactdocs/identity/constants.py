@@ -437,3 +437,8 @@ TEXT_SCALES: Final[tuple[int, ...]] = (90, 100, 110, 125, 150)
 ACCOUNTS_PER_QUERY: Final[int] = 500
 """How many account IDs one ``IN (...)`` list holds when the leaderboard asks who opted in
 (#510); longer lists are asked in turns, within every database's limit on bound parameters."""
+
+GITHUB_ORG_PATTERN: Final[str] = r"[A-Za-z0-9][A-Za-z0-9-]*"
+"""A GitHub organization's login, as a role rule names it."""
+GITHUB_TEAM_PATTERN: Final[str] = r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0-9_-]*"
+"""A GitHub team as ``org/team-slug``, as a role rule names it."""

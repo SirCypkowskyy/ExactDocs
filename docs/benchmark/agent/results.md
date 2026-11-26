@@ -1,5 +1,11 @@
 # Agent results: every table
 
+!!! abstract "TL;DR"
+    - Every table of the recorded agent run: quality, tool errors, cost per question, the paired
+      tests, and accuracy per kind and per project, for each agent model and arm.
+    - `just bench-pages` writes them from `agent.json`. The findings, with their numbers, are on
+      [Agent results](index.md).
+
 The tables of the recorded run (`packages/exactdocs/evals/results/agent.json`); read
 [Read this first](index.md#read-this-first) before comparing them.
 

@@ -89,11 +89,14 @@ sequenceDiagram
       loser uses the winner's account).
 - `identity_account_groups` holds each account's groups (with `group_prefix`), replaced at every
   sign-in and revalidation, for library roles (grants to a group).
+- `identity_account_roles` holds the values of the provider's `role_claim` the same way, apart from
+  the groups: only [role rules](role-rules.md) read them.
 - An account without a password costs one dummy hash at password sign-in, like an unknown user.
 
 ## Role and access
 
-- **Role.** `admin_groups` decides an external account's role at every sign-in and revalidation.
+- **Role.** `admin_groups` and the `instance_admin` [role rules](role-rules.md) decide an external
+  account's role at every sign-in and revalidation.
   Demotion is not held back by the last-enabled-admin guard (that guards the operator's disable
   only), and a local account's role never changes through a provider.
 - **Access** ends at the link's `access_until`. `IdentifyCaller` and `IdentifyToken` refuse an

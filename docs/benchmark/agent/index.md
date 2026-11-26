@@ -48,7 +48,8 @@ An LLM judge, blind to the arm, grades every answer against the case's reference
 | Page | What it holds |
 |---|---|
 | [Every table](results.md) | quality, tool errors, cost, the paired tests, accuracy per kind and project |
-| [Runs](runs.md) | what each run found, the recorded run and how it went |
+| [What each run found](findings.md) | the four runs in order, with their numbers |
+| [Runs](runs.md) | the recorded run: settings, commands and how it went |
 | [Every run](history.md) | every recorded agent model and arm of every run, sortable and filterable |
 
 ## Read this first
