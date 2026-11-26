@@ -108,6 +108,7 @@ nav = [
       { "Coverage matrix" = "plan/coverage.md" },
     ] },
     { "AI retrieval decisions" = "decisions/ai-retrieval.md" },
+    { "CI on GitHub-hosted runners" = "decisions/ci-runners.md" },
   ] },
   { "Engineering" = [
     { "Architecture" = [
