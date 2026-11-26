@@ -4,14 +4,14 @@
 an agent's imports from the UI's. It stays NULL on every other job, earlier ones included.
 
 Revision ID: c4d1a8e93f20
-Revises: b5e8c2d4f7a1
+Revises: 4a7c2e9b1d63
 """
 
 import sqlalchemy as sa
 from alembic import op
 
 revision = "c4d1a8e93f20"
-down_revision = "b5e8c2d4f7a1"
+down_revision = "4a7c2e9b1d63"
 branch_labels = None
 depends_on = None
 
