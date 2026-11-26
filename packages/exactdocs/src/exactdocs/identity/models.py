@@ -500,6 +500,8 @@ class SignInPolicy:
     """The operator's own icon, served by ExactDocs; not together with ``icon``."""
     github: bool = False
     """Whether the provider is GitHub, whose organizations and teams rules may name."""
+    reads_roles: bool = False
+    """Whether the provider reads a role claim, whose values rules may name."""
     rules: tuple[RoleRule, ...] = ()
     """The role rules the configuration file sets for this provider (``admin_groups`` apart)."""
     configured_rules_only: bool = False
@@ -925,6 +927,10 @@ class AccessChange(StrEnum):
     """
     LIBRARY_DELETED = "library_deleted"
     """The library was removed, and every grant on it with it."""
+    RULE_ADDED = "rule_added"
+    """An admin added a role rule (#577); the event names no library."""
+    RULE_REMOVED = "rule_removed"
+    """An admin removed a role rule; the event names no library."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -954,20 +960,27 @@ class AccessEvent:
     """The role given, or the role taken away; ``None`` for a deletion."""
     previous_role: LibraryRole | None = None
     """The role the subject held before a ``granted`` or ``ownership_transferred`` change."""
+    rule: RoleRule | None = None
+    """The rule a ``rule_added`` or ``rule_removed`` event is about (its library is empty)."""
 
     def __post_init__(self) -> None:
         """Check that the event names a subject and a role exactly when it is about one.
 
         Raises:
-            ValueError: A deletion names a subject or role, or another change lacks one.
+            ValueError: A deletion or a rule change names a subject or role, another change
+                lacks one, or a rule is named by anything but a rule change.
         """
-        about_someone = self.change is not AccessChange.LIBRARY_DELETED
+        about_rule = self.change in {AccessChange.RULE_ADDED, AccessChange.RULE_REMOVED}
+        if about_rule != (self.rule is not None):
+            message = "a rule event, and only a rule event, names a rule"
+            raise ValueError(message)
+        about_someone = self.change is not AccessChange.LIBRARY_DELETED and not about_rule
         named = (self.kind, self.subject, self.role)
         if about_someone and None in named:
             message = f"a {self.change.value} event needs a subject and a role"
             raise ValueError(message)
         if not about_someone and (any(v is not None for v in named) or self.previous_role):
-            message = "a library_deleted event names no subject or role"
+            message = f"a {self.change.value} event names no subject or role"
             raise ValueError(message)
 
     def sort_value(self, field: str) -> str:

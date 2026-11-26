@@ -2063,6 +2063,279 @@
         }
       }
     },
+    "/api/v1/role-rules": {
+      "get": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "List Role Rules",
+        "description": "List every role rule, the configuration file's first, and the providers they can name.\n\nA rule gives everyone with one membership at a sign-in provider (a group, a role value,\na GitHub organization or team) instance admin, library creation, or a library role on\nevery library that is not private or on chosen ones. Configured rules (`configured`)\nare read-only here. Operators only, with a session.",
+        "operationId": "identity-list_role_rules",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleRuleList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Add Role Rule",
+        "description": "Add a role rule; library roles follow at the next request, instance admin at once.\n\nRefused with 404 `unknown_provider` for a provider that is not configured, 409\n`rules_configured_only` for one that takes only the configuration file's rules, 409\n`role_rule_exists` for a duplicate and 422 `invalid_role_rule` for a source the provider\ncannot have (GitHub names need a GitHub provider, role values a `role_claim`). The\nchange is in the access log. Operators only, with a session.",
+        "operationId": "identity-add_role_rule",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RoleRuleRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RoleRuleSummary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ]
+      }
+    },
+    "/api/v1/role-rules/{rule_id}": {
+      "delete": {
+        "tags": [
+          "identity"
+        ],
+        "summary": "Remove Role Rule",
+        "description": "Remove a stored role rule; what it gave ends at once.\n\nRefused with 409 `configured_rule` for a rule of the configuration file, 404\n`unknown_role_rule` for an unknown ID, and 409 `last_operator` when no enabled admin\nwould remain. The change is in the access log. Operators only, with a session.",
+        "operationId": "identity-remove_role_rule",
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "rule_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Rule Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "description": "The request cannot be processed (error code in `error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The caller is not signed in, or the credentials are wrong (`unauthenticated`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The thing does not exist or is not visible to the caller.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The request conflicts with the current state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "A field is invalid (`fields` names them) or a business rule is violated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/access-log": {
       "get": {
         "tags": [
@@ -2162,7 +2435,9 @@
                       "granted",
                       "revoked",
                       "ownership_transferred",
-                      "library_deleted"
+                      "library_deleted",
+                      "rule_added",
+                      "rule_removed"
                     ],
                     "type": "string"
                   }
@@ -3683,7 +3958,9 @@
                       "granted",
                       "revoked",
                       "ownership_transferred",
-                      "library_deleted"
+                      "library_deleted",
+                      "rule_added",
+                      "rule_removed"
                     ],
                     "type": "string"
                   }
@@ -13078,10 +13355,12 @@
               "granted",
               "revoked",
               "ownership_transferred",
-              "library_deleted"
+              "library_deleted",
+              "rule_added",
+              "rule_removed"
             ],
             "title": "Change",
-            "description": "What happened: `library_created`, `granted` (a new role, or another one than before),\n`revoked`, `ownership_transferred` or `library_deleted`."
+            "description": "What happened: `library_created`, `granted` (a new role, or another one than before),\n`revoked`, `ownership_transferred`, `library_deleted`, or a role rule's `rule_added` or\n`rule_removed`."
           },
           "kind": {
             "anyOf": [
@@ -13134,6 +13413,17 @@
             ],
             "title": "Previous Role",
             "description": "The role the subject held before; null when it held none."
+          },
+          "rule": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RoleRuleSummary"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The rule a `rule_added` or `rule_removed` event is about; such an event's `library` is\nempty."
           }
         },
         "additionalProperties": false,
@@ -17271,6 +17561,14 @@
             ],
             "title": "Creator",
             "description": "The username of the library's creator, whatever the filters; null for a library that has\nnone (one added before roles, which operators manage)."
+          },
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/RoleRuleSummary"
+            },
+            "type": "array",
+            "title": "Rules",
+            "description": "The role rules that give a role on this library (#577), whatever the filters: their\nmembers hold it on top of the grants above."
           }
         },
         "additionalProperties": false,
@@ -20310,6 +20608,210 @@
         "title": "RoleOut",
         "description": "One instance role and the model it uses."
       },
+      "RoleRuleList": {
+        "properties": {
+          "rules": {
+            "items": {
+              "$ref": "#/components/schemas/RoleRuleSummary"
+            },
+            "type": "array",
+            "title": "Rules",
+            "description": "The rules: configured ones first, then the stored ones, oldest first."
+          },
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/RuleProviderSummary"
+            },
+            "type": "array",
+            "title": "Providers",
+            "description": "The configured sign-in providers, by name."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "rules",
+          "providers"
+        ],
+        "title": "RoleRuleList",
+        "description": "Every role rule, the configuration file's first, and the providers they can name."
+      },
+      "RoleRuleRequest": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Provider",
+            "description": "The sign-in provider whose accounts it matches."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "github_org",
+              "github_team",
+              "group",
+              "role"
+            ],
+            "title": "Source",
+            "description": "`github_org` and `github_team` for a GitHub provider; `role` for one with a\n`role_claim`; `group` for any."
+          },
+          "value": {
+            "type": "string",
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Value",
+            "description": "The organization (`acme`), team (`acme/docs-writers`), group or role value, as the provider\nnames it (a group without `group_prefix`)."
+          },
+          "grant": {
+            "type": "string",
+            "enum": [
+              "instance_admin",
+              "create_libraries",
+              "viewer",
+              "contributor",
+              "admin"
+            ],
+            "title": "Grant",
+            "description": "`instance_admin`, `create_libraries`, or a library role: `viewer`, `contributor`,\n`admin`."
+          },
+          "libraries": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string",
+                  "maxLength": 256,
+                  "pattern": "^/[^/]+/[^/]+$"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Libraries",
+            "description": "For a library role: the libraries it is given on (`/owner/repo`); null for every library\nthat is not private (present and future)."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "provider",
+          "source",
+          "value",
+          "grant"
+        ],
+        "title": "RoleRuleRequest",
+        "description": "A role rule to add: a provider's membership and what it gives."
+      },
+      "RoleRuleSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "The rule's ID; `config:...` for a rule of the configuration file."
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider",
+            "description": "The sign-in provider whose accounts it matches; null for any (only\n`[auth.library_creation].groups`, whose names carry their provider's prefix)."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "github_org",
+              "github_team",
+              "group",
+              "role"
+            ],
+            "title": "Source",
+            "description": "`github_org`, `github_team`, `group` or `role` (a value of the provider's `role_claim`)."
+          },
+          "value": {
+            "type": "string",
+            "title": "Value",
+            "description": "The organization, `org/team`, group or role value, as the provider names it."
+          },
+          "grant": {
+            "type": "string",
+            "enum": [
+              "instance_admin",
+              "create_libraries",
+              "viewer",
+              "contributor",
+              "admin"
+            ],
+            "title": "Grant",
+            "description": "`instance_admin`, `create_libraries`, or the library role it gives."
+          },
+          "libraries": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Libraries",
+            "description": "The libraries a library role is given on; null for every library that is not private."
+          },
+          "configured": {
+            "type": "boolean",
+            "title": "Configured",
+            "description": "Set by the configuration file: read-only here."
+          },
+          "created_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created By",
+            "description": "The username of who added it; null for a configured rule (or an account that is gone)."
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At",
+            "description": "When it was added; null for a configured rule."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "provider",
+          "source",
+          "value",
+          "grant",
+          "libraries",
+          "configured"
+        ],
+        "title": "RoleRuleSummary",
+        "description": "A role rule (#577): who it matches at a provider, and what it gives them."
+      },
       "RoleSource": {
         "type": "string",
         "enum": [
@@ -20338,6 +20840,46 @@
         "type": "object",
         "title": "RoleThinkingIn",
         "description": "An instance role's thinking level, as the admin sets it."
+      },
+      "RuleProviderSummary": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name",
+            "description": "The provider's name, as rules name it."
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name",
+            "description": "What its sign-in button says."
+          },
+          "github": {
+            "type": "boolean",
+            "title": "Github",
+            "description": "Whether it is GitHub: its rules may name organizations and teams."
+          },
+          "role_claim": {
+            "type": "boolean",
+            "title": "Role Claim",
+            "description": "Whether it reads a role claim: its rules may name role values."
+          },
+          "configured_rules_only": {
+            "type": "boolean",
+            "title": "Configured Rules Only",
+            "description": "Only the configuration file's rules apply to it: adding one here is refused."
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name",
+          "display_name",
+          "github",
+          "role_claim",
+          "configured_rules_only"
+        ],
+        "title": "RuleProviderSummary",
+        "description": "A sign-in provider as role rules see it."
       },
       "ScopeUsageOut": {
         "properties": {
@@ -22373,6 +22915,14 @@
             "title": "Token Count",
             "description": "How many API tokens the account holds that have not expired.",
             "default": 0
+          },
+          "rules": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Rules",
+            "description": "The IDs of the role rules that match the account (`GET /role-rules`): an `admin` without\nan `instance_admin` rule among them was made admin directly."
           }
         },
         "additionalProperties": false,

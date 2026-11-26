@@ -6,6 +6,8 @@
       admin, library creation, or a library role on every library or on chosen ones.
     - Rules only add to what an account was given directly; the highest role counts.
     - "Every library" leaves out private libraries.
+    - Operators add and remove rules from the Users page or over [REST](../../rest-api/users-and-access.md#role-rules);
+      rules of the configuration file show there read-only.
 
 A role rule gives everyone with one membership at a provider a role in ExactDocs. It pairs a
 **source** with a **grant**:
@@ -45,6 +47,11 @@ grant = "contributor"
 libraries = ["/acme/handbook"]
 ```
 
+Operators also add and remove rules from the Users page (or `POST` and `DELETE /role-rules`),
+for any provider without `configured_rules_only`. Every such change goes to the access log with
+who made it. A change to an `instance_admin` rule that would leave no enabled admin is refused;
+as for disabling an account, an admin counts while the account is enabled.
+
 How rules combine with everything else:
 
 - A rule only adds. An account's access is the highest of what it was given directly (the Users
@@ -56,7 +63,11 @@ How rules combine with everything else:
   covered at once.
 - "Every library" leaves out private libraries (imported with a token or a deploy key). A rule
   reaches a private library only by naming it in `libraries`, so it stays its creator's to share.
-- `instance_admin` takes effect at the next sign-in or membership check (`revalidate_minutes`).
+- `instance_admin` follows a person's memberships at the next sign-in or membership check
+  (`revalidate_minutes`). Adding or removing such a rule applies at once to the accounts the
+  provider created, from their memberships at their latest check. A GitHub organization or team
+  becomes a stored group only once a rule names it, so a new rule naming one reaches its members
+  at their next sign-in or membership check.
 - `admin_groups` and `[auth.library_creation].groups` keep working unchanged; they count as rules
   of the configuration file.
 - On GitHub, every organization and team a rule names is checked like `allowed_teams` (active

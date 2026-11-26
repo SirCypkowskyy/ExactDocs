@@ -1,10 +1,11 @@
 """Role rules (#577): GitHub organizations, teams, groups and role values mapped to roles."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+from pydantic import SecretStr
 
 from exactdocs.identity.adapters.driven.memory import (
     InMemoryAccessLog,
@@ -20,16 +21,32 @@ from exactdocs.identity.adapters.driven.memory import (
     InMemoryTokenRepository,
 )
 from exactdocs.identity.dtos import (
+    AddRoleRuleCommand,
+    CreateFirstAdminCommand,
     DropLibraryGrantsCommand,
     ExternalTokenIdentity,
     FinishExternalSignInCommand,
     GrantLibraryRoleCommand,
     LibraryCreationQuery,
     LibraryRolesQuery,
+    ListLibraryGrantsQuery,
+    ListRoleRulesQuery,
     MarkLibraryPrivateCommand,
+    RemoveRoleRuleCommand,
+    SetUserDisabledCommand,
     StartExternalSignInCommand,
+    UserListQuery,
 )
-from exactdocs.identity.errors import InvalidRoleRuleError
+from exactdocs.identity.errors import (
+    ConfiguredRuleError,
+    InvalidRoleRuleError,
+    LastOperatorError,
+    NotAnOperatorError,
+    RoleRuleExistsError,
+    RulesConfiguredOnlyError,
+    UnknownRoleRuleError,
+    UnknownSignInProviderError,
+)
 from exactdocs.identity.models import (
     AccountId,
     ExternalClaims,
@@ -109,6 +126,7 @@ class World:
     clock: Clock
     accounts: InMemoryAccountRepository
     grants: InMemoryLibraryGrantRepository
+    log: InMemoryAccessLog
 
     async def sign_in(self, subject: str, **claims: Any) -> str:
         self.provider.add(subject, **claims)
@@ -168,6 +186,7 @@ def build(
     rules = InMemoryRoleRuleRepository()
     private = InMemoryPrivateLibraries()
     grants = InMemoryLibraryGrantRepository()
+    log = InMemoryAccessLog()
     policy = policy or corp()
     identity = IdentityModule.build(
         repository=accounts,
@@ -178,7 +197,7 @@ def build(
         externals=InMemoryExternalIdentityRepository(accounts=accounts),
         library_grants=grants,
         preferences=InMemoryPreferencesRepository(),
-        access_log=InMemoryAccessLog(),
+        access_log=log,
         attempts=InMemorySignInAttemptRepository(),
         box=Box(),
         clock=clock,
@@ -188,7 +207,7 @@ def build(
         role_rules=rules,
         private_libraries=private,
     )
-    return World(identity, provider, rules, private, clock, accounts, grants)
+    return World(identity, provider, rules, private, clock, accounts, grants, log)
 
 
 # ---------------------------------------------------------------- the rule itself
@@ -516,3 +535,200 @@ async def test_the_stored_rules_refuse_a_duplicate() -> None:
     assert await world.rules.add(
         RoleRule(id="y", provider="corp", source=RuleSource.GROUP, value="w", grant=RuleGrant.ADMIN)
     )
+
+
+# ---------------------------------------------------------------- managing rules
+
+
+async def operator(world: World) -> str:
+    created = await world.identity.create_first_admin(
+        CreateFirstAdminCommand(username="ada", password=SecretStr("a long enough passphrase"))
+    )
+    return created.id
+
+
+def add(caller: str, **rule: Any) -> AddRoleRuleCommand:
+    return AddRoleRuleCommand.model_validate({"caller_id": caller, "provider": "corp", **rule})
+
+
+async def test_the_list_shows_configured_rules_first_and_what_each_provider_can_name() -> None:
+    world = build(corp(admin_groups=frozenset({"ops"}), reads_roles=True))
+    ada = await operator(world)
+    await world.identity.add_role_rule(add(ada, source="role", value="Reader", grant="viewer"))
+
+    listed = await world.identity.list_role_rules(ListRoleRulesQuery(caller_id=ada))
+
+    assert [(r.value, r.configured, r.created_by) for r in listed.rules] == [
+        ("ops", True, None),
+        ("Reader", False, "ada"),
+    ]
+    assert [(p.name, p.github, p.role_claim) for p in listed.providers] == [("corp", False, True)]
+
+
+async def test_only_an_operator_manages_rules() -> None:
+    world = build()
+    await operator(world)
+    user = await world.sign_in("u1")
+
+    with pytest.raises(NotAnOperatorError):
+        await world.identity.list_role_rules(ListRoleRulesQuery(caller_id=user))
+    with pytest.raises(NotAnOperatorError):
+        await world.identity.add_role_rule(add(user, source="group", value="w", grant="admin"))
+
+
+@pytest.mark.parametrize(
+    ("policy", "rule", "error"),
+    [
+        (corp(), {"provider": "nope", "source": "group", "value": "w"}, UnknownSignInProviderError),
+        (
+            corp(configured_rules_only=True),
+            {"source": "group", "value": "w"},
+            RulesConfiguredOnlyError,
+        ),
+        (corp(), {"source": "github_org", "value": "acme"}, InvalidRoleRuleError),
+        (corp(), {"source": "role", "value": "Reader"}, InvalidRoleRuleError),
+        (corp(github=True), {"source": "github_team", "value": "acme"}, InvalidRoleRuleError),
+    ],
+)
+async def test_a_rule_the_provider_cannot_have_is_refused(
+    policy: SignInPolicy, rule: dict[str, Any], error: type[Exception]
+) -> None:
+    world = build(policy)
+    ada = await operator(world)
+
+    with pytest.raises(error):
+        await world.identity.add_role_rule(add(ada, grant="viewer", **rule))
+    assert world.rules.rules == {}
+
+
+async def test_the_same_rule_twice_is_refused() -> None:
+    world = build(corp(github=True))
+    ada = await operator(world)
+    await world.identity.add_role_rule(add(ada, source="github_org", value="Acme", grant="viewer"))
+
+    with pytest.raises(RoleRuleExistsError):
+        await world.identity.add_role_rule(
+            add(ada, source="github_org", value="acme", grant="viewer")
+        )
+
+
+async def test_adding_an_admin_rule_makes_its_members_admins_without_a_new_sign_in() -> None:
+    world = build()
+    ada = await operator(world)
+    member = await world.sign_in("u1", groups=frozenset({"platform-admins"}))
+    other = await world.sign_in("u2", groups=frozenset({"writers"}))
+
+    added = await world.identity.add_role_rule(
+        add(ada, source="group", value="platform-admins", grant="instance_admin")
+    )
+
+    assert await world.role(member) is Role.ADMIN
+    assert await world.role(other) is Role.USER
+    [event] = world.log.events
+    assert (event.change.value, event.actor, event.library, event.rule) == (
+        "rule_added",
+        ada,
+        "",
+        world.rules.rules[added.id],
+    )
+
+
+async def test_removing_an_admin_rule_makes_its_members_users_at_once() -> None:
+    world = build()
+    ada = await operator(world)
+    member = await world.sign_in("u1", groups=frozenset({"platform-admins"}))
+    added = await world.identity.add_role_rule(
+        add(ada, source="group", value="platform-admins", grant="instance_admin")
+    )
+
+    await world.identity.remove_role_rule(RemoveRoleRuleCommand(caller_id=ada, rule_id=added.id))
+
+    assert await world.role(member) is Role.USER
+    assert [e.change.value for e in world.log.events] == ["rule_added", "rule_removed"]
+
+
+async def test_a_rule_whose_removal_leaves_no_enabled_admin_stays() -> None:
+    world = build()
+    ada = await operator(world)
+    member = await world.sign_in("u1", groups=frozenset({"platform-admins"}))
+    added = await world.identity.add_role_rule(
+        add(ada, source="group", value="platform-admins", grant="instance_admin")
+    )
+    await world.identity.set_user_disabled(SetUserDisabledCommand(id=ada, disabled=True))
+
+    with pytest.raises(LastOperatorError):
+        await world.identity.remove_role_rule(
+            RemoveRoleRuleCommand(caller_id=member, rule_id=added.id)
+        )
+
+    assert added.id in world.rules.rules
+    assert await world.role(member) is Role.ADMIN
+
+
+async def test_a_configured_rule_cannot_be_removed_here() -> None:
+    world = build(corp(admin_groups=frozenset({"ops"})))
+    ada = await operator(world)
+
+    with pytest.raises(ConfiguredRuleError):
+        await world.identity.remove_role_rule(
+            RemoveRoleRuleCommand(caller_id=ada, rule_id="config:corp:admin_groups:ops")
+        )
+    with pytest.raises(UnknownRoleRuleError):
+        await world.identity.remove_role_rule(RemoveRoleRuleCommand(caller_id=ada, rule_id="x"))
+
+
+async def test_the_users_list_and_a_librarys_grants_say_which_rules_give_roles() -> None:
+    world = build()
+    ada = await operator(world)
+    member = await world.sign_in("u1", groups=frozenset({"writers"}))
+    added = await world.identity.add_role_rule(
+        add(ada, source="group", value="writers", grant="contributor")
+    )
+    await world.identity.mark_library_private(
+        MarkLibraryPrivateCommand(library=SECRET, private=True)
+    )
+
+    users = {u.id: u for u in (await world.identity.list_users(UserListQuery())).users}
+    docs = await world.identity.list_library_grants(
+        ListLibraryGrantsQuery(caller_id=ada, library=DOCS)
+    )
+    secret = await world.identity.list_library_grants(
+        ListLibraryGrantsQuery(caller_id=ada, library=SECRET)
+    )
+
+    assert users[member].rules == [added.id]
+    assert users[ada].rules == []
+    assert [rule.id for rule in docs.rules] == [added.id]
+    assert secret.rules == []
+
+
+async def test_a_librarys_admins_see_no_other_library_a_rule_names() -> None:
+    world = build()
+    ada = await operator(world)
+    await world.identity.add_role_rule(
+        add(ada, source="group", value="w", grant="viewer", libraries=[DOCS, SECRET])
+    )
+
+    docs = await world.identity.list_library_grants(
+        ListLibraryGrantsQuery(caller_id=ada, library=DOCS)
+    )
+
+    assert [rule.libraries for rule in docs.rules] == [[DOCS]]
+
+
+async def test_an_admin_rule_whose_roles_would_leave_no_admin_is_refused() -> None:
+    # A configured admin group that was dropped leaves a stale admin behind until the next check.
+    world = build()
+    ada = await operator(world)
+    member = await world.sign_in("u1", groups=frozenset({"ops"}))
+    stale = await world.accounts.get_by_id(AccountId(member))
+    assert stale is not None
+    world.accounts.accounts[stale.username] = replace(stale, role=Role.ADMIN)
+    await world.identity.set_user_disabled(SetUserDisabledCommand(id=ada, disabled=True))
+
+    with pytest.raises(LastOperatorError):
+        await world.identity.add_role_rule(
+            add(member, source="group", value="other", grant="instance_admin")
+        )
+    assert world.rules.rules == {}
+    assert await world.role(member) is Role.ADMIN

@@ -218,6 +218,7 @@ access_events = Table(
     Column("subject", Text),
     Column("role", Text),
     Column("previous_role", Text),
+    Column("rule", Text),  # a rule event's rule as JSON (`_rule_json`); NULL otherwise
 )
 known_sign_ins = Table(
     "identity_known_sign_ins",
@@ -1563,6 +1564,61 @@ class SqliteExternalIdentityRepository:
         async with self.engine.connect() as connection:
             return frozenset((await connection.execute(query)).scalars())
 
+    async def memberships_by_account(self) -> Mapping[AccountId, Memberships]:
+        """Return the memberships of every account created through a provider.
+
+        Returns:
+            For each account with an origin: its provider, groups and role claim values.
+        """
+        async with self.engine.connect() as connection:
+            links = (
+                await connection.execute(
+                    select(external_identities.c.account_id, external_identities.c.provider).where(
+                        _origin
+                    )
+                )
+            ).all()
+            groups = (await connection.execute(select(account_groups))).all()
+            roles = (await connection.execute(select(account_roles))).all()
+        found: dict[AccountId, tuple[str, set[str], set[str]]] = {
+            AccountId(row.account_id): (row.provider, set(), set()) for row in links
+        }
+        for rows, slot in ((groups, 1), (roles, 2)):
+            for row in rows:
+                if (entry := found.get(AccountId(row.account_id))) is not None:
+                    entry[slot].add(row.name)
+        return {
+            account: Memberships(
+                provider=provider, groups=frozenset(names), roles=frozenset(values)
+            )
+            for account, (provider, names, values) in found.items()
+        }
+
+    async def set_roles(self, roles: Mapping[AccountId, Role]) -> None:
+        """Set the role of accounts created through a provider, in one transaction.
+
+        Args:
+            roles: The new role of each account; a local account's never changes.
+        """
+        external = (
+            select(external_identities.c.account_id)
+            .where(external_identities.c.account_id == accounts.c.id, _origin)
+            .exists()
+        )
+        async with self.engine.begin() as connection:
+            for role in Role:
+                ids = sorted(account for account, wanted in roles.items() if wanted is role)
+                for start in range(0, len(ids), ACCOUNTS_PER_QUERY):
+                    await connection.execute(
+                        update(accounts)
+                        .where(
+                            accounts.c.id.in_(ids[start : start + ACCOUNTS_PER_QUERY]),
+                            accounts.c.role != role.value,
+                            external,
+                        )
+                        .values(role=role.value)
+                    )
+
     async def memberships_of(self, account_id: AccountId) -> Memberships:
         """Return the account's origin provider, groups and role claim values.
 
@@ -1901,6 +1957,7 @@ class SqliteAccessLog:
                     previous_role=None
                     if event.previous_role is None
                     else event.previous_role.value,
+                    rule=None if event.rule is None else _rule_json(event.rule),
                 )
             )
 
@@ -2014,6 +2071,54 @@ def _access_event(row: Row[Any]) -> AccessEvent:
         subject=row.subject,
         role=None if row.role is None else LibraryRole(row.role),
         previous_role=None if row.previous_role is None else LibraryRole(row.previous_role),
+        rule=None if row.rule is None else _rule_from_json(row.rule),
+    )
+
+
+def _rule_json(rule: RoleRule) -> str:
+    """Write a rule as an access event keeps it: as it was, even once it is removed.
+
+    Args:
+        rule: The rule.
+
+    Returns:
+        Its JSON.
+    """
+    return json.dumps(
+        {
+            "id": rule.id,
+            "provider": rule.provider,
+            "source": rule.source.value,
+            "value": rule.value,
+            "grant": rule.grant.value,
+            "libraries": None if rule.libraries is None else sorted(rule.libraries),
+            "created_by": rule.created_by,
+            "created_at": None if rule.created_at is None else _stamp(rule.created_at),
+        }
+    )
+
+
+def _rule_from_json(text: str) -> RoleRule:
+    """Read a rule an access event keeps.
+
+    Args:
+        text: Its JSON.
+
+    Returns:
+        The rule.
+    """
+    data = json.loads(text)
+    return RoleRule(
+        id=data["id"],
+        provider=data["provider"],
+        source=RuleSource(data["source"]),
+        value=data["value"],
+        grant=RuleGrant(data["grant"]),
+        libraries=None if data["libraries"] is None else frozenset(data["libraries"]),
+        created_by=None if data["created_by"] is None else AccountId(data["created_by"]),
+        created_at=None
+        if data["created_at"] is None
+        else datetime.fromisoformat(data["created_at"]),
     )
 
 

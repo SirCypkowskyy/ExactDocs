@@ -121,9 +121,13 @@ class LastOperatorError(ConflictError):
 
     code = "last_operator"
 
-    def __init__(self) -> None:
-        """Create the error with its fixed message."""
-        super().__init__("the last enabled admin cannot be disabled")
+    def __init__(self, message: str = "the last enabled admin cannot be disabled") -> None:
+        """Create the error.
+
+        Args:
+            message: What was refused.
+        """
+        super().__init__(message)
 
 
 class NotAnOperatorError(ForbiddenError):
@@ -503,3 +507,50 @@ class InvalidRoleRuleError(ValidationError):
             reason: What is wrong with the rule.
         """
         super().__init__(f"invalid role rule: {reason}")
+
+
+class UnknownRoleRuleError(NotFoundError):
+    """No stored role rule has this ID."""
+
+    code = "unknown_role_rule"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__("no role rule has this ID")
+
+
+class ConfiguredRuleError(ConflictError):
+    """The rule comes from the configuration file, which is the only place to change it."""
+
+    code = "configured_rule"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__("this rule is set by the configuration file: change it there")
+
+
+class RulesConfiguredOnlyError(ConflictError):
+    """The provider takes only the rules of the configuration file."""
+
+    code = "rules_configured_only"
+
+    def __init__(self, provider: str) -> None:
+        """Create the error.
+
+        Args:
+            provider: The provider's name.
+        """
+        super().__init__(
+            f"sign-in provider {provider!r} takes only the configuration file's rules "
+            "(configured_rules_only)"
+        )
+
+
+class RoleRuleExistsError(ConflictError):
+    """The same rule is stored already."""
+
+    code = "role_rule_exists"
+
+    def __init__(self) -> None:
+        """Create the error with its fixed message."""
+        super().__init__("this provider already has a rule with this source and grant")

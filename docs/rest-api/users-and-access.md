@@ -6,7 +6,10 @@
     - Library roles are `viewer < contributor < admin < creator`, granted to users and groups;
       an operator is `creator` of every library.
     - `/libraries/{owner}/{repo}/grants` and `/transfer` manage who holds a role.
-    - Every creation, grant, revocation, transfer and removal of a library goes to the access log.
+    - `/role-rules` (operators) maps a provider's groups, role values, GitHub organizations and
+      teams to instance admin, library creation or library roles.
+    - Every creation, grant, revocation, transfer and removal of a library, and every role rule
+      change, goes to the access log.
 
 ## Endpoints
 
@@ -18,6 +21,9 @@
 | `POST` | `/users/{id}/enable` | let it sign in again | operator, session cookie |
 | `PUT` | `/users/{id}/password` | set a new password | operator, session cookie |
 | `GET` | `/users/tokens` | every account's API tokens | operator, session cookie |
+| `GET` | `/role-rules` | every role rule and the providers rules can name | operator, session cookie |
+| `POST` | `/role-rules` | add a role rule | operator, session cookie |
+| `DELETE` | `/role-rules/{id}` | remove a stored role rule | operator, session cookie |
 | `GET` | `/libraries/{owner}/{repo}/grants` | who holds a role | `admin` on the library |
 | `PUT` | `/libraries/{owner}/{repo}/grants` | give or replace a role | `admin` on the library[^admin-grant] |
 | `DELETE` | `/libraries/{owner}/{repo}/grants/{kind}/{subject}` | take a role away | `admin` on the library[^admin-grant] |
@@ -55,6 +61,7 @@ Lists a page of the accounts, oldest first.
 | `groups` | the provider's, as of the latest sign-in or revalidation |
 | `last_active_at` | the hour of the latest activity, see below |
 | `token_count` | API tokens that have not expired |
+| `rules` | the IDs of the [role rules](#role-rules) that match the account; an `admin` without an `instance_admin` rule among them was made admin directly |
 
 | Parameter | Meaning |
 |---|---|
@@ -155,7 +162,8 @@ groups. Filters `q`, `kind`, `role`, `sort`.
       "grants": [{"kind", "subject", "role"}],
       "next_cursor", "total",
       "caller_role",   // the caller's own role, admin or creator
-      "creator"        // the creator's username whatever the filters, null when there is none
+      "creator",       // the creator's username whatever the filters, null when there is none
+      "rules"          // the role rules that give a role on the library, whatever the filters
     }
     ```
 
@@ -182,6 +190,41 @@ the grants.
   provider reports.
 - A username nobody has is 404 `unknown_account`, a missing grant 404 `unknown_grant`.
 - Libraries that existed before roles have no creator: operators manage them and share them.
+
+## Role rules
+
+A role rule (#577) gives everyone with one membership at a sign-in provider a role.
+[Role rules](../configuration/sign-in/role-rules.md) in the configuration explains sources,
+grants and how they combine; rules from the configuration file are listed here with
+`"configured": true` and are read-only.
+
+??? example "`GET /role-rules`"
+    ```text
+    {
+      "rules": [{"id", "provider", "source", "value", "grant", "libraries", "configured",
+                 "created_by", "created_at"}],
+      "providers": [{"name", "display_name", "github", "role_claim", "configured_rules_only"}]
+    }
+    ```
+
+`POST /role-rules` with `{"provider", "source", "value", "grant", "libraries"?}` adds one and
+answers it (201).
+
+- `source` is `github_org` or `github_team` (a GitHub provider), `role` (a provider with
+  `role_claim`) or `group` (as the provider names it, without `group_prefix`).
+- `grant` is `instance_admin`, `create_libraries`, `viewer`, `contributor` or `admin`;
+  `libraries` (only with a library role) limits it to those libraries, else it covers every
+  library that is not private, present and future.
+- Library roles and creation follow at the next request. An `instance_admin` rule also sets the
+  role of every account its provider created at once, from the memberships of their latest check
+  (a GitHub organization or team a rule names for the first time: at each member's next check).
+  409 `last_operator` when that would leave no enabled admin.
+- Refusals: 404 `unknown_provider`, 409 `rules_configured_only` (the provider has
+  `configured_rules_only`), 409 `role_rule_exists`, 422 `invalid_role_rule`.
+
+`DELETE /role-rules/{id}` removes a stored rule (204): what it gave ends at the next request, and
+the role of the provider's accounts is set again at once. Refusals: 409 `configured_rule`, 404
+`unknown_role_rule`, 409 `last_operator` when no enabled admin would remain.
 
 ## Access log
 
@@ -248,4 +291,7 @@ These filters compose with each other and with `offset` and the cursor:
     2. then one `ownership_transferred` entry whose subject is the new creator (`role` `creator`,
        `previous_role` the role they held, if any), with the caller as actor
 - Giving someone the role they already hold records nothing.
+- Adding or removing a role rule records `rule_added` or `rule_removed` with the caller as actor
+  and the rule as it was (`rule`). These entries have an empty `library` and show only in
+  `GET /access-log`.
 - Changes made before the upgrade that added the log are not in it.

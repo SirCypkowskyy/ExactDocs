@@ -27,6 +27,7 @@ from exactdocs.identity.ports.driven import (
     TokenRepository,
 )
 from exactdocs.identity.ports.driving import (
+    AddRoleRule,
     Authenticate,
     CanCreateLibrary,
     ChangePassword,
@@ -51,10 +52,12 @@ from exactdocs.identity.ports.driving import (
     ListAllTokens,
     ListLibraryAccessLog,
     ListLibraryGrants,
+    ListRoleRules,
     ListTokens,
     ListUsers,
     LoginForToken,
     MarkLibraryPrivate,
+    RemoveRoleRule,
     ResetPassword,
     ResolveLibraryRoles,
     RevalidateExternalAccounts,
@@ -70,6 +73,7 @@ from exactdocs.identity.ports.driving import (
     UnlinkProvider,
 )
 from exactdocs.identity.use_cases import (
+    AddRoleRuleUseCase,
     AuthenticateUseCase,
     CanCreateLibraryUseCase,
     ChangePasswordUseCase,
@@ -94,16 +98,19 @@ from exactdocs.identity.use_cases import (
     ListAllTokensUseCase,
     ListLibraryAccessLogUseCase,
     ListLibraryGrantsUseCase,
+    ListRoleRulesUseCase,
     ListTokensUseCase,
     ListUsersUseCase,
     LoginForTokenUseCase,
     MarkLibraryPrivateUseCase,
+    RemoveRoleRuleUseCase,
     ResetPasswordUseCase,
     ResolveLibraryRolesUseCase,
     RevalidateExternalAccountsUseCase,
     RevokeLibraryRoleUseCase,
     RevokeTokenUseCase,
     RoleRules,
+    RuleAdmin,
     SavePreferencesUseCase,
     SetUserDisabledUseCase,
     Sharing,
@@ -185,6 +192,12 @@ class IdentityModule:
     """Drop every grant on a removed library."""
     mark_library_private: MarkLibraryPrivate
     """Note whether a library is private, which a role rule for every library leaves out."""
+    list_role_rules: ListRoleRules
+    """List every role rule and the providers rules can name (operators)."""
+    add_role_rule: AddRoleRule
+    """Add a role rule (operators)."""
+    remove_role_rule: RemoveRoleRule
+    """Remove a stored role rule (operators)."""
     grant_library_role: GrantLibraryRole
     """Give a user or a group a role on a library (library admins; creators for admins)."""
     revoke_library_role: RevokeLibraryRole
@@ -286,6 +299,9 @@ class IdentityModule:
             library_creation=library_creation,
             private=private_libraries,
         )
+        rule_admin = RuleAdmin(
+            accounts=repository, externals=externals, rules=rules, log=access_log, clock=clock
+        )
         sharing = Sharing(
             accounts=repository,
             externals=externals,
@@ -327,7 +343,7 @@ class IdentityModule:
                 clock=clock,
             ),
             list_users=ListUsersUseCase(
-                accounts=repository, externals=externals, tokens=tokens, clock=clock
+                accounts=repository, externals=externals, tokens=tokens, clock=clock, rules=rules
             ),
             create_user=CreateUserUseCase(
                 accounts=repository, hasher=hasher, failures=failures, clock=clock
@@ -407,6 +423,9 @@ class IdentityModule:
                 grants=library_grants, log=access_log, clock=clock
             ),
             mark_library_private=MarkLibraryPrivateUseCase(private=private_libraries),
+            list_role_rules=ListRoleRulesUseCase(admin=rule_admin),
+            add_role_rule=AddRoleRuleUseCase(admin=rule_admin),
+            remove_role_rule=RemoveRoleRuleUseCase(admin=rule_admin),
             grant_library_role=GrantLibraryRoleUseCase(sharing=sharing),
             revoke_library_role=RevokeLibraryRoleUseCase(sharing=sharing),
             list_library_grants=ListLibraryGrantsUseCase(sharing=sharing),

@@ -32,6 +32,7 @@ from exactdocs.identity.constants import (
     RESERVED_IN_USERNAME,
     REVALIDATION_BATCH,
     REVALIDATION_LEASE,
+    ROLE_RULES_ACTION,
     SIGN_IN_ATTEMPT_LIFETIME,
     SIGN_IN_SECRET_BYTES,
     TOKEN_BYTES,
@@ -48,6 +49,7 @@ from exactdocs.identity.dtos import (
     AccountProviders,
     AccountSummary,
     AccountTokenSummary,
+    AddRoleRuleCommand,
     AllTokensList,
     AllTokensQuery,
     ApiTokenIdentity,
@@ -77,13 +79,18 @@ from exactdocs.identity.dtos import (
     ListAccessLogQuery,
     ListLibraryAccessLogQuery,
     ListLibraryGrantsQuery,
+    ListRoleRulesQuery,
     LoginForTokenCommand,
     MarkLibraryPrivateCommand,
     PasswordReset,
     ProviderIconFile,
+    RemoveRoleRuleCommand,
     ResetPasswordCommand,
     RevalidationReport,
     RevokeLibraryRoleCommand,
+    RoleRuleList,
+    RoleRuleSummary,
+    RuleProviderSummary,
     SavePreferencesCommand,
     SessionGrant,
     SessionState,
@@ -106,11 +113,13 @@ from exactdocs.identity.errors import (
     AccessAssertionRefusedError,
     AccountDisabledError,
     AlreadySetUpError,
+    ConfiguredRuleError,
     ExternalAccountError,
     ExternalSignInFailedError,
     IdentityLinkedElsewhereError,
     InvalidCredentialsError,
     InvalidGrantError,
+    InvalidRoleRuleError,
     InvalidTokenError,
     InvalidTokenExpiryError,
     InvalidUsernameError,
@@ -129,11 +138,14 @@ from exactdocs.identity.errors import (
     ProviderNotLinkedError,
     ProviderUnavailableError,
     ReservedUsernameError,
+    RoleRuleExistsError,
+    RulesConfiguredOnlyError,
     SignInCancelledError,
     SignInThrottledError,
     TooManyTokensError,
     UnknownAccountError,
     UnknownGrantError,
+    UnknownRoleRuleError,
     UnknownSignInProviderError,
     UnknownTokenError,
     UsernameTakenError,
@@ -159,6 +171,7 @@ from exactdocs.identity.models import (
     Role,
     RoleRule,
     RuleGrant,
+    RuleSource,
     Session,
     SignInAttempt,
     SignInPolicy,
@@ -1039,6 +1052,8 @@ class ListUsersUseCase:
     """Where API tokens are stored, for each account's count."""
     clock: Clock
     """The current time: expired tokens are not counted."""
+    rules: RoleRules | None = None
+    """The role rules in force, to say which match each account."""
 
     async def __call__(self, query: UserListQuery) -> UserList:
         """List a page of the accounts, disabled ones included, with where each signs in.
@@ -1052,12 +1067,17 @@ class ListUsersUseCase:
         sort = parse_sort(query.sort, allowed=USER_SORT_FIELDS, default="created_at")
         links = await self.externals.groups_by_account()
         counts = await self.tokens.count_by_account(self.clock.now())
+        matched = await self._matched_rules()
         users = []
         for account in await self.accounts.list_all():
             provider, groups = links.get(account.id, (None, []))
             users.append(
                 UserSummary.from_model(
-                    account, provider=provider, groups=groups, token_count=counts.get(account.id, 0)
+                    account,
+                    provider=provider,
+                    groups=groups,
+                    token_count=counts.get(account.id, 0),
+                    rules=matched.get(account.id, []),
                 )
             )
         users = [
@@ -1085,6 +1105,20 @@ class ListUsersUseCase:
             offset=query.offset,
         )
         return UserList.from_page(page)
+
+    async def _matched_rules(self) -> dict[AccountId, list[str]]:
+        """Return the IDs of the role rules that match each account created through a provider.
+
+        Returns:
+            The IDs, in the order of the rules, by account.
+        """
+        if self.rules is None:
+            return {}
+        rules = await self.rules.in_force()
+        return {
+            account: [rule.id for rule in rules if rule.matches(found, self.rules.policies)]
+            for account, found in (await self.externals.memberships_by_account()).items()
+        }
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2411,6 +2445,24 @@ class RoleRules:
         """
         return instance_role_by_rules(await self.in_force(), memberships, self.policies)
 
+    async def reaching(self, library: str) -> list[RoleRule]:
+        """Return the rules that give a role on one library, whoever they match.
+
+        Args:
+            library: The library ID, lower-case.
+
+        Returns:
+            The library-role rules that name it, or that are for every library while it is
+            not private.
+        """
+        found = [r for r in await self.in_force() if r.grant.library_role is not None]
+        private = self.private is None or bool(await self.private.private_among({library}))
+        return [
+            rule
+            for rule in found
+            if (library in rule.libraries if rule.libraries is not None else not private)
+        ]
+
     async def library_roles(
         self, memberships: Memberships, libraries: set[str]
     ) -> dict[str, LibraryRole]:
@@ -3044,10 +3096,20 @@ class ListLibraryGrantsUseCase:
             offset=query.offset,
         )
         creator = next((g.subject for g in everyone if g.role == LibraryRole.CREATOR.value), None)
+        rules = [] if self.sharing.rules is None else await self.sharing.rules.reaching(library)
         return LibraryGrantList.from_page(
             page,
             caller_role="creator" if caller.allows(LibraryRole.CREATOR) else "admin",
             creator=creator,
+            # A rule's other libraries are not this library's admins' to see.
+            rules=[
+                RoleRuleSummary.from_model(
+                    rule
+                    if rule.libraries is None
+                    else replace(rule, libraries=frozenset({library}))
+                )
+                for rule in rules
+            ],
         )
 
 
@@ -3188,6 +3250,259 @@ class ListAccessLogUseCase:
         return await self.sharing.log_page(
             where, sort=query.sort, limit=query.limit, cursor=query.cursor, offset=query.offset
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RuleAdmin:
+    """What the role rule use cases share: the operator check, the log and instance roles."""
+
+    accounts: AccountRepository
+    """Where accounts are stored."""
+    externals: ExternalIdentityRepository
+    """The links of external accounts, for their memberships and roles."""
+    rules: RoleRules
+    """The role rules in force."""
+    log: AccessLog
+    """The access log, where every rule change goes."""
+    clock: Clock
+    """The current time."""
+
+    async def operator(self, caller_id: str) -> AccountId:
+        """Return the caller, if it is an enabled operator.
+
+        Args:
+            caller_id: The caller's account ID.
+
+        Returns:
+            Its ID.
+
+        Raises:
+            NotAnOperatorError: It is not.
+        """
+        caller = await self.accounts.get_by_id(AccountId(caller_id))
+        if caller is None or caller.is_disabled or not caller.is_operator:
+            raise NotAnOperatorError(ROLE_RULES_ACTION)
+        return caller.id
+
+    async def instance_roles(self, rules: list[RoleRule], provider: str) -> dict[AccountId, Role]:
+        """Return the role each account a provider created gets from these rules.
+
+        Args:
+            rules: The rules that would be in force.
+            provider: The provider whose rule changed; other accounts keep their role.
+
+        Returns:
+            The role of each such account.
+        """
+        policies = self.rules.policies
+        return {
+            account: instance_role_by_rules(rules, found, policies)
+            for account, found in (await self.externals.memberships_by_account()).items()
+            if found.provider == provider and provider in policies
+        }
+
+    async def keeps_an_admin(self, roles: Mapping[AccountId, Role]) -> bool:
+        """Tell whether an enabled admin remains once accounts get these roles.
+
+        Args:
+            roles: New roles of accounts created through a provider.
+
+        Returns:
+            Whether an enabled account would be an admin.
+        """
+        return any(
+            not account.is_disabled and roles.get(account.id, account.role) is Role.ADMIN
+            for account in await self.accounts.list_all()
+        )
+
+    async def record(self, change: AccessChange, rule: RoleRule, actor: str) -> None:
+        """Log a rule change.
+
+        Args:
+            change: ``rule_added`` or ``rule_removed``.
+            rule: The rule.
+            actor: Who changed it.
+        """
+        await self.log.record(
+            AccessEvent(
+                id=str(uuid7()),
+                library="",
+                at=self.clock.now(),
+                actor=AccountId(actor),
+                change=change,
+                rule=rule,
+            )
+        )
+
+    async def summary(self, rule: RoleRule) -> RoleRuleSummary:
+        """Describe a rule, its creator by username.
+
+        Args:
+            rule: The rule.
+
+        Returns:
+            Its summary.
+        """
+        creator = (
+            None if rule.created_by is None else await self.accounts.get_by_id(rule.created_by)
+        )
+        return RoleRuleSummary.from_model(
+            rule, created_by=None if creator is None else creator.username.value
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ListRoleRulesUseCase:
+    """Implements ``ports.driving.ListRoleRules``."""
+
+    admin: RuleAdmin
+    """The operator check and the rules."""
+
+    async def __call__(self, query: ListRoleRulesQuery) -> RoleRuleList:
+        """List every rule and the providers rules can name, if the caller is an operator.
+
+        Args:
+            query: Who asks.
+
+        Returns:
+            The rules, configured ones first, and the providers.
+        """
+        await self.admin.operator(query.caller_id)
+        policies = self.admin.rules.policies
+        return RoleRuleList(
+            rules=[await self.admin.summary(rule) for rule in await self.admin.rules.in_force()],
+            providers=[
+                RuleProviderSummary(
+                    name=policy.name,
+                    display_name=policy.display_name,
+                    github=policy.github,
+                    role_claim=policy.reads_roles,
+                    configured_rules_only=policy.configured_rules_only,
+                )
+                for policy in sorted(policies.values(), key=lambda p: p.name)
+            ],
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AddRoleRuleUseCase:
+    """Implements ``ports.driving.AddRoleRule``.
+
+    Library roles and creation follow at the next request. An ``instance_admin`` rule also
+    sets the role of every account its provider created now, from the memberships of their latest
+    check, so nobody has to sign in again.
+    """
+
+    admin: RuleAdmin
+    """The operator check, the rules, the log and instance roles."""
+
+    async def __call__(self, command: AddRoleRuleCommand) -> RoleRuleSummary:
+        """Store the rule, apply it to instance roles and log it.
+
+        Args:
+            command: Who adds it, and the rule.
+
+        Returns:
+            The rule stored.
+
+        Raises:
+            UnknownSignInProviderError: No provider of that name is configured.
+            RulesConfiguredOnlyError: The provider takes only configured rules (or none can be
+                stored).
+            InvalidRoleRuleError: The provider cannot have such a source, or the value or the
+                libraries cannot match anyone.
+            RoleRuleExistsError: The same rule is stored already.
+            LastOperatorError: Applying the roles now would leave no enabled admin.
+        """
+        actor = await self.admin.operator(command.caller_id)
+        rules = self.admin.rules
+        policy = rules.policies.get(command.provider)
+        if policy is None:
+            raise UnknownSignInProviderError
+        if policy.configured_rules_only or rules.stored is None:
+            raise RulesConfiguredOnlyError(policy.name)
+        source = RuleSource(command.source)
+        if source in {RuleSource.GITHUB_ORG, RuleSource.GITHUB_TEAM} and not policy.github:
+            msg = "GitHub organizations and teams need a GitHub provider"
+            raise InvalidRoleRuleError(msg)
+        if source is RuleSource.ROLE and not policy.reads_roles:
+            msg = f"sign-in provider {policy.name!r} reads no role_claim"
+            raise InvalidRoleRuleError(msg)
+        github = source in {RuleSource.GITHUB_ORG, RuleSource.GITHUB_TEAM}
+        rule = RoleRule(
+            id=uuid7().hex,
+            provider=policy.name,
+            source=source,
+            value=command.value.casefold() if github else command.value,
+            grant=RuleGrant(command.grant),
+            libraries=None
+            if command.libraries is None
+            else frozenset(library.casefold() for library in command.libraries),
+            created_by=actor,
+            created_at=self.admin.clock.now(),
+        )
+        roles: dict[AccountId, Role] = {}
+        if rule.grant is RuleGrant.INSTANCE_ADMIN:
+            # An admin rule only adds, but the recompute also catches up roles that went stale
+            # (a changed configuration), which must not leave the instance without an admin.
+            roles = await self.admin.instance_roles([*await rules.in_force(), rule], policy.name)
+            if not await self.admin.keeps_an_admin(roles):
+                msg = "applying this rule now would leave no enabled admin"
+                raise LastOperatorError(msg)
+        if not await rules.stored.add(rule):
+            raise RoleRuleExistsError
+        if roles:
+            await self.admin.externals.set_roles(roles)
+        await self.admin.record(AccessChange.RULE_ADDED, rule, actor)
+        return await self.admin.summary(rule)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RemoveRoleRuleUseCase:
+    """Implements ``ports.driving.RemoveRoleRule``.
+
+    Library roles and creation end at the next request. Removing an ``instance_admin`` rule
+    also sets the role of every account its provider created now; it is refused when no enabled
+    admin would remain.
+    """
+
+    admin: RuleAdmin
+    """The operator check, the rules, the log and instance roles."""
+
+    async def __call__(self, command: RemoveRoleRuleCommand) -> None:
+        """Remove the rule, apply that to instance roles and log it.
+
+        Args:
+            command: Who removes it, and which.
+
+        Raises:
+            ConfiguredRuleError: The rule comes from the configuration file.
+            UnknownRoleRuleError: No stored rule has that ID.
+            LastOperatorError: Without it, no enabled admin would remain.
+        """
+        actor = await self.admin.operator(command.caller_id)
+        rules = self.admin.rules
+        in_force = await rules.in_force()
+        rule = next((r for r in in_force if r.id == command.rule_id), None)
+        if rule is not None and rule.configured:
+            raise ConfiguredRuleError
+        if rule is None or rules.stored is None:
+            raise UnknownRoleRuleError
+        roles: dict[AccountId, Role] = {}
+        if rule.grant is RuleGrant.INSTANCE_ADMIN:
+            # shortcut: checked before the removal, not in one transaction with it; a sign-in or
+            # disable in between can still race it. Upgrade with a write turn if that matters.
+            roles = await self.admin.instance_roles(
+                [r for r in in_force if r.id != rule.id], rule.provider or ""
+            )
+            if not await self.admin.keeps_an_admin(roles):
+                msg = "removing this rule would leave no enabled admin"
+                raise LastOperatorError(msg)
+        if await rules.stored.remove(rule.id) is None:
+            raise UnknownRoleRuleError
+        if roles:
+            await self.admin.externals.set_roles(roles)
+        await self.admin.record(AccessChange.RULE_REMOVED, rule, actor)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

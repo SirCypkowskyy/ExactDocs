@@ -770,6 +770,34 @@ class InMemoryExternalIdentityRepository:
         """
         return self.groups.get(account_id, frozenset())
 
+    async def memberships_by_account(self) -> Mapping[AccountId, Memberships]:
+        """Return the memberships of every account created through a provider.
+
+        Returns:
+            For each account with an origin: its provider, groups and role claim values.
+        """
+        return {
+            ln.account_id: Memberships(
+                provider=ln.provider,
+                groups=self.groups.get(ln.account_id, frozenset()),
+                roles=self.roles.get(ln.account_id, frozenset()),
+            )
+            for ln in self.links.values()
+            if ln.is_origin
+        }
+
+    async def set_roles(self, roles: Mapping[AccountId, Role]) -> None:
+        """Set the role of accounts created through a provider.
+
+        Args:
+            roles: The new role of each account; a local account's never changes.
+        """
+        origins = await self.memberships_by_account()
+        for account_id, role in roles.items():
+            account = await self.accounts.get_by_id(account_id)
+            if account is not None and account_id in origins:
+                self.accounts.accounts[account.username] = replace(account, role=role)
+
     async def memberships_of(self, account_id: AccountId) -> Memberships:
         """Return the account's origin provider, groups and role claim values.
 

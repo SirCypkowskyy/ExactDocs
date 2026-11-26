@@ -781,6 +781,22 @@ class ExternalIdentityRepository(Protocol):
         """
         ...
 
+    async def memberships_by_account(self) -> Mapping[AccountId, Memberships]:
+        """Return the memberships of every account created through a provider.
+
+        Returns:
+            For each account with an origin: its provider, groups and role claim values.
+        """
+        ...
+
+    async def set_roles(self, roles: Mapping[AccountId, Role]) -> None:
+        """Set the role of accounts created through a provider, in one transaction.
+
+        Args:
+            roles: The new role of each account; a local account's never changes.
+        """
+        ...
+
 
 class RoleRuleRepository(Protocol):
     """The role rules admins added (the configuration file's are not stored)."""

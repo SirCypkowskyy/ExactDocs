@@ -7,6 +7,7 @@ from exactdocs.identity.dtos import (
     AccountPreferences,
     AccountProviders,
     AccountSummary,
+    AddRoleRuleCommand,
     AllTokensList,
     AllTokensQuery,
     ApiTokenIdentity,
@@ -33,13 +34,17 @@ from exactdocs.identity.dtos import (
     ListAccessLogQuery,
     ListLibraryAccessLogQuery,
     ListLibraryGrantsQuery,
+    ListRoleRulesQuery,
     LoginForTokenCommand,
     MarkLibraryPrivateCommand,
     PasswordReset,
     ProviderIconFile,
+    RemoveRoleRuleCommand,
     ResetPasswordCommand,
     RevalidationReport,
     RevokeLibraryRoleCommand,
+    RoleRuleList,
+    RoleRuleSummary,
     SavePreferencesCommand,
     SessionGrant,
     SessionState,
@@ -607,6 +612,48 @@ class GrantLibraryRole(Protocol):
 
         Returns:
             The library's grants now.
+        """
+        ...
+
+
+class ListRoleRules(Protocol):
+    """List every role rule and the providers rules can name (operators only)."""
+
+    async def __call__(self, query: ListRoleRulesQuery) -> RoleRuleList:
+        """Run the use case.
+
+        Args:
+            query: Who asks.
+
+        Returns:
+            The rules and the providers.
+        """
+        ...
+
+
+class AddRoleRule(Protocol):
+    """Add a role rule (operators only); its access applies at once."""
+
+    async def __call__(self, command: AddRoleRuleCommand) -> RoleRuleSummary:
+        """Run the use case.
+
+        Args:
+            command: Who adds it, and the rule.
+
+        Returns:
+            The rule stored.
+        """
+        ...
+
+
+class RemoveRoleRule(Protocol):
+    """Remove a stored role rule (operators only); its access ends at once."""
+
+    async def __call__(self, command: RemoveRoleRuleCommand) -> None:
+        """Run the use case.
+
+        Args:
+            command: Who removes it, and which.
         """
         ...
 

@@ -4,6 +4,8 @@ import {
   ArrowRightLeft,
   CalendarRange,
   ListFilter,
+  ListMinus,
+  ListPlus,
   type LucideIcon,
   Plus,
   ScrollText,
@@ -67,6 +69,8 @@ const CHANGE_LOOKS: Record<Change | "changed", ChangeLook> = {
   ownership_transferred: { icon: ArrowRightLeft, tone: "neutral" },
   library_created: { icon: Plus, tone: "neutral" },
   library_deleted: { icon: Trash2, tone: "destructive" },
+  rule_added: { icon: ListPlus, tone: "neutral" },
+  rule_removed: { icon: ListMinus, tone: "neutral" },
 };
 
 /** A grant that replaced a role reads as a change, not as a new role. */
@@ -175,7 +179,13 @@ const columnsOf = (t: Messages, everyLibrary: boolean): ColumnDef<AccessEvent>[]
           accessorKey: "library",
           header: t.list.columns.library,
           meta: { priority: 3, skeleton: "avatar" },
-          cell: ({ row }) => <LibraryCell id={row.original.library} />,
+          // A role rule's change names no library.
+          cell: ({ row }) =>
+            row.original.library ? (
+              <LibraryCell id={row.original.library} />
+            ) : (
+              <span className="text-muted-foreground">–</span>
+            ),
         } satisfies ColumnDef<AccessEvent>,
       ]
     : []),
@@ -276,7 +286,7 @@ export function AccessLogTable({ view, config, source, everyLibrary = false }: P
     const [, owner = "", repo = ""] = event.library.split("/");
     const { actor, subject } = event;
     return [
-      ...(everyLibrary && event.change !== "library_deleted"
+      ...(everyLibrary && event.library && event.change !== "library_deleted"
         ? [
             {
               id: "open",
@@ -288,7 +298,7 @@ export function AccessLogTable({ view, config, source, everyLibrary = false }: P
             },
           ]
         : []),
-      ...(everyLibrary
+      ...(everyLibrary && event.library
         ? [
             {
               id: "library-entries",
@@ -367,7 +377,11 @@ export function AccessLogTable({ view, config, source, everyLibrary = false }: P
         model={model}
         label={t.list.label}
         rowActions={actions}
-        rowLabel={(event) => t.list.row(sentenceOf(event, language), event.library)}
+        rowLabel={(event) =>
+          event.library
+            ? t.list.row(sentenceOf(event, language), event.library)
+            : sentenceOf(event, language)
+        }
         empty={{ icon: ScrollText, title: t.list.emptyTitle, body: t.list.emptyBody }}
         noMatch={{ title: t.list.noMatchTitle, body: t.list.noMatch }}
         errorMessage={

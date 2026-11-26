@@ -13,6 +13,7 @@ import { messages } from "../messages";
 export type AccessEvent = components["schemas"]["AccessEventSummary"];
 export type AccessLogPage = components["schemas"]["AccessLogPage"];
 export type Change = AccessEvent["change"];
+type RoleRule = components["schemas"]["RoleRuleSummary"];
 
 /** Every change the log records, in the order the filter offers them. */
 export const CHANGES = [
@@ -21,6 +22,8 @@ export const CHANGES = [
   "ownership_transferred",
   "library_created",
   "library_deleted",
+  "rule_added",
+  "rule_removed",
 ] as const satisfies readonly Change[];
 const LIBRARY_ID = /^\/[^/\s]+\/[^/\s]+$/;
 
@@ -255,6 +258,13 @@ export function describeEvent(event: AccessEvent, language: Language = currentLa
   const roleName = (role: string) => t.roles[role] ?? role;
   const role: Part = { key: "role", text: roleName(event.role ?? ""), kind: "role" };
   switch (event.change) {
+    case "rule_added":
+    case "rule_removed":
+      return [
+        ...actor,
+        ...words("verb", event.change === "rule_added" ? t.ruleAdded : t.ruleRemoved),
+        { key: "rule", text: event.rule ? ruleText(event.rule, language) : "", kind: "role" },
+      ];
     case "library_created":
       return [...actor, ...words("verb", t.created)];
     case "library_deleted":
@@ -290,6 +300,18 @@ export function describeEvent(event: AccessEvent, language: Language = currentLa
         ...words("tail", t.gaveTail),
       ];
   }
+}
+
+/** A role rule as one phrase: "GitHub team acme/docs → contributor on every library". */
+function ruleText(rule: RoleRule, language: Language = currentLanguage()): string {
+  const t = messages[language].sentence;
+  const grant =
+    rule.grant === "instance_admin" || rule.grant === "create_libraries"
+      ? t.rule[rule.grant]
+      : `${t.roles[rule.grant] ?? rule.grant}${
+          rule.libraries ? t.rule.onLibraries(rule.libraries.join(", ")) : t.rule.everyLibrary
+        }`;
+  return `${t.rule[rule.source]} ${rule.value} → ${grant}`;
 }
 
 /** One sentence a person can act on, for any failure of the access log API. */
