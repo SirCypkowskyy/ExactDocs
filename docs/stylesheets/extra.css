@@ -482,3 +482,141 @@
   outline: 1px solid var(--xd-border);
   outline-offset: -1px;
 }
+
+/* ------------------------------------------------- benchmark history tables */
+
+/* docs/javascripts/bench-history.js: the filters over a history table, its sortable headers and
+   the chart over it (the history.md page of each benchmark). Without the script none of this
+   shows. */
+.md-typeset .bench-history__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  align-items: end;
+  margin: 1rem 0 0.25rem;
+  font-size: 0.7rem;
+}
+
+.md-typeset .bench-history__filters label,
+.md-typeset .bench-history__chart > label {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  color: var(--xd-muted);
+}
+
+.md-typeset .bench-history :is(select, input) {
+  min-height: 2rem;
+  padding: 0.2rem 0.4rem;
+  font: inherit;
+  color: var(--xd-ink);
+  background-color: var(--xd-sheet);
+  border: 1px solid var(--xd-input);
+  border-radius: 0.3rem;
+}
+
+.md-typeset .bench-history :is(select, input, button):focus-visible {
+  outline: 2px solid var(--xd-route);
+  outline-offset: 2px;
+}
+
+.md-typeset .bench-history__filters .md-button {
+  min-height: 2rem;
+  padding: 0.3em 0.9em;
+}
+
+.md-typeset .bench-history__count {
+  margin: 0.25rem 0;
+  font-size: 0.7rem;
+  color: var(--xd-muted);
+}
+
+/* The header's button fills the cell; the arrow says which column sorts and which way. */
+.md-typeset .bench-history__sort {
+  display: inline-flex;
+  gap: 0.25em;
+  align-items: center;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.md-typeset .bench-history__sort::after {
+  content: "↕";
+  color: var(--xd-muted);
+  opacity: 0.6;
+}
+
+.md-typeset .bench-history th[aria-sort="ascending"] .bench-history__sort::after {
+  content: "↑";
+  color: inherit;
+  opacity: 1;
+}
+
+.md-typeset .bench-history th[aria-sort="descending"] .bench-history__sort::after {
+  content: "↓";
+  color: inherit;
+  opacity: 1;
+}
+
+.md-typeset .bench-history tr[hidden] {
+  display: none;
+}
+
+.md-typeset .bench-history :is(th, td) {
+  white-space: nowrap;
+}
+
+.md-typeset .bench-history__chart {
+  display: block;
+  margin: 1rem 0 0;
+  font-size: 0.7rem;
+}
+
+.md-typeset .bench-history__chart svg {
+  display: block;
+  width: 100%;
+  max-width: 48rem;
+  height: auto;
+  margin-top: 0.5rem;
+  font-size: 12px;
+  fill: var(--xd-muted);
+}
+
+.md-typeset .bench-history__grid {
+  stroke: var(--xd-border);
+}
+
+.md-typeset .bench-history__line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+
+.md-typeset .bench-history__chart circle {
+  fill: currentColor;
+}
+
+.md-typeset .bench-history__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  padding: 0;
+  margin: 0.5rem 0 0;
+  list-style: none;
+}
+
+.md-typeset .bench-history__legend li {
+  margin: 0;
+}
+
+.md-typeset .bench-history__legend li::before {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  margin-right: 0.35rem;
+  content: "";
+  background-color: var(--colour);
+  border-radius: 50%;
+}

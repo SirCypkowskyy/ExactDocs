@@ -186,12 +186,12 @@ What this means for the results:
   the 17 cases. 4 of those cases still need two parts.
 - recall@k and MRR count a hit on any section a case lists, and section recall and nDCG@10 count
   each part once. A configuration or tool that returns the other answering section (often an API
-  reference page) is not scored a miss ([Method](method.md#retrieval-metrics)).
+  reference page) is not scored a miss ([Method](method/metrics.md#retrieval-metrics)).
 - Until #501, recall@k counted only the first listed section, and these sections counted for
   nDCG@10 and section recall as parts the answer also needed.
 
-The golden set's fingerprint changed three times. The [ingestion run](ingestion.md) and the
-[retrieval run](retrieval.md) were recorded again after the first two:
+The golden set's fingerprint changed three times. The [ingestion run](ingestion/index.md) and the
+[retrieval run](retrieval/index.md) were recorded again after the first two:
 
 | Change | Fingerprint |
 |---|---|
@@ -241,4 +241,4 @@ framework pages, Zod's MDX, Pydantic's includes) are in [Adding a case](../evals
 
 !!! note
     Adding or changing a case changes the golden set's fingerprint, so the recorded runs and these
-    pages are refreshed in the same pull request ([Method](method.md#refreshing-these-pages)).
+    pages are refreshed in the same pull request ([Method](method/runs.md#refreshing-these-pages)).

@@ -9,13 +9,13 @@
       includes, MkDocs admonitions and tabs), not a configuration's.
     - First recorded on 13 November 2026, last on 24 November 2026.
 
-What the importer makes of the [golden set](golden-set.md)'s corpus under each chunking
+What the importer makes of the [golden set](../golden-set.md)'s corpus under each chunking
 configuration, measured against the source at each pinned commit, with BM25 over the whole golden
 set on the chunks it produced. No model is involved. The metrics are defined in
-[Method](method.md#ingestion-metrics).
+[Method](../method/metrics.md#ingestion-metrics).
 
 The recorded run is `packages/exactdocs/evals/results/ingestion.json`, on every pinned version of
-the five projects (the commits are on the [Golden set](golden-set.md#the-corpus) page). It was
+the five projects (the commits are on the [Golden set](../golden-set.md#the-corpus) page). It was
 recorded several times:
 
 | When | Issue | What moved |
@@ -32,8 +32,8 @@ Why each one ran:
 - **#490**, the golden set's review, added expected sections to some cases. That run was on
   Linux, 4 CPUs, and every number other than those named above is the same.
 - **#503** fixed how a hit is matched to an expected section at a coarser chunking: a chunk now
-  counts for every section it holds ([Method](method.md#chunking-configurations)).
-- **#501** counted a hit on any section a case lists ([Method](method.md#retrieval-metrics)) and
+  counts for every section it holds ([Method](../method/index.md#chunking-configurations)).
+- **#501** counted a hit on any section a case lists ([Method](../method/metrics.md#retrieval-metrics)) and
   marked the review's added sections as alternatives.
 
 [^first-run]: The report does not record the ExactDocs commit or the machine.
@@ -58,7 +58,7 @@ What it shows:
     - Pydantic keeps `{#id}` attributes in heading paths;
     - MkDocs admonitions and tabs read as code blocks;
     - Pydantic v1's includes stay unexpanded.
-- The BM25 column is this benchmark's own run. The [retrieval results](retrieval.md) measure BM25
+- The BM25 column is this benchmark's own run. The [retrieval results](../retrieval/index.md) measure BM25
   again at each chunking in a separate run, with the same match rule and the same numbers. The
   defaults are chosen from the retrieval run.
 

@@ -89,7 +89,7 @@ within each token budget; the other results were not run again and have none. Hy
 bge-small at `default`, asked again on that machine, came back with 5 of the 321 cases at another
 rank (the vectors differ in their last digits between the two machines; recall@1, @5, @10, MRR and
 nDCG@10 are the same to the digit), so its rows were not replaced: that re-run is the grid's app
-cell `hybrid:bge-small-en-v1.5@default` ([Retrieval results](../benchmark/retrieval.md)).
+cell `hybrid:bge-small-en-v1.5@default` ([Retrieval results](../benchmark/retrieval/index.md)).
 
 ### Time on that runner
 
@@ -148,7 +148,7 @@ EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
   grouping.
 - The run that measured grouping against the search before it, on the same code and machine, is
   the grid's app cells and their `+by-chunk` controls
-  ([Retrieval results](../benchmark/retrieval.md#grouped-by-article-575)).
+  ([Retrieval results](../benchmark/retrieval/grouping.md)).
 
 ### The run it replaces
 
