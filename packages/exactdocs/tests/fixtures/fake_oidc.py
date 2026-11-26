@@ -44,6 +44,8 @@ class FakeUser:
     username: str | None
     email: str | None = None
     groups: list[str] = field(default_factory=list)
+    roles: list[str] = field(default_factory=list)
+    """App roles (Entra ID's `roles` claim), sent only when there are some."""
     tenant: str | None = None
     """The person's directory (``tid``) at a multi-tenant issuer."""
 
@@ -159,6 +161,8 @@ class FakeIssuer:
             claims["email"] = user.email
         if self.groups_in_id_token:
             claims["groups"] = list(user.groups)
+        if user.roles:
+            claims["roles"] = list(user.roles)
         header = {"alg": "RS256", "kid": self.key.kid}
         if self.tamper is not None:
             replaced = self.tamper(header, claims)

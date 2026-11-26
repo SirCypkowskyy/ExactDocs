@@ -1409,11 +1409,9 @@ class AddLibraryUseCase:
             )
         )
         try:
-            # Whatever an earlier library of this ID left behind must not be inherited.
-            if credential is None:
-                await self.vault.delete(created)
-            else:
-                await self.vault.save(created, repository.credential_scope, credential)
+            await _store_credential(
+                self.vault, self.access, created, repository.credential_scope, credential
+            )
             job = await _enqueue_import(self.enqueue_job, created, resolved)
         except BaseException:
             for undo in (self.vault.delete, self.libraries.discard):
@@ -1432,6 +1430,33 @@ class AddLibraryUseCase:
                 "context7_warning": context7.warning,
             }
         )
+
+
+async def _store_credential(
+    vault: CredentialVault,
+    access: AccessPolicy,
+    library: str,
+    scope: str,
+    credential: Credential | None,
+) -> None:
+    """Store a new library's credential, or forget one an earlier library of its ID left.
+
+    Identity hears that the library is private before the credential lands, so no role rule
+    for every library reaches it meanwhile.
+
+    Args:
+        vault: Where credentials are kept.
+        access: Library roles, told whether the library is private.
+        library: The library ID.
+        scope: Where the credential may be offered.
+        credential: The token or deploy key; ``None`` for a public repository.
+    """
+    if credential is None:
+        await vault.delete(library)
+        await access.set_private(library, private=False)
+        return
+    await access.set_private(library, private=True)
+    await vault.save(library, scope, credential)
 
 
 async def _enqueue_import(
@@ -1521,6 +1546,7 @@ class AddVersionUseCase:
             raise VersionImportingError(library, resolved.name)
         if sent is not None:
             # Before queueing, because the job reads it; the ref was found with it just now.
+            await self.access.set_private(library, private=True)
             await self.vault.save(library, scope, sent)
         job = await _enqueue_import(self.enqueue_job, library, resolved)
         return AddedVersion.of(library, resolved, job)

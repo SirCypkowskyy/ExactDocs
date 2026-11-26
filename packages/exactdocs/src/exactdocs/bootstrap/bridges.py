@@ -112,12 +112,14 @@ from exactdocs.identity.dtos import (
     LeaderboardPeopleQuery,
     LibraryCreationQuery,
     LibraryRolesQuery,
+    MarkLibraryPrivateCommand,
 )
 from exactdocs.identity.ports.driving import (
     CanCreateLibrary,
     ClaimLibrary,
     DropLibraryGrants,
     FindLeaderboardPeople,
+    MarkLibraryPrivate,
     ResolveLibraryRoles,
 )
 from exactdocs.ingestion.constants import PARSER_VERSION
@@ -1573,6 +1575,8 @@ class IdentityAccessPolicy:
     """Identity's record of a library's creator."""
     drop_library_grants: DropLibraryGrants
     """Identity's drop of every grant on a removed library."""
+    mark_library_private: MarkLibraryPrivate
+    """Identity's note of which libraries are private, for role rules."""
     caller: Callable[[], str | None]
     """The account ID of the current request; ``None`` when no person made it."""
     external_identity: Callable[[], ExternalTokenIdentity | None] | None = None
@@ -1675,6 +1679,15 @@ class IdentityAccessPolicy:
             )
         )
         return frozenset(library for library in found.roles if self._selected(library))
+
+    async def set_private(self, library: str, *, private: bool) -> None:
+        """Tell identity whether the library is private, whoever stores its credential.
+
+        Args:
+            library: The library ID.
+            private: Whether a credential is stored for it.
+        """
+        await self.mark_library_private(MarkLibraryPrivateCommand(library=library, private=private))
 
     async def claim(self, library: str) -> None:
         """Make the caller, if there is one, the creator of the library just created.

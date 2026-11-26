@@ -40,6 +40,8 @@ class OAuth2ClaimNames:
     """The email claim."""
     groups: str = "groups"
     """The string or list of group names."""
+    roles: str | None = None
+    """The string or list of role values; ``None`` reads none."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -152,18 +154,16 @@ class OAuth2Provider:
         subject = claim(info, self.claims.subject)
         if not isinstance(subject, str) or not subject.strip():
             raise ExternalSignInFailedError
-        groups = claim(info, self.claims.groups)
-        if isinstance(groups, str):
-            groups = [groups]
         username, email = claim(info, self.claims.username), claim(info, self.claims.email)
         return ExternalClaims(
             issuer=self.issuer,
             subject=subject,
             username=username if isinstance(username, str) and username.strip() else None,
             email=email if isinstance(email, str) and email.strip() else None,
-            groups=frozenset(g for g in groups if isinstance(g, str) and g)
-            if isinstance(groups, list)
-            else frozenset(),
+            groups=claim_strings(claim(info, self.claims.groups)),
+            roles=frozenset()
+            if self.claims.roles is None
+            else claim_strings(claim(info, self.claims.roles)),
         )
 
     async def refresh(self, refresh_token: str, *, subject: str) -> ExternalGrant:
@@ -324,3 +324,19 @@ def text(body: Mapping[str, Any], name: str) -> str | None:
     """
     value = body.get(name)
     return value if isinstance(value, str) and value else None
+
+
+def claim_strings(value: object) -> frozenset[str]:
+    """Read a claim that holds one name or a list of names (groups, roles).
+
+    Args:
+        value: The claim's value.
+
+    Returns:
+        Its nonempty strings; empty for anything else.
+    """
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list):
+        return frozenset()
+    return frozenset(item for item in value if isinstance(item, str) and item)

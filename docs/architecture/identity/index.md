@@ -16,6 +16,7 @@
 |---|---|
 | [External sign-in (OIDC)](oidc.md) | providers in settings, sign-in attempts, linking identities, groups and revalidation |
 | [Library roles](library-roles.md) | viewer, contributor, admin and creator, groups, grants, transfers, the access log |
+| [Role rules](role-rules.md) | provider groups, role values, GitHub organizations and teams mapped to roles; private libraries |
 
 ## Accounts and passwords
 

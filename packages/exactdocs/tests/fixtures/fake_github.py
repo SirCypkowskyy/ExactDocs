@@ -17,6 +17,8 @@ class FakeGithub(FakeIssuer):
     orgs: set[str] = field(default_factory=lambda: {"acme"})
     teams: list[tuple[str, str]] = field(default_factory=lambda: [("acme", "docs-readers")])
     restricted: str | None = None
+    restricted_orgs: set[str] = field(default_factory=set)
+    """Organizations that refuse the app (OAuth App access restrictions), whatever `restricted`."""
     pages: int = 1
     requests: list[str] = field(default_factory=list)
     numeric_id: object = 123
@@ -75,7 +77,7 @@ class FakeGithub(FakeIssuer):
                 status_code=403,
                 headers={"X-GitHub-SSO": "required; url=https://github.example.com/sso"},
             )
-        if self.restricted == "app":
+        if self.restricted == "app" or request.path_params["org"] in self.restricted_orgs:
             return JSONResponse(
                 {"message": "The organization has enabled OAuth App access restrictions."},
                 status_code=403,

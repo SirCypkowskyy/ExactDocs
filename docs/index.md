@@ -206,7 +206,7 @@ a section that answers first for 70.4% of the 267 answerable questions and in th
 |---|---|
 | [User stories](user-stories.md) | The main use case (git repository to Markdown to browsing) as user stories, plus what comes next and later |
 | [Delivery plan](plan/index.md) | The issues behind the user stories, by epic and milestone |
-| [AI retrieval decisions](decisions/ai-retrieval.md) | Why the AI retrieval modes are built the way they are |
+| [Decisions](decisions/index.md) | Every technical decision in one table, and the records behind them, such as [AI retrieval](decisions/ai-retrieval.md) |
 
 <div class="xd-prose" markdown>
 
