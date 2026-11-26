@@ -61,7 +61,7 @@ How resuming works:
 
 ## Steps of `reprocess`, `rechunk` and `retag`
 
-#61, #67, `STEPS_VERSION` `jobs-2`, then `jobs-4`.
+\#61, #67, `STEPS_VERSION` `jobs-2`, then `jobs-4`.
 
 1. First the library's versions, so a resumed job takes the same ones in the same order, even if one
    was added meanwhile.

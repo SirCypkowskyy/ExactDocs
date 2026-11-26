@@ -97,14 +97,14 @@ Each issue of the milestone points here instead of deciding these again.
         - the pooler in session mode on port 5432
     - The transaction-mode pooler breaks prepared statements and DBOS's `LISTEN` connection, so
       it is refused at start.
-    - #244's CI runs DBOS on `supabase/postgres` with `dbos_system_schema`.
+    - \#244's CI runs DBOS on `supabase/postgres` with `dbos_system_schema`.
 
 [^dbos-system-db]: DBOS 3.3's default system database is a local SQLite file, today's
     `jobs.sqlite`. Given a PostgreSQL system database that does not exist, it connects to the
     `postgres` database and runs `CREATE DATABASE`, which managed services such as Supabase usually
     forbid. Pointing it at the existing app database avoids that. DBOS still first connects to
     `postgres` to check that the database exists and only logs a warning when it may not; #103 and
-    #244 verify this with a role that cannot create databases.
+    \#244 verify this with a role that cannot create databases.
 
 ## Provider abstraction
 
@@ -165,7 +165,7 @@ A profile has a `kind`:
       `GOOGLE_APPLICATION_CREDENTIALS` and the like. Then a keyless custom gateway would receive
       the host's OpenAI key, and every `*_BASE_URL` / `*_ENDPOINT` would redirect traffic.
     - ADC for Vertex is used only when the profile says `credentials = "adc"`.
-    - #241's socket-guard test runs with those variables set and proves none of them is used.
+    - \#241's socket-guard test runs with those variables set and proves none of them is used.
 - **Custom endpoints** use `OpenAIProvider(base_url=…, api_key=…)` with `OpenAIChatModel` (Chat
   Completions, the most widely implemented API). pydantic-ai's `OpenAICompatibleProvider`,
   named in the first plan, is an internal base class in 2.60.0, not an entry point.
