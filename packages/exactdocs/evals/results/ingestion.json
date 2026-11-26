@@ -160,11 +160,11 @@
       },
       "bm25": {
         "answerable": 267,
-        "recall_at_1": 0.588,
-        "recall_at_5": 0.8764,
+        "recall_at_1": 0.7079,
+        "recall_at_5": 0.9139,
         "recall_at_10": 0.9363,
-        "mrr": 0.7109,
-        "recall_at_5_exact": 0.8352,
+        "mrr": 0.7959,
+        "recall_at_5_exact": 0.8727,
         "wrong_version_rate": 0.0,
         "misses": 17,
         "errors": []
@@ -1080,11 +1080,11 @@
       },
       "bm25": {
         "answerable": 267,
-        "recall_at_1": 0.5693,
-        "recall_at_5": 0.8577,
+        "recall_at_1": 0.6891,
+        "recall_at_5": 0.9026,
         "recall_at_10": 0.9213,
-        "mrr": 0.6885,
-        "recall_at_5_exact": 0.8577,
+        "mrr": 0.7795,
+        "recall_at_5_exact": 0.9026,
         "wrong_version_rate": 0.0,
         "misses": 21,
         "errors": []
@@ -2134,11 +2134,11 @@
       },
       "bm25": {
         "answerable": 267,
-        "recall_at_1": 0.618,
-        "recall_at_5": 0.8914,
+        "recall_at_1": 0.7191,
+        "recall_at_5": 0.9288,
         "recall_at_10": 0.9401,
-        "mrr": 0.7365,
-        "recall_at_5_exact": 0.4944,
+        "mrr": 0.8027,
+        "recall_at_5_exact": 0.5393,
         "wrong_version_rate": 0.0,
         "misses": 16,
         "errors": []
@@ -3287,11 +3287,11 @@
       },
       "bm25": {
         "answerable": 267,
-        "recall_at_1": 0.5955,
-        "recall_at_5": 0.8764,
+        "recall_at_1": 0.7116,
+        "recall_at_5": 0.9176,
         "recall_at_10": 0.9326,
-        "mrr": 0.7152,
-        "recall_at_5_exact": 0.7341,
+        "mrr": 0.7998,
+        "recall_at_5_exact": 0.7753,
         "wrong_version_rate": 0.0,
         "misses": 18,
         "errors": []

@@ -8,7 +8,7 @@
     - The problems found are the importer's (Zod v4's MDX fences, Pydantic v1's includes, MkDocs
       admonitions and tabs), not a configuration's. Since #571, Pydantic's `{#id}` attributes no
       longer reach heading paths.
-    - First recorded on 13 November 2026, last on 25 November 2026.
+    - First recorded on 13 November 2026, last on 26 November 2026.
 
 What the importer makes of the [golden set](golden-set.md)'s corpus under each chunking
 configuration, measured against the source at each pinned commit, with BM25 over the whole golden
@@ -26,7 +26,7 @@ recorded several times:
 | 23 November 2026 | #490 | only the counts of expected sections and the coverage |
 | 24 November 2026 | #503 | only BM25 at `h2` and `merge-400`:<br/>82.8% and 81.7% recall@5, from 76.0% and 74.2% |
 | 24 November 2026, again | #501 | only the BM25 columns: recall@5 87.6% at `default`,<br/>85.8% at `h6`, 89.1% at `h2`, 87.6% at `merge-400` |
-| 25 November 2026 | #571, #591 | only the wrong heading paths: 8 at `default`, 8 at `h6`,<br/>5 at `h2` and 7 at `merge-400`, from 102, 103, 95 and 88 |
+| 26 November 2026 | #571, #575, #591 | the wrong heading paths: 8 at `default`, 8 at `h6`,<br/>5 at `h2` and 7 at `merge-400`, from 102, 103, 95 and 88;<br/>the BM25 columns: recall@5 91.4% at `default`, 90.3% at `h6`,<br/>92.9% at `h2`, 91.8% at `merge-400` |
 
 Why each one ran:
 
@@ -40,8 +40,9 @@ Why each one ran:
 - **#571** takes a heading's id from its attribute list (`{#id}`) and leaves the list out of the
   heading text. One golden case still named a heading with its `{#config-both}` and became a miss
   in every configuration; it now names the heading as the chunker cuts it, which changed the golden
-  set's fingerprint ([Golden set](golden-set.md#the-independent-review)). With both, BM25 scores
-  what it did before #571.
+  set's fingerprint ([Golden set](golden-set.md#the-independent-review)).
+- **#575** groups `search_docs`' results by article, which moved every BM25 column. That run was
+  on macOS arm64, 10 CPUs, and the chunk columns are the same as on Linux.
 
 [^first-run]: The report does not record the ExactDocs commit or the machine.
 [^renames]: `default` is what was `h3-max-4000`, and `h6` what was `default`.
@@ -68,16 +69,18 @@ What it shows:
     - MkDocs admonitions and tabs read as code blocks;
     - Pydantic v1's includes stay unexpanded.
 - The BM25 column is this benchmark's own run. The [retrieval results](retrieval.md) measure BM25
-  again at each chunking in a separate run, with the same match rule and the same numbers. The
-  defaults are chosen from the retrieval run.
+  again at each chunking in a separate run, with the same match rule. Its BM25 results still
+  carry the golden set's earlier fingerprint and miss the `config-both` case, so they are one case
+  (0.4 points) lower until that run is recorded again. The defaults are chosen from the retrieval
+  run.
 
 <!-- bench:ingestion -->
 | configuration | coverage | held | cut fence / table / list | lost chars | tokens p50 / p95 / max | small | multi-top | empty / wrong path | headings missed / extra | BM25 recall@5 (exact) | MRR |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `default` | 91.6% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 114 / 738 / 8645 | 23.1% | 0.0% | 723 / 8 | 60 / 3 | 87.6% (83.5%) | 0.711 |
-| `h6` | 100.0% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 88 / 516 / 8645 | 32.2% | 0.0% | 723 / 8 | 60 / 3 | 85.8% (85.8%) | 0.689 |
-| `h2` | 53.0% | 381/381 | 3 / 0 / 0 | 11446 of 7940351 | 179 / 1699 / 8645 | 14.3% | 0.6% | 726 / 5 | 60 / 3 | 89.1% (49.4%) | 0.737 |
-| `merge-400` | 77.4% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 183 / 654 / 8645 | 3.0% | 5.1% | 723 / 7 | 60 / 3 | 87.6% (73.4%) | 0.715 |
+| `default` | 91.6% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 114 / 738 / 8645 | 23.1% | 0.0% | 723 / 8 | 60 / 3 | 91.4% (87.3%) | 0.796 |
+| `h6` | 100.0% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 88 / 516 / 8645 | 32.2% | 0.0% | 723 / 8 | 60 / 3 | 90.3% (90.3%) | 0.779 |
+| `h2` | 53.0% | 381/381 | 3 / 0 / 0 | 11446 of 7940351 | 179 / 1699 / 8645 | 14.3% | 0.6% | 726 / 5 | 60 / 3 | 92.9% (53.9%) | 0.803 |
+| `merge-400` | 77.4% | 381/381 | 4 / 0 / 0 | 11446 of 7940351 | 183 / 654 / 8645 | 3.0% | 5.1% | 723 / 7 | 60 / 3 | 91.8% (77.5%) | 0.800 |
 
 - `default`: today's default (#381): # to ### start a chunk; one over 4,000 characters is cut again at deeper headings.
 - `h6`: every heading starts a chunk; nothing is merged or bounded (the default before #381).
