@@ -198,14 +198,14 @@ nav = [
 
 [project.theme]
 language = "en"
-# The mole of the web UI's band (web/src/shared/ui/wordmark.tsx, `Mark`): the small-size cut from
-# web/public/brand/, copied to docs/assets/logo/. extra.css swaps it for the on-dark cut in the dark
-# scheme. The favicon is the web UI's favicon.svg.
-logo = "assets/logo/exactdocs-mark-small.svg"
+# The lockup of the web UI's band (web/src/shared/ui/wordmark.tsx, `Wordmark`), copied from
+# web/public/brand/ to docs/assets/logo/. extra.css swaps it for the dark cut in the dark scheme.
+# The favicon is the web UI's favicon.svg.
+logo = "assets/logo/exactdocs-lockup-light.svg"
 favicon = "assets/logo/favicon.svg"
-# The web UI's faces (web/DESIGN.md, "Typography").
-font.text = "Schibsted Grotesk"
-font.code = "JetBrains Mono"
+# The web UI's faces (web/DESIGN.md, "Typography"), self-hosted like the UI's: no Google Fonts.
+# docs/stylesheets/fonts.css loads them from docs/assets/fonts/ and extra.css names them.
+font = false
 features = [
   "content.action.edit",
   "content.code.annotate",
