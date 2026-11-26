@@ -42,14 +42,14 @@ unless started with `-f integration=true`, which only a maintainer does, never a
 
 ## Runners
 
-`RUNNER_MODE` (repository variable) decides where jobs run (docs/releasing/runners.md, *CI/CD and
-runners*). `hybrid` (default, or unset): the release's eval, web, Python and arm64 image jobs on the
-self-hosted ARM64 runner `[self-hosted, linux, ARM64, exactdocs]`, its amd64 image jobs and the
-publishing jobs on `ubuntu-24.04`; CI and docs on `ubuntu-24.04`. `self-hosted`: everything on
-the self-hosted runner (amd64 images cross-built, checked with `check_artifacts.py --no-python`;
-CI skips Pinecone Local). Never change the variable yourself: tell the maintainer when a job
-fails with *"recent account payments have failed or your spending limit needs to be
-increased"*, and that they flip it in *Settings → Secrets and variables → Actions → Variables*.
+CI runs on our GCP self-hosted runners `[self-hosted, linux, ARM64, exactdocs, gcp]`
+(docs/decisions/ci-runners.md, docs/releasing/runners.md *CI/CD and runners*). The repository
+variable `RUNNER_MODE` is `self-hosted`: every job of a trusted run on those runners (amd64 images
+cross-built, checked with `check_artifacts.py --no-python`; CI skips Pinecone Local). `hybrid`
+(any other value, or unset) moves CI, the docs and the release's amd64 and publishing jobs to
+`ubuntu-24.04`. A fork's pull request always runs on `ubuntu-24.04`. Every new self-hosted
+`runs-on` uses exactly that label set (`tests/ci/test_runners.py`). Never change the variable or
+the runners yourself: tell the maintainer.
 
 ## If it fails
 

@@ -30,7 +30,7 @@ env:
 jobs:
   bench:
     name: Grounded Docs on the golden set
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
     timeout-minutes: 180
     env:
       EXACTDOCS_MODELS_DIR: ${{ github.workspace }}/.models

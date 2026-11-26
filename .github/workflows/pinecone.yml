@@ -42,7 +42,7 @@ permissions:
 jobs:
   contract:
     name: Pinecone contract tests
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
     timeout-minutes: 60
     environment: pinecone # its protection rules decide who may spend the key
     env:

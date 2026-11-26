@@ -135,6 +135,7 @@ nav = [
       { "Sign-in for Teams" = "decisions/ai-retrieval/sign-in.md" },
     ] },
     { "Documentation pages stay under 16 KiB" = "decisions/page-size.md" },
+    { "CI runs on our GCP self-hosted runners" = "decisions/ci-runners.md" },
   ] },
   { "Engineering" = [
     { "Architecture" = [
