@@ -1683,7 +1683,7 @@ ARTICLE_OUTLINE_DESCRIPTION: Final[str] = (
 # ---------------------------------------------------------------- models (vector store)
 EMBEDDING_INPUT_FORMAT: Final[int] = 1
 """What an embedding of a chunk is computed from: its article title and heading path, then its
-text (docs/decisions/ai-retrieval.md, *Vector store*). A new format needs a new space.
+text (docs/decisions/ai-retrieval/local-models.md, *Vector store*). A new format needs a new space.
 """
 MAX_EMBEDDING_DIMENSIONS: Final[int] = 16_000
 """The most dimensions a space may have: pgvector's ``vector`` type stops there."""
@@ -1703,7 +1703,7 @@ DIMENSIONS_PROBE: Final[str] = "ExactDocs embedding dimensions"
 """The fixed text embedded once to learn a model's dimensions when none are configured: no
 library text, so it may be sent before any library is known to have AI on."""
 SPEND_SCOPE_INSTANCE: Final[str] = "instance"
-"""The ledger scope kind of what the whole instance spends (docs/decisions/ai-retrieval.md)."""
+"""The ledger scope kind of what the whole instance spends (docs/decisions/ai-retrieval/cost.md)."""
 SPEND_INSTANCE_ID: Final[str] = ""
 """The scope ID of the instance's rows: there is one instance."""
 SPEND_SCOPE_LIBRARY: Final[str] = "library"

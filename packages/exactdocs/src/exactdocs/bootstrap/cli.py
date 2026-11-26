@@ -134,7 +134,7 @@ def serve(
         # SQLite: one process, it alone runs jobs and their recovery and its tag lock orders
         # re-tags; uvicorn would otherwise start WEB_CONCURRENCY workers. PostgreSQL: each worker
         # is a process of its own, with its own DBOS executor and the database's advisory locks,
-        # so WEB_CONCURRENCY decides (docs/architecture/jobs.md).
+        # so WEB_CONCURRENCY decides (docs/architecture/jobs/postgresql.md).
         workers=None if settings.uses_postgres else 1,
         # PostgreSQL: a process that lost its executor slot stops itself with SIGTERM; open MCP
         # streams must not keep it alive (and its DBOS threads polling) for long.
@@ -1611,7 +1611,7 @@ def ai_check() -> None:
     if not checks.checks:
         sys.stdout.write(
             "No model role is configured: searches use BM25. Set EXACTDOCS_AI__<ROLE>__MODEL "
-            "(see docs/decisions/ai-retrieval.md).\n"
+            "(see docs/decisions/ai-retrieval/configuration.md).\n"
         )
         raise SystemExit(EXIT_USAGE)
     for check in checks.checks:
@@ -1659,7 +1659,7 @@ def ai_estimate() -> None:
     if estimate.model is None:
         sys.stdout.write(
             "No embedding model is configured: nothing would be embedded. Set "
-            "EXACTDOCS_AI__EMBEDDING__MODEL (see docs/decisions/ai-retrieval.md).\n"
+            "EXACTDOCS_AI__EMBEDDING__MODEL (see docs/decisions/ai-retrieval/configuration.md).\n"
         )
         raise SystemExit(EXIT_USAGE)
     if estimate.estimated_usd is None:

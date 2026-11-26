@@ -41,7 +41,7 @@ FRAMEWORKS = [
     "prefab_ui*",
     *DATABASE_LIBRARIES,
     # The AI stack (the `[ai]` and `[local]` extras): adapters and bootstrap only, imported once
-    # a model is configured (docs/decisions/ai-retrieval.md, "Where the code lives").
+    # a model is configured (docs/decisions/ai-retrieval/delivery.md, "Where the code lives").
     "pydantic_ai*",
     "pydantic_monty*",
     "fastembed*",
