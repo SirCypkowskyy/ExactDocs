@@ -19,6 +19,7 @@
 | [Benchmark history](benchmark-history.md) | Where every benchmark run is kept and how the *Every run* pages show it |
 | [Eval environments and Dependabot](eval-environments-dependabot.md) | Why Dependabot leaves the coding tasks' pinned environments alone |
 | [Adding libraries over MCP](mcp-write-tools.md) | The `add_docs` and `import_status` tools, and who sees them |
+| [CI runs on our GCP self-hosted runners](ci-runners.md) | Where CI jobs run, and why a fork's pull request never reaches our runners |
 | [Role rules](role-rules.md) | How provider groups, role values and GitHub organizations and teams become roles |
 
 ## All decisions
