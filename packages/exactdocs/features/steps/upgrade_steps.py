@@ -33,7 +33,7 @@ from steps.search_steps import LIBRARY, import_versions
 # a release is tagged (docs/releasing/upgrades.md). CI also runs that release itself from PyPI
 # on a data directory and starts this build on it (deploy/upgrade_check.py); this scenario is the
 # in-process half: the data is written now, then the schema is taken back to that revision.
-PREVIOUS_RELEASE, PREVIOUS_REVISION = "v0.6.0", "b5e8c2d4f7a1"
+PREVIOUS_RELEASE, PREVIOUS_REVISION = "v0.7.0", "b5e8c2d4f7a1"
 CLI = "from exactdocs.bootstrap.cli import main; main()"
 QUERY = "retry_policy"
 
