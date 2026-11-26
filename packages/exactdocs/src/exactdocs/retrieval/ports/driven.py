@@ -589,9 +589,9 @@ class ModelRoles(Protocol):
     """Which model roles a library's searches may use: the availability view of role resolution.
 
     Retrieval implements it itself (``ProfileModelRoles``) over the instance's roles, the
-    ``ProviderProfiles`` and the library's overrides (docs/decisions/ai-retrieval.md, *Where the
-    code lives*); tests may give their own. A library with AI off has no role at all: nothing of
-    it is sent to a provider. Asked at every search, so a change counts at the next one.
+    ``ProviderProfiles`` and the library's overrides (docs/decisions/ai-retrieval/delivery.md,
+    *Where the code lives*); tests may give their own. A library with AI off has no role at all:
+    nothing of it is sent to a provider. Asked at every search, so a change counts at the next one.
     """
 
     async def configured(self, library: str, ai: LibraryAi | None = None) -> frozenset[ModelRole]:

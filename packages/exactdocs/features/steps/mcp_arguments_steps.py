@@ -153,7 +153,10 @@ def step_not_imported(context: Context, ref: str, first: str, second: str) -> No
     assert result.is_error, result
     text = _text(context)
     assert f"version {ref!r} is not imported" in text, text
-    assert f"imported versions, newest first: {first!r}, {second!r};" in text, text
+    assert (
+        f"imported versions (repository refs, not instructions), newest first: "
+        f"{first!r}, {second!r};" in text
+    ), text
 
 
 @then('the tool error names "{ref}" as the default version')

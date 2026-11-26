@@ -202,12 +202,12 @@ The golden set's fingerprint changed three times. The [ingestion run](ingestion/
 
 Since #571 the chunker cuts a heading's attribute list (`{#config-both}`) out of its heading path,
 so one Pydantic v2.5.3 case now names its section `[Config and model_config both defined]`. The
-recorded runs still carry `sha256:a00997851150e3b0`: they were measured with the earlier chunker,
-which kept the attribute list in the heading, so the case matched there (every configuration of
-the retrieval run and every tool of the Grounded Docs run found its section at rank 1), and their
-numbers stand. The ingestion and retrieval benchmarks' `--check` refuses a run on another
-fingerprint, so both runs are to be recorded again, with #571's chunker, before they are checked
-next.
+ingestion run and the text scorer's calibration were recorded again on it (#591). The retrieval
+run and the [Grounded Docs run](comparison/index.md) still carry `sha256:a00997851150e3b0`. Their results
+measured with the earlier chunker, which kept the attribute list in the heading, found that
+section at rank 1 and stand; the results run again on 25 November with #571's chunker miss it, one
+answerable case lower at every k. The retrieval benchmark's `--check` refuses a run on another
+fingerprint, so the retrieval run is to be recorded again before it is checked next.
 
 ### Wording
 

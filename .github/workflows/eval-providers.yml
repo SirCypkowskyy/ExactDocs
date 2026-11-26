@@ -4,7 +4,7 @@ name: Retrieval eval (real providers)
 # pull request. It runs the retrieval eval suite (docs/evals/suite.md,
 # `just eval --configured-models --allow-providers`)
 # with one provider profile, `eval`, configured the way an operator configures ExactDocs
-# (EXACTDOCS_AI__..., docs/decisions/ai-retrieval.md):
+# (EXACTDOCS_AI__..., docs/decisions/ai-retrieval/configuration.md):
 #
 #   repository variables   EVAL_PROVIDER_KIND (e.g. openai-compatible, openai, anthropic, azure),
 #                          EVAL_PROVIDER_BASE_URL, EVAL_PROVIDER_API_VERSION (azure),

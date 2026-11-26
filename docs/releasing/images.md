@@ -38,7 +38,7 @@ gh workflow run ghcr-retention.yml -f dry-run=true   # shows what would be delet
 RUN-02: many installs only ever use BM25, so the wheel and the base image hold no models and no ML
 libraries. Operators who want AI retrieval should not have to build their own image, so the image
 comes in three variants, the build targets of one `deploy/Dockerfile` (#246; decision record
-[*Image variants*](../decisions/ai-retrieval.md#image-variants)).
+[*Image variants*](../decisions/ai-retrieval/local-models.md#image-variants)).
 
 CI enforces each budget with `deploy/check_artifacts.py`, in:
 

@@ -30,7 +30,7 @@ A ref that names no imported version but differs from exactly one of them only b
 extra leading `v` or `V` (`v1.10.0` for `1.10.0`, never `V1.0` for `v1.0`) reads that version, and the response says so in `notes` (absent
 otherwise). A ref that names no version is `404 not_found`, naming the library's versions, the
 most recently imported first (at most 20), and its default version. Search, `query-docs` and the
-MCP tools read refs the same way ([MCP](../mcp.md#tools)).
+MCP tools read refs the same way ([MCP](../mcp/tools.md)).
 
 ## Outlines
 

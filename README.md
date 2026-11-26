@@ -27,7 +27,7 @@
 <p align="center">
   <a href="https://sircypkowskyy.github.io/ExactDocs/"><b>Documentation</b></a> |
   <a href="#quick-start"><b>Quick start</b></a> |
-  <a href="docs/mcp.md"><b>MCP tools</b></a> |
+  <a href="docs/mcp/index.md"><b>MCP tools</b></a> |
   <a href="docs/benchmark/index.md"><b>Benchmark</b></a> |
   <a href="https://github.com/SirCypkowskyy/ExactDocs/releases"><b>Releases and changelog</b></a> |
   <a href="CONTRIBUTING.md"><b>Contributing</b></a>
@@ -158,7 +158,7 @@ browse, read and search one version: `list_libraries`, `list_articles`, `read_ar
 `article_outline`, `search_docs`, `search_all_docs` and `read_chunk`. In hosts with MCP Apps
 (Claude, ChatGPT), `view_article` and `view_search` show an article or search results as UI.
 Agents connect over Streamable HTTP with an API token or OAuth, or over stdio. Every tool is
-read-only and marks what it returns as untrusted content. See [MCP](docs/mcp.md).
+read-only and marks what it returns as untrusted content. See [MCP](docs/mcp/index.md).
 
 ### Search
 

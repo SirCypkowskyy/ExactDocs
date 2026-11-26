@@ -1,15 +1,15 @@
-# E3 Git import
+# E3 · MVP-1
 
 !!! abstract "TL;DR"
-    - **Goal:** Any git URL, public or private, imported fast, atomically and with visible problems.
-    - **Stories:** LIB-01, -02, -03, -04, -05, -06, -07, -11, IMP-01, IMP-05, IMP-06
-    - **Milestones:** MVP-1, MVP-2
-    - **Issues, in build order:** E3-01 to E3-04, E3-05a, E3-05b, E3-06, E3-07; MVP-2: E3-08 to E3-12
-    - **Status:** the epic ([#3](https://github.com/SirCypkowskyy/ExactDocs/issues/3)) is closed; GitHub holds the current issue bodies.
+    - **Milestone:** MVP-1
+    - **Issues, in build order:** E3-01 to E3-04, E3-05a, E3-05b, E3-06, E3-07
+    - **Stories:** LIB-01, -02, -04, -05, -07, -11, IMP-01, IMP-05, IMP-06
+    - A git URL is checked and gets a proposed ID, then only the chosen ref and paths are fetched
+      (blobless, shallow, sparse) and published as a complete version or nothing.
+    - Private repositories use an encrypted token or SSH deploy key; one bad file is skipped with
+      its reason, never failing the import.
 
-## E3 · MVP-1
-
-### E3-01 · feat: pasting a git URL validates the repository and proposes a library ID
+## E3-01 · feat: pasting a git URL validates the repository and proposes a library ID
 
 | Milestone | Labels | Area | Stories | Depends on | Size |
 |---|---|---|---|---|---|
@@ -52,7 +52,7 @@ Scenario: A taken ID asks for another one
 **Notes.** Decisions *Git*: no git hosting APIs, only `git`. A missing `git` binary is reported
 clearly at start (also covered by E10-03b).
 
-### E3-02 · feat: a library is created with its doc selection and a ref resolved to a commit
+## E3-02 · feat: a library is created with its doc selection and a ref resolved to a commit
 
 | Milestone | Labels | Area | Stories | Depends on | Size |
 |---|---|---|---|---|---|
@@ -88,7 +88,7 @@ Scenario: Exclusions win over inclusions
 **Notes.** The selection belongs to the library (Decisions *Library settings*). Import itself is
 E3-05a.
 
-### E3-03 · feat: imports fetch only the chosen ref and paths
+## E3-03 · feat: imports fetch only the chosen ref and paths
 
 | Milestone | Labels | Area | Stories | Depends on | Size |
 |---|---|---|---|---|---|
@@ -117,7 +117,7 @@ Scenario: Only the selected paths of one ref are fetched
 
 **Notes.** Decisions *Git*. Referenced images are MVP-2 (E3-10).
 
-### E3-04 · feat: private repositories import with an encrypted access token or SSH deploy key
+## E3-04 · feat: private repositories import with an encrypted access token or SSH deploy key
 
 | Milestone | Labels | Area | Stories | Depends on | Size |
 |---|---|---|---|---|---|
@@ -155,7 +155,7 @@ Scenario: Losing the secret key keeps the docs
 **Notes.** Decided SSH host-key policy: trust on first use for unknown hosts, pinned keys for
 the big three hosts, never silently accept a changed key.
 
-### E3-05a · feat: an import publishes a complete version or nothing
+## E3-05a · feat: an import publishes a complete version or nothing
 
 | Milestone | Labels | Area | Stories | Depends on | Size |
 |---|---|---|---|---|---|
@@ -192,7 +192,7 @@ Scenario: A failed import leaves the previous state served
 `DiscardPendingManifests`), ingestion → retrieval (`IndexManifest`, `DiscardPendingManifests`).
 `IndexManifest` already feeds the FTS5 index (E5-02), so imported versions are searchable.
 
-### E3-05b · feat: one bad file never fails an import, and the job lists every skipped file with its reason
+## E3-05b · feat: one bad file never fails an import, and the job lists every skipped file with its reason
 
 | Milestone | Labels | Area | Stories | Depends on | Size |
 |---|---|---|---|---|---|
@@ -223,7 +223,7 @@ Scenario: A Latin-1 file is decoded, not skipped
 
 **Notes.** The UI list is in E8-04.
 
-### E3-06 · feat: libraries get a title and description from the root README
+## E3-06 · feat: libraries get a title and description from the root README
 
 | Milestone | Labels | Area | Stories | Depends on | Size |
 |---|---|---|---|---|---|
@@ -254,7 +254,7 @@ Scenario: The user can edit them
 
 **Notes.** `context7.json` precedence is MVP-2 (E3-09). The UI edit is E8-10b.
 
-### E3-07 · feat: users add another version to an existing library
+## E3-07 · feat: users add another version to an existing library
 
 | Milestone | Labels | Area | Stories | Depends on | Size |
 |---|---|---|---|---|---|
@@ -281,106 +281,3 @@ Scenario: A second version uses the library's settings
 - [ ] behave scenario on the fixture repo
 
 **Notes.** UI in E8-10b; CLI `exactdocs version add` is MVP-2 (E6-03).
-
-## E3 · MVP-2
-
-### E3-08 · feat: users preview the matching files before importing
-
-| Milestone | Labels | Area | Stories | Depends on | Size |
-|---|---|---|---|---|---|
-| MVP-2 | `type: feature`<br/>`status: triage`<br/>`area: backend` | backend / ingestion | LIB-03 | E3-03 | M |
-
-**Context.** A wrong glob is only noticed after a long import. A dry run shows count, size and the
-file tree first, without storing anything. No sizes: `git ls-tree -l` lazily downloads every blob it
-lists (measured on a `--filter=blob:none --depth=1` clone), which defeats a dry run.
-
-```gherkin
-Scenario: A dry run lists files without storing anything
-  When a user previews the fixture repository at "v1.4.0" with paths "docs/**"
-  Then the matching files are listed with their count
-  And no library, version or job exists afterwards
-```
-
-- [ ] `POST /api/v1/repositories/preview` (URL, ref, patterns, optional credentials) fetches the tree only (no blobs) and returns paths, the total count and a truncated flag (no sizes: `ls-tree -l` downloads the blobs)
-- [ ] `exactdocs add --dry-run` prints the same list (moved to a follow-up issue, which depends on E6-02 and E3-08)
-- [ ] behave scenario; test that the database is unchanged
-
-### E3-09 · feat: a repository's `context7.json` pre-fills the library
-
-| Milestone | Labels | Area | Stories | Depends on | Size |
-|---|---|---|---|---|---|
-| MVP-2 | `type: feature`<br/>`status: triage`<br/>`area: backend` | backend / ingestion | LIB-06, LIB-07 (MVP-2), C7-02 (MVP-2 rules) | E3-02, E7-06 | M |
-
-**Context.** Many projects already describe their docs for context7; users should not repeat it.
-
-```gherkin
-Scenario: context7.json pre-fills the selection and rules
-  Given the fixture repository has a context7.json with folders "docs" and rules "Use v2 client"
-  When a user adds it
-  Then title, description and paths are pre-filled and still editable
-  And "query-docs" for the library includes the rule "Use v2 client"
-```
-
-- [ ] parses `projectTitle`, `description`, `folders`, `excludeFolders`, `excludeFiles`, `rules`, `previousVersions`; invalid file → warning, ignored
-- [ ] `context7.json` values take precedence over README defaults (LIB-07), user edits over both
-- [ ] `previousVersions` offered for import (REST field + UI list in E8-11)
-- [ ] `rules` stored on the library and returned by `query-docs`
-- [ ] fixture repo gains a `context7.json` on branch `next`
-
-### E3-10 · feat: images referenced by imported articles are imported too
-
-| Milestone | Labels | Area | Stories | Depends on | Size |
-|---|---|---|---|---|---|
-| MVP-2 | `type: feature`<br/>`status: triage`<br/>`area: backend` | backend / ingestion | LIB-02 (MVP-2), IMP-01 (MVP-2) | E3-05a | M |
-
-**Context.** Private-repo images do not load from the git host, and offline instances should
-render diagrams too.
-
-```gherkin
-Scenario: A referenced image is served from ExactDocs
-  Given an imported article references "img/flow.png" in the repository
-  When the article is read
-  Then the image is served by ExactDocs at the imported commit
-```
-
-- [ ] relative image references collected at parse time; sparse checkout adds them; per-image (default 2 MiB, as E3-05b) and per-version size caps, oversize listed as skipped
-- [ ] images stored by blob SHA (dedup) and served by `GET /api/v1/libraries/{owner}/{repo}/asset?ref=&path=` with the correct content type; SVG served with a restrictive CSP
-- [ ] tests on the fixture repo
-
-### E3-11 · feat: a killed import resumes where it stopped
-
-| Milestone | Labels | Area | Stories | Depends on | Size |
-|---|---|---|---|---|---|
-| MVP-2 | `type: feature`<br/>`status: triage`<br/>`area: backend` | backend / ingestion | IMP-05 (MVP-2), Decisions *Background jobs* | E3-05a | L |
-
-**Context.** Large imports should not restart from zero after a crash or deploy.
-
-```gherkin
-Scenario: A killed worker resumes without duplicates
-  Given an import of 200 files was killed after 120 files
-  When ExactDocs starts again
-  Then the import finishes from file 121
-  And the version has each article exactly once
-```
-
-- [ ] DBOS durable workflow replaces the in-process worker behind the job port (steps: fetch, per-batch parse/chunk, publish)
-- [ ] steps idempotent (content-addressed writes); the test kills the process mid-import
-- [ ] DBOS used only in `ingestion/adapters` and `bootstrap`; architecture tests green
-
-### E3-12 · feat: renames between versions are detected from git
-
-| Milestone | Labels | Area | Stories | Depends on | Size |
-|---|---|---|---|---|---|
-| MVP-2 | `type: feature`<br/>`status: triage`<br/>`area: backend` | backend / ingestion | supports TAG-01 (MVP-2), BRW-04 (MVP-2), MCP-04 (MVP-2) | E3-05a | M |
-
-**Context.** Manual tags, the version switcher and stale-chunk hints should follow a file that was
-moved, not lose it.
-
-```gherkin
-Scenario: A renamed article is linked across versions
-  Given "guide/setup.md" in "v1.3.0" was renamed to "guide/install.md" in "v1.4.0"
-  Then the rename map of "v1.4.0" maps "guide/setup.md" to "guide/install.md"
-```
-
-- [ ] on import, `git diff -M --name-status` against the previous version's commit (fetched shallowly) gives a rename map stored with the manifest
-- [ ] catalog port `ResolveRenamedPath(version, old_path)`; tests on the fixture rename

@@ -97,7 +97,7 @@ Rules around it:
 - A search in a hybrid mode answers BM25 with `embedding_in_progress` while the configured model's
   space does not cover the version. Otherwise the pipeline is given that space
   (`PipelineRequest.space`) and must search it, never the active one
-  ([Hybrid search](ai-retrieval.md#hybrid-search-92)).
+  ([Hybrid search](ai-retrieval/modes.md#hybrid-search-92)).
 - Saving over REST the profile the embedding role uses queues the embedding too
   (`bootstrap/embedding.py`), and the start queues what is missing in the background.
 - A search uses up its caller's LLM rate limit only once its version resolved.
