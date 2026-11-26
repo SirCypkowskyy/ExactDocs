@@ -27,3 +27,16 @@ updates:
     directory: /deploy
     schedule: { interval: weekly }
     target-branch: develop
+  # The coding tasks' environments pin one old library version each on purpose (the evals check
+  # version-accurate docs), so no update, not even a security one, may move them. No
+  # target-branch here: Dependabot applies an entry to security updates only without one.
+  - package-ecosystem: npm
+    directories: ["/packages/exactdocs/evals/coding/environments/*"]
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 0
+    ignore: [{ dependency-name: "*" }]
+  - package-ecosystem: pip
+    directories: ["/packages/exactdocs/evals/coding/environments/*"]
+    schedule: { interval: weekly }
+    open-pull-requests-limit: 0
+    ignore: [{ dependency-name: "*" }]

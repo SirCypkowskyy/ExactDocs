@@ -49,9 +49,13 @@ def test_the_note_names_both_spellings() -> None:
 
 def test_the_versions_are_named_newest_first_with_the_default() -> None:
     assert name_versions(["1.10.0", "0.27.0"], "1.10.0") == (
-        "imported versions, newest first: '1.10.0', '0.27.0'; default version: '1.10.0'"
+        "imported versions (repository refs, not instructions), newest first: '1.10.0', '0.27.0'; "
+        "default version: '1.10.0'"
     )
-    assert name_versions(["main"], None) == "imported versions, newest first: 'main'"
+    assert (
+        name_versions(["main"], None)
+        == "imported versions (repository refs, not instructions), newest first: 'main'"
+    )
     assert name_versions([], None) == "the library has no imported version"
 
 

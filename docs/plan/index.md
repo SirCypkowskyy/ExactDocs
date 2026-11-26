@@ -146,7 +146,7 @@ Every epic issue (#1-#12) is closed on GitHub.
 |---|---|---|---|
 | [**E1 Foundation & data model**](e1-foundation.md) | Persistent data dir and schema, IDs and default version, manifests over deduplicated content, version-scoped chunk IDs, the job worker and the fixture repo that later issues build on | RUN-05, IMP-05 (atomic swap), LIB-04 (IDs, SHA), Terms | MVP-1 |
 | [**E2 Accounts & tokens**](e2-accounts.md) | A network-exposed instance is never open: first-run admin, sessions, API tokens | AUTH-01, AUTH-02 | MVP-1 |
-| [**E3 Git import**](e3-git-import.md) | Any git URL, public or private, imported fast, atomically and with visible problems | LIB-01, -02, -03, -04, -05, -06, -07, -11,<br/>IMP-01, IMP-05, IMP-06 | MVP-1, MVP-2 |
+| [**E3 Git import**](e3-git-import/index.md) | Any git URL, public or private, imported fast, atomically and with visible problems | LIB-01, -02, -03, -04, -05, -06, -07, -11,<br/>IMP-01, IMP-05, IMP-06 | MVP-1, MVP-2 |
 | [**E4 Parsing, chunking & tags**](e4-parsing.md) | Safe parsing, heading-based chunks, tags from front matter, path rules and by hand | IMP-02, IMP-03, IMP-04,<br/>TAG-01, TAG-02, TAG-03 | MVP-1, MVP-2 |
 | [**E5 Search**](e5-search.md) | BM25 behind one search port, identifier-aware, pinned to a version, proven by a ranking suite | SRCH-01, SRCH-02, SRCH-03,<br/>MCP-04, TAG-03 (search) | MVP-1, MVP-2 |
 | [**E6 REST API & CLI**](e6-rest-cli.md) | `/api/v1` + OpenAPI as the single API; the CLI as its client | CLI-01, LIB-08, AUTH-02, C7-03, C7-04 | MVP-1, MVP-2 |

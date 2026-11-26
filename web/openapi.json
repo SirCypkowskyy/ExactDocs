@@ -19499,7 +19499,7 @@
           "local"
         ],
         "title": "ProviderKind",
-        "description": "What a provider profile talks to; each maps to one pydantic-ai provider and model class.\n\nSee the table in docs/decisions/ai-retrieval.md (*Provider abstraction*). Kinds whose SDK is\nnot in ``exactdocs[ai]`` (Bedrock, Groq, Mistral, Cohere, xAI, Hugging Face) are reached as\n``openai-compatible`` or through ``litellm``."
+        "description": "What a provider profile talks to; each maps to one pydantic-ai provider and model class.\n\nSee the table in docs/decisions/ai-retrieval/providers.md (*Provider abstraction*). Kinds whose\nSDK is not in ``exactdocs[ai]`` (Bedrock, Groq, Mistral, Cohere, xAI, Hugging Face) are reached\nas ``openai-compatible`` or through ``litellm``."
       },
       "ProviderListOut": {
         "properties": {

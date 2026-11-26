@@ -104,8 +104,8 @@ from exactdocs_kernel import OutboundNetwork
 class ProviderSettings(BaseModel):
     """A provider profile: ``EXACTDOCS_AI__PROVIDERS__<NAME>__<FIELD>``, ``[ai.providers.<name>]``.
 
-    See docs/decisions/ai-retrieval.md (*Provider abstraction*) for what each kind needs. The
-    TOML file may not hold ``api_key``: use ``api_key_file`` or the environment.
+    See docs/decisions/ai-retrieval/providers.md (*Provider abstraction*) for what each kind needs.
+    The TOML file may not hold ``api_key``: use ``api_key_file`` or the environment.
     """
 
     model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
@@ -1171,7 +1171,8 @@ class Settings(BaseSettings):
     """
     ai: AiSettings = Field(default_factory=AiSettings)
     """AI retrieval (`EXACTDOCS_AI__...`, or `[ai]` in the `EXACTDOCS_CONFIG_FILE` TOML file;
-    docs/decisions/ai-retrieval.md): the instance mode, provider profiles and model roles.
+    docs/decisions/ai-retrieval/configuration.md): the instance mode, provider profiles and model
+    roles.
     """
     search_backend: str = DATABASE_BACKEND
     """Where full-text search runs: `database` (the default: SQLite FTS5, or PostgreSQL's

@@ -19,7 +19,7 @@ and BM25 search. Everything in this section is optional.
 | Set up a production instance step by step | [Detailed setup](detailed-setup.md) |
 | Look up a setting of the data directory or the database | [Storage and database](storage.md) |
 | Set allowed hosts, the public URL, cookies or the secret key | [Security and the secret key](security.md) |
-| Let people sign in through OIDC, OAuth2, GitHub or Cloudflare Access | [Sign-in and access](sign-in.md) |
+| Let people sign in through OIDC, OAuth2, GitHub or Cloudflare Access | [Sign-in and access](sign-in/index.md) |
 | Change the bind address, import limits or the CLI's server | [Server, imports and the CLI](server.md) |
 | Choose a retrieval mode, model roles or an index backend | [Search and AI settings](ai.md) |
 | Export traces and metrics, or count usage | [Observability and usage counts](observability.md) |
@@ -36,7 +36,7 @@ Settings are environment variables named `EXACTDOCS_<SETTING>`. Nested settings 
 underscore, as in `EXACTDOCS_AI__MODE` or `EXACTDOCS_AI__PROVIDERS__CORP__KIND`. They can also come
 from a `.env` file in the working directory, or from a TOML file named by `EXACTDOCS_CONFIG_FILE`
 (for example the `[ai]` tables on [Search and AI models](../search/index.md), or the `[auth]` tables on
-[Sign-in and access](sign-in.md)).
+[Sign-in and access](sign-in/index.md)).
 
 When the same setting appears in several places, the environment wins over `.env`, and both win
 over the TOML file, field by field.

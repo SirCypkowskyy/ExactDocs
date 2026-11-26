@@ -5667,9 +5667,9 @@ export interface components {
          * ProviderKind
          * @description What a provider profile talks to; each maps to one pydantic-ai provider and model class.
          *
-         *     See the table in docs/decisions/ai-retrieval.md (*Provider abstraction*). Kinds whose SDK is
-         *     not in ``exactdocs[ai]`` (Bedrock, Groq, Mistral, Cohere, xAI, Hugging Face) are reached as
-         *     ``openai-compatible`` or through ``litellm``.
+         *     See the table in docs/decisions/ai-retrieval/providers.md (*Provider abstraction*). Kinds whose
+         *     SDK is not in ``exactdocs[ai]`` (Bedrock, Groq, Mistral, Cohere, xAI, Hugging Face) are reached
+         *     as ``openai-compatible`` or through ``litellm``.
          * @enum {string}
          */
         readonly ProviderKind: "openai-compatible" | "openai" | "openrouter" | "anthropic" | "azure" | "google-vertex" | "google" | "ollama" | "vllm" | "litellm" | "deepseek" | "together" | "fireworks" | "cerebras" | "github" | "vercel" | "moonshotai" | "heroku" | "nebius" | "ovhcloud" | "sambanova" | "alibaba" | "tei" | "local";
