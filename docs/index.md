@@ -92,7 +92,7 @@ those are imported. Branches stay fresh by hand, on a schedule or by webhook.
 ### The tools agents already know
 
 `resolve-library-id` and `query-docs` match context7's, so a client set up for context7 needs only
-a new URL. More tools list, browse, read and search one version. See [MCP](mcp.md).
+a new URL. More tools list, browse, read and search one version. See [MCP](mcp/index.md).
 
 </div>
 
@@ -183,7 +183,7 @@ a section that answers first for 70.4% of the 267 answerable questions and in th
 | Page | What is in it |
 |---|---|
 | [Getting started](getting-started/index.md) | Start the server, create the admin, import a library<br/>use the CLI, private repositories, the sources file, webhooks<br/>accounts, sign-in through an identity provider |
-| [MCP](mcp.md) | Connecting Claude, Cursor, VS Code and Codex; tokens; stdio; every tool and resource; context7 over REST |
+| [MCP](mcp/index.md) | Connecting Claude, Cursor, VS Code and Codex; tokens; stdio; every tool and resource; context7 over REST |
 | [Sources file](sources.md) | Declaring libraries in `exactdocs.sources.yaml`, with `sources plan` and `sources apply` |
 | [Configuration](configuration/index.md) | Every environment variable, the TOML file, sign-in providers and the secret key |
 | [Search and AI models](search/index.md) | Retrieval modes, chunking and tags, AI providers, reranking, agentic search, local models, budgets |

@@ -210,8 +210,8 @@ ai_providers = Table(
     Column("sealed_key", Text),
 )
 
-# The spend ledger (docs/decisions/ai-retrieval.md, *Cost and budgets*): one row per scope and UTC
-# window, added to atomically. US dollars are whole millionths, so additions stay exact.
+# The spend ledger (docs/decisions/ai-retrieval/cost.md, *Cost and budgets*): one row per scope and
+# UTC window, added to atomically. US dollars are whole millionths, so additions stay exact.
 ai_spend = Table(
     "retrieval_ai_spend",
     metadata,

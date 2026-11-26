@@ -22,7 +22,7 @@ image sets to `/data`, else the platform user-data directory (so `uvx` and stdio
   `foreign_keys=ON`.
 
 Next to it, DBOS keeps the durable state of running jobs in `jobs.sqlite` (its own schema and
-migrations; see [Background jobs](jobs.md)).
+migrations; see [Background jobs](jobs/index.md)).
 
 !!! tip "Back up the data directory as a whole"
 
@@ -161,7 +161,7 @@ extension is installed and builds the BM25 index if no valid one exists.
 ### Other differences
 
 - **Jobs and locks across processes:** see
-  [Several processes on PostgreSQL](jobs.md#several-processes-on-postgresql).
+  [Several processes on PostgreSQL](jobs/postgresql.md).
 - **Backup** is PostgreSQL's own (`pg_dump`): `exactdocs backup`/`restore` refuse it.
 - `EXACTDOCS_SECRET_KEY` is required: one key for every process, or credentials one stored could
   not be opened by another.
