@@ -49,6 +49,7 @@ nav = [
           "configuration/sign-in/index.md",
           { "GitHub, Discord, Google and Microsoft" = "configuration/sign-in/providers.md" },
           { "Cloudflare Access" = "configuration/sign-in/cloudflare-access.md" },
+          { "Role rules" = "configuration/sign-in/role-rules.md" },
         ] },
         { "Server, imports and the CLI" = "configuration/server.md" },
         { "Search and AI settings" = "configuration/ai.md" },
@@ -160,6 +161,7 @@ nav = [
         "architecture/identity/index.md",
         { "External sign-in (OIDC)" = "architecture/identity/oidc.md" },
         { "Library roles" = "architecture/identity/library-roles.md" },
+        { "Role rules" = "architecture/identity/role-rules.md" },
       ] },
       { "Usage counts" = "architecture/usage.md" },
       { "Background jobs" = [

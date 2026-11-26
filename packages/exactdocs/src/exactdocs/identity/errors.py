@@ -489,3 +489,17 @@ class LinkRefusedError(DomainError):
         self.code = refusal.code
         self.refusal = refusal
         self.return_to = return_to
+
+
+class InvalidRoleRuleError(ValidationError):
+    """A role rule names its source or its libraries in a form that cannot match anyone."""
+
+    code = "invalid_role_rule"
+
+    def __init__(self, reason: str) -> None:
+        """Create the error.
+
+        Args:
+            reason: What is wrong with the rule.
+        """
+        super().__init__(f"invalid role rule: {reason}")

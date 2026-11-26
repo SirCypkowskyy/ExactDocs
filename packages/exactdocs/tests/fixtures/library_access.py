@@ -23,6 +23,8 @@ class FakeAccess:
     """Each check made: the library and the role it needed."""
 
     creation_allowed: bool = True
+    private: set[str] = field(default_factory=set)
+    """The libraries said to be private."""
 
     async def can_create(self, library: str | None = None) -> bool:
         del library
@@ -39,6 +41,12 @@ class FakeAccess:
 
     async def claim(self, library: str) -> None:
         self.claimed.append(library)
+
+    async def set_private(self, library: str, *, private: bool) -> None:
+        if private:
+            self.private.add(library)
+        else:
+            self.private.discard(library)
 
     async def forget(self, library: str) -> None:
         self.forgotten.append(library)

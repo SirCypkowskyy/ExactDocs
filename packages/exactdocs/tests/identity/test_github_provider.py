@@ -17,8 +17,15 @@ from fake_oidc import CLIENT_ID, CLIENT_SECRET
 
 
 def provider(
-    client: httpx2.AsyncClient, fake: FakeGithub, allowed_orgs: tuple[str, ...] = ("acme",)
+    client: httpx2.AsyncClient,
+    fake: FakeGithub,
+    allowed_orgs: tuple[str, ...] = ("acme",),
+    rules: tuple[set[str], set[str]] | None = None,
 ) -> GithubProvider:
+    async def watched() -> tuple[frozenset[str], frozenset[str]]:
+        assert rules is not None
+        return frozenset(rules[0]), frozenset(rules[1])
+
     return GithubProvider(
         base_url=fake.issuer,
         api_url=fake.api_url,
@@ -28,6 +35,7 @@ def provider(
         allowed_orgs=allowed_orgs,
         allowed_teams=("acme/docs-readers",),
         client=client,
+        watched=None if rules is None else watched,
     )
 
 
@@ -171,3 +179,73 @@ async def test_pending_organization_is_not_active_membership(setup) -> None:
     fake.membership_state = "pending"
     with pytest.raises(GithubAccessDeniedError, match="not a member of an allowed organization"):
         await sign_in(p, fake)
+
+
+async def test_organizations_and_teams_named_in_rules_become_groups(setup) -> None:
+    fake, _, client = setup
+    fake.orgs.add("beta")
+    fake.teams += [("acme", "docs-writers"), ("acme", "unnamed")]
+    p = provider(client, fake, rules=({"acme", "beta"}, {"acme/docs-writers"}))
+
+    grant = await sign_in(p, fake)
+
+    assert grant.claims.groups == {
+        "github:acme/docs-readers",
+        "github:acme",
+        "github:beta",
+        "github:acme/docs-writers",
+    }
+
+
+async def test_a_team_named_only_in_a_rule_admits_nobody(setup) -> None:
+    fake, _, client = setup
+    fake.teams[:] = [("acme", "docs-writers")]
+    p = provider(client, fake, rules=(set(), {"acme/docs-writers"}))
+
+    with pytest.raises(GithubAccessDeniedError, match="not a member of an allowed team"):
+        await sign_in(p, fake)
+
+
+async def test_a_restricted_organization_named_only_in_a_rule_gives_no_group(setup) -> None:
+    fake, _, client = setup
+    fake.orgs.add("locked")
+    fake.restricted_orgs.add("locked")
+    fake.teams.append(("locked", "writers"))
+    p = provider(client, fake, rules=({"locked"}, {"locked/writers"}))
+
+    grant = await sign_in(p, fake)
+
+    assert grant.claims.groups == {"github:acme/docs-readers"}
+    assert any("/memberships/orgs/locked" in path for path in fake.requests)
+
+
+async def test_a_rules_organization_its_member_left_gives_no_group(setup) -> None:
+    fake, _, client = setup
+    p = provider(client, fake, rules=({"gone"}, {"gone/team"}))
+
+    assert (await sign_in(p, fake)).claims.groups == {"github:acme/docs-readers"}
+
+
+async def test_a_rules_organization_that_cannot_be_read_never_blocks_a_sign_in(setup) -> None:
+    fake, _, client = setup
+    fake.membership_state = "unexpected"  # every organization's answer is unusable
+    p = GithubProvider(
+        base_url=fake.issuer,
+        api_url=fake.api_url,
+        client_id=CLIENT_ID,
+        client_secret=lambda: CLIENT_SECRET,
+        redirect_uri="https://docs.example.com/callback",
+        allowed_orgs=(),
+        allowed_teams=(),
+        client=client,
+        watched=lambda: _targets({"acme"}, {"acme/docs-readers"}),
+    )
+    fake.fail_teams = True
+    fake.fallback_active = True
+    fake.fallback_state = "unexpected"
+
+    assert (await sign_in(p, fake)).claims.groups == frozenset()
+
+
+async def _targets(orgs: set[str], teams: set[str]) -> tuple[frozenset[str], frozenset[str]]:
+    return frozenset(orgs), frozenset(teams)

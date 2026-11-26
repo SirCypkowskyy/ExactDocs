@@ -7,6 +7,8 @@
     - Each provider admits people by `allowed_groups`, by GitHub membership filters, or by `allow_any_user = true`.
     - Behind Cloudflare Access, ExactDocs can sign people in by the identity Access already checked.
     - `[auth.library_creation]` limits who may create libraries; by default every signed-in user may.
+    - [Role rules](role-rules.md) map a provider's groups, role values, GitHub organizations and teams
+      to instance admin, library creation, or a library role on every library or on chosen ones.
 
 ## Pages
 
@@ -14,6 +16,7 @@
 |---|---|
 | [GitHub, Discord, Google and Microsoft](providers.md) | GitHub and GitHub Enterprise, organizations and teams, the Discord, Google and Microsoft presets |
 | [Cloudflare Access](cloudflare-access.md) | Access tokens, linking people by `sub`, service tokens |
+| [Role rules](role-rules.md) | groups, role values, GitHub organizations and teams mapped to roles, and how they combine |
 
 ## Sign-in providers
 
@@ -40,6 +43,9 @@ not valid stops the server at start, with a message naming the field.
 | `allowed_groups` | `[]` | Groups, as the provider names them, whose members may sign in |
 | `allow_any_user` | `false` | Admit everyone the provider vouches for.<br/>Either this, `allowed_groups`, or GitHub membership filters is required |
 | `admin_groups` | `[]` | Members of these groups get the role `admin`, everyone else `user`, decided again at every sign-in and revalidation |
+| `role_claim` | unset | OIDC and OAuth2: a claim, a dotted path, whose values [role rules](role-rules.md) can name (Entra ID app roles: `roles`; Keycloak client roles: `resource_access.<client>.roles`).<br/>Read beside the groups claim, from userinfo when the ID token lacks it |
+| `rules` | `[]` | [Role rules](role-rules.md) for the provider's accounts, `[[auth.providers.<name>.rules]]` |
+| `configured_rules_only` | `false` | Only `admin_groups` and `rules` apply to this provider; rules stored for it are ignored |
 | `groups_claim` | `groups` | The claim holding the groups, a dotted path (Keycloak: `realm_access.roles`; ADFS: `group`).<br/>Read from userinfo when the ID token lacks it |
 | `group_prefix` | empty | Put before each group name ExactDocs stores for the account (for example `corp:`).<br/>Matching against `allowed_groups` and `admin_groups` uses the provider's names |
 | `username_claim` | `preferred_username` | The claim that names a new account (ADFS: `upn` or `unique_name`); without it, the local part of the email.<br/>Read only when the account is created |
