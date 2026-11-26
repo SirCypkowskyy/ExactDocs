@@ -3,7 +3,7 @@
 !!! abstract "TL;DR"
     - `retrieval.json` records everything needed to recompute a result: the corpus commits, the
       environment, the models and settings, and every case's outcome.
-    - The recorded run (24 November 2026, 3 h 22 min on a 4-CPU aarch64 runner) covers BM25 and
+    - The recorded run (26 November 2026, 4 h 38 min on a 4-CPU x86_64 container) covers BM25 and
       the local models on a subset of the matrix. No hosted configuration has run yet.
     - BM25 scores recall@5 89.1% at `h2`, 87.6% at `default` and `merge-400`, and 85.8% at `h6`.
       `h2`'s lead is not significant (p 0.42), so the shipped default stays `default`.
@@ -51,15 +51,15 @@ still 1, and a report without them still reads.
 
 | Run | |
 |---|---|
-| Recorded | 24 November 2026, for #503 and #501 |
-| Golden set | with its alternatives marked (`sha256:a00997851150e3b0`) |
-| Workflow | the manual *Retrieval eval (real providers)*, `benchmark` ticked, local configurations only ([run 45353553786](https://github.com/SirCypkowskyy/ExactDocs/actions/runs/45353553786)) |
-| Machine | one self-hosted runner VM, Linux aarch64, 4 CPUs |
-| ExactDocs | `8e789e6` |
-| Time | 3 h 22 min |
+| Recorded | 26 November 2026, for #591 |
+| Golden set | the `config-both` case naming its heading as #571 cuts it (`sha256:100484c7ccdb1b89`) |
+| How | by hand, with the command below, local configurations only |
+| Machine | one cloud container, Linux x86_64, 4 CPUs |
+| ExactDocs | `08349c1` |
+| Time | 4 h 38 min |
 
 A full local matrix (three embedding models, each with and without the cross-encoder, at four
-chunkings) would take far longer there, so it ran on this subset:
+chunkings) would take far longer there, so it ran on the same subset as the run it replaces:
 
 - `bm25` and `hybrid:bge-small-en-v1.5` at every chunking configuration;
 - `bm25+ce` at `default`, `h6` and `h2`;
@@ -77,13 +77,17 @@ EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
 Every result keeps its per-case `rows`, so every one has intervals and a paired test against its
 budget's default (#489).
 
-### Time on that runner
+### Time on that machine
 
 | Step | Time |
 |---|---|
-| embedding the corpus, bge-small | 25 min at `default`<br/>32 at `h6`<br/>14 at `h2`<br/>23 at `merge-400` |
-| embedding the corpus, arctic-embed-s | 35 min |
-| the cross-encoder | about 2.5 s per question (32 candidates) |
+| embedding the corpus, bge-small | 38 min at `default`<br/>51 at `h6`<br/>20 at `h2`<br/>32 at `merge-400` |
+| embedding the corpus, arctic-embed-s | 43 min |
+| the cross-encoder | about 3.2 s per question (32 candidates; 2.7 s at `h2`) |
+
+The run it replaces took 25, 32, 14 and 23 minutes for bge-small, 35 for arctic-embed-s and
+about 2.5 s per question for the cross-encoder on a self-hosted aarch64 runner: the latencies in
+the report are this container's, 30% to 45% higher.
 
 ### What it found
 
@@ -107,8 +111,22 @@ budget's default (#489).
 
 ### The run it replaces
 
-It replaces a run of 23 and 24 November 2026 (the same subset on the same runner), scored by the
-rules before #503 and #501. Its numbers are not comparable:
+It replaces the run of 24 November 2026 (golden set `sha256:a00997851150e3b0`, ExactDocs
+`8e789e6`), from the manual *Retrieval eval (real providers)* workflow with `benchmark` ticked on
+a self-hosted aarch64 runner ([run 45353553786](https://github.com/SirCypkowskyy/ExactDocs/actions/runs/45353553786)).
+That run was made before #571, which takes a heading's `{#id}` out of its text; one case still
+named a heading with its `{#config-both}` and became a miss in every run after #571 (#591). The
+case now names the heading as the chunker cuts it, so it is answered as before.
+
+- BM25 and the cross-encoder give the same rank on every case, so the same numbers.
+- Hybrid's ranks moved in 2 to 7 cases per result (0 or 1 with the cross-encoder), in every
+  project, not only Pydantic's: the embeddings were computed on another machine (x86_64, not
+  aarch64) and with onnxruntime 1.32.0, not 1.31.0. That costs bge-small one case of recall@5 at
+  `default` (90.3% to 89.9%) and at `h6` (90.6% to 90.3%); `merge-400` and `h2` keep theirs.
+- No recommendation, significance or finding below changed.
+
+That run replaced one of 23 and 24 November 2026 (the same subset on the same runner), scored by
+the rules before #503 and #501, whose numbers are not comparable:
 
 - a chunk that held the expected section next to a sibling was a miss (BM25's recall@5 was 76.0%
   at `h2` and 74.2% at `merge-400`);

@@ -1,6 +1,6 @@
 {
   "schema_version": 2,
-  "golden": "sha256:a00997851150e3b0",
+  "golden": "sha256:100484c7ccdb1b89",
   "cases": 321,
   "projects": [
     "starlette",
@@ -87,13 +87,13 @@
     }
   ],
   "environment": {
-    "exactdocs_commit": "8e789e67177adf9514418b566473dca937ca638d",
+    "exactdocs_commit": "08349c19d4fec0630e61b7f4394797373409af38",
     "python": "3.14.6",
     "platform": "Linux x86_64",
     "cpus": "4",
-    "exactdocs": "0.0.0.post109.dev0+c85c7b3",
+    "exactdocs": "0.0.0.post144.dev0+e621fa7",
     "fastembed": "0.9.1",
-    "onnxruntime": "1.31.0",
+    "onnxruntime": "1.32.0",
     "pydantic-ai-slim": "2.60.0",
     "pydantic-evals": "2.60.0"
   },
@@ -177,8 +177,8 @@
         "unanswerable_clean_rate": 1.0,
         "no_answer_rate": 0.0,
         "answerable_empty_rate": 0.0,
-        "latency_p50_ms": 79.285,
-        "latency_p95_ms": 120.812,
+        "latency_p50_ms": 54.959,
+        "latency_p95_ms": 79.356,
         "tokens_per_question": 0.0,
         "usd_per_question": 0.0,
         "intervals": {
@@ -252,8 +252,8 @@
           "unanswerable_clean_rate": 1.0,
           "no_answer_rate": 0.0,
           "answerable_empty_rate": 0.0,
-          "latency_p50_ms": 79.285,
-          "latency_p95_ms": 120.812,
+          "latency_p50_ms": 54.959,
+          "latency_p95_ms": 79.356,
           "tokens_per_question": 0.0,
           "usd_per_question": 0.0,
           "intervals": {
@@ -394,8 +394,8 @@
         "unanswerable_clean_rate": 1.0,
         "no_answer_rate": 0.0,
         "answerable_empty_rate": 0.0,
-        "latency_p50_ms": 109.12,
-        "latency_p95_ms": 165.815,
+        "latency_p50_ms": 79.713,
+        "latency_p95_ms": 118.159,
         "tokens_per_question": 0.0,
         "usd_per_question": 0.0,
         "intervals": {
@@ -469,8 +469,8 @@
           "unanswerable_clean_rate": 1.0,
           "no_answer_rate": 0.0,
           "answerable_empty_rate": 0.0,
-          "latency_p50_ms": 109.12,
-          "latency_p95_ms": 165.815,
+          "latency_p50_ms": 79.713,
+          "latency_p95_ms": 118.159,
           "tokens_per_question": 0.0,
           "usd_per_question": 0.0,
           "intervals": {
@@ -529,15 +529,15 @@
           }
         },
         "results_per_question": 10.0,
-        "version_neutral_share": 0.7215,
+        "version_neutral_share": 0.7218,
         "unmatched_share": 0.0,
-        "context_tokens_per_question": 2875.7,
+        "context_tokens_per_question": 2874.4,
         "context_tokens_p95": 5345.0,
-        "tokens_to_first_hit": 583.1,
+        "tokens_to_first_hit": 582.9,
         "facts_found_rate": 0.8424
       },
       "facts_in_expected_sections": 0.8062,
-      "facts_in_other_results": 0.2125
+      "facts_in_other_results": 0.2144
     },
     {
       "chunking": "h2",
@@ -611,8 +611,8 @@
         "unanswerable_clean_rate": 1.0,
         "no_answer_rate": 0.0,
         "answerable_empty_rate": 0.0,
-        "latency_p50_ms": 46.493,
-        "latency_p95_ms": 76.233,
+        "latency_p50_ms": 32.843,
+        "latency_p95_ms": 43.062,
         "tokens_per_question": 0.0,
         "usd_per_question": 0.0,
         "intervals": {
@@ -686,8 +686,8 @@
           "unanswerable_clean_rate": 1.0,
           "no_answer_rate": 0.0,
           "answerable_empty_rate": 0.0,
-          "latency_p50_ms": 46.493,
-          "latency_p95_ms": 76.233,
+          "latency_p50_ms": 32.843,
+          "latency_p95_ms": 43.062,
           "tokens_per_question": 0.0,
           "usd_per_question": 0.0,
           "intervals": {
@@ -835,8 +835,8 @@
         "unanswerable_clean_rate": 1.0,
         "no_answer_rate": 0.0,
         "answerable_empty_rate": 0.0,
-        "latency_p50_ms": 74.262,
-        "latency_p95_ms": 99.014,
+        "latency_p50_ms": 46.306,
+        "latency_p95_ms": 65.019,
         "tokens_per_question": 0.0,
         "usd_per_question": 0.0,
         "intervals": {
@@ -910,8 +910,8 @@
           "unanswerable_clean_rate": 1.0,
           "no_answer_rate": 0.0,
           "answerable_empty_rate": 0.0,
-          "latency_p50_ms": 74.262,
-          "latency_p95_ms": 99.014,
+          "latency_p50_ms": 46.306,
+          "latency_p95_ms": 65.019,
           "tokens_per_question": 0.0,
           "usd_per_question": 0.0,
           "intervals": {
@@ -970,9 +970,9 @@
           }
         },
         "results_per_question": 10.0,
-        "version_neutral_share": 0.733,
+        "version_neutral_share": 0.7327,
         "unmatched_share": 0.0,
-        "context_tokens_per_question": 3534.0,
+        "context_tokens_per_question": 3534.9,
         "context_tokens_p95": 5957.0,
         "tokens_to_first_hit": 656.2,
         "facts_found_rate": 0.8714

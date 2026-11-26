@@ -190,14 +190,16 @@ What this means for the results:
 - Until #501, recall@k counted only the first listed section, and these sections counted for
   nDCG@10 and section recall as parts the answer also needed.
 
-The golden set's fingerprint changed twice, and the [ingestion run](ingestion.md) and the
-[retrieval run](retrieval.md) were recorded again each time:
+The golden set's fingerprint changed three times, and the [ingestion run](ingestion.md) and the
+[retrieval run](retrieval.md) were recorded again each time (the last time also the text scorer's
+calibration and the [Grounded Docs run](comparison.md)):
 
 | Change | Fingerprint |
 |---|---|
 | before the review | `sha256:39f6f9d5e909d128` |
 | the fixes | `sha256:7dd51c59057c279a` |
 | marking the alternatives | `sha256:a00997851150e3b0` |
+| the `config-both` case names its heading without `{#config-both}`, as the chunker cuts it since #571 | `sha256:100484c7ccdb1b89` |
 
 ### Wording
 
