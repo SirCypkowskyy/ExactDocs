@@ -168,7 +168,7 @@ jobs:
   # make a network namespace, CPU, memory and time limits).
   coding-tasks:
     name: Coding tasks (references pass, other versions fail)
-    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

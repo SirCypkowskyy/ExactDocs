@@ -8,7 +8,7 @@
       fixed-window RAG.
     - None of it changes what ExactDocs ships. A variant that wins significantly gets a follow-up
       issue to ship it.
-    - It runs by hand and resumes where it stopped. A full grid is meant for the self-hosted runner.
+    - It runs by hand and resumes where it stopped, so a full grid can run in parts.
 
 The grid tries:
 
@@ -154,4 +154,4 @@ By hand.
   their numbers are never results.
 - A full grid embeds the corpus once per embedding cell: about 50 minutes per chunking for
   `bge-base` on a 4-CPU runner (see [the recorded run](retrieval-runs.md#the-recorded-run)). So it
-  is meant for the self-hosted runner.
+  runs in parts: a hosted runner stops a job after 6 hours, and the grid resumes where it stopped.

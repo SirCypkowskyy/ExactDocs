@@ -67,8 +67,8 @@ env:
   EVAL_LLM_MODEL: ${{ vars.EVAL_LLM_MODEL }}
   EVAL_JUDGE_MODEL: ${{ vars.EVAL_JUDGE_MODEL }}
 
-# Runners (docs/releasing/runners.md "CI/CD and runners"): GitHub-hosted. The eval on ubuntu-24.04; the
-# benchmark on ubuntu-24.04-arm, the platform of the recorded runs in evals/results/ (Linux
+# Runners (docs/releasing/runners.md "CI/CD and runners"): GitHub-hosted. The eval and Context7 on
+# ubuntu-24.04; the benchmark on ubuntu-24.04-arm, the platform of the recorded runs in evals/results/ (Linux
 # aarch64, 4 CPUs), so its latencies compare with theirs. A hosted job stops after 6 hours.
 jobs:
   eval:
@@ -191,7 +191,7 @@ jobs:
   context7:
     name: Context7 on the golden set
     if: ${{ inputs.context7 }}
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
     environment: eval-providers # its protection rules decide who may spend the keys
     steps:

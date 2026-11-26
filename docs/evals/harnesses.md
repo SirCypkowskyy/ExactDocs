@@ -201,7 +201,7 @@ just harness-bench run ... --resume
 ### The manual workflow
 
 *Harness benchmark (real providers)* (`.github/workflows/harness-bench.yml`, `workflow_dispatch`
-only, environment `eval-providers`, the self-hosted runner) runs the same command and uploads the
+only, environment `eval-providers`, `ubuntu-24.04`) runs the same command and uploads the
 report and every run's transcript as the artifact `harness-bench`.
 
 | Input | What it is |

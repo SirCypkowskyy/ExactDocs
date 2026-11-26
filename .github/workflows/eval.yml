@@ -19,10 +19,10 @@ permissions:
 jobs:
   eval:
     name: Retrieval eval
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
-    # On the self-hosted runner in both modes: the heaviest job, and nothing in it needs x86. The
-    # gating steps take about 10 minutes on a 2-4 core runner, the report-only local models most
-    # of the rest.
+    runs-on: ubuntu-24.04
+    # GitHub-hosted (docs/releasing/runners.md "CI/CD and runners"). The heaviest job: the gating
+    # steps take about 10 minutes on a 2-4 core runner, the report-only local models most of the
+    # rest.
     timeout-minutes: 75
     services:
       postgres:

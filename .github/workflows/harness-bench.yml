@@ -54,12 +54,12 @@ env:
   FORCE_COLOR: "1"
   PYDANTIC_AI_NO_BANNER: "1"
 
-# Runner: the self-hosted ARM64 runner (docs/releasing/runners.md "CI/CD and runners"), with
-# Docker; it uses none of the GitHub-hosted minutes.
+# Runner: GitHub-hosted ubuntu-24.04 (docs/releasing/runners.md "CI/CD and runners"), which has
+# Docker. A hosted job stops after 6 hours: the timeout below is that maximum.
 jobs:
   bench:
     name: Harness benchmark with real providers
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
     environment: eval-providers # its protection rules decide who may spend the keys
     env:
@@ -84,7 +84,7 @@ jobs:
       - name: Install
         run: uv sync --locked
       # The keys are given to this step only, not to `uv sync` (third-party build backends) or the
-      # other steps of this persistent runner. Each CLI's container gets only its provider's key,
+      # other steps. Each CLI's container gets only its provider's key,
       # passed by name.
       - name: Harness benchmark (just harness-bench run)
         env:

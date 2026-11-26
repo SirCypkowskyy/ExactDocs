@@ -127,8 +127,8 @@ Two sandboxes enforce the same `Limits`, and every report says how (`isolation`)
 - The container is `debian:trixie-slim`, pinned by digest.
 - The interpreters (uv's Python, Node) are the host's, mounted read-only where they were
   installed, so both sandboxes run the same install.
-- The self-hosted CI runner cannot make a network namespace, so CI's check runs there without
-  network isolation, and says so. It runs only the repository's own solutions.
+- On a CI runner that cannot make a network namespace the check runs without network
+  isolation, and says so. It runs only the repository's own solutions.
 
 ## Evaluators and the report
 
