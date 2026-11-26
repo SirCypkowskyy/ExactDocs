@@ -13,7 +13,7 @@ env:
 
 jobs:
   retrieval:
-    if: contains(github.event.head_commit.message, '[record]')
+    if: contains(github.event.head_commit.message, '[record]') || contains(github.event.head_commit.message, '[rest]')
     name: retrieval ${{ matrix.shard }}
     runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
     timeout-minutes: 420
@@ -21,22 +21,8 @@ jobs:
       fail-fast: false
       max-parallel: 3 # leaves runners for the other branches' CI
       matrix:
-        include:
-          - shard: default
-            chunkings: default
-            configs: bm25,bm25+ce,hybrid:bge-small-en-v1.5,hybrid:bge-small-en-v1.5+ce
-          - shard: h6-a
-            chunkings: h6
-            configs: bm25,bm25+ce,hybrid:snowflake-arctic-embed-s
-          - shard: h6-b
-            chunkings: h6
-            configs: hybrid:bge-small-en-v1.5,hybrid:bge-small-en-v1.5+ce
-          - shard: h2
-            chunkings: h2
-            configs: bm25,bm25+ce,hybrid:bge-small-en-v1.5
-          - shard: merge-400
-            chunkings: merge-400
-            configs: bm25,hybrid:bge-small-en-v1.5
+        # [rest]: only the shards a run started with [record] has not reached yet
+        include: ${{ contains(github.event.head_commit.message, '[rest]') && fromJSON('[{"shard": "h2", "chunkings": "h2", "configs": "bm25,bm25+ce,hybrid:bge-small-en-v1.5"}, {"shard": "merge-400", "chunkings": "merge-400", "configs": "bm25,hybrid:bge-small-en-v1.5"}]') || fromJSON('[{"shard": "default", "chunkings": "default", "configs": "bm25,bm25+ce,hybrid:bge-small-en-v1.5,hybrid:bge-small-en-v1.5+ce"}, {"shard": "h6-a", "chunkings": "h6", "configs": "bm25,bm25+ce,hybrid:snowflake-arctic-embed-s"}, {"shard": "h6-b", "chunkings": "h6", "configs": "hybrid:bge-small-en-v1.5,hybrid:bge-small-en-v1.5+ce"}, {"shard": "h2", "chunkings": "h2", "configs": "bm25,bm25+ce,hybrid:bge-small-en-v1.5"}, {"shard": "merge-400", "chunkings": "merge-400", "configs": "bm25,hybrid:bge-small-en-v1.5"}]') }}
     env:
       EXACTDOCS_MODELS_DIR: ${{ github.workspace }}/.models
     steps:
