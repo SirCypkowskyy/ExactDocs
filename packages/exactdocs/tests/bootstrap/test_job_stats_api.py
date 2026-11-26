@@ -177,7 +177,11 @@ async def test_a_job_names_the_account_of_the_session_or_token_that_queued_it(
 
     for response in (by_session, by_token):
         job = await get(client, response.headers["Location"].removeprefix("http://localhost"))
-        assert job["created_by"] == {"id": ADA, "username": "ada", "via": None}  # nothing of the token
+        assert job["created_by"] == {
+            "id": ADA,
+            "username": "ada",
+            "via": None,
+        }  # nothing of the token
         assert job["origin"] == "manual"
     listed = await get(client, "/api/v1/jobs", kind="reprocess")
     assert [j["created_by"]["username"] for j in listed["jobs"]] == ["ada", "ada"]
