@@ -1,0 +1,118 @@
+name: Re-record 598 (temporary)
+
+# Temporary, on chore/598-record only: records the benchmark runs for #598 on the GCP runners.
+on:
+  push:
+    branches: [chore/598-record]
+
+permissions:
+  contents: read
+
+env:
+  FORCE_COLOR: "1"
+
+jobs:
+  retrieval:
+    if: contains(github.event.head_commit.message, '[record]')
+    name: retrieval ${{ matrix.shard }}
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
+    timeout-minutes: 420
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: default
+            chunkings: default
+            configs: bm25,bm25+ce,hybrid:bge-small-en-v1.5,hybrid:bge-small-en-v1.5+ce
+          - shard: h6-a
+            chunkings: h6
+            configs: bm25,bm25+ce,hybrid:snowflake-arctic-embed-s
+          - shard: h6-b
+            chunkings: h6
+            configs: hybrid:bge-small-en-v1.5,hybrid:bge-small-en-v1.5+ce
+          - shard: h2
+            chunkings: h2
+            configs: bm25,bm25+ce,hybrid:bge-small-en-v1.5
+          - shard: merge-400
+            chunkings: merge-400
+            configs: bm25,hybrid:bge-small-en-v1.5
+    env:
+      EXACTDOCS_MODELS_DIR: ${{ github.workspace }}/.models
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: >-
+          uv run exactdocs models pull BAAI/bge-small-en-v1.5 Xenova/ms-marco-MiniLM-L-6-v2
+          snowflake/snowflake-arctic-embed-s
+      - run: >-
+          uv run python packages/exactdocs/evals/run_retrieval_bench.py
+          --chunkings ${{ matrix.chunkings }} --configs '${{ matrix.configs }}'
+          --out reports/${{ matrix.shard }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: retrieval-${{ matrix.shard }}
+          path: reports/
+          retention-days: 30
+
+  offline:
+    if: contains(github.event.head_commit.message, '[record]')
+    name: ${{ matrix.bench }}
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - bench: ingestion
+            run: run_ingestion_bench.py --out reports/ingestion
+          - bench: text-scorer
+            run: run_text_bench.py --chunkings default,h6,h2,merge-400 --out reports/text-scorer
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run python packages/exactdocs/evals/${{ matrix.run }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: ${{ matrix.bench }}
+          path: reports/
+          retention-days: 30
+
+  grounded:
+    if: contains(github.event.head_commit.message, '[grounded]')
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
+    timeout-minutes: 300
+    env:
+      EXACTDOCS_MODELS_DIR: ${{ github.workspace }}/.models
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - run: uv sync --locked
+      - run: uv run exactdocs models pull BAAI/bge-small-en-v1.5
+      - run: >-
+          uv run python packages/exactdocs/evals/run_grounded_bench.py
+          --home "$RUNNER_TEMP/grounded-docs" --out reports/grounded
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: grounded
+          path: reports/
+          retention-days: 30
