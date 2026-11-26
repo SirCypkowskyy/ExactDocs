@@ -134,6 +134,7 @@ nav = [
       { "Code, order of work, dependencies" = "decisions/ai-retrieval/delivery.md" },
       { "Sign-in for Teams" = "decisions/ai-retrieval/sign-in.md" },
     ] },
+    { "Documentation pages stay under 16 KiB" = "decisions/page-size.md" },
   ] },
   { "Engineering" = [
     { "Architecture" = [
