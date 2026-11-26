@@ -228,7 +228,7 @@ html {
 }
 
 /* Scrolling boxes take the ring inside, so it is not cut off by their own overflow. */
-.md-typeset :is(pre > code, table:not([class])):focus-visible,
+.md-typeset :is(pre > code, table:not([class]), .md-typeset__scrollwrap, .tabbed-labels):focus-visible,
 .md-sidebar__scrollwrap:focus-visible {
   outline-offset: -2px;
 }
