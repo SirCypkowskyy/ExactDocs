@@ -3,11 +3,13 @@
 Each page under ``docs/benchmark/`` holds generated blocks between ``<!-- bench:<name> -->`` and
 ``<!-- /bench -->``; everything around them is written by hand. This rewrites the blocks from
 ``evals/results/*.json`` (ingestion, retrieval, agent, and other tools' runs such as
-``grounded-docs.json``) and the golden set, with the benchmarks' own Markdown renderers, and with
-``--check`` fails when a page differs from what they give. See docs/benchmark/method.md.
+``grounded-docs.json``) and the golden set, with the benchmarks' own Markdown renderers, adds the
+reports' new rows to ``results/history.json`` (``bench_history``), and with ``--check`` fails when
+a page or the history differs from what they give. See docs/benchmark/method/runs.md.
 """
 
 import argparse
+import json
 import re
 import sys
 from collections import Counter
@@ -18,6 +20,7 @@ from typing import Final, get_args
 from agent_bench.arms import CONTEXT7, GROUNDED_DOCS
 from agent_bench.report import BenchReport
 from agent_bench.report import markdown as agent_markdown
+from retrieval_eval import bench_history
 from retrieval_eval.dataset import GoldenKind
 from retrieval_eval.golden import load_cases, load_corpus
 from retrieval_eval.golden_review import load_review, review_block
@@ -31,6 +34,8 @@ from retrieval_eval.retrieval_bench import markdown as retrieval_markdown
 
 RESULTS: Final[Path] = Path(__file__).parents[1] / "results"
 PAGES: Final[Path] = Path(__file__).parents[4] / "docs" / "benchmark"
+HISTORY: Final[Path] = RESULTS / "history.json"
+"""Every recorded run, one row per result (``bench_history``)."""
 GRID_RESULTS: Final[str] = "retrieval-grid-rank1.json"
 """The recorded run of the grid's rank-1 cells (#575), in ``RESULTS``."""
 GRID_GROUPED: Final[str] = "retrieval-grid-grouped.json"
@@ -193,7 +198,18 @@ def agent_blocks(report: BenchReport) -> dict[str, str]:
     return {"agent-run": "\n".join(run), "agent": _body(agent_markdown(report))}
 
 
-def blocks(results: Path = RESULTS) -> dict[str, str]:
+def history(results: Path = RESULTS) -> list[bench_history.Row]:
+    """The recorded history with the current reports' new rows (dated today).
+
+    Returns:
+        The rows.
+    """
+    path = results / HISTORY.name
+    recorded = json.loads(path.read_text("utf-8")) if path.exists() else []
+    return bench_history.merge(recorded, bench_history.rows_of(results), bench_history.today())
+
+
+def blocks(results: Path = RESULTS, rows: list[bench_history.Row] | None = None) -> dict[str, str]:
     """Every generated block, by name.
 
     Returns:
@@ -216,6 +232,7 @@ def blocks(results: Path = RESULTS) -> dict[str, str]:
         for name, file in grids.items()
         if (results / file).exists()
     }
+    rows = history(results) if rows is None else rows
     return {
         "golden": golden_block(),
         "golden-review": review_block(load_review()),
@@ -224,6 +241,10 @@ def blocks(results: Path = RESULTS) -> dict[str, str]:
         **agent_blocks(agent),
         **competitors,
         **rank_one,
+        **{
+            f"history-{family}": bench_history.table(rows, family)
+            for family in bench_history.COLUMNS
+        },
     }
 
 
@@ -250,9 +271,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true", help="fail when a page is out of date")
     parser.add_argument("--pages", type=Path, default=PAGES, help="the benchmark pages")
     args = parser.parse_args(argv)
-    generated = blocks()
+    rows = history()
+    generated = blocks(rows=rows)
     stale = []
-    for path in sorted(args.pages.glob("*.md")):
+    recorded = bench_history.dumps(rows)
+    if not HISTORY.exists() or HISTORY.read_text("utf-8") != recorded:
+        stale.append(HISTORY)
+        if not args.check:
+            HISTORY.write_text(recorded, "utf-8")
+    for path in sorted(args.pages.rglob("*.md")):
         page = path.read_text("utf-8")
         new = render(page, generated)
         if new == page:

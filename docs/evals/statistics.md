@@ -64,6 +64,6 @@ Each comes with the difference and its paired bootstrap interval. The summary sh
 in brackets and the tests under *Against the budget's default*.
 
 The definitions, and why mid-p and a permutation test, are in
-[Intervals and significance](../benchmark/method.md#intervals-and-significance). The code is
+[Intervals and significance](../benchmark/method/metrics.md#intervals-and-significance). The code is
 `retrieval_eval/stats.py`, tested on synthetic runs with known answers in
 `tests/evals/test_stats.py`.

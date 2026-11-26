@@ -10,7 +10,11 @@ site_url = "https://sircypkowskyy.github.io/ExactDocs/"
 repo_url = "https://github.com/SirCypkowskyy/ExactDocs"
 repo_name = "SirCypkowskyy/ExactDocs"
 edit_uri = "edit/develop/docs/"
-extra_javascript = ["https://unpkg.com/mermaid@12.3.0/dist/mermaid.min.js"]
+# bench-history.js: the benchmark history tables' sorting, filters and chart (docs/benchmark/*/history.md).
+extra_javascript = [
+  "https://unpkg.com/mermaid@12.3.0/dist/mermaid.min.js",
+  "javascripts/bench-history.js",
+]
 # The web UI's colours (web/DESIGN.md, "The Headlamp"), the logo swap for the dark scheme, and the
 # home page's hero and grid.
 extra_css = ["stylesheets/extra.css"]
@@ -135,6 +139,9 @@ nav = [
       { "Sign-in for Teams" = "decisions/ai-retrieval/sign-in.md" },
     ] },
     { "Documentation pages stay under 16 KiB" = "decisions/page-size.md" },
+    { "Benchmark history" = "decisions/benchmark-history.md" },
+    { "Eval environments and Dependabot" = "decisions/eval-environments-dependabot.md" },
+    { "Adding libraries over MCP" = "decisions/mcp-write-tools.md" },
     { "CI runs on our GCP self-hosted runners" = "decisions/ci-runners.md" },
   ] },
   { "Engineering" = [
@@ -234,25 +241,49 @@ nav = [
   { "Benchmark" = [
     "benchmark/index.md",
     { "Golden set" = "benchmark/golden-set.md" },
-    { "Method" = "benchmark/method.md" },
-    { "Ingestion results" = "benchmark/ingestion.md" },
-    { "Retrieval results" = "benchmark/retrieval.md" },
-    { "Agent results" = "benchmark/agent.md" },
-    { "Comparison with other tools" = "benchmark/comparison.md" },
+    { "Method" = [
+      "benchmark/method/index.md",
+      { "Metrics and statistics" = "benchmark/method/metrics.md" },
+      { "Running and refreshing" = "benchmark/method/runs.md" },
+    ] },
+    { "Ingestion results" = [
+      "benchmark/ingestion/index.md",
+      { "Every run" = "benchmark/ingestion/history.md" },
+    ] },
+    { "Retrieval results" = [
+      "benchmark/retrieval/index.md",
+      { "Every result" = "benchmark/retrieval/results.md" },
+      { "Rank 1 at no more context" = "benchmark/retrieval/rank-one.md" },
+      { "Rank 1: every table" = "benchmark/retrieval/rank-one-tables.md" },
+      { "Grouped by article" = "benchmark/retrieval/grouping.md" },
+      { "Every run" = "benchmark/retrieval/history.md" },
+    ] },
+    { "Agent results" = [
+      "benchmark/agent/index.md",
+      { "Every table" = "benchmark/agent/results.md" },
+      { "Runs" = "benchmark/agent/runs.md" },
+      { "Every run" = "benchmark/agent/history.md" },
+    ] },
+    { "Comparison with other tools" = [
+      "benchmark/comparison/index.md",
+      { "How Grounded Docs was measured" = "benchmark/comparison/grounded-docs.md" },
+      { "Grounded Docs: every table" = "benchmark/comparison/grounded-docs-results.md" },
+      { "Every run" = "benchmark/comparison/history.md" },
+    ] },
     { "Recommended defaults" = "benchmark/defaults.md" },
   ] },
 ]
 
 [project.theme]
 language = "en"
-# The mole of the web UI's band (web/src/shared/ui/wordmark.tsx, `Mark`): the small-size cut from
-# web/public/brand/, copied to docs/assets/logo/. extra.css swaps it for the on-dark cut in the dark
-# scheme. The favicon is the web UI's favicon.svg.
-logo = "assets/logo/exactdocs-mark-small.svg"
+# The lockup of the web UI's band (web/src/shared/ui/wordmark.tsx, `Wordmark`), copied from
+# web/public/brand/ to docs/assets/logo/. extra.css swaps it for the dark cut in the dark scheme.
+# The favicon is the web UI's favicon.svg.
+logo = "assets/logo/exactdocs-lockup-light.svg"
 favicon = "assets/logo/favicon.svg"
-# The web UI's faces (web/DESIGN.md, "Typography").
-font.text = "Schibsted Grotesk"
-font.code = "JetBrains Mono"
+# The web UI's faces (web/DESIGN.md, "Typography"), self-hosted like the UI's: no Google Fonts.
+# docs/stylesheets/fonts.css loads them from docs/assets/fonts/ and extra.css names them.
+font = false
 features = [
   "content.action.edit",
   "content.code.annotate",
