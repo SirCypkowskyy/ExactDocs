@@ -487,7 +487,28 @@
 
 /* docs/javascripts/bench-history.js: the filters over a history table, its sortable headers and
    the chart over it (the history.md page of each benchmark). Without the script none of this
-   shows. */
+   shows. Controls, icons and chart colours follow the web UI (web/DESIGN.md): 36 px controls with
+   6 px corners, lucide's sort arrows, one grey for every series and the route for the lit one. */
+:root,
+[data-md-color-scheme="default"] {
+  --xd-chart-series: #6b6c72;
+}
+
+[data-md-color-scheme="slate"] {
+  --xd-chart-series: #8b8b94;
+}
+
+@media (prefers-contrast: more) {
+  :root,
+  [data-md-color-scheme="default"] {
+    --xd-chart-series: #4f5055;
+  }
+
+  [data-md-color-scheme="slate"] {
+    --xd-chart-series: #a0a0a8;
+  }
+}
+
 .md-typeset .bench-history__filters {
   display: flex;
   flex-wrap: wrap;
@@ -499,20 +520,25 @@
 
 .md-typeset .bench-history__filters label,
 .md-typeset .bench-history__chart > label {
-  display: inline-flex;
+  display: flex;
   flex-direction: column;
   gap: 0.15rem;
   color: var(--xd-muted);
 }
 
+.md-typeset .bench-history__chart > label {
+  display: inline-flex;
+}
+
 .md-typeset .bench-history :is(select, input) {
-  min-height: 2rem;
-  padding: 0.2rem 0.4rem;
+  box-sizing: border-box;
+  height: 36px;
+  padding: 0 0.5rem;
   font: inherit;
   color: var(--xd-ink);
   background-color: var(--xd-sheet);
   border: 1px solid var(--xd-input);
-  border-radius: 0.3rem;
+  border-radius: 6px;
 }
 
 .md-typeset .bench-history :is(select, input, button):focus-visible {
@@ -521,8 +547,10 @@
 }
 
 .md-typeset .bench-history__filters .md-button {
-  min-height: 2rem;
-  padding: 0.3em 0.9em;
+  box-sizing: border-box;
+  height: 36px;
+  padding: 0 0.9em;
+  border-radius: 6px;
 }
 
 .md-typeset .bench-history__count {
@@ -531,7 +559,7 @@
   color: var(--xd-muted);
 }
 
-/* The header's button fills the cell; the arrow says which column sorts and which way. */
+/* The header's button holds the column's name and its sort icon. */
 .md-typeset .bench-history__sort {
   display: inline-flex;
   gap: 0.25em;
@@ -540,23 +568,22 @@
   color: inherit;
   text-align: left;
   cursor: pointer;
+  border-radius: 4px;
 }
 
-.md-typeset .bench-history__sort::after {
-  content: "↕";
-  color: var(--xd-muted);
-  opacity: 0.6;
+.md-typeset .bench-history__icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.5;
 }
 
-.md-typeset .bench-history th[aria-sort="ascending"] .bench-history__sort::after {
-  content: "↑";
-  color: inherit;
-  opacity: 1;
-}
-
-.md-typeset .bench-history th[aria-sort="descending"] .bench-history__sort::after {
-  content: "↓";
-  color: inherit;
+.md-typeset .bench-history th[aria-sort] .bench-history__icon {
   opacity: 1;
 }
 
@@ -585,23 +612,36 @@
 }
 
 .md-typeset .bench-history__grid {
-  stroke: var(--xd-border);
+  stroke: var(--xd-rule);
 }
 
-.md-typeset .bench-history__line {
+.md-typeset .bench-history__series {
+  color: var(--xd-chart-series);
+}
+
+.md-typeset .bench-history__series--lit {
+  color: var(--xd-route);
+}
+
+.md-typeset .bench-history__series polyline {
   fill: none;
   stroke: currentColor;
   stroke-width: 1.5;
 }
 
-.md-typeset .bench-history__chart circle {
+.md-typeset .bench-history__series--lit polyline {
+  stroke-width: 2.5;
+}
+
+.md-typeset .bench-history__series circle {
   fill: currentColor;
 }
 
+/* The legend names every series; the pressed one is the lit line. */
 .md-typeset .bench-history__legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 0.25rem 1rem;
+  gap: 0.25rem 0.5rem;
   padding: 0;
   margin: 0.5rem 0 0;
   list-style: none;
@@ -611,12 +651,32 @@
   margin: 0;
 }
 
-.md-typeset .bench-history__legend li::before {
-  display: inline-block;
-  width: 0.6rem;
-  height: 0.6rem;
-  margin-right: 0.35rem;
+.md-typeset .bench-history__legend button {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 0.5rem;
+  font: inherit;
+  color: var(--xd-muted);
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.md-typeset .bench-history__legend button::before {
+  width: 0.9rem;
+  height: 2px;
   content: "";
-  background-color: var(--colour);
-  border-radius: 50%;
+  background-color: var(--xd-chart-series);
+}
+
+.md-typeset .bench-history__legend button[aria-pressed="true"] {
+  font-weight: 600;
+  color: var(--xd-ink);
+  background-color: var(--xd-fill);
+}
+
+.md-typeset .bench-history__legend button[aria-pressed="true"]::before {
+  height: 3px;
+  background-color: var(--xd-route);
 }

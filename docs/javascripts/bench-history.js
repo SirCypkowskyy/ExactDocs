@@ -4,7 +4,12 @@
 // reads as it is. The state lives in the address: ?sort=recall-5&dir=asc&chunking=default&from=...
 (() => {
   const RUN = new Set(["Date", "Commit", "Golden"]); // what a run is, not what a series is
-  const COLOURS = ["--xd-route", "--xd-tint-note", "--xd-tint-tip", "--xd-tint-danger", "--xd-tint-warning", "--xd-muted"];
+  // The web UI's sort icons (lucide ArrowUp, ArrowDown, ArrowUpDown, as in web/src/shared/ui/data-table/columns.tsx).
+  const ICONS = {
+    ascending: ["m5 12 7-7 7 7", "M12 19V5"],
+    descending: ["M12 5v14", "m19 12-7 7-7-7"],
+    none: ["m21 16-4 4-4-4", "M17 20V4", "m3 8 4-4 4 4", "M7 4v16"],
+  };
   const SVG = "http://www.w3.org/2000/svg";
 
   const number = (text) => {
@@ -42,6 +47,7 @@
       from: params.get("from") || "",
       to: params.get("to") || "",
       metric: params.get("metric") || "",
+      lit: undefined,
     };
 
     // ---- filters
@@ -84,7 +90,8 @@
 
     // ---- sorting: a button in each header, aria-sort on the sorted one
     heads.forEach((th, c) => {
-      const button = el("button", { type: "button", className: "bench-history__sort" }, ...th.childNodes);
+      const icon = svg("svg", { viewBox: "0 0 24 24", "aria-hidden": "true", class: "bench-history__icon" });
+      const button = el("button", { type: "button", className: "bench-history__sort" }, ...th.childNodes, icon);
       button.addEventListener("click", () => {
         state.desc = state.sort === c ? !state.desc : numeric[c] || c === dateCol;
         state.sort = c;
@@ -126,7 +133,11 @@
         r.tr.hidden = !shown.includes(r);
         body.append(r.tr);
       }
-      heads.forEach((th, k) => (k === c ? th.setAttribute("aria-sort", state.desc ? "descending" : "ascending") : th.removeAttribute("aria-sort")));
+      heads.forEach((th, k) => {
+        const sort = k === c ? (state.desc ? "descending" : "ascending") : "none";
+        sort === "none" ? th.removeAttribute("aria-sort") : th.setAttribute("aria-sort", sort);
+        th.querySelector(".bench-history__icon").replaceChildren(...ICONS[sort].map((d) => svg("path", { d })));
+      });
       count.textContent = `Showing ${shown.length} of ${rows.length} results.`;
       draw(shown);
 
@@ -182,13 +193,16 @@
         t.textContent = new Date(x).toISOString().slice(0, 10);
         view.append(t);
       }
-      const coloured = series.size <= COLOURS.length;
-      const legend = el("ul", { className: "bench-history__legend" });
-      [...series].forEach(([name, days], i) => {
+      // As in the web UI's charts (web/DESIGN.md, Charts): one grey for every series, and the
+      // highlight for the one lit series, which the legend names too.
+      if (!series.has(state.lit)) state.lit = series.keys().next().value;
+      const legend = el("ul", { className: "bench-history__legend", ariaLabel: "Series: choose the one to light" });
+      const lines = [];
+      [...series].forEach(([name, days]) => {
         const ps = [...days.values()];
-        const colour = coloured ? `var(${COLOURS[i]})` : "var(--xd-muted)";
         ps.sort((a, b) => a.x - b.x);
-        const g = svg("g", { style: `color: ${colour}` });
+        const lit = name === state.lit;
+        const g = svg("g", { class: lit ? "bench-history__series bench-history__series--lit" : "bench-history__series" });
         g.append(svg("polyline", { points: ps.map((p) => `${px(p.x)},${py(p.y)}`).join(" "), class: "bench-history__line" }));
         for (const p of ps) {
           const dot = svg("circle", { cx: px(p.x), cy: py(p.y), r: 3.5 });
@@ -197,12 +211,17 @@
           dot.append(tip);
           g.append(dot);
         }
-        view.append(g);
-        if (coloured) legend.append(el("li", { style: `--colour: ${colour}`, textContent: name || names[m] }));
+        lit ? lines.push(g) : lines.unshift(g); // the lit line is drawn last, over the others
+        const pick = el("button", { type: "button", textContent: name || names[m], ariaPressed: String(lit) });
+        pick.addEventListener("click", () => {
+          state.lit = name;
+          draw(shown);
+          legend.querySelector('[aria-pressed="true"]')?.focus();
+        });
+        legend.append(el("li", {}, pick));
       });
-      plot.append(view);
-      if (coloured) plot.append(legend);
-      else plot.append(el("p", { textContent: `${series.size} series; filter the table to tell them apart by colour, or point at a dot for its name.` }));
+      view.append(...lines);
+      plot.append(view, legend);
     }
 
     update();
