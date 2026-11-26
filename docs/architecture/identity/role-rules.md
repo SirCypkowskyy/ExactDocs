@@ -32,7 +32,8 @@ library or on chosen ones.
 - **Private libraries.** A rule for every library leaves out private ones
   (`identity_private_libraries`, the `PrivateLibraries` port). Ingestion tells identity
   (`AccessPolicy.set_private`, bridged to `MarkLibraryPrivate`) before it stores a token or deploy
-  key, so the library is never reachable meanwhile; a removed library stays marked (fail closed) until ingestion adds that ID again.
+  key, so the library is never reachable meanwhile. A removed library stays marked (fail closed)
+  until ingestion adds that ID again.
   The migration copies the libraries that already hold a credential. Without the port, a rule for
   every library reaches no library (fails closed).
 - **GitHub.** `GithubProvider.watched` reads the organizations and teams the rules name at every
