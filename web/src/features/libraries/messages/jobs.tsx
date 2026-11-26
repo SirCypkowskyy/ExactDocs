@@ -45,6 +45,8 @@ export const jobsMessages = defineMessages(
     } as Readonly<Record<string, string>>,
     /** Who queued a job, when no person did: the instance on its own, or nobody recorded. */
     automatic: "Automatic",
+    /** Next to the person, for a job their agent queued over MCP (`add_docs`). */
+    viaMcp: "via MCP",
     notRecorded: "Not recorded",
     notRecordedHint: "Queued from the server's command line, or before ExactDocs recorded who did.",
     within: {
@@ -127,6 +129,7 @@ export const jobsMessages = defineMessages(
       manual: "ręczne",
     },
     automatic: "Automatycznie",
+    viaMcp: "przez MCP",
     notRecorded: "Nie zapisano",
     notRecordedHint:
       "Zlecone z wiersza poleceń na serwerze albo zanim ExactDocs zaczął zapisywać, kto je zlecił.",

@@ -11,7 +11,7 @@
 
 | | |
 |---|---|
-| **Status** | Accepted (design), implementation pending in #613 |
+| **Status** | Accepted, implemented in #613 |
 | **Scope** | The MCP server (`bootstrap/mcp.py`, a new `ingestion/adapters/driving/mcp.py`) |
 | **Issue** | #613 |
 | **Decided by** | The owner decided who gets the tools and how they are hidden; the rest was proposed in #613 |
@@ -27,7 +27,7 @@ back, although the agent already knows the repository and the version it needs.
 **Two tools.** `add_docs(source, ref?, paths?)` creates a library, adds a version or syncs an
 existing library, depending on what already exists. `import_status(job_id?)` reports one job, or
 the caller's latest five. Both call the driving ports the REST adapter uses (`add_library`,
-`add_version`, `sync_library`, `get_job`, `list_latest_jobs`) under the same access checks, and
+`add_version`, `sync_library`, `get_job`, `list_jobs`, `list_library_jobs`) under the same access checks, and
 answer in a line or two per job. Imports are asynchronous, so the agent needs `import_status` to
 know when to search; without it the agent would poll `list_libraries` and get a large payload.
 
@@ -36,7 +36,7 @@ know when to search; without it the agent would poll `list_libraries` and get a 
 REST. They are not limited to admins. A token restricted to some libraries does not get them, and
 stdio MCP never registers them.
 
-**Hidden, not refused.** Both tools carry FastMCP's component-level `auth=` (FastMCP v4.2.3,
+**Hidden, not refused.** Both tools carry FastMCP's component-level `auth=` (documented for FastMCP v4.2.3 and present in the pinned v4.1.6,
 `docs/servers/authorization.mdx`, "Component-Level Authorization"). For a caller without the
 permission they are missing from `tools/list` and a direct call answers not-found, so that agent
 never spends tokens on their schemas. If the pinned FastMCP turns out not to hide them, the
@@ -49,8 +49,11 @@ and it is the action a prompt injection in fetched docs would aim for.
 **Sources.** Only `https://` URLs (or `owner/repo` for GitHub, or an existing library), never
 `file://`, `ssh://`, `http://` or a URL with credentials. The host must be in
 `EXACTDOCS_MCP_IMPORT_HOSTS` (default `github.com,gitlab.com,codeberg.org,bitbucket.org`), and
-the resolved address must not be loopback, private, link-local or the metadata address, checked
-again at connect time. No credential argument: private repositories are added in the web UI.
+the addresses the name resolves to must not be loopback, private, link-local or the metadata
+address. They are resolved and checked when the call is made, right before git first contacts the
+host; the import job and later syncs fetch from the same host without a new check, so the
+allowlist is what keeps those fetches on public forges (git also follows a redirect on its first
+request, as for every import). No credential argument: private repositories are added in the web UI.
 
 ## Consequences
 

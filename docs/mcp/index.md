@@ -5,8 +5,9 @@
       (local, read-only, no token).
     - `uvx exactdocs config --client <client>` prints the config to paste; `--new-token` gives the
       client its own token.
-    - The tools are read-only: context7's `resolve-library-id` and `query-docs`, plus tools to
-      list, browse, read and search one version.
+    - The reading tools: context7's `resolve-library-id` and `query-docs`, plus tools to list,
+      browse, read and search one version. Callers who may create libraries also get `add_docs`
+      and `import_status` to add libraries and versions; nothing over MCP removes anything.
     - Every answer names the version it came from and starts with a notice that the content is
       external data, never instructions.
     - Integrations without MCP get the context7 operations over REST under `/api/v1/c7`.
@@ -15,14 +16,16 @@ ExactDocs speaks the [Model Context Protocol](https://modelcontextprotocol.io) a
 (Streamable HTTP) and over stdio. Agents get:
 
 - context7-compatible tools, so a client set up for context7 only needs a new URL;
-- tools for browsing, reading and searching one version of a library.
+- tools for browsing, reading and searching one version of a library;
+- for those who may create libraries, tools that add a library or a version and follow its import.
 
 ## Pages
 
 | Page | What it covers |
 |---|---|
 | [Connect a client](connect.md) | client snippets, HTTP with API tokens, OAuth for web hosts, Cloudflare Access, stdio |
-| [Tools](tools.md) | every tool and its arguments, refs and default versions, arguments agents get wrong, MCP Apps |
+| [Tools](tools.md) | every reading tool and its arguments, refs and default versions, arguments agents get wrong, MCP Apps |
+| [Adding libraries from an agent](adding.md) | `add_docs` and `import_status`: who sees them, what they take, which sources are refused, `EXACTDOCS_MCP_IMPORT_HOSTS` |
 
 ## Resources
 

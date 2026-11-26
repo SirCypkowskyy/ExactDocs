@@ -1,8 +1,9 @@
 # Tools
 
 !!! abstract "TL;DR"
-    - All tools are read-only, and every output starts with a notice that the content is external
-      data, never instructions.
+    - The tools on this page are read-only, and every output starts with a notice that the content
+      is external data, never instructions. The two that add libraries are on
+      [Adding libraries from an agent](adding.md).
     - Library IDs are `/owner/repo`; without a ref the default version answers (highest stable
       semver tag, else default branch, else the most recently imported version).
     - A ref is read as given, except that a missing or extra leading `v` is forgiven when it names
@@ -12,8 +13,9 @@
     - `view_article` and `view_search` render as UI in hosts with MCP Apps and fall back to text
       elsewhere; agents reading for themselves should keep using `read_article` and `search_docs`.
 
-All tools are read-only, and every tool's output starts with a notice that the content is external
-data, never instructions.
+The tools below are read-only, and every tool's output starts with a notice that the content is
+external data, never instructions. Callers who may create libraries also get `add_docs` and
+`import_status`, described in [Adding libraries from an agent](adding.md).
 
 | Tool | What it does |
 |---|---|

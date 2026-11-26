@@ -123,6 +123,9 @@ class PersonSummary(_Dto):
     """The account's stable ID."""
     username: str
     """The account's user name, as it was when they asked."""
+    via: str | None = None
+    """`mcp` when they asked through an MCP client (an agent's `add_docs`); null for the web UI
+    and REST."""
 
     @classmethod
     def of(cls, person: Person | None) -> Self | None:
@@ -134,7 +137,9 @@ class PersonSummary(_Dto):
         Returns:
             Their summary, or ``None``.
         """
-        return None if person is None else cls(id=person.id, username=person.username)
+        return (
+            None if person is None else cls(id=person.id, username=person.username, via=person.via)
+        )
 
 
 class JobSummary(_Dto):

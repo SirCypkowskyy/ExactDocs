@@ -49,6 +49,7 @@ from exactdocs_kernel.listing import (
 )
 from exactdocs_kernel.network import (
     OutboundNetwork,
+    is_public_address,
     proxy_failure,
     redact_url,
     resolve_outbound,
@@ -112,6 +113,7 @@ __all__ = [
     "encode_sort_cursor",
     "inside",
     "is_after",
+    "is_public_address",
     "like_pattern",
     "name_versions",
     "normalize_tag",

@@ -19095,6 +19095,18 @@
             "type": "string",
             "title": "Username",
             "description": "The account's user name, as it was when they asked."
+          },
+          "via": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Via",
+            "description": "`mcp` when they asked through an MCP client (an agent's `add_docs`); null for the web UI\nand REST."
           }
         },
         "additionalProperties": false,

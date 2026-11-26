@@ -58,6 +58,7 @@ from exactdocs.identity.constants import (
 )
 from exactdocs.identity.errors import InvalidUsernameError
 from exactdocs.identity.models import Username
+from exactdocs.ingestion.constants import DEFAULT_MCP_IMPORT_HOSTS
 from exactdocs.retrieval.constants import (
     DEFAULT_AGENT_CACHE_TTL_DAYS,
     DEFAULT_AGENT_REPEATED_CALLS,
@@ -1172,6 +1173,14 @@ class Settings(BaseSettings):
     `client_id` also needs `<public_url>/auth/callback` among the redirect URIs registered at
     the provider; the groups must be in the ID token."""
 
+    mcp_import_hosts: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: list(DEFAULT_MCP_IMPORT_HOSTS)
+    )
+    """The hosts an MCP client's `add_docs` may import from (`EXACTDOCS_MCP_IMPORT_HOSTS`),
+    comma-separated, exact names: `https://` only, and only when the name resolves to public
+    addresses. Empty: `add_docs` imports from no URL, only re-syncs and adds versions of
+    libraries that exist."""
+
     @classmethod
     def settings_customise_sources(
         cls,
@@ -1400,7 +1409,7 @@ class Settings(BaseSettings):
             raise ValueError(message)
         return self
 
-    @field_validator("allowed_hosts", "allowed_origins", mode="before")
+    @field_validator("allowed_hosts", "allowed_origins", "mcp_import_hosts", mode="before")
     @classmethod
     def _split_csv(cls, value: object) -> object:
         """Split a comma-separated environment value into its non-blank items.

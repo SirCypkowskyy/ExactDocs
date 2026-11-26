@@ -105,6 +105,7 @@ jobs = Table(
     # person did, and on the rows of jobs queued before.
     Column("created_by_id", Text),
     Column("created_by_name", Text),
+    Column("created_by_via", Text),
     # A page of a library's jobs is a range of this index (see `list_page_for_library`).
     Index("ingestion_jobs_library_id", "library", "id"),
     Index("ingestion_jobs_state", "state"),
@@ -682,6 +683,7 @@ def _values(job: Job) -> Mapping[str, Any]:
         "cancelled_at": _text(job.cancelled_at),
         "created_by_id": None if job.created_by is None else job.created_by.id,
         "created_by_name": None if job.created_by is None else job.created_by.username,
+        "created_by_via": None if job.created_by is None else job.created_by.via,
     }
 
 
@@ -766,7 +768,11 @@ def _job(row: Row) -> Job:
         created_by=(
             None
             if row.created_by_id is None
-            else Person(id=row.created_by_id, username=row.created_by_name or row.created_by_id)
+            else Person(
+                id=row.created_by_id,
+                username=row.created_by_name or row.created_by_id,
+                via=row.created_by_via,
+            )
         ),
     )
 

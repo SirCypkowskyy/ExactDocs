@@ -34,6 +34,7 @@ nav = [
       "mcp/index.md",
       { "Connect a client" = "mcp/connect.md" },
       { "Tools" = "mcp/tools.md" },
+      { "Adding libraries from an agent" = "mcp/adding.md" },
     ] },
     { "Sources file" = "sources.md" },
     { "Configuration" = [
