@@ -138,6 +138,7 @@ The domain wraps the ports so that the use cases see the ports they always did:
 | `pinecone` | vectors | `pinecone` | with `hybrid = true` on a `dotproduct` index: one sparse-dense query |
 | `qdrant` | vectors | `qdrant` | with `hybrid = true`: BM25-weighted sparse and dense prefetches fused by Qdrant (RRF) |
 | `redis` | search, vectors | `redis` | with `hybrid = true`: one `FT.HYBRID` query (BM25 and KNN fused by Redis, RRF) |
+| `weaviate` | search, vectors | `weaviate` | yes: Weaviate's hybrid query (BM25 and the vector, `alpha`, relative-score fusion) |
 
 [^azure-rerank]: A reranked search is that query reranked by Azure's semantic ranker
     (`semanticQuery`), the configuration made over plain-text `title` / `content` fields.
@@ -236,6 +237,12 @@ Each adapter is a module in `retrieval/adapters/driven/`.
     - Indexes made with `FT.CREATE` (`<prefix>:search`, `<prefix>:space<id>`).
     - `manifest_id` / `library` / `version_id` / `tags` as `TAG` fields
       ([Configuration](../configuration/index-backends/redis.md)).
+
+??? info "`weaviate`: `weaviate_index.py`"
+
+    - A `<collection>_search` collection and one per space, ExactDocs' own vectors (no vectorizer).
+    - Objects filtered by `manifest_id` / `tags` in every query.
+    - REST and gRPC, both required ([Configuration](../configuration/index-backends/weaviate.md)).
 
 ## Adding a backend
 

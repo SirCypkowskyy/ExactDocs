@@ -96,6 +96,7 @@ jobs:
       EXACTDOCS_TEST_MILVUS_URL: http://127.0.0.1:9
       EXACTDOCS_TEST_MONGODB_URL: mongodb://127.0.0.1:9/?directConnection=true
       EXACTDOCS_TEST_PINECONE_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_WEAVIATE_URL: http://127.0.0.1:9
       EXACTDOCS_TEST_AZURE_SEARCH_URL: http://127.0.0.1:9
       EXACTDOCS_TEST_MODELS_DIR: /nonexistent/models
     steps:
@@ -148,6 +149,7 @@ jobs:
       EXACTDOCS_TEST_MILVUS_URL: http://127.0.0.1:9
       EXACTDOCS_TEST_MONGODB_URL: mongodb://127.0.0.1:9/?directConnection=true
       EXACTDOCS_TEST_PINECONE_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_WEAVIATE_URL: http://127.0.0.1:9
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0

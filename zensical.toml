@@ -70,6 +70,7 @@ nav = [
         { "Pinecone" = "configuration/index-backends/pinecone.md" },
         { "Qdrant" = "configuration/index-backends/qdrant.md" },
         { "Redis" = "configuration/index-backends/redis.md" },
+        { "Weaviate" = "configuration/index-backends/weaviate.md" },
       ] },
       { "Advanced" = "configuration/advanced.md" },
     ] },

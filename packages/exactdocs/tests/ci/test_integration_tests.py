@@ -46,6 +46,7 @@ SERVICES = {
     "EXACTDOCS_TEST_MONGODB_URL": f"mongodb://{NOWHERE}/?directConnection=true",
     "EXACTDOCS_TEST_PINECONE_URL": f"http://{NOWHERE}",
     "EXACTDOCS_TEST_AZURE_SEARCH_URL": f"http://{NOWHERE}",
+    "EXACTDOCS_TEST_WEAVIATE_URL": f"http://{NOWHERE}",
     "EXACTDOCS_TEST_MODELS_DIR": "/nonexistent/models",
     "EXACTDOCS_TEST_PROXY_IMAGE": "nonexistent/squid:none",
 }

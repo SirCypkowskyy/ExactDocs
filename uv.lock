@@ -5,11 +5,11 @@ resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
     "python_full_version >= '3.15' and sys_platform == 'emscripten'",
     "python_full_version >= '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux'",
-    "(python_full_version >= '3.15' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version >= '3.15' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version >= '3.15' and ((platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'))",
     "python_full_version < '3.15' and sys_platform == 'win32'",
     "python_full_version < '3.15' and sys_platform == 'emscripten'",
     "python_full_version < '3.15' and platform_machine == 'x86_64' and sys_platform == 'linux'",
-    "(python_full_version < '3.15' and platform_machine != 'x86_64' and sys_platform == 'linux') or (python_full_version < '3.15' and sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32')",
+    "python_full_version < '3.15' and ((platform_machine != 'x86_64' and sys_platform == 'linux') or (sys_platform != 'emscripten' and sys_platform != 'linux' and sys_platform != 'win32'))",
 ]
 conflicts = [[
     { package = "exactdocs", extra = "chroma" },
@@ -451,7 +451,7 @@ name = "build"
 version = "1.6.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "colorama", marker = "(os_name == 'nt' and platform_machine != 'x86_64') or (os_name == 'nt' and sys_platform != 'linux')" },
+    { name = "colorama", marker = "os_name == 'nt'" },
     { name = "packaging" },
     { name = "pyproject-hooks" },
 ]
@@ -1176,6 +1176,9 @@ qdrant = [
 redis = [
     { name = "redis" },
 ]
+weaviate = [
+    { name = "weaviate-client" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -1232,8 +1235,9 @@ requires-dist = [
     { name = "sqlite-vec", marker = "extra == 'ai'", specifier = "==0.1.9" },
     { name = "turso-serverless", marker = "extra == 'libsql-database'", specifier = "==0.1.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.38" },
+    { name = "weaviate-client", marker = "extra == 'weaviate'", specifier = "==4.25.0" },
 ]
-provides-extras = ["ai", "azure-search", "chroma", "chroma-local", "duckdb", "elasticsearch", "lancedb", "libsql", "libsql-database", "local", "milvus", "milvus-lite", "mongodb", "opensearch", "pinecone", "qdrant", "redis"]
+provides-extras = ["ai", "azure-search", "chroma", "chroma-local", "duckdb", "elasticsearch", "lancedb", "libsql", "libsql-database", "local", "milvus", "milvus-lite", "mongodb", "opensearch", "pinecone", "qdrant", "redis", "weaviate"]
 
 [[package]]
 name = "exactdocs-kernel"
@@ -1252,7 +1256,7 @@ dependencies = [
 dev = [
     { name = "archunitpython" },
     { name = "behave" },
-    { name = "exactdocs", extra = ["ai", "azure-search", "duckdb", "elasticsearch", "lancedb", "libsql-database", "local", "milvus-lite", "mongodb", "opensearch", "pinecone", "qdrant", "redis"] },
+    { name = "exactdocs", extra = ["ai", "azure-search", "duckdb", "elasticsearch", "lancedb", "libsql-database", "local", "milvus-lite", "mongodb", "opensearch", "pinecone", "qdrant", "redis", "weaviate"] },
     { name = "exactdocs", extra = ["chroma-local"], marker = "extra == 'extra-9-exactdocs-chroma-local'" },
     { name = "exactdocs", extra = ["libsql"], marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "httpx" },
@@ -1293,6 +1297,7 @@ dev = [
     { name = "exactdocs", extras = ["pinecone"], editable = "packages/exactdocs" },
     { name = "exactdocs", extras = ["qdrant"], editable = "packages/exactdocs" },
     { name = "exactdocs", extras = ["redis"], editable = "packages/exactdocs" },
+    { name = "exactdocs", extras = ["weaviate"], editable = "packages/exactdocs" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "pydantic-evals", specifier = "==2.60.0" },
     { name = "pytest", specifier = ">=9" },
@@ -4695,6 +4700,15 @@ wheels = [
 ]
 
 [[package]]
+name = "validators"
+version = "0.36.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/7b/3f/4fe7905f73ba0e768baa102a09ba9458f2f0bb4a676102e1fd7a3cb55c2b/validators-0.36.0.tar.gz", hash = "sha256:92ad9ed00bbed320b784cec0ea90b213cf08904cf605b3d0852cfa4108e32a2c", size = 79234, upload-time = "2026-10-11T11:01:31.682Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d5/ce/fc5090ea3789bdfd22e90f2515b237194c5dacfc8f26d2082a0b50b2ca86/validators-0.36.0-py3-none-any.whl", hash = "sha256:c52ad00435e385b95fa4d6dd3081cb20c0660e7fd07b214523c8584dd2edba34", size = 46040, upload-time = "2026-10-11T11:01:30.269Z" },
+]
+
+[[package]]
 name = "watchfiles"
 version = "1.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -4731,6 +4745,24 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/25/9d/b9deb52f1e4528ffe44338c5ebab95c32ed79203082da661de50288e130a/watchfiles-1.3.0-cp314-cp314t-win32.whl", hash = "sha256:81c989d7267bfb7b676cd32c83bec97914e396870983cbf493e29415037bff5e", size = 270863, upload-time = "2026-09-21T09:08:46.518Z" },
     { url = "https://files.pythonhosted.org/packages/59/59/8b1881afccbafda06248be4185e28034dd73c80c85e4da24f2cb0c1321eb/watchfiles-1.3.0-cp314-cp314t-win_amd64.whl", hash = "sha256:d754e049006e81a9be49dc78ba7802081cee426e968cbc63ee19e164fa2d0e39", size = 286879, upload-time = "2026-09-21T09:08:47.874Z" },
     { url = "https://files.pythonhosted.org/packages/46/dd/41c12ae9745d5d72f709333287679d71cbba68ad7678fed872207bba94f4/watchfiles-1.3.0-cp314-cp314t-win_arm64.whl", hash = "sha256:a5b631db08fd3032db57ec6a92d1777cd60f88803287e4e941a4858c53aab1e0", size = 276924, upload-time = "2026-09-21T09:08:48.976Z" },
+]
+
+[[package]]
+name = "weaviate-client"
+version = "4.25.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "authlib" },
+    { name = "certifi" },
+    { name = "grpcio", marker = "sys_platform != 'emscripten'" },
+    { name = "httpx" },
+    { name = "packaging" },
+    { name = "protobuf" },
+    { name = "pydantic" },
+    { name = "validators" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/65/34/ac1e91cc7d4a24724337592edb492c391968ca17c87ed47472ce30d55c1c/weaviate_client-4.25.0-py3-none-any.whl", hash = "sha256:dfc0c4bba5500dab46538811c12f600179eb67b8729707b7d4b3f20f4e98dac9", size = 715964, upload-time = "2026-11-26T11:47:37.791Z" },
 ]
 
 [[package]]

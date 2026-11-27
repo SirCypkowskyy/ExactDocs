@@ -103,6 +103,7 @@ How it is read:
 | Qdrant, Pinecone, libSQL server, Azure AI Search, OpenSearch | yes, given to the client explicitly | yes |
 | Elasticsearch, Chroma | yes, through the standard variables (their clients read only those) | yes (`ca_certs` / `chroma_server_ssl_verify` by default) |
 | Milvus (gRPC) | yes, as the channel's `grpc.http_proxy` | yes, for `https://` |
+| Weaviate (REST and gRPC) | yes, given to the client explicitly | gRPC only: the client's REST transport keeps certifi's bundle |
 | Redis, MongoDB | no: an HTTP proxy does not carry their protocols | yes, for TLS, when the options name no CA file |
 | DuckDB, LanceDB or Milvus Lite on a local directory | no connection at all | - |
 | OpenTelemetry exporter | yes | yes, unless `OTEL_EXPORTER_OTLP_CERTIFICATE` names one |
