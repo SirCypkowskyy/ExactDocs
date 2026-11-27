@@ -9,6 +9,8 @@
     - Operators add and remove rules from the Users page or over [REST](../../rest-api/users-and-access.md#role-rules);
       rules of the configuration file show there read-only.
 
+Why rules work this way, and what else was weighed: [the role rules decision](../../decisions/role-rules.md).
+
 A role rule gives everyone with one membership at a provider a role in ExactDocs. It pairs a
 **source** with a **grant**:
 

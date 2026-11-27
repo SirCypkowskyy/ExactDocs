@@ -109,26 +109,6 @@ export const messages = defineMessages(
       gaveTail: " role",
       ruleAdded: " added the role rule ",
       ruleRemoved: " removed the role rule ",
-      /** A rule as one phrase: "GitHub team acme/docs → contributor on every library". */
-      rule: {
-        github_org: "GitHub organization",
-        github_team: "GitHub team",
-        group: "group",
-        role: "role",
-        instance_admin: "instance admin",
-        create_libraries: "may create libraries",
-        everyLibrary: " on every library",
-        onLibraries: (ids: string) => ` on ${ids}`,
-      } as {
-        github_org: string;
-        github_team: string;
-        group: string;
-        role: string;
-        instance_admin: string;
-        create_libraries: string;
-        everyLibrary: string;
-        onLibraries: (ids: string) => string;
-      },
       /** A role as the server names it; an unknown one shows as sent. */
       roles: {
         viewer: "viewer",
@@ -246,16 +226,6 @@ export const messages = defineMessages(
       gaveTail: "",
       ruleAdded: " dodał regułę ról ",
       ruleRemoved: " usunął regułę ról ",
-      rule: {
-        github_org: "organizacja GitHub",
-        github_team: "zespół GitHub",
-        group: "grupa",
-        role: "rola",
-        instance_admin: "administrator instancji",
-        create_libraries: "może tworzyć biblioteki",
-        everyLibrary: " we wszystkich bibliotekach",
-        onLibraries: (ids) => ` w ${ids}`,
-      },
       roles: {
         viewer: "czytelnik",
         contributor: "współtwórca",

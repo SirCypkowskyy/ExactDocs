@@ -80,7 +80,12 @@ export const messages = defineMessages(
       tokens: "Show their API tokens",
     },
     /** The two views of the users page: the accounts, and every account's API tokens. */
-    views: { label: "Users views", accounts: "Accounts", tokens: "API tokens" },
+    views: {
+      label: "Users views",
+      accounts: "Accounts",
+      tokens: "API tokens",
+      rules: "Role rules",
+    },
     /** Every account's API tokens (operators). */
     tokens: {
       documentTitle: "All API tokens",
@@ -238,7 +243,12 @@ export const messages = defineMessages(
       accessLog: "Pokaż wpisy tej osoby w dzienniku dostępu",
       tokens: "Pokaż tokeny API tej osoby",
     },
-    views: { label: "Widoki użytkowników", accounts: "Konta", tokens: "Tokeny API" },
+    views: {
+      label: "Widoki użytkowników",
+      accounts: "Konta",
+      tokens: "Tokeny API",
+      rules: "Reguły ról",
+    },
     tokens: {
       documentTitle: "Wszystkie tokeny API",
       description:

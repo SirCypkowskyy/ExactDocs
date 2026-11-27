@@ -15,6 +15,7 @@ import { type ReactNode, useRef, useState } from "react";
 import { toast } from "sonner";
 import { HttpError } from "@/shared/lib/http";
 import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
+import { ruleGrant, ruleSource } from "@/shared/lib/role-rules";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { cn } from "@/shared/lib/utils";
 import {
@@ -30,7 +31,7 @@ import { ConfirmDialog } from "@/shared/ui/confirm-dialog";
 import { type RowAction, restoreRowFocus } from "@/shared/ui/data-table/row-actions";
 import { TableError, TableMessage } from "@/shared/ui/data-table/states";
 import { LibraryMark } from "@/shared/ui/library-mark";
-import { Page, PageHeader } from "@/shared/ui/page";
+import { Page, PageHeader, Section } from "@/shared/ui/page";
 import { Skeleton } from "@/shared/ui/skeleton";
 import { putGrant, revokeGrant, sharingKey, sharingSummaryQueryOptions } from "../api/grants";
 import { messages } from "../messages";
@@ -200,6 +201,26 @@ export function SharingPage({ owner, repo, libraryId, title, logo }: Props) {
           />
         )}
       </GrantsBody>
+
+      {summary.data?.rules?.length ? (
+        <Section
+          id="sharing-rules"
+          title={t.rules.title}
+          description={t.rules.description}
+          className="mt-8"
+        >
+          <ul aria-label={t.rules.label} className="flex flex-col divide-y divide-border">
+            {summary.data.rules.map((rule) => (
+              <li key={rule.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-1 py-2">
+                <span className="font-mono text-mono [overflow-wrap:anywhere]">
+                  {ruleSource(rule, language)}
+                </span>
+                <span className="text-muted-foreground">{ruleGrant(rule, language)}</span>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      ) : null}
 
       {caller && (
         <ShareDialog

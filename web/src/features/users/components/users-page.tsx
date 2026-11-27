@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import {
   Ban,
@@ -15,7 +15,8 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { useLanguage, useMessages } from "@/shared/lib/i18n";
+import { type Language, useLanguage, useMessages } from "@/shared/lib/i18n";
+import { ruleText } from "@/shared/lib/role-rules";
 import { usePageTitle } from "@/shared/lib/use-page-title";
 import { cn } from "@/shared/lib/utils";
 import { Badge } from "@/shared/ui/badge";
@@ -30,6 +31,7 @@ import { DataTableToolbar } from "@/shared/ui/data-table/toolbar";
 import { type TableFilter, useDataTable } from "@/shared/ui/data-table/use-data-table";
 import { FormAlert } from "@/shared/ui/form-alert";
 import { Page, PageHeader } from "@/shared/ui/page";
+import { roleRulesQueryOptions } from "../api/role-rules-query";
 import { setUserDisabled, usersKey, usersSource } from "../api/users-query";
 import { messages } from "../messages";
 import {
@@ -39,7 +41,9 @@ import {
   USER_STATUSES,
   USERS_TABLE,
 } from "../model/list-view";
+import { type RoleRuleList, rulesOf } from "../model/role-rule";
 import { explainUserError, type Role, type User } from "../model/user";
+import { rulesMessages } from "../rules-messages";
 import { CreateUserDialog } from "./create-user-dialog";
 import { ResetPasswordDialog } from "./reset-password-dialog";
 import { UsersViews } from "./users-views";
@@ -88,7 +92,13 @@ function SignInCell({ user, names }: { user: User; names: ProviderNames }) {
 
 // Built once per language and operator: a cell is rendered as a component, so a new function
 // would remount it.
-const columnsOf = (m: UsersMessages, me: string, names: ProviderNames): ColumnDef<User>[] => [
+const columnsOf = (
+  m: UsersMessages,
+  me: string,
+  names: ProviderNames,
+  rules: RoleRuleList | undefined,
+  language: Language,
+): ColumnDef<User>[] => [
   {
     accessorKey: "username",
     header: m.list.columns.account,
@@ -102,11 +112,22 @@ const columnsOf = (m: UsersMessages, me: string, names: ProviderNames): ColumnDe
     meta: { priority: 2, skeleton: "pill" },
     cell: ({ row }) => {
       const Icon = row.original.role === "admin" ? ShieldCheck : UserRound;
+      // An admin through an instance_admin rule (admin_groups among them) says so.
+      const fromRule =
+        row.original.role === "admin" &&
+        rulesOf(row.original.rules ?? [], rules).some((r) => r.grant === "instance_admin");
       return (
-        <Badge>
-          <Icon aria-hidden="true" className="size-3" />
-          {roleName(m, row.original.role)}
-        </Badge>
+        <span className="inline-flex flex-wrap items-center gap-1.5">
+          <Badge>
+            <Icon aria-hidden="true" className="size-3" />
+            {roleName(m, row.original.role)}
+          </Badge>
+          {fromRule && (
+            <span className="text-small text-muted-foreground">
+              {rulesMessages[language].origin.fromRule}
+            </span>
+          )}
+        </span>
       );
     },
   },
@@ -127,6 +148,20 @@ const columnsOf = (m: UsersMessages, me: string, names: ProviderNames): ColumnDe
         items={row.original.groups ?? []}
         more={(n) => m.list.moreGroups(n, row.original.username)}
         title={m.list.allGroups(row.original.username)}
+      />
+    ),
+  },
+  {
+    id: "rules",
+    header: rulesMessages[language].origin.rules,
+    enableSorting: false,
+    meta: { label: rulesMessages[language].origin.rules, className: "max-lg:hidden" },
+    cell: ({ row }) => (
+      <Chips
+        items={rulesOf(row.original.rules ?? [], rules).map((r) => ruleText(r, language))}
+        more={(n) => rulesMessages[language].origin.more(n, row.original.username)}
+        title={rulesMessages[language].origin.all(row.original.username)}
+        look="pill"
       />
     ),
   },
@@ -235,7 +270,12 @@ export function UsersPage({
     [providers],
   );
   const pickedKey = (view.provider ?? []).join(",");
-  const columns = useMemo(() => columnsOf(m, currentUserId, names), [m, currentUserId, names]);
+  // The rules each account matches come as IDs; their words come from the rules list.
+  const rules = useQuery(roleRulesQueryOptions()).data;
+  const columns = useMemo(
+    () => columnsOf(m, currentUserId, names, rules, language),
+    [m, currentUserId, names, rules, language],
+  );
   const filters = useMemo(
     () => filtersOf(m, names, pickedKey ? pickedKey.split(",") : []),
     [m, names, pickedKey],

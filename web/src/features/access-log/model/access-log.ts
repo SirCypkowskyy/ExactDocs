@@ -2,6 +2,7 @@ import type { components } from "@/shared/lib/api-schema";
 import { HttpError } from "@/shared/lib/http";
 import { currentLanguage, type Language } from "@/shared/lib/i18n";
 import { textParam } from "@/shared/lib/list-sort";
+import { ruleText } from "@/shared/lib/role-rules";
 import {
   parseFacet,
   parseTableSearch,
@@ -13,7 +14,6 @@ import { messages } from "../messages";
 export type AccessEvent = components["schemas"]["AccessEventSummary"];
 export type AccessLogPage = components["schemas"]["AccessLogPage"];
 export type Change = AccessEvent["change"];
-type RoleRule = components["schemas"]["RoleRuleSummary"];
 
 /** Every change the log records, in the order the filter offers them. */
 export const CHANGES = [
@@ -300,18 +300,6 @@ export function describeEvent(event: AccessEvent, language: Language = currentLa
         ...words("tail", t.gaveTail),
       ];
   }
-}
-
-/** A role rule as one phrase: "GitHub team acme/docs → contributor on every library". */
-function ruleText(rule: RoleRule, language: Language = currentLanguage()): string {
-  const t = messages[language].sentence;
-  const grant =
-    rule.grant === "instance_admin" || rule.grant === "create_libraries"
-      ? t.rule[rule.grant]
-      : `${t.roles[rule.grant] ?? rule.grant}${
-          rule.libraries ? t.rule.onLibraries(rule.libraries.join(", ")) : t.rule.everyLibrary
-        }`;
-  return `${t.rule[rule.source]} ${rule.value} → ${grant}`;
 }
 
 /** One sentence a person can act on, for any failure of the access log API. */
