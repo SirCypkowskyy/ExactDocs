@@ -22,6 +22,7 @@ from exactdocs.identity.constants import (
     ICON_SECURITY_POLICY,
     LINK_PROVIDER_DESCRIPTION,
     LOGIN_FOR_TOKEN_DESCRIPTION,
+    ROLE_RULES_ACTION,
     SESSION_COOKIE,
     SIGN_IN_COOKIE,
     SIGN_IN_COOKIE_PATH,
@@ -36,6 +37,7 @@ from exactdocs.identity.dtos import (
     AccountPreferences,
     AccountProviders,
     AccountSummary,
+    AddRoleRuleCommand,
     AllTokensList,
     AllTokensQuery,
     AuthenticateQuery,
@@ -57,11 +59,16 @@ from exactdocs.identity.dtos import (
     ListAccessLogQuery,
     ListLibraryAccessLogQuery,
     ListLibraryGrantsQuery,
+    ListRoleRulesQuery,
     LoginForTokenCommand,
     NewPassword,
     PasswordReset,
+    RemoveRoleRuleCommand,
     ResetPasswordCommand,
     RevokeLibraryRoleCommand,
+    RoleRuleList,
+    RoleRuleRequest,
+    RoleRuleSummary,
     SavePreferencesCommand,
     SessionState,
     SetUserDisabledCommand,
@@ -85,6 +92,7 @@ from exactdocs.identity.errors import (
 )
 from exactdocs.identity.models import Role
 from exactdocs.identity.ports.driving import (
+    AddRoleRule,
     ChangePassword,
     CreateFirstAdmin,
     CreateToken,
@@ -102,9 +110,11 @@ from exactdocs.identity.ports.driving import (
     ListAllTokens,
     ListLibraryAccessLog,
     ListLibraryGrants,
+    ListRoleRules,
     ListTokens,
     ListUsers,
     LoginForToken,
+    RemoveRoleRule,
     ResetPassword,
     RevokeLibraryRole,
     RevokeToken,
@@ -623,6 +633,86 @@ def build_all_tokens_router(
             The page of tokens, its next cursor and the total.
         """
         return await list_all_tokens(query)
+
+    return router
+
+
+def build_role_rules_router(
+    *,
+    list_role_rules: ListRoleRules,
+    add_role_rule: AddRoleRule,
+    remove_role_rule: RemoveRoleRule,
+    session_caller: CurrentCaller,
+) -> APIRouter:
+    """Expose ``/role-rules`` (#577): who gets which role from their provider memberships.
+
+    Every route needs a signed-in session of an ``admin`` (an API token is refused with 401, as
+    for ``/users``); anyone else gets 403.
+
+    Args:
+        list_role_rules: The driving port that lists the rules.
+        add_role_rule: The driving port that adds one.
+        remove_role_rule: The driving port that removes one.
+        session_caller: The dependency that requires a signed-in session.
+
+    Returns:
+        The router.
+    """
+    operator = build_operator(caller=session_caller, action=ROLE_RULES_ACTION)
+    router = APIRouter(tags=["identity"], dependencies=[Depends(operator)])
+    account = Annotated[AccountSummary, Depends(session_caller)]
+
+    @router.get("/role-rules", name="list_role_rules")
+    async def get_role_rules(who: account) -> RoleRuleList:
+        """List every role rule, the configuration file's first, and the providers they can name.
+
+        A rule gives everyone with one membership at a sign-in provider (a group, a role value,
+        a GitHub organization or team) instance admin, library creation, or a library role on
+        every library that is not private or on chosen ones. Configured rules (`configured`)
+        are read-only here. Operators only, with a session.
+
+        Args:
+            who: The caller.
+
+        Returns:
+            The rules and the providers.
+        """
+        return await list_role_rules(ListRoleRulesQuery(caller_id=who.id))
+
+    @router.post("/role-rules", status_code=201, name="add_role_rule")
+    async def post_role_rule(who: account, request: RoleRuleRequest) -> RoleRuleSummary:
+        """Add a role rule; library roles follow at the next request, instance admin at once.
+
+        Refused with 404 `unknown_provider` for a provider that is not configured, 409
+        `rules_configured_only` for one that takes only the configuration file's rules, 409
+        `role_rule_exists` for a duplicate and 422 `invalid_role_rule` for a source the provider
+        cannot have (GitHub names need a GitHub provider, role values a `role_claim`). The
+        change is in the access log. Operators only, with a session.
+
+        Args:
+            who: The caller.
+            request: The rule.
+
+        Returns:
+            The rule stored.
+        """
+        return await add_role_rule(
+            AddRoleRuleCommand(caller_id=who.id, **request.model_dump(exclude_unset=True))
+        )
+
+    @router.delete("/role-rules/{rule_id}", status_code=204, name="remove_role_rule")
+    async def delete_role_rule(who: account, rule_id: str) -> None:
+        """Remove a stored role rule; what it gave ends at once.
+
+        Refused with 409 `configured_rule` for a rule of the configuration file, 404
+        `unknown_role_rule` for an unknown ID, and 409 `last_operator` when no enabled admin
+        would remain. The change is in the access log. Operators only, with a session.
+
+        Args:
+            who: The caller.
+            rule_id: The rule's ID.
+        """
+        await remove_role_rule(RemoveRoleRuleCommand(caller_id=who.id, rule_id=rule_id))
 
     return router
 

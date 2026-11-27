@@ -65,6 +65,7 @@ async def test_an_operator_creates_and_lists_users(
         "groups",
         "last_active_at",
         "token_count",
+        "rules",
     }
     assert (body["last_active_at"], body["token_count"]) == (None, 0)  # never active, no tokens
     assert BOB["password"] not in created.text

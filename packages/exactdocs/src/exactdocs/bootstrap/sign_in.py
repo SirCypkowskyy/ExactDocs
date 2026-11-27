@@ -120,6 +120,7 @@ def sign_in_providers(
             icon=None if icon is None else BuiltInIcon(icon),
             icon_file=None if config.icon_file is None else _icon(name, config.icon_file),
             github=config.kind == "github",
+            reads_roles=config.role_claim is not None,
             rules=_configured_rules(name, config),
             configured_rules_only=config.configured_rules_only,
         )

@@ -313,6 +313,65 @@ export interface paths {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/api/v1/role-rules": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        /**
+         * List Role Rules
+         * @description List every role rule, the configuration file's first, and the providers they can name.
+         *
+         *     A rule gives everyone with one membership at a sign-in provider (a group, a role value,
+         *     a GitHub organization or team) instance admin, library creation, or a library role on
+         *     every library that is not private or on chosen ones. Configured rules (`configured`)
+         *     are read-only here. Operators only, with a session.
+         */
+        readonly get: operations["identity-list_role_rules"];
+        readonly put?: never;
+        /**
+         * Add Role Rule
+         * @description Add a role rule; library roles follow at the next request, instance admin at once.
+         *
+         *     Refused with 404 `unknown_provider` for a provider that is not configured, 409
+         *     `rules_configured_only` for one that takes only the configuration file's rules, 409
+         *     `role_rule_exists` for a duplicate and 422 `invalid_role_rule` for a source the provider
+         *     cannot have (GitHub names need a GitHub provider, role values a `role_claim`). The
+         *     change is in the access log. Operators only, with a session.
+         */
+        readonly post: operations["identity-add_role_rule"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/api/v1/role-rules/{rule_id}": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        readonly post?: never;
+        /**
+         * Remove Role Rule
+         * @description Remove a stored role rule; what it gave ends at once.
+         *
+         *     Refused with 409 `configured_rule` for a rule of the configuration file, 404
+         *     `unknown_role_rule` for an unknown ID, and 409 `last_operator` when no enabled admin
+         *     would remain. The change is in the access log. Operators only, with a session.
+         */
+        readonly delete: operations["identity-remove_role_rule"];
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/api/v1/access-log": {
         readonly parameters: {
             readonly query?: never;
@@ -1929,10 +1988,11 @@ export interface components {
             /**
              * Change
              * @description What happened: `library_created`, `granted` (a new role, or another one than before),
-             *     `revoked`, `ownership_transferred` or `library_deleted`.
+             *     `revoked`, `ownership_transferred`, `library_deleted`, or a role rule's `rule_added` or
+             *     `rule_removed`.
              * @enum {string}
              */
-            readonly change: "library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted";
+            readonly change: "library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted" | "rule_added" | "rule_removed";
             /**
              * Kind
              * @description Whether `subject` is a username or a group name; null for a deletion.
@@ -1954,6 +2014,11 @@ export interface components {
              * @description The role the subject held before; null when it held none.
              */
             readonly previous_role: string | null;
+            /**
+             * @description The rule a `rule_added` or `rule_removed` event is about; such an event's `library` is
+             *     empty.
+             */
+            readonly rule?: components["schemas"]["RoleRuleSummary"] | null;
         };
         /**
          * AccessLogPage
@@ -4494,6 +4559,12 @@ export interface components {
              *     none (one added before roles, which operators manage).
              */
             readonly creator: string | null;
+            /**
+             * Rules
+             * @description The role rules that give a role on this library (#577), whatever the filters: their
+             *     members hold it on top of the grants above.
+             */
+            readonly rules?: readonly components["schemas"]["RoleRuleSummary"][];
         };
         /**
          * LibraryGrantRequest
@@ -6137,6 +6208,113 @@ export interface components {
             readonly thinking_unsupported: string | null;
         };
         /**
+         * RoleRuleList
+         * @description Every role rule, the configuration file's first, and the providers they can name.
+         */
+        readonly RoleRuleList: {
+            /**
+             * Rules
+             * @description The rules: configured ones first, then the stored ones, oldest first.
+             */
+            readonly rules: readonly components["schemas"]["RoleRuleSummary"][];
+            /**
+             * Providers
+             * @description The configured sign-in providers, by name.
+             */
+            readonly providers: readonly components["schemas"]["RuleProviderSummary"][];
+        };
+        /**
+         * RoleRuleRequest
+         * @description A role rule to add: a provider's membership and what it gives.
+         */
+        readonly RoleRuleRequest: {
+            /**
+             * Provider
+             * @description The sign-in provider whose accounts it matches.
+             */
+            readonly provider: string;
+            /**
+             * Source
+             * @description `github_org` and `github_team` for a GitHub provider; `role` for one with a
+             *     `role_claim`; `group` for any.
+             * @enum {string}
+             */
+            readonly source: "github_org" | "github_team" | "group" | "role";
+            /**
+             * Value
+             * @description The organization (`acme`), team (`acme/docs-writers`), group or role value, as the provider
+             *     names it (a group without `group_prefix`).
+             */
+            readonly value: string;
+            /**
+             * Grant
+             * @description `instance_admin`, `create_libraries`, or a library role: `viewer`, `contributor`,
+             *     `admin`.
+             * @enum {string}
+             */
+            readonly grant: "instance_admin" | "create_libraries" | "viewer" | "contributor" | "admin";
+            /**
+             * Libraries
+             * @description For a library role: the libraries it is given on (`/owner/repo`); null for every library
+             *     that is not private (present and future).
+             */
+            readonly libraries?: readonly string[] | null;
+        };
+        /**
+         * RoleRuleSummary
+         * @description A role rule (#577): who it matches at a provider, and what it gives them.
+         */
+        readonly RoleRuleSummary: {
+            /**
+             * Id
+             * @description The rule's ID; `config:...` for a rule of the configuration file.
+             */
+            readonly id: string;
+            /**
+             * Provider
+             * @description The sign-in provider whose accounts it matches; null for any (only
+             *     `[auth.library_creation].groups`, whose names carry their provider's prefix).
+             */
+            readonly provider: string | null;
+            /**
+             * Source
+             * @description `github_org`, `github_team`, `group` or `role` (a value of the provider's `role_claim`).
+             * @enum {string}
+             */
+            readonly source: "github_org" | "github_team" | "group" | "role";
+            /**
+             * Value
+             * @description The organization, `org/team`, group or role value, as the provider names it.
+             */
+            readonly value: string;
+            /**
+             * Grant
+             * @description `instance_admin`, `create_libraries`, or the library role it gives.
+             * @enum {string}
+             */
+            readonly grant: "instance_admin" | "create_libraries" | "viewer" | "contributor" | "admin";
+            /**
+             * Libraries
+             * @description The libraries a library role is given on; null for every library that is not private.
+             */
+            readonly libraries: readonly string[] | null;
+            /**
+             * Configured
+             * @description Set by the configuration file: read-only here.
+             */
+            readonly configured: boolean;
+            /**
+             * Created By
+             * @description The username of who added it; null for a configured rule (or an account that is gone).
+             */
+            readonly created_by?: string | null;
+            /**
+             * Created At
+             * @description When it was added; null for a configured rule.
+             */
+            readonly created_at?: string | null;
+        };
+        /**
          * RoleSource
          * @description Where a role's model came from.
          * @enum {string}
@@ -6152,6 +6330,37 @@ export interface components {
              *     `xhigh`; null: the provider's default. Thinking tokens are billed as output.
              */
             readonly thinking?: components["schemas"]["ThinkingLevel"] | null;
+        };
+        /**
+         * RuleProviderSummary
+         * @description A sign-in provider as role rules see it.
+         */
+        readonly RuleProviderSummary: {
+            /**
+             * Name
+             * @description The provider's name, as rules name it.
+             */
+            readonly name: string;
+            /**
+             * Display Name
+             * @description What its sign-in button says.
+             */
+            readonly display_name: string;
+            /**
+             * Github
+             * @description Whether it is GitHub: its rules may name organizations and teams.
+             */
+            readonly github: boolean;
+            /**
+             * Role Claim
+             * @description Whether it reads a role claim: its rules may name role values.
+             */
+            readonly role_claim: boolean;
+            /**
+             * Configured Rules Only
+             * @description Only the configuration file's rules apply to it: adding one here is refused.
+             */
+            readonly configured_rules_only: boolean;
         };
         /**
          * ScopeUsageOut
@@ -7438,6 +7647,12 @@ export interface components {
              * @default 0
              */
             readonly token_count: number;
+            /**
+             * Rules
+             * @description The IDs of the role rules that match the account (`GET /role-rules`): an `admin` without
+             *     an `instance_admin` rule among them was made admin directly.
+             */
+            readonly rules?: readonly string[];
         };
         /**
          * VersionList
@@ -9028,6 +9243,232 @@ export interface operations {
             };
         };
     };
+    readonly "identity-list_role_rules": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 200: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RoleRuleList"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-add_role_rule": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["RoleRuleRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 201: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["RoleRuleSummary"];
+                };
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    readonly "identity-remove_role_rule": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                readonly rule_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description Successful Response */
+            readonly 204: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description The request cannot be processed (error code in `error`). */
+            readonly 400: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The caller is not signed in, or the credentials are wrong (`unauthenticated`). */
+            readonly 401: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Refused: the instance has no admin account yet (`setup_required`), or the caller may not do this (`forbidden`). */
+            readonly 403: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The thing does not exist or is not visible to the caller. */
+            readonly 404: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description The request conflicts with the current state. */
+            readonly 409: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description A field is invalid (`fields` names them) or a business rule is violated. */
+            readonly 422: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     readonly "identity-list_access_log": {
         readonly parameters: {
             readonly query?: {
@@ -9047,7 +9488,7 @@ export interface operations {
                 /** @description Sort by one of at, library, change; prefix `-` for descending. Default: `-at` (newest first). Ties go by the event's ID (the order it was recorded in), in the same direction. An unknown field is a 422. */
                 readonly sort?: string | null;
                 /** @description Only events of these changes; repeat for several. */
-                readonly change?: readonly ("library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted")[] | null;
+                readonly change?: readonly ("library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted" | "rule_added" | "rule_removed")[] | null;
                 /** @description Only changes made by this person: a username (any case), or the account ID the log shows as `actor` for an account that no longer exists. Changes the instance made (`actor` null) never match. */
                 readonly actor?: string | null;
                 /** @description Only changes about this user or group: a username (any case), the account ID the log shows as `subject` for an account that no longer exists, or a group name (exact case, as the log shows it). A user and a group of the same name both match. Deletions, which are about nobody, never match. */
@@ -9902,7 +10343,7 @@ export interface operations {
                 /** @description Sort by one of at, library, change; prefix `-` for descending. Default: `-at` (newest first). Ties go by the event's ID (the order it was recorded in), in the same direction. An unknown field is a 422. */
                 readonly sort?: string | null;
                 /** @description Only events of these changes; repeat for several. */
-                readonly change?: readonly ("library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted")[] | null;
+                readonly change?: readonly ("library_created" | "granted" | "revoked" | "ownership_transferred" | "library_deleted" | "rule_added" | "rule_removed")[] | null;
                 /** @description Only changes made by this person: a username (any case), or the account ID the log shows as `actor` for an account that no longer exists. Changes the instance made (`actor` null) never match. */
                 readonly actor?: string | null;
                 /** @description Only changes about this user or group: a username (any case), the account ID the log shows as `subject` for an account that no longer exists, or a group name (exact case, as the log shows it). A user and a group of the same name both match. Deletions, which are about nobody, never match. */

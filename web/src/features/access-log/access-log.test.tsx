@@ -140,6 +140,40 @@ describe("access log sentences", () => {
     ).toBe("ExactDocs (command line or a job) removed the library and every role on it");
   });
 
+  it("name a role rule an admin added or removed", () => {
+    const rule = {
+      id: "r1",
+      provider: "gh",
+      source: "github_team" as const,
+      value: "acme/docs-writers",
+      grant: "contributor" as const,
+      libraries: null,
+      configured: false,
+    };
+    const ruleEvent = (change: "rule_added" | "rule_removed", libraries: string[] | null) =>
+      event({
+        change,
+        library: "",
+        kind: null,
+        subject: null,
+        role: null,
+        rule: { ...rule, libraries },
+      });
+    expect(sentence(ruleEvent("rule_added", null))).toBe(
+      "alice added the role rule GitHub team acme/docs-writers → contributor on every library",
+    );
+    expect(sentence(ruleEvent("rule_removed", ["/acme/api"]))).toBe(
+      "alice removed the role rule GitHub team acme/docs-writers → contributor on /acme/api",
+    );
+    expect(
+      describeEvent(ruleEvent("rule_added", null), "pl")
+        .map((p) => p.text)
+        .join(""),
+    ).toBe(
+      "Użytkownik alice dodał regułę ról zespół GitHub acme/docs-writers → współtwórca we wszystkich bibliotekach",
+    );
+  });
+
   it("keep their part keys unique", () => {
     const parts = describeEvent(event({ role: "admin", previous_role: "viewer", kind: "group" }));
     expect(new Set(parts.map((p) => p.key)).size).toBe(parts.length);

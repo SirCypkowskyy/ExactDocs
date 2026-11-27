@@ -307,6 +307,7 @@ async def test_grants_are_given_listed_and_revoked_over_rest(instance: Instance)
             "total": 1,
             "caller_role": "creator",
             "creator": None,
+            "rules": [],
         }
 
         revoked = await ada.delete(f"{PATH}/grants/user/bob")

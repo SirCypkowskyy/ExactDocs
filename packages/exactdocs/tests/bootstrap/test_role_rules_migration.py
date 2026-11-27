@@ -48,3 +48,33 @@ async def test_libraries_with_a_credential_start_private(
             assert private.scalars().all() == ["/acme/secret"]
     finally:
         await engine.dispose()
+
+
+@pytest.mark.parametrize("backend", SQL_BACKENDS)
+async def test_access_events_get_a_rule_and_lose_rule_events_on_downgrade(
+    backend: str, request: pytest.FixtureRequest
+) -> None:
+    if backend == "postgres":
+        request.getfixturevalue("on_postgres")
+    engine = open_database(Settings())
+    try:
+        await migrate(engine)
+        async with engine.begin() as connection:
+            columns = await connection.run_sync(
+                lambda sync: {
+                    c["name"] for c in inspect(sync).get_columns("identity_access_events")
+                }
+            )
+            assert "rule" in columns
+            await connection.execute(
+                text(
+                    "INSERT INTO identity_access_events (id, library, at, change, rule) VALUES"
+                    " ('1', '', 't', 'rule_added', '{}'),"
+                    " ('2', '/a/b', 't', 'library_deleted', NULL)"
+                )
+            )
+            await connection.run_sync(_migrate, "downgrade", AFTER)
+            ids = await connection.execute(text("SELECT id FROM identity_access_events"))
+            assert ids.scalars().all() == ["2"]
+    finally:
+        await engine.dispose()

@@ -40,3 +40,19 @@ library or on chosen ones.
   check. Their active memberships (organizations checked like the filters, restricted ones counted
   as none) become `github:<org>` and `github:<org>/<team>`; admission stays with `allowed_orgs` and
   `allowed_teams`.
+- **Managing rules.** `ListRoleRules`, `AddRoleRule` and `RemoveRoleRule` (`/role-rules`, operators
+  with a session) share `RuleAdmin`. A stored rule needs a configured provider without
+  `configured_rules_only`, a source the provider can have (GitHub names for GitHub, role values
+  with `role_claim`) and no duplicate (checked in the repository's write turn).
+- **Instance roles at once.** Adding or removing an `instance_admin` rule sets the role of every
+  account its provider created from `memberships_by_account` (`set_roles`; a local account's role
+  never changes), for the changed rule's provider only. A change that would leave no enabled admin
+  is refused (`LastOperatorError`); adding one can demote too, when a role went stale after a
+  configuration change.
+  The check runs before the removal, not in its transaction: a sign-in or disable in between can
+  still race it.
+- **Provenance.** `UserSummary.rules` lists the rules that match each account, and a library's
+  grants list carries the rules that reach the library (`RoleRules.reaching`).
+- **Access log.** `rule_added` and `rule_removed` events (`AccessEvent.rule`, stored as JSON in
+  `identity_access_events.rule`) have the actor and the rule as it was, and an empty library.
+
