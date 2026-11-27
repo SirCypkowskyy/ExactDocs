@@ -63,7 +63,7 @@ jobs:
             not-stable: '^(?!sha256[:-])(?!(latest|\d+\.\d+|\d+\.\d+\.\d+)-local$)'
     steps:
       - name: Dev images (X.Y.Z.devN) of ${{ matrix.variant }}, keep the newest ${{ env.KEEP_DEV }}
-        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        uses: dataaxiom/ghcr-cleanup-action@ac45a8c04b1eb4b27974ca79a0a74f344c93664b # v1.3.0
         with:
           package: exactdocs
           use-regex: true
@@ -73,7 +73,7 @@ jobs:
           dry-run: ${{ inputs.dry-run || false }}
 
       - name: Stable images (X.Y.Z) of ${{ matrix.variant }}, keep the newest ${{ env.KEEP_STABLE }}
-        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        uses: dataaxiom/ghcr-cleanup-action@ac45a8c04b1eb4b27974ca79a0a74f344c93664b # v1.3.0
         with:
           package: exactdocs
           use-regex: true
@@ -92,7 +92,7 @@ jobs:
       # passes, so this job never deletes them under a running release (#607). The weekly run
       # removes them once they are older.
       - name: Untagged leftovers, orphaned signatures and partial images
-        uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        uses: dataaxiom/ghcr-cleanup-action@ac45a8c04b1eb4b27974ca79a0a74f344c93664b # v1.3.0
         with:
           package: exactdocs
           older-than: 1 day
