@@ -12,12 +12,12 @@
 #
 # Runners (#478, docs/releasing/runners.md "CI/CD and runners"), switched by the repository variable
 # RUNNER_MODE (Settings -> Secrets and variables -> Actions -> Variables):
-#   hybrid (default, also when unset): the self-hosted ARM64 runner [self-hosted, linux, ARM64,
-#     exactdocs] runs the eval, the integration pytest and behave suites (when asked for), the web
+#   hybrid (default, also when unset): the GCP self-hosted ARM64 runners [self-hosted, linux, ARM64,
+#     exactdocs, gcp] run the eval, the integration pytest and behave suites (when asked for), the web
 #     and Python builds and the arm64 image legs; GitHub-hosted ubuntu-24.04 runs the amd64 image
 #     legs (natively), the integration image, uvx and browser jobs (when asked for), and the short
 #     jobs that validate the tag, publish and sign (a fresh VM each time).
-#   self-hosted (when the GitHub-hosted minutes ran out): every job on the self-hosted runner.
+#   self-hosted (the current setting: docs/decisions/ci-runners.md): every job on the GCP runners.
 #     The amd64 legs are cross-built there (QEMU runs only the runtime stage's apt-get, never
 #     Python) and checked with `check_artifacts.py --no-python`.
 #
@@ -48,7 +48,7 @@ permissions:
 jobs:
   meta:
     name: Validate tag
-    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs","gcp"]') || 'ubuntu-24.04' }}
     outputs:
       version: ${{ steps.meta.outputs.version }}
       channel: ${{ steps.meta.outputs.channel }}
@@ -112,7 +112,7 @@ jobs:
   eval:
     name: Retrieval eval
     needs: meta
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
     # On the self-hosted runner in both modes: nothing in it needs x86. A few minutes.
     timeout-minutes: 30
     services:
@@ -187,7 +187,7 @@ jobs:
   web:
     name: Build web UI
     needs: meta
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
     defaults:
       run:
         working-directory: web
@@ -212,7 +212,7 @@ jobs:
   python:
     name: Build Python distributions
     needs: [meta, web]
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
     env:
       UV_DYNAMIC_VERSIONING_BYPASS: ${{ needs.meta.outputs.version }}
     steps:
@@ -262,7 +262,7 @@ jobs:
     name: Publish exactdocs-kernel to PyPI
     needs: [meta, python, eval]
     if: github.event_name == 'push'
-    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs","gcp"]') || 'ubuntu-24.04' }}
     environment:
       name: pypi
       url: https://pypi.org/project/exactdocs-kernel/${{ needs.meta.outputs.version }}/
@@ -280,7 +280,7 @@ jobs:
     name: Publish exactdocs to PyPI
     needs: [meta, pypi-kernel]
     if: github.event_name == 'push'
-    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs","gcp"]') || 'ubuntu-24.04' }}
     environment:
       name: pypi-exactdocs
       url: https://pypi.org/project/exactdocs/${{ needs.meta.outputs.version }}/
@@ -306,7 +306,7 @@ jobs:
   image-scan:
     name: Scan image (${{ matrix.variant }}, ${{ matrix.arch }})
     needs: meta
-    runs-on: ${{ (matrix.arch == 'arm64' || vars.RUNNER_MODE == 'self-hosted') && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ (matrix.arch == 'arm64' || vars.RUNNER_MODE == 'self-hosted') && fromJSON('["self-hosted","linux","ARM64","exactdocs","gcp"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
     strategy:
       fail-fast: false # one variant's finding must not hide another's
@@ -375,7 +375,7 @@ jobs:
   image:
     name: Build image (${{ matrix.variant }}, ${{ matrix.arch }})
     needs: [meta, image-scan, eval]
-    runs-on: ${{ (matrix.arch == 'arm64' || vars.RUNNER_MODE == 'self-hosted') && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ (matrix.arch == 'arm64' || vars.RUNNER_MODE == 'self-hosted') && fromJSON('["self-hosted","linux","ARM64","exactdocs","gcp"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
     permissions:
       contents: read
@@ -441,7 +441,7 @@ jobs:
     name: Publish image to ghcr.io (${{ matrix.variant }})
     needs: [meta, image]
     if: github.event_name == 'push'
-    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs","gcp"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
       packages: write
@@ -536,7 +536,7 @@ jobs:
     name: GitHub Release
     needs: [meta, python, pypi-kernel, pypi, image-publish]
     if: github.event_name == 'push'
-    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.RUNNER_MODE == 'self-hosted' && fromJSON('["self-hosted","linux","ARM64","exactdocs","gcp"]') || 'ubuntu-24.04' }}
     permissions:
       contents: write
     steps:

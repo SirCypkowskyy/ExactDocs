@@ -8,7 +8,7 @@ so a rotated ``client_secret_file`` needs no restart.
 
 import asyncio
 import logging
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
@@ -31,14 +31,19 @@ from exactdocs.identity.adapters.driven.icons import read_icon
 from exactdocs.identity.adapters.driven.oauth2 import OAuth2ClaimNames, OAuth2Provider
 from exactdocs.identity.adapters.driven.oidc import OidcClaimNames, OidcProvider
 from exactdocs.identity.constants import OIDC_TIMEOUT
+from exactdocs.identity.errors import InvalidRoleRuleError
 from exactdocs.identity.models import (
     AccessPolicy,
     BuiltInIcon,
     ProviderIcon,
+    RoleRule,
+    RuleGrant,
+    RuleSource,
     SignInPolicy,
     Username,
+    github_rule_targets,
 )
-from exactdocs.identity.ports.driven import SignInProvider
+from exactdocs.identity.ports.driven import RoleRuleRepository, SignInProvider
 from exactdocs.identity.ports.driving import RevalidateExternalAccounts
 from exactdocs_kernel import Clock, OutboundNetwork
 
@@ -81,7 +86,10 @@ def sign_in_client(
 
 
 def sign_in_providers(
-    settings: Settings, client: httpx2.AsyncClient, clock: Clock
+    settings: Settings,
+    client: httpx2.AsyncClient,
+    clock: Clock,
+    rules: RoleRuleRepository | None = None,
 ) -> tuple[dict[str, SignInProvider], dict[str, SignInPolicy]]:
     """Build the configured identity providers and their policies, by name.
 
@@ -89,6 +97,8 @@ def sign_in_providers(
         settings: The runtime configuration (``auth.providers`` and ``public_url``).
         client: The HTTP client the providers are called through.
         clock: The current time.
+        rules: The stored role rules, whose GitHub organizations and teams a GitHub provider
+            checks too; ``None`` for the configured ones only.
 
     Returns:
         The providers and their policies, under the same names.
@@ -109,6 +119,10 @@ def sign_in_providers(
             auto_create_users=config.creates_accounts,
             icon=None if icon is None else BuiltInIcon(icon),
             icon_file=None if config.icon_file is None else _icon(name, config.icon_file),
+            github=config.kind == "github",
+            reads_roles=config.role_claim is not None,
+            rules=_configured_rules(name, config),
+            configured_rules_only=config.configured_rules_only,
         )
         if config.protocol == "github":
             providers[name] = GithubProvider(
@@ -120,6 +134,7 @@ def sign_in_providers(
                 allowed_orgs=tuple(config.allowed_orgs),
                 allowed_teams=tuple(config.allowed_teams),
                 client=client,
+                watched=_github_watch(policies[name], rules),
             )
             continue
         if config.protocol == "oauth2":
@@ -137,6 +152,7 @@ def sign_in_providers(
                     username=config.username_claim,
                     email=config.email_claim,
                     groups=config.groups_claim,
+                    roles=config.role_claim,
                 ),
                 client_auth_method=config.client_auth_method,
                 client=client,
@@ -152,6 +168,7 @@ def sign_in_providers(
                 username=config.username_claim,
                 email=config.email_claim,
                 groups=config.groups_claim,
+                roles=config.role_claim,
             ),
             client=client,
             clock=clock,
@@ -159,6 +176,67 @@ def sign_in_providers(
             authorization_params=GOOGLE_AUTHORIZATION_PARAMS if config.kind == "google" else {},
         )
     return providers, policies
+
+
+def _configured_rules(name: str, config: SignInProviderSettings) -> tuple[RoleRule, ...]:
+    """Turn a provider's ``[[rules]]`` into the domain's read-only role rules.
+
+    Args:
+        name: The provider's name.
+        config: Its settings.
+
+    Returns:
+        The rules, in the file's order.
+
+    Raises:
+        StartupError: A rule cannot match anyone (a malformed name or library ID).
+    """
+    found: list[RoleRule] = []
+    for number, rule in enumerate(config.rules, start=1):
+        kind, value = rule.source
+        try:
+            found.append(
+                RoleRule(
+                    id=f"config:{name}:{number}",
+                    provider=name,
+                    source=RuleSource(kind),
+                    value=value,
+                    grant=RuleGrant(rule.grant),
+                    libraries=None
+                    if rule.libraries is None
+                    else frozenset(library.casefold() for library in rule.libraries),
+                    configured=True,
+                )
+            )
+        except InvalidRoleRuleError as error:
+            message = f"sign-in provider {name!r}, rule {number}: {error}"
+            raise StartupError(message) from None
+    return tuple(found)
+
+
+def _github_watch(
+    policy: SignInPolicy, rules: RoleRuleRepository | None
+) -> Callable[[], Awaitable[tuple[frozenset[str], frozenset[str]]]]:
+    """Return what tells a GitHub provider which organizations and teams the rules name.
+
+    Args:
+        policy: The provider's policy, with its configured rules.
+        rules: The stored rules; ``None`` for none.
+
+    Returns:
+        A function giving the organizations and teams, case folded, read at every check.
+    """
+
+    async def watched() -> tuple[frozenset[str], frozenset[str]]:
+        """Read the rules in force for this provider.
+
+        Returns:
+            Their organizations and teams.
+        """
+        stored = [] if rules is None or policy.configured_rules_only else await rules.stored()
+        return github_rule_targets([*policy.rules, *stored], policy.name)
+
+    return watched
 
 
 def _icon(name: str, path: Path) -> ProviderIcon:

@@ -27,6 +27,7 @@ from exactdocs.identity.models import (
     Account,
     AccountId,
     ExternalIdentity,
+    Memberships,
     Role,
     SignInAttempt,
     Username,
@@ -502,3 +503,35 @@ async def test_two_processes_never_claim_one_link_twice(on_postgres: None) -> No
 
     claimed = [ln.subject for batch in batches for ln in batch]
     assert sorted(claimed) == sorted(f"u-{i}" for i in range(20))
+
+
+async def test_role_values_are_stored_apart_from_the_groups(stores: Stores) -> None:
+    alice, bob = account("alice"), account("bob")
+    await stores.accounts.add(bob)
+    await stores.externals.create_linked_account(
+        alice, link("u-1", alice.id), frozenset({"g"}), frozenset({"Reader"})
+    )
+    expected = Memberships(provider="corp", groups=frozenset({"g"}), roles=frozenset({"Reader"}))
+
+    assert await stores.externals.memberships_of(alice.id) == expected
+    assert await stores.externals.memberships_by_account() == {alice.id: expected}
+    assert await stores.externals.groups_of(alice.id) == {"g"}
+    assert await stores.externals.memberships_of(bob.id) == Memberships(provider=None)
+
+    await stores.externals.record_check(
+        link("u-1", alice.id), role=Role.USER, groups=frozenset(), roles=frozenset({"Admin"})
+    )
+    assert (await stores.externals.memberships_of(alice.id)).roles == {"Admin"}
+    await stores.externals.revoke(alice.id, NOW)
+    assert (await stores.externals.memberships_of(alice.id)).roles == frozenset()
+
+
+async def test_roles_are_set_for_provider_accounts_only(stores: Stores) -> None:
+    alice, bob = account("alice"), account("bob")
+    await stores.accounts.add(bob)
+    await stores.externals.create_linked_account(alice, link("u-1", alice.id), frozenset())
+
+    await stores.externals.set_roles({alice.id: Role.ADMIN, bob.id: Role.ADMIN})
+
+    roles = {a.username.value: a.role for a in await stores.accounts.list_all()}
+    assert roles == {"alice": Role.ADMIN, "bob": Role.USER}

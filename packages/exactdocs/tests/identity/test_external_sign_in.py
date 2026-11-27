@@ -521,7 +521,11 @@ async def test_two_concurrent_first_sign_ins_end_up_on_one_account() -> None:
             return await self.inner.get(issuer, subject) if self.raced else None
 
         async def create_linked_account(
-            self, account: Account, identity: ExternalIdentity, groups: frozenset[str]
+            self,
+            account: Account,
+            identity: ExternalIdentity,
+            groups: frozenset[str],
+            roles: frozenset[str] = frozenset(),
         ) -> LinkOutcome:
             if not self.raced:  # the other sign-in wins first
                 self.raced = True
@@ -534,7 +538,7 @@ async def test_two_concurrent_first_sign_ins_end_up_on_one_account() -> None:
                 )
                 won = replace(identity, account_id=winner.id)
                 assert await self.inner.create_linked_account(winner, won, groups) == "created"
-            return await self.inner.create_linked_account(account, identity, groups)
+            return await self.inner.create_linked_account(account, identity, groups, roles)
 
     world = build(externals=Racing)
     world.provider.add("u-1", "alice")

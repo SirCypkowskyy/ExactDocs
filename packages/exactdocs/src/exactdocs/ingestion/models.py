@@ -1007,6 +1007,9 @@ class Person:
     """The account's stable ID."""
     username: str
     """The account's user name, the name people see."""
+    via: str | None = None
+    """How the request came in when it was not the web UI or REST: ``mcp`` for an agent's
+    ``add_docs`` (#613); ``None`` otherwise."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

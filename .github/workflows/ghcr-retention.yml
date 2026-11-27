@@ -2,7 +2,7 @@
 # newest stable images (X.Y.Z) of each variant (base, -ai, -local: #246), counted per variant so
 # that one release's three images do not push out older releases of another variant. Multi-arch
 # indexes, their platform images, cosign signatures and SBOM/provenance attestations are removed
-# together; untagged leftovers are deleted.
+# together; untagged leftovers older than a day are deleted.
 # See docs/releasing/images.md#image-retention.
 name: GHCR retention
 
@@ -42,9 +42,12 @@ jobs:
   # with `(?!sha256[:-])`, or it would match every digest and the pass would delete nothing.
   # packages/exactdocs/tests/bootstrap/test_ghcr_retention.py checks them on sample tags.
   cleanup:
-    # After a release only: a manual Release run is a dry run that pushes nothing (#478).
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.event == 'push'
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    # After a successful tag release only: a manual Release run is a dry run that pushes nothing
+    # (#478), and a failed one is usually re-run, which pushes new untagged images (#607).
+    if: >-
+      github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'success')
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
     strategy:
       max-parallel: 1 # one deletion at a time on the same package
       matrix:
@@ -81,12 +84,18 @@ jobs:
 
   leftovers:
     needs: cleanup
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
     steps:
+      # A running Release pushes its platform images by digest (untagged) and tags them into
+      # multi-arch indexes later, in image-publish; re-running only image-publish reuses them.
+      # `older-than` keeps every image pushed in the last day out of the untagged, partial and ghost
+      # passes, so this job never deletes them under a running release (#607). The weekly run
+      # removes them once they are older.
       - name: Untagged leftovers, orphaned signatures and partial images
         uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
           package: exactdocs
+          older-than: 1 day
           delete-untagged: true
           delete-orphaned-images: true
           delete-partial-images: true

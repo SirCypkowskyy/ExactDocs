@@ -4,7 +4,7 @@ name: Retrieval eval (real providers)
 # pull request. It runs the retrieval eval suite (docs/evals/suite.md,
 # `just eval --configured-models --allow-providers`)
 # with one provider profile, `eval`, configured the way an operator configures ExactDocs
-# (EXACTDOCS_AI__..., docs/decisions/ai-retrieval.md):
+# (EXACTDOCS_AI__..., docs/decisions/ai-retrieval/configuration.md):
 #
 #   repository variables   EVAL_PROVIDER_KIND (e.g. openai-compatible, openai, anthropic, azure),
 #                          EVAL_PROVIDER_BASE_URL, EVAL_PROVIDER_API_VERSION (azure),
@@ -74,7 +74,7 @@ jobs:
     name: Retrieval eval with real providers
     # Nothing to measure without a provider (a local-models benchmark run leaves it unset).
     if: ${{ vars.EVAL_PROVIDER_KIND != '' }}
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
     timeout-minutes: 60
     environment: eval-providers # its protection rules decide who may spend the keys
     env:
@@ -132,8 +132,9 @@ jobs:
   benchmark:
     name: Retrieval benchmark with real providers
     if: ${{ inputs.benchmark }}
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
-    timeout-minutes: 360
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
+    # The recorded local subset took 3 h 22 min on 4 CPUs; the GCP runners have 2.
+    timeout-minutes: 720
     environment: eval-providers # its protection rules decide who may spend the keys
     env:
       EXACTDOCS_MODELS_DIR: ${{ github.workspace }}/.models
@@ -189,7 +190,7 @@ jobs:
   context7:
     name: Context7 on the golden set
     if: ${{ inputs.context7 }}
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
     timeout-minutes: 120
     environment: eval-providers # its protection rules decide who may spend the keys
     steps:

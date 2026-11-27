@@ -3,14 +3,13 @@
 !!! abstract "TL;DR"
     - `retrieval.json` records everything needed to recompute a result: the corpus commits, the
       environment, the models and settings, and every case's outcome.
-    - The recorded run (24 November 2026, 3 h 22 min on a 4-CPU aarch64 runner) covers BM25 and
-      the local models on a subset of the matrix. No hosted configuration has run yet.
-    - `search_docs` groups its results by article since #575, so BM25 at every chunking and hybrid
-      on bge-small at `default` were run again on 25 November and replace their recorded results.
-    - BM25 scores recall@5 92.5% at `h2`, 91.4% at `merge-400`, 91.0% at `default` and 89.9% at
+    - The recorded run (26 and 27 November 2026, five 2-vCPU aarch64 runner VMs, one chunking
+      each) covers BM25 and the local models on a subset of the matrix, every result grouped by
+      article (#575). No hosted configuration has run yet.
+    - BM25 scores recall@5 92.9% at `h2`, 91.8% at `merge-400`, 91.4% at `default` and 90.3% at
       `h6`. `h2`'s lead is not significant (p 0.27), so the shipped default stays `default`.
-    - Hybrid on bge-small at `default` reaches 92.5%, under the 5-point margin and not
-      significant, so BM25 stays the default for the local budget too.
+    - Hybrid on bge-small reaches 94.0% at `merge-400` and `h6`, under the 5-point margin and not
+      significant (p 0.13 and 0.12), so BM25 stays the default for the local budget too.
     - The manual *Eval* workflow runs BM25 at `default` with `--check`. The local and hosted parts
       never run in CI.
 
@@ -56,111 +55,87 @@ still 1, and a report without them still reads.
 
 | Run | |
 |---|---|
-| Recorded | 24 November 2026, for #503 and #501 |
-| Golden set | with its alternatives marked (`sha256:a00997851150e3b0`) |
-| Workflow | the manual *Retrieval eval (real providers)*, `benchmark` ticked, local configurations only ([run 45353553786](https://github.com/SirCypkowskyy/ExactDocs/actions/runs/45353553786)) |
-| Machine | one self-hosted runner VM, Linux aarch64, 4 CPUs |
-| ExactDocs | `8e789e6` |
-| Time | 3 h 22 min |
+| Recorded | 26 and 27 November 2026, for #598 |
+| Golden set | one heading without its attribute list (`sha256:100484c7ccdb1b89`) |
+| Workflow | a temporary workflow on a branch, one job per chunking ([run 45868335522](https://github.com/SirCypkowskyy/ExactDocs/actions/runs/45868335522) for `default` and `h6`, [run 45903219806](https://github.com/SirCypkowskyy/ExactDocs/actions/runs/45903219806) for `h2` and `merge-400`) |
+| Machine | five self-hosted runner VMs, Linux aarch64, 2 vCPUs each |
+| ExactDocs | `7f532c0`: develop at `fcd125d` with the temporary workflow added (`h2` and `merge-400` on `e530273`, which changes only that workflow) |
+| Time | 7 h 23 min from the first start to the last result; per VM below |
 
 A full local matrix (three embedding models, each with and without the cross-encoder, at four
-chunkings) would take far longer there, so it ran on this subset:
+chunkings) would take far longer there, so it ran the same subset as the run before it:
 
 - `bm25` and `hybrid:bge-small-en-v1.5` at every chunking configuration;
 - `bm25+ce` at `default`, `h6` and `h2`;
 - `hybrid:bge-small-en-v1.5+ce` at `default` and `h6`;
 - `hybrid:snowflake-arctic-embed-s` at `h6` (the second local embedding model);
-- `hybrid:bge-base-en-v1.5` did not run (about 50 minutes of embedding per chunking);
+- `hybrid:bge-base-en-v1.5` did not run (about 50 minutes of embedding per chunking on 4 CPUs);
 - every hosted configuration is listed as skipped: it needs a real-providers run.
 
+Each job ran one chunking (`h6` on two jobs):
+
 ```bash
-EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
-  --configs 'bm25,hybrid:bge-small-en-v1.5,bm25+ce@h6,bm25+ce@h2,bm25+ce@default,hybrid:bge-small-en-v1.5+ce@h6,hybrid:bge-small-en-v1.5+ce@default,hybrid:snowflake-arctic-embed-s@h6' \
-  --out packages/exactdocs/evals/results
+just retrieval-bench --chunkings default --configs 'bm25,bm25+ce,hybrid:bge-small-en-v1.5,hybrid:bge-small-en-v1.5+ce' --out <dir>
+just retrieval-bench --chunkings h6 --configs 'bm25,bm25+ce,hybrid:snowflake-arctic-embed-s' --out <dir>
+just retrieval-bench --chunkings h6 --configs 'hybrid:bge-small-en-v1.5,hybrid:bge-small-en-v1.5+ce' --out <dir>
+just retrieval-bench --chunkings h2 --configs 'bm25,bm25+ce,hybrid:bge-small-en-v1.5' --out <dir>
+just retrieval-bench --chunkings merge-400 --configs 'bm25,hybrid:bge-small-en-v1.5' --out <dir>
 ```
 
-Every result keeps its per-case `rows`, so every one has intervals and a paired test against its
-budget's default (#489).
+The five reports were merged into one: their results in chunking order, then the recommendations
+and the tests against each budget's default made again from all of them with the benchmark's own
+`recommend` and `against_defaults`. The environment is the `default` job's. Every result keeps its
+per-case `rows`, so every one has intervals, a paired test against its budget's default (#489)
+and recall within each token budget (#575).
 
-The run kept no context per case (#575). BM25 is deterministic, so its rows at every chunking were
-completed from a re-run of 25 November (Linux x86_64, 4 CPUs) that gave every case the same rank,
-nDCG and section ranks; `rows_from` names it, and the recorded latencies are kept. BM25 has recall
-within each token budget; the other results were not run again and have none. Hybrid search on
-bge-small at `default`, asked again on that machine, came back with 5 of the 321 cases at another
-rank (the vectors differ in their last digits between the two machines; recall@1, @5, @10, MRR and
-nDCG@10 are the same to the digit), so its rows were not replaced: that re-run is the grid's app
-cell `hybrid:bge-small-en-v1.5@default` ([Retrieval results](../benchmark/retrieval.md)).
-
-### Time on that runner
+### Time on those VMs
 
 | Step | Time |
 |---|---|
-| embedding the corpus, bge-small | 25 min at `default`<br/>32 at `h6`<br/>14 at `h2`<br/>23 at `merge-400` |
-| embedding the corpus, arctic-embed-s | 35 min |
-| the cross-encoder | about 2.5 s per question (32 candidates) |
+| embedding the corpus, bge-small | 2 h 27 min at `default`<br/>3 h at `h6`<br/>1 h 21 min at `h2`<br/>2 h 11 min at `merge-400` |
+| embedding the corpus, arctic-embed-s | 3 h 8 min |
+| the cross-encoder | about 15 s per question (32 candidates) |
+| BM25 | about a minute per chunking, import included |
+
+Embedding took about six times as long as on the 4-CPU runner of 24 November (25 minutes at
+`default` there), and the cross-encoder about six times (2.5 s per question).
 
 ### What it found
 
-| Configuration | recall@5, 24 November | grouped by article, 25 November |
+| Configuration | recall@5, 24 and 25 November | 26 and 27 November |
 |---|---|---|
-| BM25 at `h2` | 89.1% | 92.5% |
-| BM25 at `default` | 87.6% | 91.0% |
-| BM25 at `merge-400` | 87.6% | 91.4% |
-| BM25 at `h6` | 85.8% | 89.9% |
-| hybrid on bge-small at `default` | 90.3% | 92.5% |
-| hybrid on bge-small at `merge-400` | 91.0% | not run again |
-| hybrid on arctic-embed-s at `h6` | 79.8% | not run again |
+| BM25 at `h2` | 92.5% | 92.9% |
+| BM25 at `merge-400` | 91.4% | 91.8% |
+| BM25 at `default` | 91.0% | 91.4% |
+| BM25 at `h6` | 89.9% | 90.3% |
+| hybrid on bge-small at `default` | 92.5% | 93.3% |
+| hybrid on bge-small at `h6` | 90.6%, one chunk per result | 94.0% |
+| hybrid on bge-small at `merge-400` | 91.0%, one chunk per result | 94.0% |
+| BM25 with the cross-encoder at `default` | 89.5%, one chunk per result | 93.6% |
+| hybrid on arctic-embed-s at `h6` | 79.8%, one chunk per result | 86.5% |
 
-- BM25 scores alike at `h2`, `default` and `merge-400`, above `h6`, in both runs.
+- BM25 gives every case the rank it had on 25 November but one: the Pydantic `config-both` case,
+  a miss there since #571 cut `{#config-both}` out of the heading and found again since #594
+  dropped it from the case (0.4 points at every k).
 - `h2` comes first by the benchmark's ordering, so the summary names it for the no-model budget.
-  Its lead over `default` is not significant (grouped: +1.5 points, McNemar mid-p 0.27; on
-  24 November p 0.42), and the shipped default stays `default`.
-- Hybrid on bge-small at `default`, grouped, is as high as BM25 at `h2`: under the 5-point margin
-  and not significant (p 1). So BM25 stays the default for the local budget too. (On 24 November
-  the best was hybrid at `merge-400`, 1.9 points over BM25 at `h2`, p 0.33.)
-- The cross-encoder loses recall at `h2`, whose chunks are longer than its window.
+  Its lead over `default` is not significant (+1.5 points, McNemar mid-p 0.27), and the shipped
+  default stays `default`.
+- Hybrid on bge-small at `merge-400` is the best local result, 1.1 points over BM25 at `h2`: under
+  the 5-point margin and not significant (p 0.50). So BM25 stays the default for the local budget
+  too.
+- The results of 24 November were one chunk per result; grouped by article, the cross-encoder and
+  hybrid at `h6`, `h2` and `merge-400` gain 11 to 15 points of recall@1, and the cross-encoder no
+  longer loses recall against BM25 at `default` and `h6`. It still does at `h2`, whose chunks are
+  longer than its window.
 - arctic-embed-s is below BM25.
-
-### Run again with results grouped by article
-
-`search_docs` groups its results by article since #575, and the benchmark scores each group as one
-result ([Grouped results](retrieval-benchmark.md#what-a-run-does)). So the results ExactDocs'
-defaults are chosen from were run again on 25 November 2026 on 4 shared CPUs (Linux x86_64,
-ExactDocs `ce81d93`):
-
-```bash
-just retrieval-bench --offline --configs bm25 --out <dir>             # about 5 minutes
-EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
-  --configs 'hybrid:bge-small-en-v1.5@default' --out <dir>             # 59 minutes, embedding included
-```
-
-- Each of those five results replaced the recorded one whole: metrics, rows and latencies.
-  `recorded_by` names the run, and *Recorded by another run* in `retrieval.md` lists them.
-- The recommendations and the tests against each budget's default were made again from the
-  results as they then stood.
-- The other results (the cross-encoder, hybrid at `h6`, `h2` and `merge-400`, arctic-embed-s) are
-  still those of 24 November: the search before it grouped its results, one chunk per result, with
-  no context per case and so no recall within a token budget. Their recall@10 compares with the
-  grouped results (grouping returns the same ten chunks); their recall@1, recall@5 and MRR do not.
-- Since #571 a heading's `{#id}` is no longer part of its text, and one Pydantic case lists a
-  heading with one. So that case, at rank 1 for BM25 before, is a miss in every run since
-  `ce81d93`: one of the 267 answerable cases (0.4 points) fewer at every k, with or without
-  grouping.
-- The run that measured grouping against the search before it, on the same code and machine, is
-  the grid's app cells and their `+by-chunk` controls
-  ([Retrieval results](../benchmark/retrieval.md#grouped-by-article-575)).
 
 ### The run it replaces
 
-It replaces a run of 23 and 24 November 2026 (the same subset on the same runner), scored by the
-rules before #503 and #501. Its numbers are not comparable:
-
-- a chunk that held the expected section next to a sibling was a miss (BM25's recall@5 was 76.0%
-  at `h2` and 74.2% at `merge-400`);
-- recall@k counted only a case's first listed section (81.7% at `default`).
-
-Scored that way, BM25's results at `default` give the same 81.7%. The alternatives the review
-marked add 3 cases, and the other parts of multi-part cases 13 (8 of them `cross-page`).
+It replaces the run of 24 November 2026 (the same subset on one 4-CPU runner, ExactDocs `8e789e6`,
+[run 45353553786](https://github.com/SirCypkowskyy/ExactDocs/actions/runs/45353553786)), of which
+BM25 at every chunking and hybrid on bge-small at `default` were run again on 25 November (Linux
+x86_64, `ce81d93`) with the results grouped by article. Both were on the golden set before #594
+(`sha256:a00997851150e3b0`). The earlier history is on [Every run](../benchmark/retrieval/history.md).
 
 ## Running it with local models
 

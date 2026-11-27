@@ -136,3 +136,22 @@ async def test_unusable_userinfo_fails_closed(response: httpx2.Response) -> None
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(lambda _: response)) as client:
         with pytest.raises(ProviderUnavailableError):
             await provider(client).verify_id_token("access")
+
+
+async def test_a_role_claim_is_read_from_userinfo_beside_the_groups() -> None:
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path == "/token":
+            return httpx2.Response(200, json={"access_token": "access"})
+        return httpx2.Response(
+            200, json={"sub": "1", "groups": ["staff"], "app": {"roles": "ExactDocs.Admin"}}
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(respond)) as client:
+        grant = await provider(client, claims=OAuth2ClaimNames(roles="app.roles")).exchange(
+            code="code", code_verifier="v", nonce="n"
+        )
+        plain = await provider(client).verify_id_token("access")
+
+    assert grant.claims.roles == {"ExactDocs.Admin"}
+    assert grant.claims.groups == {"staff"}
+    assert plain.roles == frozenset()

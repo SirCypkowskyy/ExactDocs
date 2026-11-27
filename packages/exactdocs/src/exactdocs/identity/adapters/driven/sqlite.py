@@ -62,9 +62,13 @@ from exactdocs.identity.models import (
     Language,
     LibraryGrant,
     LibraryRole,
+    Memberships,
     Motion,
     Preferences,
     Role,
+    RoleRule,
+    RuleGrant,
+    RuleSource,
     Session,
     SignInAttempt,
     SubjectKind,
@@ -153,6 +157,34 @@ account_groups = Table(
     ),
     Column("name", Text, primary_key=True),
 )
+account_roles = Table(
+    "identity_account_roles",
+    metadata,
+    Column(
+        "account_id",
+        Text,
+        ForeignKey("identity_accounts.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+    Column("name", Text, primary_key=True),  # a role claim value, as the provider sends it
+)
+role_rules = Table(
+    "identity_role_rules",
+    metadata,
+    Column("id", Text, primary_key=True),  # a UUIDv7: sorts in the order of creation
+    Column("provider", Text, nullable=False),
+    Column("source", Text, nullable=False),  # `github_org`, `github_team`, `group` or `role`
+    Column("value", Text, nullable=False),
+    Column("grant", Text, nullable=False),
+    Column("libraries", Text),  # a JSON array of library IDs; NULL for every library
+    Column("created_by", Text),  # an account ID; no foreign key, like the access log's actor
+    Column("created_at", Text, nullable=False),  # see `_stamp`
+)
+private_libraries = Table(
+    "identity_private_libraries",
+    metadata,
+    Column("library", Text, primary_key=True),  # `/owner/repo`, lower-case
+)
 library_grants = Table(
     "identity_library_grants",
     metadata,
@@ -186,6 +218,7 @@ access_events = Table(
     Column("subject", Text),
     Column("role", Text),
     Column("previous_role", Text),
+    Column("rule", Text),  # a rule event's rule as JSON (`_rule_json`); NULL otherwise
 )
 known_sign_ins = Table(
     "identity_known_sign_ins",
@@ -1297,9 +1330,13 @@ class SqliteExternalIdentityRepository:
             await connection.execute(statement)
 
     async def create_linked_account(
-        self, account: Account, identity: ExternalIdentity, groups: frozenset[str]
+        self,
+        account: Account,
+        identity: ExternalIdentity,
+        groups: frozenset[str],
+        roles: frozenset[str] = frozenset(),
     ) -> LinkOutcome:
-        """Store the account, its link and its groups in one transaction.
+        """Store the account, its link, its groups and its roles in one transaction.
 
         The unique username refuses a taken name, the primary key (issuer, subject) a second
         link of the identity; either rolls everything back. Which one it was is read again
@@ -1309,6 +1346,7 @@ class SqliteExternalIdentityRepository:
             account: The new account.
             identity: Its link.
             groups: Its groups.
+            roles: Its role claim values.
 
         Returns:
             ``created``, ``username_taken`` or ``already_linked``.
@@ -1319,7 +1357,7 @@ class SqliteExternalIdentityRepository:
                 await connection.execute(
                     insert(external_identities).values(_identity_values(identity))
                 )
-                await _replace_groups(connection, account.id, groups)
+                await _replace_groups(connection, account.id, groups, roles)
         except IntegrityError:
             if await self.get(identity.issuer, identity.subject) is not None:
                 return "already_linked"
@@ -1327,14 +1365,20 @@ class SqliteExternalIdentityRepository:
         return "created"
 
     async def record_check(
-        self, identity: ExternalIdentity, *, role: Role, groups: frozenset[str]
+        self,
+        identity: ExternalIdentity,
+        *,
+        role: Role,
+        groups: frozenset[str],
+        roles: frozenset[str] = frozenset(),
     ) -> None:
-        """Store the link's new state, the account's role and its groups in one transaction.
+        """Store the link's new state, the account's role, groups and roles in one transaction.
 
         Args:
             identity: The link as it is now.
             role: The account's role now.
             groups: The account's groups now.
+            roles: The account's role claim values now.
         """
         values = _identity_values(identity)
         del values["issuer"], values["subject"], values["account_id"]
@@ -1347,7 +1391,7 @@ class SqliteExternalIdentityRepository:
         async with self.engine.begin() as connection:
             await connection.execute(link.values(values))
             await connection.execute(account.values(role=role.value))
-            await _replace_groups(connection, identity.account_id, groups)
+            await _replace_groups(connection, identity.account_id, groups, roles)
 
     async def record_revalidation(
         self,
@@ -1356,6 +1400,7 @@ class SqliteExternalIdentityRepository:
         *,
         role: Role,
         groups: frozenset[str],
+        roles: frozenset[str] = frozenset(),
     ) -> bool:
         """Store a successful revalidation, unless the link changed since it was claimed.
 
@@ -1363,13 +1408,15 @@ class SqliteExternalIdentityRepository:
         sign-in, check and access times and the account is not disabled (a compare-and-set, so
         it holds on PostgreSQL under concurrent writers too: the row lock makes a concurrent
         sign-in or revocation either finish first, and the compare then fails, or wait). The
-        role and the groups are written only when it matched, in the same transaction.
+        role, the groups and the roles are written only when it matched, in the same
+        transaction.
 
         Args:
             claimed: The link as ``claim_due`` returned it.
             checked: The link after the check.
             role: The account's role now.
             groups: The account's groups now.
+            roles: The account's role claim values now.
 
         Returns:
             ``True`` when stored; ``False`` when the link had changed (nothing is stored).
@@ -1397,7 +1444,7 @@ class SqliteExternalIdentityRepository:
             if (await connection.execute(link.values(values))).rowcount != 1:
                 return False
             await connection.execute(account.values(role=role.value))
-            await _replace_groups(connection, claimed.account_id, groups)
+            await _replace_groups(connection, claimed.account_id, groups, roles)
         return True
 
     async def revoke(self, account_id: AccountId, now: datetime) -> None:
@@ -1414,7 +1461,7 @@ class SqliteExternalIdentityRepository:
         )
         async with self.engine.begin() as connection:
             await connection.execute(statement)
-            await _replace_groups(connection, account_id, frozenset())
+            await _replace_groups(connection, account_id, frozenset(), frozenset())
 
     async def forget_tokens(self, account_id: AccountId) -> None:
         """Drop the account's sealed tokens.
@@ -1516,6 +1563,215 @@ class SqliteExternalIdentityRepository:
         query = select(account_groups.c.name).where(account_groups.c.account_id == account_id)
         async with self.engine.connect() as connection:
             return frozenset((await connection.execute(query)).scalars())
+
+    async def memberships_by_account(self) -> Mapping[AccountId, Memberships]:
+        """Return the memberships of every account created through a provider.
+
+        Returns:
+            For each account with an origin: its provider, groups and role claim values.
+        """
+        async with self.engine.connect() as connection:
+            links = (
+                await connection.execute(
+                    select(external_identities.c.account_id, external_identities.c.provider).where(
+                        _origin
+                    )
+                )
+            ).all()
+            groups = (await connection.execute(select(account_groups))).all()
+            roles = (await connection.execute(select(account_roles))).all()
+        found: dict[AccountId, tuple[str, set[str], set[str]]] = {
+            AccountId(row.account_id): (row.provider, set(), set()) for row in links
+        }
+        for rows, slot in ((groups, 1), (roles, 2)):
+            for row in rows:
+                if (entry := found.get(AccountId(row.account_id))) is not None:
+                    entry[slot].add(row.name)
+        return {
+            account: Memberships(
+                provider=provider, groups=frozenset(names), roles=frozenset(values)
+            )
+            for account, (provider, names, values) in found.items()
+        }
+
+    async def set_roles(self, roles: Mapping[AccountId, Role]) -> None:
+        """Set the role of accounts created through a provider, in one transaction.
+
+        Args:
+            roles: The new role of each account; a local account's never changes.
+        """
+        external = (
+            select(external_identities.c.account_id)
+            .where(external_identities.c.account_id == accounts.c.id, _origin)
+            .exists()
+        )
+        async with self.engine.begin() as connection:
+            for role in Role:
+                ids = sorted(account for account, wanted in roles.items() if wanted is role)
+                for start in range(0, len(ids), ACCOUNTS_PER_QUERY):
+                    await connection.execute(
+                        update(accounts)
+                        .where(
+                            accounts.c.id.in_(ids[start : start + ACCOUNTS_PER_QUERY]),
+                            accounts.c.role != role.value,
+                            external,
+                        )
+                        .values(role=role.value)
+                    )
+
+    async def memberships_of(self, account_id: AccountId) -> Memberships:
+        """Return the account's origin provider, groups and role claim values.
+
+        Args:
+            account_id: The account.
+
+        Returns:
+            Its memberships; no provider for a local account.
+        """
+        provider = select(external_identities.c.provider).where(
+            external_identities.c.account_id == account_id, _origin
+        )
+        groups = select(account_groups.c.name).where(account_groups.c.account_id == account_id)
+        roles = select(account_roles.c.name).where(account_roles.c.account_id == account_id)
+        async with self.engine.connect() as connection:
+            return Memberships(
+                provider=(await connection.execute(provider)).scalar(),
+                groups=frozenset((await connection.execute(groups)).scalars()),
+                roles=frozenset((await connection.execute(roles)).scalars()),
+            )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqliteRoleRuleRepository:
+    """Implements ``ports.driven.RoleRuleRepository`` (SQLite and PostgreSQL)."""
+
+    engine: AsyncEngine
+    """The database engine."""
+
+    async def stored(self) -> list[RoleRule]:
+        """Return every stored rule, oldest first.
+
+        Returns:
+            The rules.
+        """
+        async with self.engine.connect() as connection:
+            rows = await connection.execute(select(role_rules).order_by(role_rules.c.id))
+            return [_role_rule(row) for row in rows]
+
+    async def add(self, rule: RoleRule) -> bool:
+        """Store a rule unless its provider has the same source and grant stored.
+
+        Checked and stored in one ``begin_immediate`` transaction (SQLite's write lock; on
+        PostgreSQL the shared writers' lock), so two concurrent adds store one rule.
+
+        Args:
+            rule: The rule.
+
+        Returns:
+            Whether it was stored.
+        """
+        libraries = None if rule.libraries is None else json.dumps(sorted(rule.libraries))
+        same = select(role_rules.c.id).where(
+            role_rules.c.provider == rule.provider,
+            role_rules.c.source == rule.source.value,
+            role_rules.c.value == rule.value,
+            role_rules.c.grant == rule.grant.value,
+            role_rules.c.libraries.is_(None)
+            if libraries is None
+            else role_rules.c.libraries == libraries,
+        )
+        async with self.engine.execution_options(begin_immediate=True).begin() as connection:
+            if (await connection.execute(same)).first() is not None:
+                return False
+            await connection.execute(
+                insert(role_rules).values(
+                    id=rule.id,
+                    provider=rule.provider,
+                    source=rule.source.value,
+                    value=rule.value,
+                    grant=rule.grant.value,
+                    libraries=libraries,
+                    created_by=rule.created_by,
+                    created_at=_stamp(rule.created_at or datetime.now(UTC)),
+                )
+            )
+        return True
+
+    async def remove(self, rule_id: str) -> RoleRule | None:
+        """Remove a rule.
+
+        Args:
+            rule_id: Its ID.
+
+        Returns:
+            The rule removed, or ``None``.
+        """
+        statement = delete(role_rules).where(role_rules.c.id == rule_id).returning(role_rules)
+        async with self.engine.begin() as connection:
+            row = (await connection.execute(statement)).first()
+        return None if row is None else _role_rule(row)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class SqlitePrivateLibraries:
+    """Implements ``ports.driven.PrivateLibraries`` (SQLite and PostgreSQL)."""
+
+    engine: AsyncEngine
+    """The database engine."""
+
+    async def set_private(self, library: str, *, private: bool) -> None:
+        """Note whether a library is private.
+
+        Args:
+            library: The library ID, lower-case.
+            private: Whether it is.
+        """
+        async with self.engine.begin() as connection:
+            await connection.execute(
+                delete(private_libraries).where(private_libraries.c.library == library)
+            )
+            if private:
+                await connection.execute(insert(private_libraries).values(library=library))
+
+    async def private_among(self, libraries: Collection[str]) -> frozenset[str]:
+        """Return the private libraries among these.
+
+        Args:
+            libraries: Library IDs, lower-case.
+
+        Returns:
+            The private ones.
+        """
+        found: set[str] = set()
+        names = sorted(set(libraries))
+        async with self.engine.connect() as connection:
+            for start in range(0, len(names), ACCOUNTS_PER_QUERY):
+                query = select(private_libraries.c.library).where(
+                    private_libraries.c.library.in_(names[start : start + ACCOUNTS_PER_QUERY])
+                )
+                found.update((await connection.execute(query)).scalars())
+        return frozenset(found)
+
+
+def _role_rule(row: Row[Any]) -> RoleRule:
+    """Read a stored rule.
+
+    Args:
+        row: Its row.
+
+    Returns:
+        The rule.
+    """
+    return RoleRule(
+        id=row.id,
+        provider=row.provider,
+        source=RuleSource(row.source),
+        value=row.value,
+        grant=RuleGrant(row.grant),
+        libraries=None if row.libraries is None else frozenset(json.loads(row.libraries)),
+        created_by=None if row.created_by is None else AccountId(row.created_by),
+        created_at=datetime.fromisoformat(row.created_at),
+    )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1701,6 +1957,7 @@ class SqliteAccessLog:
                     previous_role=None
                     if event.previous_role is None
                     else event.previous_role.value,
+                    rule=None if event.rule is None else _rule_json(event.rule),
                 )
             )
 
@@ -1814,6 +2071,54 @@ def _access_event(row: Row[Any]) -> AccessEvent:
         subject=row.subject,
         role=None if row.role is None else LibraryRole(row.role),
         previous_role=None if row.previous_role is None else LibraryRole(row.previous_role),
+        rule=None if row.rule is None else _rule_from_json(row.rule),
+    )
+
+
+def _rule_json(rule: RoleRule) -> str:
+    """Write a rule as an access event keeps it: as it was, even once it is removed.
+
+    Args:
+        rule: The rule.
+
+    Returns:
+        Its JSON.
+    """
+    return json.dumps(
+        {
+            "id": rule.id,
+            "provider": rule.provider,
+            "source": rule.source.value,
+            "value": rule.value,
+            "grant": rule.grant.value,
+            "libraries": None if rule.libraries is None else sorted(rule.libraries),
+            "created_by": rule.created_by,
+            "created_at": None if rule.created_at is None else _stamp(rule.created_at),
+        }
+    )
+
+
+def _rule_from_json(text: str) -> RoleRule:
+    """Read a rule an access event keeps.
+
+    Args:
+        text: Its JSON.
+
+    Returns:
+        The rule.
+    """
+    data = json.loads(text)
+    return RoleRule(
+        id=data["id"],
+        provider=data["provider"],
+        source=RuleSource(data["source"]),
+        value=data["value"],
+        grant=RuleGrant(data["grant"]),
+        libraries=None if data["libraries"] is None else frozenset(data["libraries"]),
+        created_by=None if data["created_by"] is None else AccountId(data["created_by"]),
+        created_at=None
+        if data["created_at"] is None
+        else datetime.fromisoformat(data["created_at"]),
     )
 
 
@@ -1916,23 +2221,23 @@ def _identity(row: Row[Any]) -> ExternalIdentity:
 
 
 async def _replace_groups(
-    connection: AsyncConnection, account_id: str, groups: frozenset[str]
+    connection: AsyncConnection, account_id: str, groups: frozenset[str], roles: frozenset[str]
 ) -> None:
-    """Replace the account's groups, in the caller's transaction.
+    """Replace the account's groups and role claim values, in the caller's transaction.
 
     Args:
         connection: The connection, in a transaction.
         account_id: The account.
         groups: Its groups now.
+        roles: Its role claim values now.
     """
-    await connection.execute(
-        delete(account_groups).where(account_groups.c.account_id == account_id)
-    )
-    if groups:
-        await connection.execute(
-            insert(account_groups),
-            [{"account_id": account_id, "name": name} for name in sorted(groups)],
-        )
+    for table, names in ((account_groups, groups), (account_roles, roles)):
+        await connection.execute(delete(table).where(table.c.account_id == account_id))
+        if names:
+            await connection.execute(
+                insert(table),
+                [{"account_id": account_id, "name": name} for name in sorted(names)],
+            )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

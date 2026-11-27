@@ -16,8 +16,9 @@
     - No Context7 number is published until Upstash permits it
       ([Terms of service](context7.md#terms-of-service)).
     - It never runs in CI with a model. The recorded runs and their caveats are on
-      [Agent results](../benchmark/agent.md); flags and the workflow are on
-      [Running the agent benchmark](agent-bench-running.md).
+      [Agent results](../benchmark/agent/index.md); flags and the workflow are on
+      [Running the agent benchmark](agent-bench-running.md), and what the report holds on
+      [The agent benchmark's report](agent-bench-report.md).
 
 It lives in
 [`packages/exactdocs/evals/agent_bench/`](https://github.com/SirCypkowskyy/ExactDocs/tree/develop/packages/exactdocs/evals/agent_bench).
@@ -223,93 +224,13 @@ answer, for any other kind it is a miss. Each question keeps its raw grade.
 counts those separately (*Wrong for the version*). The judge's instructions are in
 `agent_bench/judge.py`.
 
-## The report
+## Moved sections
 
-`reports/evals/agent-bench.json`, and `.md` next to it (also appended to `$GITHUB_STEP_SUMMARY`).
+These sections moved to another page. The old links still land here and point on.
 
-- One cell per agent model and arm (and configuration, for `exactdocs` and `grounded-docs`).
-- Every rate and mean is over the questions without a provider failure (`answered`).
-
-### Quality
-
-- Grades and accuracy (share `correct`, plus `refused` on `unanswerable` cases), overall, per kind
-  and per project.
-- *No answer* and *Errors*.
-- *Wrong for the version*: answers the judge flagged `wrong_version`, and their share.
-- *Refused, answerable*: answerable questions the agent refused (misses).
-- *Correct refusals, unanswerable*.
-- *Read the answer*: of the answerable questions, the share where the agent read in full every
-  part the case names, at its version: a section of each part, or one of its alternatives (#501).
-    - Search snippets do not count.
-    - A case's sections are, by construction, where its facts are stated, so this measures whether
-      the cited text holds the required facts.
-    - `n/a` for `none` and `context7` ([How a run works](#how-a-run-works)).
-- *Read another version*.
-- Tool calls per question.
-
-### Tool errors
-
-Per arm with tools (#573):
-
-- the runs with a tool call that failed: an argument the server refused, a path the version
-  lacks... (`runs_with_tool_errors`);
-- how many calls failed (`tool_errors`), and which tools (`tool_errors_by_tool`).
-
-Each costs the agent a turn, and the harness ends a run whose tool fails twice (pydantic-ai's one
-retry), so a tool's strictness shows up as `no_answer`.
-
-### Cost per question
-
-Each as mean with its 95% interval, p50 and p95 (nearest rank):
-
-- wall time (retries left out);
-- input tokens;
-- output tokens with the thinking;
-- thinking tokens on their own (marked *estimated*, or *not returned*);
-- USD;
-- the provider retries.
-
-### Intervals and comparisons
-
-- Every rate and mean has its 95% interval (`intervals`, a percentile bootstrap over the questions,
-  as in [Intervals and paired tests](statistics.md#intervals-and-paired-tests)).
-- **Against the other arms, on the same cases** (`versus`): each arm against `none`, and
-  `context7` and `grounded-docs` against `exactdocs` too, for the same agent model and the cases
-  both answered (a baseline arm's first configuration).
-    - The accuracy difference, by McNemar's test (mid-p).
-    - The wall time, output tokens and input tokens, by a paired sign-flip permutation test.
-    - Each with its paired bootstrap interval, and the ratio of the means.
-    - This answers "how much longer does the agent take with the tool, and is it worth it".
-- **Against the first retrieval configuration**: for each retrieval configuration of an arm but
-  its first, McNemar's test of its accuracy against the first one's (`reference`,
-  `versus_reference`). Put the baseline first (`--retrieval`), e.g. BM25 when comparing models.
-- *Runs without an answer*: the `no_answer` and `error` runs and why.
-- *Documentation servers*: what each setup's server was (`meta.servers`).
-
-### What a rerun needs
-
-- `statistics` records the seed, resamples, confidence and level of the intervals and tests.
-- `meta` holds what a rerun needs:
-    - the agent models, the judge model, the arms and their instructions;
-    - each `exactdocs` retrieval configuration's settings;
-    - each arm's server (`servers`: release, integrity hash, configuration, the tools the agent
-      got; empty with stand-in tools);
-    - the selection of cases, the thinking setting, the limits and retries;
-    - where the models are served (`providers`: base URLs only);
-    - the ExactDocs version and the repository commit the run started from;
-    - every imported version with its pinned and recorded commit;
-    - how many answers were kept from an earlier run of the same command (`resumed`: those ran at
-      that run's commit and time).
-- `questions` holds every question's record: tool calls, chunks read as `<chunk ID>@<version>`,
-  tokens, thinking, wall and retry time, USD, the answer as given, the judge's reason.
-
-!!! info "No credential is recorded"
-    - A retrieval setting whose name holds `KEY`, `TOKEN`, `SECRET`, `PASSWORD`, `AUTH`, `HEADER`
-      and the like is recorded as `<redacted>`.
-    - Base URLs lose their user, password and query.
-    - Error messages and the judge's reasons have every secret-named environment value and
-      `Bearer <token>` replaced (`agent_bench/redact.py`).
-    - The API keys are read from the environment only.
-    - Each documentation server gets none of the agents' keys: ExactDocs only its own settings,
-      Context7 only `CONTEXT7_API_KEY` (recorded as `CONTEXT7_API_KEY set`), Grounded Docs no
-      credential.
+- <a id="the-report"></a>[The report](agent-bench-report.md#the-report)
+- <a id="quality"></a>[Quality](agent-bench-report.md#quality)
+- <a id="tool-errors"></a>[Tool errors](agent-bench-report.md#tool-errors)
+- <a id="cost-per-question"></a>[Cost per question](agent-bench-report.md#cost-per-question)
+- <a id="intervals-and-comparisons"></a>[Intervals and comparisons](agent-bench-report.md#intervals-and-comparisons)
+- <a id="what-a-rerun-needs"></a>[What a rerun needs](agent-bench-report.md#what-a-rerun-needs)

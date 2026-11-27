@@ -16,8 +16,10 @@ from exactdocs.identity.models import (
     ExternalIdentity,
     FailedSignIns,
     LibraryGrant,
+    Memberships,
     Preferences,
     Role,
+    RoleRule,
     Session,
     SignInAttempt,
     SubjectKind,
@@ -642,14 +644,19 @@ class ExternalIdentityRepository(Protocol):
         ...
 
     async def create_linked_account(
-        self, account: Account, identity: ExternalIdentity, groups: frozenset[str]
+        self,
+        account: Account,
+        identity: ExternalIdentity,
+        groups: frozenset[str],
+        roles: frozenset[str] = frozenset(),
     ) -> LinkOutcome:
-        """Store a new account, its link and its groups, all or nothing.
+        """Store a new account, its link, its groups and its roles, all or nothing.
 
         Args:
             account: The new account (without a password).
             identity: Its link.
             groups: Its groups, as ExactDocs stores them.
+            roles: Its role claim values.
 
         Returns:
             ``created``; ``username_taken`` when another account has the username;
@@ -658,16 +665,23 @@ class ExternalIdentityRepository(Protocol):
         ...
 
     async def record_check(
-        self, identity: ExternalIdentity, *, role: Role, groups: frozenset[str]
+        self,
+        identity: ExternalIdentity,
+        *,
+        role: Role,
+        groups: frozenset[str],
+        roles: frozenset[str] = frozenset(),
     ) -> None:
         """Store a successful sign-in or revalidation, in one transaction.
 
-        The link's times and tokens, the account's role and its groups (replacing the old ones).
+        The link's times and tokens, the account's role, its groups and its role claim values
+        (replacing the old ones).
 
         Args:
             identity: The link as it is now.
             role: The account's role now.
             groups: The account's groups now, as ExactDocs stores them.
+            roles: The account's role claim values now.
         """
         ...
 
@@ -678,6 +692,7 @@ class ExternalIdentityRepository(Protocol):
         *,
         role: Role,
         groups: frozenset[str],
+        roles: frozenset[str] = frozenset(),
     ) -> bool:
         """Store a successful revalidation, unless the link changed since it was claimed.
 
@@ -693,6 +708,7 @@ class ExternalIdentityRepository(Protocol):
             checked: The link after the check.
             role: The account's role now.
             groups: The account's groups now, as ExactDocs stores them.
+            roles: The account's role claim values now.
 
         Returns:
             ``True`` when stored; ``False`` when the link had changed (nothing is stored).
@@ -700,7 +716,7 @@ class ExternalIdentityRepository(Protocol):
         ...
 
     async def revoke(self, account_id: AccountId, now: datetime) -> None:
-        """End the account's access at ``now`` (its origin's) and drop its sealed tokens and groups.
+        """End the account's access at ``now`` (its origin's); drop its tokens, groups and roles.
 
         Args:
             account_id: The account.
@@ -750,6 +766,96 @@ class ExternalIdentityRepository(Protocol):
 
         Returns:
             Its groups, as ExactDocs stores them.
+        """
+        ...
+
+    async def memberships_of(self, account_id: AccountId) -> Memberships:
+        """Return what role rules can match about one account.
+
+        Args:
+            account_id: The account.
+
+        Returns:
+            Its origin's provider, its groups and its role claim values; no provider for a
+            local account.
+        """
+        ...
+
+    async def memberships_by_account(self) -> Mapping[AccountId, Memberships]:
+        """Return the memberships of every account created through a provider.
+
+        Returns:
+            For each account with an origin: its provider, groups and role claim values.
+        """
+        ...
+
+    async def set_roles(self, roles: Mapping[AccountId, Role]) -> None:
+        """Set the role of accounts created through a provider, in one transaction.
+
+        Args:
+            roles: The new role of each account; a local account's never changes.
+        """
+        ...
+
+
+class RoleRuleRepository(Protocol):
+    """The role rules admins added (the configuration file's are not stored)."""
+
+    async def stored(self) -> list[RoleRule]:
+        """Return every stored rule, oldest first.
+
+        Returns:
+            The rules.
+        """
+        ...
+
+    async def add(self, rule: RoleRule) -> bool:
+        """Store a rule, unless the same source and grant are stored for its provider already.
+
+        Args:
+            rule: The rule.
+
+        Returns:
+            ``True`` when stored; ``False`` for a duplicate (nothing is stored).
+        """
+        ...
+
+    async def remove(self, rule_id: str) -> RoleRule | None:
+        """Remove a rule.
+
+        Args:
+            rule_id: Its ID.
+
+        Returns:
+            The rule removed, or ``None`` when none has that ID.
+        """
+        ...
+
+
+class PrivateLibraries(Protocol):
+    """Which libraries are private (ingestion stores a token or deploy key for them).
+
+    Ingestion tells identity (``MarkLibraryPrivate``) before it stores a credential, so a role
+    rule for every library never reaches a private library, even for a moment.
+    """
+
+    async def set_private(self, library: str, *, private: bool) -> None:
+        """Note whether a library is private.
+
+        Args:
+            library: The library ID, lower-case.
+            private: Whether it is.
+        """
+        ...
+
+    async def private_among(self, libraries: Collection[str]) -> frozenset[str]:
+        """Return the private libraries among these.
+
+        Args:
+            libraries: Library IDs, lower-case.
+
+        Returns:
+            The private ones, lower-case.
         """
         ...
 

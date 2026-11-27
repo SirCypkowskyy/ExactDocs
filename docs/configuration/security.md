@@ -14,6 +14,7 @@
 | `EXACTDOCS_ALLOWED_ORIGINS` | unset | Browser origins allowed to make state-changing requests, comma-separated |
 | `EXACTDOCS_SECURE_COOKIES` | `false` | The session cookie is always `Secure` over HTTPS, and whenever `EXACTDOCS_PUBLIC_URL` is `https://`.<br/>Set `true` when TLS ends at a proxy that does not forward `X-Forwarded-Proto` from a trusted address and no public URL is set |
 | `EXACTDOCS_FORWARDED_ALLOW_IPS` | `127.0.0.1,::1` | Proxies whose `X-Forwarded-*` headers are trusted, for the scheme and for the client address the sign-in throttle counts.<br/>See [Behind a reverse proxy](../deployment/reverse-proxy.md) |
+| `EXACTDOCS_MCP_IMPORT_HOSTS` | `github.com,gitlab.com,codeberg.org,bitbucket.org` | The hosts an MCP client's `add_docs` may import from, comma-separated, exact names; `https://` only and only to public addresses.<br/>See [Adding libraries from an agent](../mcp/adding.md) |
 | `EXACTDOCS_PUBLIC_URL` | unset | The URL people reach the server at, without a path (`https://docs.example.com`).<br/>Required once a sign-in provider is configured: the redirect URI to register at the provider is `<public_url>/api/v1/auth/<name>/callback`, never built from a request's `Host` |
 
 ## The secret key

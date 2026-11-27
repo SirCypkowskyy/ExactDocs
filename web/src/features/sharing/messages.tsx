@@ -76,6 +76,13 @@ export const messages = defineMessages(
     },
     kinds: { user: "User", group: "Group" },
     kindsPlural: { user: "Users", group: "Groups" },
+    /** The role rules (#577) that reach the library, beside the grants. */
+    rules: {
+      title: "From role rules",
+      description:
+        "Members of these provider memberships hold the role too, on top of what is shared here. Operators manage the rules on the Users page.",
+      label: "Role rules that reach this library",
+    },
     page: {
       title: "Sharing",
       documentTitle: (name: string) => `Sharing ${name}`,
@@ -182,6 +189,12 @@ export const messages = defineMessages(
     },
     kinds: { user: "Użytkownik", group: "Grupa" },
     kindsPlural: { user: "Użytkownicy", group: "Grupy" },
+    rules: {
+      title: "Z reguł ról",
+      description:
+        "Członkowie tych grup u dostawców też mają tę rolę, niezależnie od udostępnień tutaj. Regułami zarządzają operatorzy na stronie Użytkownicy.",
+      label: "Reguły ról obejmujące tę bibliotekę",
+    },
     page: {
       title: "Udostępnianie",
       documentTitle: (name) => `Udostępnianie: ${name}`,

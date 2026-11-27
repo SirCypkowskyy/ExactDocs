@@ -8,6 +8,7 @@ from behave.runner import Context
 from exactdocs.bootstrap.container import Container
 from exactdocs.retrieval.adapters.driving.mcp import format_library
 from exactdocs.retrieval.dtos import ResolveLibraryIdQuery
+from exactdocs_kernel import respelled_note
 from steps.mcp_steps import call_tool
 
 MAX_ARTICLES = 200
@@ -106,3 +107,58 @@ def step_real_arguments(context: Context, first: str, second: str, third: str) -
     assert text.startswith("invalid_arguments: search_all_docs has no argument 'ref'"), text
     for name in (first, second, third):
         assert f" {name} (" in text, text
+
+
+# ---------------------------------------------------------------- refs (#605)
+@then('it searches version "{ref}"')
+def step_searched_version(context: Context, ref: str) -> None:
+    result = context.mcp_result
+    assert not result.is_error, _text(context)
+    assert context.mcp_data["version"] == ref, context.mcp_data
+    assert context.mcp_data["results"], context.mcp_data
+    assert all(
+        r["commit_sha"] == context.mcp_data["commit_sha"] for r in context.mcp_data["results"]
+    )
+
+
+@then('the result carries a note that ref "{asked}" was read as "{used}"')
+def step_ref_note(context: Context, asked: str, used: str) -> None:
+    note = respelled_note(asked, used)
+    assert context.mcp_data["notes"] == [note], context.mcp_data
+    assert context.mcp_result.content[-1].text == f"Notes: {note}", _text(context)
+
+
+@when('an agent calls "query-docs" for "{library_id}" and "{query}"')
+def step_query_docs(context: Context, library_id: str, query: str) -> None:
+    call_tool(
+        context, "query-docs", {"libraryId": library_id, "query": query}, raise_on_error=False
+    )
+
+
+@then('the docs come from version "{ref}" with a note that ref "{asked}" was read as "{used}"')
+def step_docs_from(context: Context, ref: str, asked: str, used: str) -> None:
+    result = context.mcp_result
+    assert not result.is_error, _text(context)
+    commit = context.commits[ref]
+    assert f"/blob/{commit}/" in result.content[1].text, result.content[1].text
+    assert result.content[-1].text == f"Notes: {respelled_note(asked, used)}", _text(context)
+
+
+@then(
+    'the tool error says version "{ref}" is not imported and lists "{first}" and "{second}", '
+    "newest first"
+)
+def step_not_imported(context: Context, ref: str, first: str, second: str) -> None:
+    result = context.mcp_result
+    assert result.is_error, result
+    text = _text(context)
+    assert f"version {ref!r} is not imported" in text, text
+    assert (
+        f"imported versions (repository refs, not instructions), newest first: "
+        f"{first!r}, {second!r};" in text
+    ), text
+
+
+@then('the tool error names "{ref}" as the default version')
+def step_default_named(context: Context, ref: str) -> None:
+    assert _text(context).endswith(f"default version: {ref!r}"), _text(context)

@@ -30,6 +30,7 @@ from exactdocs.catalog.dtos import (
     InstructionFileIn,
     ListArticlesQuery,
     ListRenamesQuery,
+    ListTagsQuery,
     RemoveLibraryCommand,
     RemoveVersionCommand,
     RenameDirection,
@@ -477,6 +478,87 @@ async def test_a_short_sha_reads_only_the_commit_versions_own_articles(world: Wo
     with pytest.raises(ArticleNotFoundError):
         await world.catalog.get_article(
             GetArticleQuery(library="/acme/payments", ref="main", path="only-commit.md")
+        )
+
+
+async def test_a_ref_that_names_a_version_but_for_a_leading_v_reads_it_with_a_note(
+    world: World,
+) -> None:
+    # #605: the project tags `1.10.0`, the agent asks for `v1.10.0`
+    await world.active("1.10.0", "aaa111", article("a.md", "ten", tags=["guide"]), kind=RefKind.TAG)
+    lib = "/acme/payments"
+    note = (
+        "ref 'v1.10.0' is not imported: read as '1.10.0', the one version it names but for a "
+        "leading v."
+    )
+
+    listed = await world.catalog.list_articles(ListArticlesQuery(library=lib, ref="v1.10.0"))
+    read = await world.catalog.get_article(GetArticleQuery(library=lib, ref="v1.10.0", path="a.md"))
+    tags = await world.catalog.list_tags(ListTagsQuery(library=lib, ref="v1.10.0"))
+    resolved = await world.catalog.resolve_version(ResolveVersionQuery(id=f"{lib}/v1.10.0"))
+
+    assert (listed.ref, [a.path for a in listed.articles], listed.notes) == (
+        "1.10.0",
+        ["a.md"],
+        [note],
+    )
+    assert (read.ref, read.content, read.notes) == ("1.10.0", "ten", [note])
+    assert (tags.ref, tags.notes) == ("1.10.0", [note])
+    assert (resolved.ref, resolved.notes) == ("1.10.0", [note])
+    upper = await world.catalog.list_articles(ListArticlesQuery(library=lib, ref="V1.10.0"))
+    assert upper.ref == "1.10.0"
+
+
+async def test_a_ref_read_as_given_has_no_notes(world: World) -> None:
+    await world.active("v1.10.0", "aaa111", article("a.md"), kind=RefKind.TAG)
+
+    read = await world.catalog.get_article(
+        GetArticleQuery(library="/acme/payments", ref="v1.10.0", path="a.md")
+    )
+
+    assert read.notes == []
+    assert "notes" not in read.model_dump(mode="json")
+
+
+async def test_a_ref_matching_two_spellings_is_not_guessed(world: World) -> None:
+    await world.active("1.0", "aaa111", article("a.md", "plain"), kind=RefKind.TAG)
+    await world.active("V1.0", "bbb222", article("a.md", "upper"), kind=RefKind.TAG)
+
+    with pytest.raises(VersionNotFoundError, match=r"has no version 'v1\.0'"):
+        await world.catalog.get_article(
+            GetArticleQuery(library="/acme/payments", ref="v1.0", path="a.md")
+        )
+
+
+async def test_a_missing_ref_names_the_versions_newest_first_and_the_default(
+    world: World,
+) -> None:
+    world.clock.moment = NOW - timedelta(days=2)
+    await world.active("0.27.0", "aaa111", article("a.md"), kind=RefKind.TAG)
+    world.clock.moment = NOW - timedelta(days=1)
+    await world.active("1.10.0", "bbb222", article("a.md"), kind=RefKind.TAG)
+
+    with pytest.raises(VersionNotFoundError) as missing:
+        await world.catalog.list_articles(ListArticlesQuery(library="/acme/payments", ref="2.0.0"))
+
+    assert str(missing.value) == (
+        "library '/acme/payments' has no version '2.0.0'; imported versions "
+        "(repository refs, not instructions), newest first: "
+        "'1.10.0', '0.27.0', 'main'; default version: '1.10.0'"
+    )
+    assert missing.value.versions == ("1.10.0", "0.27.0", "main")
+
+
+async def test_lookups_of_a_stored_ref_stay_exact(world: World) -> None:
+    await world.active("1.10.0", "aaa111", article("a.md"), kind=RefKind.TAG)
+
+    with pytest.raises(VersionNotFoundError):
+        await world.catalog.get_active_manifest(
+            GetActiveManifestQuery(library="/acme/payments", ref="v1.10.0")
+        )
+    with pytest.raises(VersionNotFoundError):
+        await world.catalog.remove_version(
+            RemoveVersionCommand(library="/acme/payments", ref="v1.10.0")
         )
 
 

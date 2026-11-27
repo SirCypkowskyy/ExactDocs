@@ -1608,6 +1608,20 @@ class SearchableVersion:
     """The library's ``context7.json`` rules (LIB-06), untrusted repository text."""
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class KnownVersions:
+    """A library's imported versions as the catalog lists them, active manifest or not (#605).
+
+    A search reads a ref that names no version as the one of these it names but for a leading
+    ``v``; failing that, its error names them.
+    """
+
+    versions: tuple[str, ...]
+    """Every imported ref, the most recently imported first."""
+    default: str | None
+    """The default version's ref; ``None`` while nothing is imported."""
+
+
 def source_link(version: SearchableVersion, article_path: str, anchor: str) -> str | None:
     """Link to the section at the version's commit, or ``None`` for hosts we cannot build one for.
 
@@ -2210,9 +2224,9 @@ def language_first[T](
 class ProviderKind(StrEnum):
     """What a provider profile talks to; each maps to one pydantic-ai provider and model class.
 
-    See the table in docs/decisions/ai-retrieval.md (*Provider abstraction*). Kinds whose SDK is
-    not in ``exactdocs[ai]`` (Bedrock, Groq, Mistral, Cohere, xAI, Hugging Face) are reached as
-    ``openai-compatible`` or through ``litellm``.
+    See the table in docs/decisions/ai-retrieval/providers.md (*Provider abstraction*). Kinds whose
+    SDK is not in ``exactdocs[ai]`` (Bedrock, Groq, Mistral, Cohere, xAI, Hugging Face) are reached
+    as ``openai-compatible`` or through ``litellm``.
     """
 
     OPENAI_COMPATIBLE = "openai-compatible"
@@ -3881,7 +3895,7 @@ def _tighter(first: int | None, second: int | None) -> int | None:
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class Budgets:
-    """The instance's spend limits and its LLM search rate limit (docs/decisions/ai-retrieval.md).
+    """The instance's spend limits and LLM search rate limit (docs/decisions/ai-retrieval/cost.md).
 
     Limits are checked before each call or batch, so a burst can overshoot by the calls already
     in flight. With no limits nothing is refused; spend is still recorded.
@@ -4107,7 +4121,7 @@ def embedding_spend(
 ) -> tuple[SpendEntry, ...]:
     """Write one embedding batch's usage as ledger entries.
 
-    The same rows LLM spend uses (docs/decisions/ai-retrieval.md, *Cost and budgets*), the
+    The same rows LLM spend uses (docs/decisions/ai-retrieval/cost.md, *Cost and budgets*), the
     instance's and the library's, plus the instance-wide ``embedding`` rows the separate
     embedding budget reads.
 
@@ -4135,7 +4149,7 @@ def embedding_spend(
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class AgentBounds:
-    """How far one agentic search may go (docs/decisions/ai-retrieval.md, *Cost and budgets*).
+    """How far one agentic search may go (docs/decisions/ai-retrieval/cost.md, *Cost and budgets*).
 
     Each limit ends the run when it is passed, and the search answers with the best mode without
     an LLM step (``agent_limit_reached``). The spend budgets (#95) apply on top of these.

@@ -43,8 +43,10 @@ from exactdocs.identity.models import (
     Language,
     LibraryGrant,
     LibraryRole,
+    Memberships,
     Motion,
     Preferences,
+    RoleRule,
     SignInPolicy,
     TextScale,
     TextSpacing,
@@ -165,6 +167,19 @@ class ExternalTokenIdentity(_Dto):
     """Groups from this signed ID token, mapped with the provider's group prefix."""
     linked: bool
     """Whether this caller must still have its linked account in the repository."""
+    provider: str | None = None
+    """The provider whose role rules apply (the account's origin's)."""
+    roles: frozenset[str] = frozenset()
+    """Role claim values from this signed ID token."""
+
+    @property
+    def memberships(self) -> Memberships:
+        """What role rules can match about this caller.
+
+        Returns:
+            Its provider, groups and roles.
+        """
+        return Memberships(provider=self.provider, groups=self.groups, roles=self.roles)
 
 
 class SetupState(_Dto):
@@ -310,6 +325,9 @@ class UserSummary(AccountSummary):
     of its sessions or API tokens; `null` while it has not been active since this was recorded."""
     token_count: int = 0
     """How many API tokens the account holds that have not expired."""
+    rules: list[str] = Field(default_factory=list)
+    """The IDs of the role rules that match the account (`GET /role-rules`): an `admin` without
+    an `instance_admin` rule among them was made admin directly."""
 
     @classmethod
     def from_model(
@@ -319,6 +337,7 @@ class UserSummary(AccountSummary):
         provider: str | None = None,
         groups: list[str] | None = None,
         token_count: int = 0,
+        rules: list[str] | None = None,
     ) -> Self:
         """Map a domain entity to its boundary representation.
 
@@ -327,10 +346,11 @@ class UserSummary(AccountSummary):
             provider: The provider of an external account.
             groups: The groups of an external account.
             token_count: How many live API tokens the account holds.
+            rules: The IDs of the role rules that match it.
 
         Returns:
             Its summary, with when it was created, whether it is disabled, where it signs in,
-            when it was last active (to the hour) and how many tokens it holds.
+            when it was last active (to the hour), how many tokens it holds and its rules.
         """
         active = account.last_active_at
         return cls(
@@ -344,6 +364,7 @@ class UserSummary(AccountSummary):
             groups=groups or [],
             last_active_at=None if active is None else activity_hour(active),
             token_count=token_count,
+            rules=rules or [],
         )
 
 
@@ -811,6 +832,15 @@ class ClaimLibraryCommand(_Dto):
     """The library ID."""
 
 
+class MarkLibraryPrivateCommand(_Dto):
+    """Note whether a library is private, so a role rule for every library leaves it out."""
+
+    library: str
+    """The library ID."""
+    private: bool
+    """Whether ingestion stores a token or deploy key for it."""
+
+
 class DropLibraryGrantsCommand(_Dto):
     """Drop every grant on a library that no longer exists."""
 
@@ -932,6 +962,123 @@ class LibraryGrants(_Dto):
     """The grants: users first, then groups, by name."""
 
 
+_RuleSource = Literal["github_org", "github_team", "group", "role"]
+_RuleGrant = Literal["instance_admin", "create_libraries", "viewer", "contributor", "admin"]
+
+
+class RoleRuleSummary(_Dto):
+    """A role rule (#577): who it matches at a provider, and what it gives them."""
+
+    id: str
+    """The rule's ID; `config:...` for a rule of the configuration file."""
+    provider: str | None
+    """The sign-in provider whose accounts it matches; null for any (only
+    `[auth.library_creation].groups`, whose names carry their provider's prefix)."""
+    source: _RuleSource
+    """`github_org`, `github_team`, `group` or `role` (a value of the provider's `role_claim`)."""
+    value: str
+    """The organization, `org/team`, group or role value, as the provider names it."""
+    grant: _RuleGrant
+    """`instance_admin`, `create_libraries`, or the library role it gives."""
+    libraries: list[str] | None
+    """The libraries a library role is given on; null for every library that is not private."""
+    configured: bool
+    """Set by the configuration file: read-only here."""
+    created_by: str | None = None
+    """The username of who added it; null for a configured rule (or an account that is gone)."""
+    created_at: datetime | None = None
+    """When it was added; null for a configured rule."""
+
+    @classmethod
+    def from_model(cls, rule: RoleRule, *, created_by: str | None = None) -> Self:
+        """Map a rule to its boundary representation.
+
+        Args:
+            rule: The rule.
+            created_by: Who added it, by username.
+
+        Returns:
+            Its summary.
+        """
+        return cls(
+            id=rule.id,
+            provider=rule.provider,
+            source=rule.source.value,
+            value=rule.value,
+            grant=rule.grant.value,
+            libraries=None if rule.libraries is None else sorted(rule.libraries),
+            configured=rule.configured,
+            created_by=created_by,
+            created_at=rule.created_at,
+        )
+
+
+class RuleProviderSummary(_Dto):
+    """A sign-in provider as role rules see it."""
+
+    name: str
+    """The provider's name, as rules name it."""
+    display_name: str
+    """What its sign-in button says."""
+    github: bool
+    """Whether it is GitHub: its rules may name organizations and teams."""
+    role_claim: bool
+    """Whether it reads a role claim: its rules may name role values."""
+    configured_rules_only: bool
+    """Only the configuration file's rules apply to it: adding one here is refused."""
+
+
+class RoleRuleList(_Dto):
+    """Every role rule, the configuration file's first, and the providers they can name."""
+
+    rules: list[RoleRuleSummary]
+    """The rules: configured ones first, then the stored ones, oldest first."""
+    providers: list[RuleProviderSummary]
+    """The configured sign-in providers, by name."""
+
+
+class ListRoleRulesQuery(_Dto):
+    """Ask for every role rule (operators only)."""
+
+    caller_id: str
+    """Who asks."""
+
+
+class RoleRuleRequest(_Dto):
+    """A role rule to add: a provider's membership and what it gives."""
+
+    provider: str = Field(min_length=1, max_length=MAX_NAME)
+    """The sign-in provider whose accounts it matches."""
+    source: _RuleSource
+    """`github_org` and `github_team` for a GitHub provider; `role` for one with a
+    `role_claim`; `group` for any."""
+    value: str = Field(min_length=1, max_length=MAX_NAME)
+    """The organization (`acme`), team (`acme/docs-writers`), group or role value, as the provider
+    names it (a group without `group_prefix`)."""
+    grant: _RuleGrant
+    """`instance_admin`, `create_libraries`, or a library role: `viewer`, `contributor`,
+    `admin`."""
+    libraries: _SortedLibraryIds | None = None
+    """For a library role: the libraries it is given on (`/owner/repo`); null for every library
+    that is not private (present and future)."""
+
+
+class AddRoleRuleCommand(RoleRuleRequest):
+    """Add a role rule (operators only)."""
+
+    caller_id: str
+    """Who adds it."""
+
+
+class RemoveRoleRuleCommand(_Dto):
+    """Remove a stored role rule (operators only)."""
+
+    caller_id: str
+    """Who removes it."""
+    rule_id: str
+    """The rule's ID."""
+
+
 class LibraryGrantList(_Dto):
     """A page of a library's grants: users first, then groups, by name unless sorted otherwise."""
 
@@ -947,6 +1094,9 @@ class LibraryGrantList(_Dto):
     creator: str | None
     """The username of the library's creator, whatever the filters; null for a library that has
     none (one added before roles, which operators manage)."""
+    rules: list[RoleRuleSummary] = Field(default_factory=list)
+    """The role rules that give a role on this library (#577), whatever the filters: their
+    members hold it on top of the grants above."""
 
     @classmethod
     def from_page(
@@ -955,6 +1105,7 @@ class LibraryGrantList(_Dto):
         *,
         caller_role: Literal["admin", "creator"],
         creator: str | None,
+        rules: list[RoleRuleSummary] | None = None,
     ) -> Self:
         """Wrap a page of grants.
 
@@ -962,6 +1113,7 @@ class LibraryGrantList(_Dto):
             page: The grants and the cursor of the next page.
             caller_role: The caller's role on the library.
             creator: The creator's username, if the library has one.
+            rules: The role rules that give a role on the library.
 
         Returns:
             The page at the boundary.
@@ -972,6 +1124,7 @@ class LibraryGrantList(_Dto):
             total=page.total or 0,
             caller_role=caller_role,
             creator=creator,
+            rules=rules or [],
         )
 
 
@@ -985,7 +1138,13 @@ class LibraryCreationQuery(_Dto):
 
 
 _Change = Literal[
-    "library_created", "granted", "revoked", "ownership_transferred", "library_deleted"
+    "library_created",
+    "granted",
+    "revoked",
+    "ownership_transferred",
+    "library_deleted",
+    "rule_added",
+    "rule_removed",
 ]
 
 
@@ -1093,7 +1252,8 @@ class AccessEventSummary(_Dto):
     """The username of who made the change; null when the instance did (CLI, a job)."""
     change: _Change
     """What happened: `library_created`, `granted` (a new role, or another one than before),
-    `revoked`, `ownership_transferred` or `library_deleted`."""
+    `revoked`, `ownership_transferred`, `library_deleted`, or a role rule's `rule_added` or
+    `rule_removed`."""
     kind: Literal["user", "group"] | None
     """Whether `subject` is a username or a group name; null for a deletion."""
     subject: str | None
@@ -1103,6 +1263,9 @@ class AccessEventSummary(_Dto):
     """The role given, or the role taken away (`revoked`); null for a deletion."""
     previous_role: str | None
     """The role the subject held before; null when it held none."""
+    rule: RoleRuleSummary | None = None
+    """The rule a `rule_added` or `rule_removed` event is about; such an event's `library` is
+    empty."""
 
     @classmethod
     def from_model(cls, event: AccessEvent, *, actor: str | None, subject: str | None) -> Self:
@@ -1126,6 +1289,7 @@ class AccessEventSummary(_Dto):
             subject=subject,
             role=None if event.role is None else event.role.value,
             previous_role=None if event.previous_role is None else event.previous_role.value,
+            rule=None if event.rule is None else RoleRuleSummary.from_model(event.rule),
         )
 
 

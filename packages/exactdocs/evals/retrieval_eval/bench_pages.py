@@ -2,12 +2,15 @@
 
 Each page under ``docs/benchmark/`` holds generated blocks between ``<!-- bench:<name> -->`` and
 ``<!-- /bench -->``; everything around them is written by hand. This rewrites the blocks from
-``evals/results/*.json`` (ingestion, retrieval, agent, and other tools' runs such as
-``grounded-docs.json``) and the golden set, with the benchmarks' own Markdown renderers, and with
-``--check`` fails when a page differs from what they give. See docs/benchmark/method.md.
+``evals/results/*.json`` (ingestion, retrieval, agent, coding tasks, harnesses, and other tools'
+runs such as ``grounded-docs.json``) and the golden set, with the benchmarks' own Markdown
+renderers, adds the reports' new rows to ``results/history.json`` (``bench_history``), and with
+``--check`` fails when a page or the history differs from what they give. See
+docs/benchmark/method/runs.md.
 """
 
 import argparse
+import json
 import re
 import sys
 from collections import Counter
@@ -18,12 +21,17 @@ from typing import Final, get_args
 from agent_bench.arms import CONTEXT7, GROUNDED_DOCS
 from agent_bench.report import BenchReport
 from agent_bench.report import markdown as agent_markdown
+from coding_tasks.report import CodingReport
+from coding_tasks.report import markdown as coding_markdown
+from harness_bench.report import HarnessReport
+from harness_bench.report import markdown as harness_markdown
+from retrieval_eval import bench_history
 from retrieval_eval.dataset import GoldenKind
 from retrieval_eval.golden import load_cases, load_corpus
 from retrieval_eval.golden_review import load_review, review_block
 from retrieval_eval.grid_cli import GridReport
 from retrieval_eval.grid_cli import page_block as grid_block
-from retrieval_eval.grounded_docs import GroundedDocsReport, page_blocks
+from retrieval_eval.grounded_docs import GroundedDocsReport, page_blocks, results_block
 from retrieval_eval.ingestion_cli import IngestionReport
 from retrieval_eval.ingestion_cli import markdown as ingestion_markdown
 from retrieval_eval.retrieval_bench import RetrievalBenchReport
@@ -31,6 +39,8 @@ from retrieval_eval.retrieval_bench import markdown as retrieval_markdown
 
 RESULTS: Final[Path] = Path(__file__).parents[1] / "results"
 PAGES: Final[Path] = Path(__file__).parents[4] / "docs" / "benchmark"
+HISTORY: Final[Path] = RESULTS / "history.json"
+"""Every recorded run, one row per result (``bench_history``)."""
 GRID_RESULTS: Final[str] = "retrieval-grid-rank1.json"
 """The recorded run of the grid's rank-1 cells (#575), in ``RESULTS``."""
 GRID_GROUPED: Final[str] = "retrieval-grid-grouped.json"
@@ -193,7 +203,92 @@ def agent_blocks(report: BenchReport) -> dict[str, str]:
     return {"agent-run": "\n".join(run), "agent": _body(agent_markdown(report))}
 
 
-def blocks(results: Path = RESULTS) -> dict[str, str]:
+def _section(summary: str, heading: str) -> str:
+    """The text under a heading of a rendered report, up to the next heading of any level.
+
+    Returns:
+        The text; a heading the report lacks raises ``IndexError``.
+    """
+    after = re.split(rf"^{re.escape(heading)}\n", summary, maxsplit=1, flags=re.MULTILINE)[1]
+    return re.split(r"^#+ ", after, maxsplit=1, flags=re.MULTILINE)[0].strip()
+
+
+def _started(started_at: str, version: str, commit: str | None) -> str:
+    """A run's start, ExactDocs version and commit, as a list item.
+
+    Returns:
+        The Markdown line.
+    """
+    return f"- Started {started_at}; ExactDocs `{version}` at `{(commit or '?')[:12]}`."
+
+
+def comparison_blocks(
+    agent: BenchReport, grounded: GroundedDocsReport, harness: HarnessReport, coding: CodingReport
+) -> dict[str, str]:
+    """The comparison page's tables (#498): retrieval, agent and coding tasks per arm.
+
+    Returns:
+        The Markdown of the blocks ``comparison-retrieval``, ``comparison-agent``,
+        ``comparison-harnesses`` and ``comparison-coding``.
+
+    Raises:
+        ValueError: A coding run has a ``context7`` arm (see ``agent_blocks``).
+    """
+    if CONTEXT7 in harness.meta.arms or CONTEXT7 in coding.meta.arms:
+        message = "a coding run has a context7 arm: Context7's terms forbid publishing it"
+        raise ValueError(message)
+    am, hm, cm = agent_markdown(agent), harness_markdown(harness), coding_markdown(coding)
+    h, c = harness.meta, coding.meta
+    resumed = f" {h.resumed} runs were kept from an earlier run (`--resume`)." if h.resumed else ""
+    harnesses = [
+        _started(h.started_at, h.exactdocs_version, h.git_commit) + resumed,
+        "",
+        _section(hm, "## Harnesses"),
+        "",
+        _section(hm, "### Coding tasks"),
+        "",
+        "Against the harness's own `none` arm, on the same jobs:",
+        "",
+        _section(hm, "#### Coding tasks: against the harness's own `none` arm, on the same jobs"),
+        "",
+        "Built-in web calls, and the hosts the gate refused:",
+        "",
+        _section(hm, "### Network"),
+    ]
+    loop = [
+        _started(c.started_at, c.exactdocs_version, c.git_commit),
+        "",
+        _section(cm, "## Coding tasks"),
+        "",
+        "Against `none`, on the same tasks (McNemar, mid-p):",
+        "",
+        _section(cm, "### Against `none`, on the same tasks (McNemar, mid-p)"),
+    ]
+    return {
+        "comparison-retrieval": _section(results_block(grounded), "### Every result"),
+        "comparison-agent": "\n\n".join(
+            (
+                _section(am, "## Quality"),
+                _section(am, "## Against the other arms, on the same cases"),
+            )
+        ),
+        "comparison-harnesses": "\n".join(harnesses),
+        "comparison-coding": "\n".join(loop),
+    }
+
+
+def history(results: Path = RESULTS) -> list[bench_history.Row]:
+    """The recorded history with the current reports' new rows (dated today).
+
+    Returns:
+        The rows.
+    """
+    path = results / HISTORY.name
+    recorded = json.loads(path.read_text("utf-8")) if path.exists() else []
+    return bench_history.merge(recorded, bench_history.rows_of(results), bench_history.today())
+
+
+def blocks(results: Path = RESULTS, rows: list[bench_history.Row] | None = None) -> dict[str, str]:
     """Every generated block, by name.
 
     Returns:
@@ -204,18 +299,24 @@ def blocks(results: Path = RESULTS) -> dict[str, str]:
         (results / "retrieval.json").read_text("utf-8")
     )
     agent = BenchReport.model_validate_json((results / "agent.json").read_text("utf-8"))
-    grounded = results / "grounded-docs.json"
-    competitors = (
-        page_blocks(GroundedDocsReport.model_validate_json(grounded.read_text("utf-8")))
-        if grounded.exists()
-        else {}
-    )
+    path = results / "grounded-docs.json"
+    competitors: dict[str, str] = {}
+    if path.exists():
+        grounded = GroundedDocsReport.model_validate_json(path.read_text("utf-8"))
+        harness = HarnessReport.model_validate_json(
+            (results / "harness-bench.json").read_text("utf-8")
+        )
+        coding = CodingReport.model_validate_json(
+            (results / "coding-tasks.json").read_text("utf-8")
+        )
+        competitors = page_blocks(grounded) | comparison_blocks(agent, grounded, harness, coding)
     grids = {"retrieval-grid": GRID_RESULTS, "retrieval-grouping": GRID_GROUPED}
     rank_one = {
         name: grid_block(GridReport.model_validate_json((results / file).read_text("utf-8")))
         for name, file in grids.items()
         if (results / file).exists()
     }
+    rows = history(results) if rows is None else rows
     return {
         "golden": golden_block(),
         "golden-review": review_block(load_review()),
@@ -224,6 +325,10 @@ def blocks(results: Path = RESULTS) -> dict[str, str]:
         **agent_blocks(agent),
         **competitors,
         **rank_one,
+        **{
+            f"history-{family}": bench_history.table(rows, family)
+            for family in bench_history.COLUMNS
+        },
     }
 
 
@@ -250,9 +355,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true", help="fail when a page is out of date")
     parser.add_argument("--pages", type=Path, default=PAGES, help="the benchmark pages")
     args = parser.parse_args(argv)
-    generated = blocks()
+    rows = history()
+    generated = blocks(rows=rows)
     stale = []
-    for path in sorted(args.pages.glob("*.md")):
+    recorded = bench_history.dumps(rows)
+    if not HISTORY.exists() or HISTORY.read_text("utf-8") != recorded:
+        stale.append(HISTORY)
+        if not args.check:
+            HISTORY.write_text(recorded, "utf-8")
+    for path in sorted(args.pages.rglob("*.md")):
         page = path.read_text("utf-8")
         new = render(page, generated)
         if new == page:

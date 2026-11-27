@@ -129,6 +129,14 @@ def _include_session_routers(v1: APIRouter, container: Container) -> identity_ht
         )
     )
     v1.include_router(
+        identity_http.build_role_rules_router(
+            list_role_rules=container.identity.list_role_rules,
+            add_role_rule=container.identity.add_role_rule,
+            remove_role_rule=container.identity.remove_role_rule,
+            session_caller=session_caller,
+        )
+    )
+    v1.include_router(
         identity_http.build_access_log_router(
             list_access_log=container.identity.list_access_log, session_caller=session_caller
         )

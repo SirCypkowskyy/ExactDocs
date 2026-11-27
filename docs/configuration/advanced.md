@@ -89,7 +89,7 @@ Settings that are rarely changed, with the reference row that describes each:
 | `EXACTDOCS_DBOS_SYSTEM_SCHEMA` | `dbos` | [Storage and database](storage.md) |
 | `EXACTDOCS_MODELS_DIR` | `<data dir>/models` | [Storage and database](storage.md) |
 | `EXACTDOCS_SECURE_COOKIES` | `false` | [Security and the secret key](security.md) |
-| `EXACTDOCS_AUTH__REVALIDATE_POLL_SECONDS` | `300` | [Linking providers to an account](sign-in.md#linking-providers-to-an-account) |
+| `EXACTDOCS_AUTH__REVALIDATE_POLL_SECONDS` | `300` | [Linking providers to an account](sign-in/index.md#linking-providers-to-an-account) |
 | `EXACTDOCS_AI__HYDE__CACHE_TTL` | `P30D` | [Search and AI settings](ai.md) |
 | `EXACTDOCS_AI__USE_INSTANCE_PROXY` | `false` | [Outbound connections](outbound.md) |
 | `EXACTDOCS_USAGE__RETENTION_MONTHS` | `13` | [Usage counts and leaderboards](observability.md#usage-counts-and-leaderboards) |

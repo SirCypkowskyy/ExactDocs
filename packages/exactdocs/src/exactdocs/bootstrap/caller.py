@@ -81,13 +81,15 @@ async def current_person() -> Person | None:
     a token, its ID or any other credential.
 
     Returns:
-        The account, named by its ID when the request carries no user name; ``None`` for the
-        instance's own work (no account bound).
+        The account, named by its ID when the request carries no user name, ``via`` ``mcp`` over
+        MCP (#613); ``None`` for the instance's own work (no account bound).
     """
     account = current_account_id()
     if account is None:
         return None
-    return Person(id=account, username=current_account_name() or account)
+    # REST binds its caller; only an MCP request is known by its access token alone.
+    via = "mcp" if _caller.get() is None else None
+    return Person(id=account, username=current_account_name() or account, via=via)
 
 
 def current_external_identity() -> ExternalTokenIdentity | None:

@@ -1,22 +1,26 @@
 import { Link } from "@tanstack/react-router";
-import { KeyRound, type LucideIcon, Users } from "lucide-react";
+import { KeyRound, ListChecks, type LucideIcon, Users } from "lucide-react";
 import { useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
 import { messages } from "../messages";
 
 /*
- * The users page's two views as links that look like the kit's underline tabs: the accounts
+ * The users page's views as links that look like the kit's underline tabs: the accounts
  * (`/users`) and every account's API tokens (`/users/tokens`). Each view is its own URL with its
  * own table view, so these are links with `aria-current`, not a tablist.
  */
 
-export type UsersViewName = "accounts" | "tokens";
+export type UsersViewName = "accounts" | "tokens" | "rules";
 
-const VIEWS: readonly { name: UsersViewName; to: "/users" | "/users/tokens"; icon: LucideIcon }[] =
-  [
-    { name: "accounts", to: "/users", icon: Users },
-    { name: "tokens", to: "/users/tokens", icon: KeyRound },
-  ];
+const VIEWS: readonly {
+  name: UsersViewName;
+  to: "/users" | "/users/tokens" | "/users/rules";
+  icon: LucideIcon;
+}[] = [
+  { name: "accounts", to: "/users", icon: Users },
+  { name: "tokens", to: "/users/tokens", icon: KeyRound },
+  { name: "rules", to: "/users/rules", icon: ListChecks },
+];
 
 export function UsersViews({ current }: { current: UsersViewName }) {
   const t = useMessages(messages).views;

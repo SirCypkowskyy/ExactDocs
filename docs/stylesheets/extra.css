@@ -5,10 +5,14 @@
  * light, the lamp: in light mode a pale wash behind the lit item with ink on it, in dark mode the
  * lamp itself. Links are ink (light) or the lamp (dark), told apart by their underline. The home
  * page's hero and feature grid are the .xd-* classes at the end.
+ *
+ * Type, shapes and components follow the UI too: the reader's article (web/src/features/browse/
+ * render/prose.css) for the page, the band, sheet, controls and motion of web/DESIGN.md for the
+ * frame around it. Sizes are the UI's pixels over 20 (the theme's root is 20px; see "scale").
  */
 
-/* Zensical loads 400, 500 and 700 of the text face; the UI's headings are 600. */
-@import url("https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@600&display=fallback");
+/* The UI's faces, self-hosted (zensical.toml turns the theme's Google Fonts off). */
+@import url("fonts.css");
 
 /* ------------------------------------------------------------- tokens: light */
 
@@ -30,6 +34,14 @@
   --xd-tint-tip: oklch(0.52 0.11 155);
   --xd-tint-warning: oklch(0.6 0.13 75);
   --xd-tint-danger: oklch(0.52 0.19 27); /* destructive */
+  --xd-float: 0 10px 30px -12px rgb(23 23 26 / 0.22), 0 0 0 1px rgb(23 23 26 / 0.06);
+
+  /* Faces and motion (styles.css: --ui-font, --code-font, --ease-out, --dur-*). */
+  --md-text-font: "Schibsted Grotesk Variable";
+  --md-code-font: "JetBrains Mono Variable";
+  --xd-ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --xd-dur-fast: 120ms;
+  --xd-dur: 180ms;
 
   --md-default-fg-color: var(--xd-ink);
   --md-default-fg-color--light: var(--xd-muted);
@@ -106,6 +118,7 @@
   --xd-tint-tip: oklch(0.76 0.12 155);
   --xd-tint-warning: oklch(0.8 0.13 80);
   --xd-tint-danger: oklch(0.7 0.17 22);
+  --xd-float: 0 12px 32px -10px rgb(0 0 0 / 0.7), 0 0 0 1px rgb(255 255 255 / 0.07);
 
   --md-default-fg-color: var(--xd-ink);
   --md-default-fg-color--light: var(--xd-muted);
@@ -188,6 +201,14 @@
   }
 }
 
+/* ------------------------------------------------------------------ scale */
+
+/* One scale at every width, as in the UI: the theme grows the root to 137.5 % and 150 % on wide
+   windows, which would make the docs larger than the product beside them. 1rem is 20px here. */
+html {
+  font-size: 125%;
+}
+
 /* ------------------------------------------------------------------- base */
 
 ::selection {
@@ -195,63 +216,438 @@
   color: var(--xd-ink);
 }
 
+html {
+  scrollbar-color: color-mix(in oklab, var(--xd-muted) 40%, transparent) transparent;
+}
+
+/* Focus is a 2px ring with a 2px offset: ink in light, the lamp in dark (DESIGN.md, Elevation). */
+:focus-visible,
+.md-typeset :is(a, button, summary, label, code, .md-button):focus-visible {
+  outline: 2px solid var(--xd-route);
+  outline-offset: 2px;
+}
+
+/* Scrolling boxes take the ring inside, so it is not cut off by their own overflow. */
+.md-typeset :is(pre > code, table:not([class]), .md-typeset__scrollwrap, .tabbed-labels):focus-visible,
+.md-sidebar__scrollwrap:focus-visible {
+  outline-offset: -2px;
+}
+
 /* The theme sets headings to pure white in the dark scheme; the UI's words are cream. */
 [data-md-color-scheme="slate"] :is(.md-header__title, h1, h2, h3, h4, h5, h6) {
   color: var(--xd-ink);
 }
 
-/* The header is the UI's band: the stone frame above the white sheet, with a hairline. */
+/* ------------------------------------------------------------- the frame */
+
+/* The UI's frame: the band and the window are the stone frame; from 48em (the UI's `md`) the page
+   is a white sheet inset 8px from the sides and bottom, with 16px corners and a hairline. Below it
+   the sheet is the screen. */
+.md-container {
+  background-color: var(--xd-frame);
+}
+
+.md-main {
+  background-color: var(--xd-sheet);
+}
+
+@media screen and (min-width: 48em) {
+  .md-main {
+    margin: 0 0.4rem 0.4rem;
+    border: 1px solid var(--xd-border);
+    border-radius: 0.8rem;
+  }
+
+  .md-footer {
+    background-color: var(--xd-frame);
+  }
+}
+
+/* The band: 56px of frame, no blur, no hairline of its own (the sheet's edge draws the line). */
 .md-header {
   background-color: var(--xd-frame);
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
 }
 
-.md-header--shadow {
-  box-shadow: 0 1px 0 var(--xd-border);
+.md-header__inner {
+  padding-block: 0.2rem;
 }
 
-/* The mole at band size (the cut has room around it, so it may reach into the button's padding);
-   on the dark scheme it swaps to the cut with a cream edge. */
+.md-header--shadow {
+  box-shadow: none;
+}
+
+.md-sidebar {
+  top: 2.8rem;
+}
+
+.md-typeset :target {
+  --md-scroll-margin: 4rem;
+}
+
+/* The lockup at band size (32px), as the UI's `Wordmark`; the dark scheme takes the cut with a
+   cream edge. With the lockup there, the site's name beside it is not repeated; the page title
+   still slides in on scroll. Below 76.25em the theme hides the logo and the name stays. */
+.md-header__button.md-logo {
+  padding: 0.2rem 0.3rem;
+}
+
 .md-header__button.md-logo img {
-  height: 1.9rem;
+  height: 1.6rem;
   width: auto;
-  margin: -0.35rem -0.25rem;
 }
 
 [data-md-color-scheme="slate"] .md-logo img {
-  content: url("../assets/logo/exactdocs-mark-small-on-dark.svg");
+  content: url("../assets/logo/exactdocs-lockup-dark.svg");
+}
+
+@media screen and (min-width: 76.25em) {
+  .md-header__title:not(.md-header__title--active) .md-header__topic:first-child {
+    visibility: hidden;
+  }
+}
+
+.md-header__title {
+  font-size: 0.8rem;
+  letter-spacing: -0.01em;
+}
+
+.md-header__topic:first-child {
+  font-weight: 600;
+}
+
+/* Band buttons: square, muted, filled on hover, 6px corners (DESIGN.md, band icon buttons). */
+.md-header__button:not(.md-logo) {
+  color: var(--xd-muted);
+  border-radius: 0.3rem;
+  transition:
+    background-color var(--xd-dur-fast) ease,
+    color var(--xd-dur-fast) ease,
+    transform var(--xd-dur-fast) var(--xd-ease);
+}
+
+.md-header__button:not(.md-logo):hover {
+  color: var(--xd-ink);
+  background-color: var(--xd-fill);
+  opacity: 1;
+}
+
+.md-header__button:not(.md-logo):active {
+  transform: scale(0.94);
+}
+
+/* The search field: the sheet on the frame, a control border, 6px corners, 36px high, muted words
+   (DESIGN.md, Inputs). */
+@media screen and (min-width: 45em) {
+  .md-search__button {
+    width: 11rem;
+    height: 1.8rem;
+    color: var(--xd-muted);
+    background-color: var(--xd-sheet);
+    border-radius: 0.3rem;
+    box-shadow: inset 0 0 0 1px var(--xd-input);
+    transition: box-shadow var(--xd-dur-fast) ease;
+  }
+
+  .md-search__button:is(:hover, :focus) {
+    color: var(--xd-muted);
+    background-color: var(--xd-sheet);
+    box-shadow: inset 0 0 0 1px var(--xd-muted);
+  }
+
+  .md-search__button::before {
+    top: 0.4rem;
+    background-color: var(--xd-muted);
+  }
+
+  .md-search__button::after {
+    top: 0.45rem;
+    font-family: var(--md-code-font-family);
+    color: var(--xd-muted);
+    background: var(--xd-fill);
+  }
+}
+
+/* The repository link: 12px, the smallest size the UI sets, in the one grey at full strength. */
+.md-source {
+  font-size: 0.6rem;
+  color: var(--xd-muted);
+  transition: color var(--xd-dur-fast) ease;
+}
+
+.md-source__facts,
+.md-source__fact {
+  opacity: 1;
+}
+
+.md-source:hover {
+  color: var(--xd-ink);
+  opacity: 1;
 }
 
 .md-footer-meta {
   background-color: var(--xd-frame);
 }
 
-/* Links: an underline at 40 % that fills on hover, as in the reader (prose.css). */
-.md-typeset a:not(.md-button, .headerlink) {
-  text-decoration-color: color-mix(in oklab, currentColor 40%, transparent);
-  text-underline-offset: 0.2em;
+.md-footer__link {
+  transition: color var(--xd-dur-fast) ease;
 }
 
-.md-typeset a:not(.md-button, .headerlink):is(:hover, :focus-visible) {
-  text-decoration-color: currentColor;
+.md-footer__link:is(:hover, :focus) {
+  opacity: 1;
 }
 
-/* Inline code on the hover fill, blocks on the raised ground. */
-.md-typeset :not(pre) > code {
+.md-footer__title {
+  color: var(--xd-ink);
+}
+
+/* ------------------------------------------------------------ navigation */
+
+/* The UI's nav rows and contents column: 14px, muted until hovered or current; hover fills the
+   row; the current page sits on the lamp's wash in ink (the One Lamp Rule). */
+.md-nav {
+  font-size: 0.7rem;
+  line-height: 1.43;
+}
+
+.md-nav__link {
+  border-radius: 0.3rem;
+  transition:
+    color var(--xd-dur-fast) ease,
+    background-color var(--xd-dur-fast) ease;
+}
+
+.md-nav--primary .md-nav__link:is(a, label, [href]):hover {
+  color: var(--xd-ink);
   background-color: var(--xd-fill);
 }
 
+.md-nav--primary .md-nav__item .md-nav__link--active {
+  color: var(--xd-ink);
+  font-weight: 500;
+}
+
+
+/* Section heads: 600, sentence case, no fill. */
+.md-nav__item--section > .md-nav__link,
+.md-nav__item--section > .md-nav__link--active,
+.md-nav__item--section > .md-nav__link > .md-nav__link--active {
+  font-weight: 600;
+}
+
+/* "On this page": the label in small muted text, the entries muted, the one you are reading in
+   ink with the 2px route rule on the left, as the reader's contents column. */
+.md-nav--secondary .md-nav__title {
+  font-size: 0.6rem;
+  font-weight: 400;
+  color: var(--xd-muted);
+  background: var(--xd-sheet);
+}
+
+/* One rail for every level: nested entries indent inside their link, not by moving the link. */
+[dir] .md-nav--secondary .md-nav__list {
+  margin-inline: 0;
+}
+
+.md-nav--secondary > .md-nav__list {
+  box-shadow: inset 1px 0 0 var(--xd-border);
+}
+
+.md-nav--secondary .md-nav__link {
+  padding-block: 0.2rem;
+  padding-left: 0.6rem;
+  margin-left: 0;
+  color: var(--xd-muted);
+  border-radius: 0;
+}
+
+.md-nav--secondary .md-nav .md-nav__link {
+  padding-left: 1.2rem;
+}
+
+.md-nav--secondary .md-nav .md-nav .md-nav__link {
+  padding-left: 1.8rem;
+}
+
+.md-nav--secondary .md-nav__link:is(:hover, :focus-visible),
+.md-nav--secondary .md-nav__link--active {
+  color: var(--xd-ink);
+}
+
+.md-nav--secondary .md-nav__link--active {
+  box-shadow: inset 2px 0 0 var(--xd-route);
+}
+
+.md-nav--secondary .md-nav__link .md-typeset {
+  font-size: inherit;
+  line-height: inherit;
+}
+
+/* ------------------------------------------------------------ typography */
+
+/* The reader's article (prose.css): 17px on 1.65, headings at 600 loose above and tight below,
+   no tracked capitals. */
+.md-typeset {
+  font-size: 0.85rem;
+  line-height: 1.65;
+  letter-spacing: 0;
+}
+
+.md-typeset p {
+  text-wrap: pretty;
+}
+
+.md-typeset :is(h1, h2, h3, h4, h5, h6) {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  text-wrap: balance;
+}
+
+.md-typeset h1 {
+  margin: 0 0 1rem;
+  font-size: 1.5rem;
+  line-height: 1.2;
+}
+
+.md-typeset h2 {
+  margin: 2em 0 0.6em;
+  font-size: 1rem;
+}
+
+.md-typeset h3 {
+  margin: 1.75em 0 0.6em;
+  font-size: 0.85rem;
+}
+
+.md-typeset :is(h4, h5, h6) {
+  margin: 1.5em 0 0.5em;
+  font-size: 0.85rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.md-typeset :is(h5, h6) {
+  color: var(--xd-muted);
+}
+
+.md-typeset strong {
+  font-weight: 600;
+}
+
+.md-typeset li::marker {
+  color: var(--xd-muted);
+}
+
+.md-typeset blockquote {
+  color: var(--xd-muted);
+  border-left: 2px solid color-mix(in oklab, var(--xd-muted) 45%, transparent);
+}
+
+.md-typeset hr {
+  border-bottom-color: var(--xd-border);
+}
+
+/* The heading's own link: muted, the route on hover. */
+.md-typeset .headerlink {
+  color: var(--xd-muted);
+  transition: opacity var(--xd-dur-fast) var(--xd-ease);
+}
+
+.md-typeset .headerlink:is(:hover, :focus) {
+  color: var(--xd-route);
+}
+
+/* Where nothing hovers, the link stays faintly in view, as in the reader. */
+@media (hover: none) {
+  .md-typeset .headerlink {
+    opacity: 0.5;
+  }
+}
+
+/* Links: an underline at 40 % that fills on hover, as in the reader. */
+.md-typeset a:not(.md-button, .headerlink) {
+  text-decoration-color: color-mix(in oklab, currentColor 40%, transparent);
+  text-underline-offset: 0.2em;
+  border-radius: 2px;
+  transition: text-decoration-color var(--xd-dur-fast) ease;
+}
+
+.md-typeset a:not(.md-button, .headerlink):is(:hover, :focus-visible) {
+  color: var(--xd-route);
+  text-decoration-color: currentColor;
+}
+
+/* Figures line up where they are compared. */
+.md-typeset :is(time, td code, .num) {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ code */
+
+/* Inline code: 14px mono on the fill with 4px corners; blocks: 14px on 1.65 on the raised ground,
+   8px corners, 16px of air (20px at the sides). */
+.md-typeset code {
+  font-size: 0.8235em;
+}
+
+.md-typeset :not(pre) > code {
+  padding: 0.1em 0.3em;
+  background-color: var(--xd-fill);
+  border-radius: 0.2rem;
+}
+
+.md-typeset pre {
+  line-height: 1.65;
+}
+
 .md-typeset pre > code {
+  padding: 0.8rem 1rem;
+  font-size: 0.7rem;
   border-radius: 0.4rem;
+  tab-size: 4;
+}
+
+.md-typeset .highlight :is(.c, .c1, .ch, .cm, .cs, .cpf) {
+  font-style: italic;
+}
+
+.md-typeset .highlighttable .linenos {
+  border-radius: 0.4rem 0 0 0.4rem;
+}
+
+/* The copy button: muted, filled on hover, as the UI's ghost icon button. */
+.md-typeset .md-code__button,
+.md-clipboard {
+  color: var(--xd-muted);
+  border-radius: 0.3rem;
+}
+
+.md-typeset .md-code__button:hover,
+.md-clipboard:hover {
+  color: var(--xd-ink);
 }
 
 /* --------------------------------------------------------------- tables */
 
+/* The reader's tables: 14px on 1.55 in an 8px hairline frame, the head on the fill at 600, cells
+   8px by 14px, rows split by hairlines. */
 .md-typeset table:not([class]) {
   font-size: 0.7rem;
-  border-color: var(--xd-border);
+  line-height: 1.55;
+  border: 1px solid var(--xd-border);
   border-radius: 0.4rem;
+}
+
+.md-typeset table:not([class]) :is(th, td) {
+  min-width: 5rem;
+  padding: 0.4rem 0.7rem;
+}
+
+/* Code beside 14px text is the UI's 13px mono. */
+.md-typeset table:not([class]) code {
+  font-size: 0.65rem;
 }
 
 .md-typeset table:not([class]) th {
@@ -260,16 +656,28 @@
 }
 
 .md-typeset table:not([class]) td {
-  border-top-color: var(--xd-border);
+  border-top: 1px solid var(--xd-border);
+}
+
+.md-typeset table:not([class]) tbody tr {
+  transition: background-color var(--xd-dur-fast) ease;
+}
+
+.md-typeset table:not([class]) tbody tr:hover {
+  background-color: color-mix(in oklab, var(--xd-fill) 55%, transparent);
+  box-shadow: none;
 }
 
 /* ------------------------------------------------------------ admonitions */
 
-/* The reader's callouts: a field tinted 7 % with a 22 % hairline; the title mixes the tint with
-   ink. Note, tip, warning and danger are the reader's tints; the rest borrow the nearest. */
+/* The reader's callouts: a field tinted 7 % with a 22 % hairline and 8px corners, the body at the
+   text's own size; the title mixes the tint with ink, its icon 16px with 8px to the words. Note,
+   tip, warning and danger are the reader's tints; the rest borrow the nearest. */
 .md-typeset :is(.admonition, details)[class] {
   --xd-tint: var(--xd-tint-note);
-  font-size: 0.7rem;
+  padding: 0.7rem 0.8rem 0.8rem;
+  font-size: 1em;
+  line-height: 1.6;
   background-color: color-mix(in oklab, var(--xd-tint) 7%, var(--xd-sheet));
   border: 0;
   border-radius: 0.4rem;
@@ -293,19 +701,157 @@
 }
 
 .md-typeset :is(.admonition, details) > :is(.admonition-title, summary) {
-  color: color-mix(in oklab, var(--xd-tint) 70%, var(--xd-ink));
+  margin: 0;
+  padding: 0 0 0 1.2rem;
+  line-height: 1.4;
   font-weight: 600;
+  color: color-mix(in oklab, var(--xd-tint) 70%, var(--xd-ink));
+  background: none;
+  border: 0;
 }
 
-.md-typeset :is(.admonition, details) > :is(.admonition-title, summary)::before,
-.md-typeset :is(.admonition, details) > :is(.admonition-title, summary)::after {
+.md-typeset details > summary {
+  min-height: 1.6rem;
+  padding-right: 1.4rem;
+  border-radius: 0.2rem;
+}
+
+.md-typeset :is(.admonition, details) > :is(.admonition-title, summary)::before {
+  top: 0.15em;
+  left: 0;
+  width: 0.8rem;
+  height: 0.8rem;
   color: inherit;
+  background-color: currentColor;
+}
+
+.md-typeset details > summary::after {
+  top: 0.15em;
+  right: 0;
+  width: 0.8rem;
+  height: 0.8rem;
+  color: inherit;
+  transition: transform var(--xd-dur-fast) var(--xd-ease);
+}
+
+.md-typeset :is(.admonition, details) > :is(.admonition-title, summary) + * {
+  margin-top: 0.4rem;
+}
+
+.md-typeset :is(.admonition, details) > * + * {
+  margin-top: 0.6em;
+}
+
+.md-typeset :is(.admonition, details) > :last-child {
+  margin-bottom: 0;
 }
 
 /* Code inside a callout sits on a lighter cut of its field. */
 .md-typeset :is(.admonition, details) :not(pre) > code,
 .md-typeset :is(.admonition, details) pre > code {
   background-color: color-mix(in oklab, var(--xd-sheet) 65%, color-mix(in oklab, var(--xd-tint) 7%, var(--xd-sheet)));
+}
+
+/* ------------------------------------------------------------------ tabs */
+
+/* The UI's underline tabs: 14px / 500 muted labels, the active one ink, one 2px route indicator
+   that slides under it on a hairline, in 180ms. */
+.md-typeset .tabbed-labels {
+  box-shadow: inset 0 -1px 0 var(--xd-border);
+}
+
+.md-typeset .tabbed-labels > label {
+  min-height: 2rem;
+  padding: 0.55rem 0.6rem 0.45rem;
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--xd-muted);
+  border-radius: 0.3rem 0.3rem 0 0;
+  transition: color var(--xd-dur-fast) ease;
+}
+
+/* With linked tabs (content.tabs.link) the padding moves to the label's link. */
+.md-typeset .tabbed-labels--linked > label {
+  padding: 0;
+}
+
+.md-typeset .tabbed-labels--linked > label > a {
+  padding: 0.55rem 0.6rem 0.45rem;
+}
+
+.md-typeset .tabbed-labels > label:hover {
+  color: var(--xd-ink);
+}
+
+.js .md-typeset .tabbed-labels::before {
+  height: 2px;
+  background: var(--xd-route);
+  transition:
+    width var(--xd-dur) var(--xd-ease),
+    transform var(--xd-dur) var(--xd-ease);
+}
+
+.md-typeset .tabbed-set > input.focus-visible ~ .tabbed-labels::before {
+  background-color: var(--xd-route);
+}
+
+/* ------------------------------------------------------------------ misc */
+
+/* The page's own actions (edit, copy): the UI's ghost icon button, muted, filled on hover. */
+.md-typeset .md-content__button {
+  color: var(--xd-muted);
+  background: none;
+  border-radius: 0.3rem;
+  transition:
+    background-color var(--xd-dur-fast) ease,
+    color var(--xd-dur-fast) ease;
+}
+
+.md-typeset .md-content__button svg {
+  opacity: 1;
+}
+
+.md-typeset .md-content__button:is(:hover, :focus) {
+  color: var(--xd-ink);
+  background-color: var(--xd-fill);
+}
+
+/* Back to top floats like the UI's popovers: the sheet, a hairline and the float shadow. */
+.md-top {
+  color: var(--xd-ink);
+  background-color: var(--xd-sheet);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-radius: 0.4rem;
+  box-shadow: var(--xd-float);
+}
+
+.md-top:is(:hover, :focus) {
+  color: var(--xd-ink);
+  background-color: var(--xd-fill);
+}
+
+.md-typeset kbd {
+  font-size: 0.75em;
+  border-radius: 0.2rem;
+}
+
+.md-typeset mark {
+  color: var(--xd-ink);
+  border-radius: 0.2rem;
+}
+
+/* The tooltip of an abbreviation or a code annotation: inverted, 4px corners, the float shadow. */
+.md-tooltip,
+.md-tooltip2 {
+  border-radius: 0.2rem;
+  box-shadow: var(--xd-float);
+}
+
+/* The search dialog floats as the UI's popovers do. */
+.md-search__inner,
+.md-search__output {
+  border-radius: 0.4rem;
 }
 
 /* -------------------------------------------------------------- mermaid */
@@ -320,20 +866,26 @@
 
 /* -------------------------------------------------------------- buttons */
 
-/* The UI's buttons: 6 px corners, weight 500; the primary is anthracite (cream in the dark), the
-   others outlined in the control border and filled on hover. */
+/* The UI's buttons: 36px, 6px corners, 14px / 500, 16px at the sides; the primary is anthracite
+   (cream in the dark) and goes to 88 % on hover, the others outlined in the control border and
+   filled on hover; a press scales to 0.97. */
 .md-typeset .md-button {
-  padding: 0.5em 1.1em;
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.8rem;
+  padding: 0.2rem 0.8rem;
+  font-size: 0.7rem;
   font-weight: 500;
+  line-height: 1.4;
   color: var(--xd-ink);
   background-color: var(--xd-sheet);
   border: 0;
   border-radius: 0.3rem;
   box-shadow: inset 0 0 0 1px var(--xd-input);
   transition:
-    transform 120ms cubic-bezier(0.23, 1, 0.32, 1),
-    background-color 120ms ease,
-    color 120ms ease;
+    transform var(--xd-dur-fast) var(--xd-ease),
+    background-color var(--xd-dur-fast) ease,
+    color var(--xd-dur-fast) ease;
 }
 
 .md-typeset .md-button:is(:hover, :focus) {
@@ -350,20 +902,39 @@
 
 .md-typeset .md-button--primary:is(:hover, :focus) {
   color: var(--md-primary-bg-color);
-  background-color: var(--md-primary-fg-color--light);
+  background-color: color-mix(in oklab, var(--md-primary-fg-color) 88%, var(--xd-sheet));
 }
 
 .md-typeset .md-button:active {
   transform: scale(0.97);
 }
 
+/* --------------------------------------------------------------- motion */
+
+/* Reduced motion keeps colour changes and drops travel and zoom (DESIGN.md, Motion). */
 @media (prefers-reduced-motion: reduce) {
-  .md-typeset .md-button {
+  .md-typeset .md-button,
+  .md-header__button,
+  .js .md-typeset .tabbed-labels::before,
+  .md-typeset details > summary::after {
     transition: none;
   }
 
-  .md-typeset .md-button:active {
+  .md-typeset .md-button:active,
+  .md-header__button:not(.md-logo):active {
     transform: none;
+  }
+}
+
+/* --------------------------------------------------------------- print */
+
+/* Paper has no frame: the sheet and band colours go. */
+@media print {
+  .md-container,
+  .md-main {
+    margin: 0;
+    background: none;
+    border: 0;
   }
 }
 
@@ -481,4 +1052,202 @@
   border-radius: 0.6rem;
   outline: 1px solid var(--xd-border);
   outline-offset: -1px;
+}
+
+/* ------------------------------------------------- benchmark history tables */
+
+/* docs/javascripts/bench-history.js: the filters over a history table, its sortable headers and
+   the chart over it (the history.md page of each benchmark). Without the script none of this
+   shows. Controls, icons and chart colours follow the web UI (web/DESIGN.md): 36 px controls with
+   6 px corners, lucide's sort arrows, one grey for every series and the route for the lit one. */
+:root,
+[data-md-color-scheme="default"] {
+  --xd-chart-series: #6b6c72;
+}
+
+[data-md-color-scheme="slate"] {
+  --xd-chart-series: #8b8b94;
+}
+
+@media (prefers-contrast: more) {
+  :root,
+  [data-md-color-scheme="default"] {
+    --xd-chart-series: #4f5055;
+  }
+
+  [data-md-color-scheme="slate"] {
+    --xd-chart-series: #a0a0a8;
+  }
+}
+
+.md-typeset .bench-history__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  align-items: end;
+  margin: 1rem 0 0.25rem;
+  font-size: 0.7rem;
+}
+
+.md-typeset .bench-history__filters label,
+.md-typeset .bench-history__chart > label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  color: var(--xd-muted);
+}
+
+.md-typeset .bench-history__chart > label {
+  display: inline-flex;
+}
+
+.md-typeset .bench-history :is(select, input) {
+  box-sizing: border-box;
+  height: 36px;
+  padding: 0 0.5rem;
+  font: inherit;
+  color: var(--xd-ink);
+  background-color: var(--xd-sheet);
+  border: 1px solid var(--xd-input);
+  border-radius: 6px;
+}
+
+.md-typeset .bench-history :is(select, input, button):focus-visible {
+  outline: 2px solid var(--xd-route);
+  outline-offset: 2px;
+}
+
+.md-typeset .bench-history__filters .md-button {
+  box-sizing: border-box;
+  height: 36px;
+  padding: 0 0.9em;
+  border-radius: 6px;
+}
+
+.md-typeset .bench-history__count {
+  margin: 0.25rem 0;
+  font-size: 0.7rem;
+  color: var(--xd-muted);
+}
+
+/* The header's button holds the column's name and its sort icon. */
+.md-typeset .bench-history__sort {
+  display: inline-flex;
+  gap: 0.25em;
+  align-items: center;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.md-typeset .bench-history__icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  opacity: 0.5;
+}
+
+.md-typeset .bench-history th[aria-sort] .bench-history__icon {
+  opacity: 1;
+}
+
+.md-typeset .bench-history tr[hidden] {
+  display: none;
+}
+
+.md-typeset .bench-history :is(th, td) {
+  white-space: nowrap;
+}
+
+.md-typeset .bench-history__chart {
+  display: block;
+  margin: 1rem 0 0;
+  font-size: 0.7rem;
+}
+
+.md-typeset .bench-history__chart svg {
+  display: block;
+  width: 100%;
+  max-width: 48rem;
+  height: auto;
+  margin-top: 0.5rem;
+  font-size: 12px;
+  fill: var(--xd-muted);
+}
+
+.md-typeset .bench-history__grid {
+  stroke: var(--xd-rule);
+}
+
+.md-typeset .bench-history__series {
+  color: var(--xd-chart-series);
+}
+
+.md-typeset .bench-history__series--lit {
+  color: var(--xd-route);
+}
+
+.md-typeset .bench-history__series polyline {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+}
+
+.md-typeset .bench-history__series--lit polyline {
+  stroke-width: 2.5;
+}
+
+.md-typeset .bench-history__series circle {
+  fill: currentColor;
+}
+
+/* The legend names every series; the pressed one is the lit line. */
+.md-typeset .bench-history__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 0.5rem;
+  padding: 0;
+  margin: 0.5rem 0 0;
+  list-style: none;
+}
+
+.md-typeset .bench-history__legend li {
+  margin: 0;
+}
+
+.md-typeset .bench-history__legend button {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  min-height: 28px;
+  padding: 0 0.5rem;
+  font: inherit;
+  color: var(--xd-muted);
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.md-typeset .bench-history__legend button::before {
+  width: 0.9rem;
+  height: 2px;
+  content: "";
+  background-color: var(--xd-chart-series);
+}
+
+.md-typeset .bench-history__legend button[aria-pressed="true"] {
+  font-weight: 600;
+  color: var(--xd-ink);
+  background-color: var(--xd-fill);
+}
+
+.md-typeset .bench-history__legend button[aria-pressed="true"]::before {
+  height: 3px;
+  background-color: var(--xd-route);
 }

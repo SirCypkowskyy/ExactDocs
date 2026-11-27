@@ -112,12 +112,14 @@ from exactdocs.identity.dtos import (
     LeaderboardPeopleQuery,
     LibraryCreationQuery,
     LibraryRolesQuery,
+    MarkLibraryPrivateCommand,
 )
 from exactdocs.identity.ports.driving import (
     CanCreateLibrary,
     ClaimLibrary,
     DropLibraryGrants,
     FindLeaderboardPeople,
+    MarkLibraryPrivate,
     ResolveLibraryRoles,
 )
 from exactdocs.ingestion.constants import PARSER_VERSION
@@ -180,6 +182,7 @@ from exactdocs.retrieval.models import (
     CatalogLibrary,
     DocTarget,
     InstructionFile,
+    KnownVersions,
     ManifestPaths,
     ManifestStatus,
     SearchableVersion,
@@ -249,6 +252,31 @@ class CatalogSearchableVersions:
             host=SourceHost(detail.host.value),
             rules=tuple(detail.rules),
         )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CatalogLibraryVersions:
+    """Implements ``retrieval.ports.driven.LibraryVersions`` using the catalog (#605)."""
+
+    get_library: GetLibrary
+    """The catalog's library read: every version with its import time, and the default."""
+
+    async def of(self, library: str) -> KnownVersions | None:
+        """List the library's imported refs, the most recently imported first, and its default.
+
+        Args:
+            library: The library ID.
+
+        Returns:
+            The versions; ``None`` when the catalog has no such library or hides it.
+        """
+        try:
+            detail = await self.get_library(GetLibraryQuery(id=library))
+        except NotFoundError, ValidationError:
+            return None
+        by_ref = sorted(detail.versions, key=lambda v: v.ref)
+        newest = sorted(by_ref, key=lambda v: v.imported_at, reverse=True)
+        return KnownVersions(versions=tuple(v.ref for v in newest), default=detail.default_version)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -463,7 +491,8 @@ class CatalogArticleSuggestions:
                 GetArticleQuery(library=target.library, ref=target.version, path=path)
             )
         except CatalogArticleNotFoundError as missing:
-            return missing.close_matches
+            # The catalog forgives a leading `v` (#605): only this exact version's paths count.
+            return missing.close_matches if missing.ref == target.version else ()
         except NotFoundError:
             return ()
         return ()  # the catalog has it but retrieval has no chunks: no path to suggest
@@ -1546,6 +1575,8 @@ class IdentityAccessPolicy:
     """Identity's record of a library's creator."""
     drop_library_grants: DropLibraryGrants
     """Identity's drop of every grant on a removed library."""
+    mark_library_private: MarkLibraryPrivate
+    """Identity's note of which libraries are private, for role rules."""
     caller: Callable[[], str | None]
     """The account ID of the current request; ``None`` when no person made it."""
     external_identity: Callable[[], ExternalTokenIdentity | None] | None = None
@@ -1648,6 +1679,15 @@ class IdentityAccessPolicy:
             )
         )
         return frozenset(library for library in found.roles if self._selected(library))
+
+    async def set_private(self, library: str, *, private: bool) -> None:
+        """Tell identity whether the library is private, whoever stores its credential.
+
+        Args:
+            library: The library ID.
+            private: Whether a credential is stored for it.
+        """
+        await self.mark_library_private(MarkLibraryPrivateCommand(library=library, private=private))
 
     async def claim(self, library: str) -> None:
         """Make the caller, if there is one, the creator of the library just created.

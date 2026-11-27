@@ -91,7 +91,8 @@ It builds version `0.0.0.dev<run number>`.
 - With `integration`: `gh workflow run release.yml --ref develop -f integration=true`. No other job
   waits for the integration jobs; when one fails, the run fails.
 - GHCR retention still starts after it (a `workflow_run` trigger fires on every completed Release
-  run, from the file on the default branch) but skips its jobs when the run was not a tag push.
+  run, from the file on the default branch) but skips its jobs unless the run was a successful tag
+  push.
 
 !!! tip "When to run one"
     Run one before tagging when the release workflow, the Dockerfile, the eval or a size budget

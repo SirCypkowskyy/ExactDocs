@@ -19,7 +19,7 @@ permissions:
 jobs:
   eval:
     name: Retrieval eval
-    runs-on: [self-hosted, linux, ARM64, exactdocs]
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
     # On the self-hosted runner in both modes: the heaviest job, and nothing in it needs x86. The
     # gating steps take about 10 minutes on a 2-4 core runner, the report-only local models most
     # of the rest.

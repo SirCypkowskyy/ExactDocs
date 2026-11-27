@@ -216,6 +216,15 @@ class _EveryoneMayDoAnything:
         """
         return frozenset(library.casefold() for library in libraries)
 
+    async def set_private(self, library: str, *, private: bool) -> None:
+        """Note nothing: without roles, no rule reaches a library.
+
+        Args:
+            library: The library ID.
+            private: Whether it is private.
+        """
+        del library, private
+
 
 _open_access = _EveryoneMayDoAnything()
 

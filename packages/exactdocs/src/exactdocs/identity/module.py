@@ -18,6 +18,8 @@ from exactdocs.identity.ports.driven import (
     LibraryGrantRepository,
     PasswordHasher,
     PreferencesRepository,
+    PrivateLibraries,
+    RoleRuleRepository,
     SecretBox,
     SessionRepository,
     SignInAttemptRepository,
@@ -25,6 +27,7 @@ from exactdocs.identity.ports.driven import (
     TokenRepository,
 )
 from exactdocs.identity.ports.driving import (
+    AddRoleRule,
     Authenticate,
     CanCreateLibrary,
     ChangePassword,
@@ -49,9 +52,12 @@ from exactdocs.identity.ports.driving import (
     ListAllTokens,
     ListLibraryAccessLog,
     ListLibraryGrants,
+    ListRoleRules,
     ListTokens,
     ListUsers,
     LoginForToken,
+    MarkLibraryPrivate,
+    RemoveRoleRule,
     ResetPassword,
     ResolveLibraryRoles,
     RevalidateExternalAccounts,
@@ -67,6 +73,7 @@ from exactdocs.identity.ports.driving import (
     UnlinkProvider,
 )
 from exactdocs.identity.use_cases import (
+    AddRoleRuleUseCase,
     AuthenticateUseCase,
     CanCreateLibraryUseCase,
     ChangePasswordUseCase,
@@ -91,14 +98,19 @@ from exactdocs.identity.use_cases import (
     ListAllTokensUseCase,
     ListLibraryAccessLogUseCase,
     ListLibraryGrantsUseCase,
+    ListRoleRulesUseCase,
     ListTokensUseCase,
     ListUsersUseCase,
     LoginForTokenUseCase,
+    MarkLibraryPrivateUseCase,
+    RemoveRoleRuleUseCase,
     ResetPasswordUseCase,
     ResolveLibraryRolesUseCase,
     RevalidateExternalAccountsUseCase,
     RevokeLibraryRoleUseCase,
     RevokeTokenUseCase,
+    RoleRules,
+    RuleAdmin,
     SavePreferencesUseCase,
     SetUserDisabledUseCase,
     Sharing,
@@ -178,6 +190,14 @@ class IdentityModule:
     """Make an account the creator of a new library."""
     drop_library_grants: DropLibraryGrants
     """Drop every grant on a removed library."""
+    mark_library_private: MarkLibraryPrivate
+    """Note whether a library is private, which a role rule for every library leaves out."""
+    list_role_rules: ListRoleRules
+    """List every role rule and the providers rules can name (operators)."""
+    add_role_rule: AddRoleRule
+    """Add a role rule (operators)."""
+    remove_role_rule: RemoveRoleRule
+    """Remove a stored role rule (operators)."""
     grant_library_role: GrantLibraryRole
     """Give a user or a group a role on a library (library admins; creators for admins)."""
     revoke_library_role: RevokeLibraryRole
@@ -218,6 +238,8 @@ class IdentityModule:
         library_creation: LibraryCreationPolicy | None = None,
         access_verifier: AccessAssertionVerifier | None = None,
         access_policy: AccessPolicy | None = None,
+        role_rules: RoleRuleRepository | None = None,
+        private_libraries: PrivateLibraries | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -240,6 +262,9 @@ class IdentityModule:
             policies: Their policies, by the same names.
             access_verifier: Checks Cloudflare Access tokens; ``None`` when Access is off.
             access_policy: Who Cloudflare Access signs in; given with ``access_verifier``.
+            role_rules: The role rules admins added; ``None`` for the configured ones only.
+            private_libraries: Which libraries are private, which a rule for every library
+                leaves out; ``None`` makes such a rule reach no library.
 
         Returns:
             The module, its driving ports wired.
@@ -268,12 +293,22 @@ class IdentityModule:
             clock=clock,
         )
         create_token = CreateTokenUseCase(tokens=tokens, clock=clock)
+        rules = RoleRules(
+            policies=policies,
+            stored=role_rules,
+            library_creation=library_creation,
+            private=private_libraries,
+        )
+        rule_admin = RuleAdmin(
+            accounts=repository, externals=externals, rules=rules, log=access_log, clock=clock
+        )
         sharing = Sharing(
             accounts=repository,
             externals=externals,
             grants=library_grants,
             log=access_log,
             clock=clock,
+            rules=rules,
         )
         return cls(
             get_setup_state=GetSetupStateUseCase(repository=repository),
@@ -308,7 +343,7 @@ class IdentityModule:
                 clock=clock,
             ),
             list_users=ListUsersUseCase(
-                accounts=repository, externals=externals, tokens=tokens, clock=clock
+                accounts=repository, externals=externals, tokens=tokens, clock=clock, rules=rules
             ),
             create_user=CreateUserUseCase(
                 accounts=repository, hasher=hasher, failures=failures, clock=clock
@@ -336,6 +371,7 @@ class IdentityModule:
                 accounts=repository,
                 externals=externals,
                 clock=clock,
+                rules=rules,
             ),
             start_external_sign_in=StartExternalSignInUseCase(
                 providers=providers, policies=policies, attempts=attempts, clock=clock
@@ -350,6 +386,7 @@ class IdentityModule:
                 identify_caller=identify_caller,
                 box=box,
                 clock=clock,
+                rules=rules,
             ),
             get_provider_icon=GetProviderIconUseCase(policies=policies),
             list_account_providers=ListAccountProvidersUseCase(
@@ -373,17 +410,22 @@ class IdentityModule:
                 sessions=sessions,
                 box=box,
                 clock=clock,
+                rules=rules,
             ),
             can_create_library=CanCreateLibraryUseCase(
-                accounts=repository, externals=externals, policy=library_creation
+                accounts=repository, externals=externals, policy=library_creation, rules=rules
             ),
             resolve_library_roles=ResolveLibraryRolesUseCase(
-                accounts=repository, externals=externals, grants=library_grants
+                accounts=repository, externals=externals, grants=library_grants, rules=rules
             ),
             claim_library=ClaimLibraryUseCase(grants=library_grants, log=access_log, clock=clock),
             drop_library_grants=DropLibraryGrantsUseCase(
                 grants=library_grants, log=access_log, clock=clock
             ),
+            mark_library_private=MarkLibraryPrivateUseCase(private=private_libraries),
+            list_role_rules=ListRoleRulesUseCase(admin=rule_admin),
+            add_role_rule=AddRoleRuleUseCase(admin=rule_admin),
+            remove_role_rule=RemoveRoleRuleUseCase(admin=rule_admin),
             grant_library_role=GrantLibraryRoleUseCase(sharing=sharing),
             revoke_library_role=RevokeLibraryRoleUseCase(sharing=sharing),
             list_library_grants=ListLibraryGrantsUseCase(sharing=sharing),

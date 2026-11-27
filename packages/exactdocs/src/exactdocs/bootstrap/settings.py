@@ -58,6 +58,7 @@ from exactdocs.identity.constants import (
 )
 from exactdocs.identity.errors import InvalidUsernameError
 from exactdocs.identity.models import Username
+from exactdocs.ingestion.constants import DEFAULT_MCP_IMPORT_HOSTS
 from exactdocs.retrieval.constants import (
     DEFAULT_AGENT_CACHE_TTL_DAYS,
     DEFAULT_AGENT_REPEATED_CALLS,
@@ -104,8 +105,8 @@ from exactdocs_kernel import OutboundNetwork
 class ProviderSettings(BaseModel):
     """A provider profile: ``EXACTDOCS_AI__PROVIDERS__<NAME>__<FIELD>``, ``[ai.providers.<name>]``.
 
-    See docs/decisions/ai-retrieval.md (*Provider abstraction*) for what each kind needs. The
-    TOML file may not hold ``api_key``: use ``api_key_file`` or the environment.
+    See docs/decisions/ai-retrieval/providers.md (*Provider abstraction*) for what each kind needs.
+    The TOML file may not hold ``api_key``: use ``api_key_file`` or the environment.
     """
 
     model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
@@ -470,6 +471,62 @@ class AiSettings(BaseModel):
         return value
 
 
+class RoleRuleSettings(BaseModel):
+    """A role rule of the configuration file (`[[auth.providers.<name>.rules]]`), read-only.
+
+    Exactly one source: `group`, `role` (with `role_claim`), `github_org` or `github_team`
+    (GitHub only). `grant` is `instance_admin`, `create_libraries`, or a library role
+    (`viewer`, `contributor`, `admin`) on every library that is not private, or on `libraries`.
+    """
+
+    model_config = ConfigDict(use_attribute_docstrings=True, frozen=True, extra="forbid")
+
+    group: str | None = None
+    """A group, as the provider names it (without `group_prefix`)."""
+    role: str | None = None
+    """A value of the provider's `role_claim` (an Entra ID app role, a Keycloak client role)."""
+    github_org: str | None = None
+    """A GitHub organization: its active members."""
+    github_team: str | None = None
+    """A GitHub team, `org/team-slug`: its active members."""
+    grant: Literal["instance_admin", "create_libraries", "viewer", "contributor", "admin"]
+    """What the rule gives."""
+    libraries: list[str] | None = None
+    """For a library role: the libraries (`/owner/repo`) it is given on; unset for every
+    library that is not private."""
+
+    @property
+    def source(self) -> tuple[Literal["group", "role", "github_org", "github_team"], str]:
+        """The one source the rule names.
+
+        Returns:
+            Its kind and its value.
+        """
+        if self.group is not None:
+            return "group", self.group
+        if self.role is not None:
+            return "role", self.role
+        if self.github_org is not None:
+            return "github_org", self.github_org
+        return "github_team", self.github_team or ""
+
+    @model_validator(mode="after")
+    def _one_source(self) -> Self:
+        """Refuse a rule with no source or with several.
+
+        Returns:
+            The settings, unchanged.
+
+        Raises:
+            ValueError: Not exactly one of `group`, `role`, `github_org`, `github_team`.
+        """
+        named = [self.group, self.role, self.github_org, self.github_team]
+        if sum(value is not None for value in named) != 1:
+            message = "a rule names exactly one of group, role, github_org and github_team"
+            raise ValueError(message)
+        return self
+
+
 class SignInProviderSettings(BaseModel):
     """An identity provider to sign in with (``[auth.providers.<name>]`` in the TOML file).
 
@@ -551,6 +608,16 @@ class SignInProviderSettings(BaseModel):
     admin_groups: list[str] = Field(default_factory=list)
     """Groups whose members are `admin` (else `user`), recomputed at every sign-in and
     revalidation."""
+    role_claim: str | None = None
+    """OIDC and OAuth2: a claim, a dotted path, whose values role rules can name (Entra ID app
+    roles: `roles`; Keycloak client roles: `resource_access.<client>.roles`). Read beside the
+    groups claim, from userinfo when the ID token lacks it."""
+    rules: list[RoleRuleSettings] = Field(default_factory=list)
+    """Role rules for this provider's accounts (`[[auth.providers.<name>.rules]]`); shown
+    read-only beside the ones admins add in the UI."""
+    configured_rules_only: bool = False
+    """Only `admin_groups` and `rules` apply to this provider: rules added in the UI or over REST
+    are refused for it, and any stored earlier are ignored."""
     revalidate_minutes: int = Field(default=60, ge=1)
     """How often memberships are checked again with the stored refresh token."""
     revalidate_grace_minutes: int = Field(default=1440, ge=1)
@@ -736,7 +803,27 @@ class SignInProviderSettings(BaseModel):
         if not self.allowed_groups and not self.admits_anyone:
             message = "set allowed_groups, or allow_any_user = true to admit everyone"
             raise ValueError(message)
+        self._rules_consistent()
         return self
+
+    def _rules_consistent(self) -> None:
+        """Refuse rules this provider's accounts could never match.
+
+        Raises:
+            ValueError: A GitHub source outside GitHub, a role claim on GitHub, or a role rule
+                without `role_claim`.
+        """
+        if self.kind == "github" and self.role_claim is not None:
+            message = "role_claim is for OIDC and OAuth2 providers, not github"
+            raise ValueError(message)
+        for rule in self.rules:
+            kind, _ = rule.source
+            if kind.startswith("github_") and self.kind != "github":
+                message = f"a {kind} rule needs kind = github"
+                raise ValueError(message)
+            if kind == "role" and self.role_claim is None:
+                message = "a role rule needs role_claim"
+                raise ValueError(message)
 
 
 def _preset(kind: str, data: dict[str, Any]) -> dict[str, Any]:
@@ -1085,7 +1172,8 @@ class Settings(BaseSettings):
     """
     ai: AiSettings = Field(default_factory=AiSettings)
     """AI retrieval (`EXACTDOCS_AI__...`, or `[ai]` in the `EXACTDOCS_CONFIG_FILE` TOML file;
-    docs/decisions/ai-retrieval.md): the instance mode, provider profiles and model roles.
+    docs/decisions/ai-retrieval/configuration.md): the instance mode, provider profiles and model
+    roles.
     """
     search_backend: str = DATABASE_BACKEND
     """Where full-text search runs: `database` (the default: SQLite FTS5, or PostgreSQL's
@@ -1170,6 +1258,14 @@ class Settings(BaseSettings):
     an MCP client discovers a single authorization server. API tokens keep working. Its
     `client_id` also needs `<public_url>/auth/callback` among the redirect URIs registered at
     the provider; the groups must be in the ID token."""
+
+    mcp_import_hosts: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: list(DEFAULT_MCP_IMPORT_HOSTS)
+    )
+    """The hosts an MCP client's `add_docs` may import from (`EXACTDOCS_MCP_IMPORT_HOSTS`),
+    comma-separated, exact names: `https://` only, and only when the name resolves to public
+    addresses. Empty: `add_docs` imports from no URL, only re-syncs and adds versions of
+    libraries that exist."""
 
     @classmethod
     def settings_customise_sources(
@@ -1399,7 +1495,7 @@ class Settings(BaseSettings):
             raise ValueError(message)
         return self
 
-    @field_validator("allowed_hosts", "allowed_origins", mode="before")
+    @field_validator("allowed_hosts", "allowed_origins", "mcp_import_hosts", mode="before")
     @classmethod
     def _split_csv(cls, value: object) -> object:
         """Split a comma-separated environment value into its non-blank items.

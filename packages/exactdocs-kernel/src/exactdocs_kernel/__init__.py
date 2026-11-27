@@ -12,6 +12,7 @@ from exactdocs_kernel.constants import (
     MAX_CURSOR,
     MAX_LIMIT,
     MAX_NAME,
+    MAX_NAMED_VERSIONS,
     MAX_OFFSET,
     MAX_PATH,
     MAX_TAG_INPUT,
@@ -48,6 +49,7 @@ from exactdocs_kernel.listing import (
 )
 from exactdocs_kernel.network import (
     OutboundNetwork,
+    is_public_address,
     proxy_failure,
     redact_url,
     resolve_outbound,
@@ -62,6 +64,7 @@ from exactdocs_kernel.pagination import (
     paginate,
 )
 from exactdocs_kernel.paths import clean_path_prefix, inside
+from exactdocs_kernel.refs import name_versions, respelled, respelled_note
 from exactdocs_kernel.source_link import section_link
 from exactdocs_kernel.tags import normalize_tag
 
@@ -73,6 +76,7 @@ __all__ = [
     "MAX_CURSOR",
     "MAX_LIMIT",
     "MAX_NAME",
+    "MAX_NAMED_VERSIONS",
     "MAX_OFFSET",
     "MAX_PATH",
     "MAX_TAGS",
@@ -109,7 +113,9 @@ __all__ = [
     "encode_sort_cursor",
     "inside",
     "is_after",
+    "is_public_address",
     "like_pattern",
+    "name_versions",
     "normalize_tag",
     "page_offset",
     "paginate",
@@ -117,6 +123,8 @@ __all__ = [
     "proxy_failure",
     "redact_url",
     "resolve_outbound",
+    "respelled",
+    "respelled_note",
     "section_link",
     "sorted_page",
 ]

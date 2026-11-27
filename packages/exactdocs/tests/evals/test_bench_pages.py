@@ -1,9 +1,21 @@
 """The benchmark pages (#349): their generated tables match the recorded runs."""
 
 import pytest
+from pydantic import BaseModel
 
 from agent_bench.report import BenchReport
-from retrieval_eval.bench_pages import PAGES, RESULTS, agent_blocks, blocks, main, render
+from coding_tasks.report import CodingReport
+from harness_bench.report import HarnessReport
+from retrieval_eval.bench_pages import (
+    PAGES,
+    RESULTS,
+    agent_blocks,
+    blocks,
+    comparison_blocks,
+    main,
+    render,
+)
+from retrieval_eval.grounded_docs import GroundedDocsReport
 
 
 def test_the_committed_pages_match_the_recorded_runs() -> None:
@@ -11,7 +23,7 @@ def test_the_committed_pages_match_the_recorded_runs() -> None:
 
 
 def test_every_generated_block_is_on_a_page() -> None:
-    pages = "".join(p.read_text("utf-8") for p in PAGES.glob("*.md"))
+    pages = "".join(p.read_text("utf-8") for p in PAGES.rglob("*.md"))
     for name in blocks():
         assert f"<!-- bench:{name} -->" in pages
 
@@ -31,3 +43,21 @@ def test_a_recorded_agent_run_with_the_context7_arm_is_not_published() -> None:
 
     with pytest.raises(ValueError, match="Context7's terms forbid publishing it"):
         agent_blocks(with_context7)
+
+
+def test_a_recorded_coding_run_with_the_context7_arm_is_not_published() -> None:
+    def load[T: BaseModel](model: type[T], name: str) -> T:
+        return model.model_validate_json((RESULTS / name).read_text("utf-8"))
+
+    harness = load(HarnessReport, "harness-bench.json")
+    with_context7 = harness.model_copy(
+        update={"meta": harness.meta.model_copy(update={"arms": [*harness.meta.arms, "context7"]})}
+    )
+
+    with pytest.raises(ValueError, match="Context7's terms forbid publishing it"):
+        comparison_blocks(
+            load(BenchReport, "agent.json"),
+            load(GroundedDocsReport, "grounded-docs.json"),
+            with_context7,
+            load(CodingReport, "coding-tasks.json"),
+        )

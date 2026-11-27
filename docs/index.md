@@ -92,7 +92,7 @@ those are imported. Branches stay fresh by hand, on a schedule or by webhook.
 ### The tools agents already know
 
 `resolve-library-id` and `query-docs` match context7's, so a client set up for context7 needs only
-a new URL. More tools list, browse, read and search one version. See [MCP](mcp.md).
+a new URL. More tools list, browse, read and search one version. See [MCP](mcp/index.md).
 
 </div>
 
@@ -172,9 +172,9 @@ result's BM25 and vector rank.</figcaption>
 
 The [golden set](benchmark/golden-set.md) is 321 questions about the docs of Starlette, Pydantic,
 TanStack Query, Zod and Electron, at three pinned versions each. With no model at all, BM25 puts
-a section that answers first for 70.4% of the 267 answerable questions and in the top 5 for
-91.0%, at 133 ms p95 on 4 shared CPUs. Hybrid search on a small local embedding model reaches
-76.0% and 92.5%. Hosted models have not run yet. [Recommended defaults](benchmark/defaults.md) has the numbers and the known weak spots.
+a section that answers first for 70.8% of the 267 answerable questions and in the top 5 for
+91.4%, at 120 ms p95 on 2 vCPUs. Hybrid search on a small local embedding model reaches
+76.4% and 93.3%. Hosted models have not run yet. [Recommended defaults](benchmark/defaults.md) has the numbers and the known weak spots.
 
 </div>
 
@@ -183,7 +183,7 @@ a section that answers first for 70.4% of the 267 answerable questions and in th
 | Page | What is in it |
 |---|---|
 | [Getting started](getting-started/index.md) | Start the server, create the admin, import a library<br/>use the CLI, private repositories, the sources file, webhooks<br/>accounts, sign-in through an identity provider |
-| [MCP](mcp.md) | Connecting Claude, Cursor, VS Code and Codex; tokens; stdio; every tool and resource; context7 over REST |
+| [MCP](mcp/index.md) | Connecting Claude, Cursor, VS Code and Codex; tokens; stdio; every tool and resource; context7 over REST |
 | [Sources file](sources.md) | Declaring libraries in `exactdocs.sources.yaml`, with `sources plan` and `sources apply` |
 | [Configuration](configuration/index.md) | Every environment variable, the TOML file, sign-in providers and the secret key |
 | [Search and AI models](search/index.md) | Retrieval modes, chunking and tags, AI providers, reranking, agentic search, local models, budgets |
@@ -206,7 +206,7 @@ a section that answers first for 70.4% of the 267 answerable questions and in th
 |---|---|
 | [User stories](user-stories.md) | The main use case (git repository to Markdown to browsing) as user stories, plus what comes next and later |
 | [Delivery plan](plan/index.md) | The issues behind the user stories, by epic and milestone |
-| [AI retrieval decisions](decisions/ai-retrieval.md) | Why the AI retrieval modes are built the way they are |
+| [Decisions](decisions/index.md) | Every technical decision in one table, and the records behind them, such as [AI retrieval](decisions/ai-retrieval.md) |
 
 <div class="xd-prose" markdown>
 

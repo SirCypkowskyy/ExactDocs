@@ -10,7 +10,13 @@ site_url = "https://sircypkowskyy.github.io/ExactDocs/"
 repo_url = "https://github.com/SirCypkowskyy/ExactDocs"
 repo_name = "SirCypkowskyy/ExactDocs"
 edit_uri = "edit/develop/docs/"
-extra_javascript = ["https://unpkg.com/mermaid@12.3.0/dist/mermaid.min.js"]
+# bench-history.js: the benchmark history tables' sorting, filters and chart (docs/benchmark/*/history.md).
+# scroll-regions.js: a wide table's scrolling box takes keyboard focus (#619).
+extra_javascript = [
+  "https://unpkg.com/mermaid@12.3.0/dist/mermaid.min.js",
+  "javascripts/bench-history.js",
+  "javascripts/scroll-regions.js",
+]
 # The web UI's colours (web/DESIGN.md, "The Headlamp"), the logo swap for the dark scheme, and the
 # home page's hero and grid.
 extra_css = ["stylesheets/extra.css"]
@@ -26,7 +32,12 @@ nav = [
       { "Declare and sync libraries" = "getting-started/sync.md" },
       { "Accounts and sign-in" = "getting-started/accounts.md" },
     ] },
-    { "MCP" = "mcp.md" },
+    { "MCP" = [
+      "mcp/index.md",
+      { "Connect a client" = "mcp/connect.md" },
+      { "Tools" = "mcp/tools.md" },
+      { "Adding libraries from an agent" = "mcp/adding.md" },
+    ] },
     { "Sources file" = "sources.md" },
     { "Configuration" = [
       "configuration/index.md",
@@ -35,7 +46,12 @@ nav = [
       { "Reference" = [
         { "Storage and database" = "configuration/storage.md" },
         { "Security and the secret key" = "configuration/security.md" },
-        { "Sign-in and access" = "configuration/sign-in.md" },
+        { "Sign-in and access" = [
+          "configuration/sign-in/index.md",
+          { "GitHub, Discord, Google and Microsoft" = "configuration/sign-in/providers.md" },
+          { "Cloudflare Access" = "configuration/sign-in/cloudflare-access.md" },
+          { "Role rules" = "configuration/sign-in/role-rules.md" },
+        ] },
         { "Server, imports and the CLI" = "configuration/server.md" },
         { "Search and AI settings" = "configuration/ai.md" },
         { "Observability and usage counts" = "configuration/observability.md" },
@@ -87,7 +103,13 @@ nav = [
     ] },
   ] },
   { "Product" = [
-    { "User stories" = "user-stories.md" },
+    { "User stories" = [
+      { "Terms and actors" = "user-stories.md" },
+      { "MVP: setup, libraries and imports" = "user-stories/mvp-libraries.md" },
+      { "MVP: browsing, search, sync and running" = "user-stories/mvp-search.md" },
+      { "Next: AI-powered retrieval" = "user-stories/ai-retrieval.md" },
+      { "Next and later" = "user-stories/next.md" },
+    ] },
     { "Delivery plan" = [
       "plan/index.md",
       { "Filing" = "plan/filing.md" },
@@ -95,7 +117,11 @@ nav = [
       { "MVP-1 build order" = "plan/build-order.md" },
       { "E1 Foundation & data model" = "plan/e1-foundation.md" },
       { "E2 Accounts & tokens" = "plan/e2-accounts.md" },
-      { "E3 Git import" = "plan/e3-git-import.md" },
+      { "E3 Git import" = [
+        "plan/e3-git-import/index.md",
+        { "E3 MVP-1" = "plan/e3-git-import/mvp-1.md" },
+        { "E3 MVP-2" = "plan/e3-git-import/mvp-2.md" },
+      ] },
       { "E4 Parsing, chunking & tags" = "plan/e4-parsing.md" },
       { "E5 Search" = "plan/e5-search.md" },
       { "E6 REST API & CLI" = "plan/e6-rest-cli.md" },
@@ -107,7 +133,24 @@ nav = [
       { "E12 Teams & integrations" = "plan/e12-teams.md" },
       { "Coverage matrix" = "plan/coverage.md" },
     ] },
-    { "AI retrieval decisions" = "decisions/ai-retrieval.md" },
+    { "Decisions" = [
+      "decisions/index.md",
+      { "AI retrieval decisions" = [
+        { "Context, summary and consequences" = "decisions/ai-retrieval.md" },
+        { "Databases and providers" = "decisions/ai-retrieval/providers.md" },
+        { "Local models and the vector store" = "decisions/ai-retrieval/local-models.md" },
+        { "Configuration and no outbound" = "decisions/ai-retrieval/configuration.md" },
+        { "Cost, telemetry and evaluation" = "decisions/ai-retrieval/cost.md" },
+        { "Code, order of work, dependencies" = "decisions/ai-retrieval/delivery.md" },
+        { "Sign-in for Teams" = "decisions/ai-retrieval/sign-in.md" },
+      ] },
+      { "Documentation pages stay under 16 KiB" = "decisions/page-size.md" },
+      { "Benchmark history" = "decisions/benchmark-history.md" },
+      { "Eval environments and Dependabot" = "decisions/eval-environments-dependabot.md" },
+      { "Adding libraries over MCP" = "decisions/mcp-write-tools.md" },
+      { "CI runs on our GCP self-hosted runners" = "decisions/ci-runners.md" },
+      { "Role rules" = "decisions/role-rules.md" },
+    ] },
   ] },
   { "Engineering" = [
     { "Architecture" = [
@@ -117,13 +160,30 @@ nav = [
       { "Version storage" = "architecture/versions.md" },
       { "Vectors, embedding and budgets" = "architecture/embeddings.md" },
       { "Data model" = "architecture/data-model.md" },
-      { "Identity" = "architecture/identity.md" },
+      { "Identity" = [
+        "architecture/identity/index.md",
+        { "External sign-in (OIDC)" = "architecture/identity/oidc.md" },
+        { "Library roles" = "architecture/identity/library-roles.md" },
+        { "Role rules" = "architecture/identity/role-rules.md" },
+      ] },
       { "Usage counts" = "architecture/usage.md" },
-      { "Background jobs" = "architecture/jobs.md" },
-      { "The import" = "architecture/import.md" },
+      { "Background jobs" = [
+        "architecture/jobs/index.md",
+        { "Several processes on PostgreSQL" = "architecture/jobs/postgresql.md" },
+        { "Scheduled check and webhooks" = "architecture/jobs/triggers.md" },
+      ] },
+      { "The import" = [
+        "architecture/import/index.md",
+        { "Chunking" = "architecture/import/chunking.md" },
+        { "Images and logos" = "architecture/import/images.md" },
+      ] },
       { "Telemetry" = "architecture/telemetry.md" },
       { "External index backends" = "architecture/index-backends.md" },
-      { "AI retrieval" = "architecture/ai-retrieval.md" },
+      { "AI retrieval" = [
+        "architecture/ai-retrieval/index.md",
+        { "Profiles, modes and hybrid search" = "architecture/ai-retrieval/modes.md" },
+        { "HyDE, reranker and LLM judge" = "architecture/ai-retrieval/hyde-rerank.md" },
+      ] },
       { "Agentic search" = "architecture/agentic.md" },
       { "Python conventions" = "architecture/conventions.md" },
       { "Web client" = "architecture/web-client.md" },
@@ -142,7 +202,10 @@ nav = [
       { "Users, roles and access log" = "rest-api/users-and-access.md" },
       { "Lists and pagination" = "rest-api/pagination.md" },
       { "Errors" = "rest-api/errors.md" },
-      { "Libraries and versions" = "rest-api/libraries.md" },
+      { "Libraries and versions" = [
+        "rest-api/libraries/index.md",
+        { "Adding libraries and versions" = "rest-api/libraries/adding.md" },
+      ] },
       { "Library settings" = "rest-api/library-settings.md" },
       { "Articles, outlines and tags" = "rest-api/articles.md" },
       { "Syncing and webhooks" = "rest-api/sync.md" },
@@ -167,8 +230,10 @@ nav = [
       { "Context7" = "evals/context7.md" },
       { "Agent benchmark" = "evals/agent-bench.md" },
       { "Running the agent benchmark" = "evals/agent-bench-running.md" },
+      { "The agent benchmark's report" = "evals/agent-bench-report.md" },
       { "Version-pinned coding tasks" = "evals/coding-tasks.md" },
       { "Coding-agent CLIs" = "evals/harnesses.md" },
+      { "Running the harness benchmark" = "evals/harnesses-running.md" },
     ] },
     { "Branching and releases" = [
       "releasing/index.md",
@@ -187,25 +252,53 @@ nav = [
   { "Benchmark" = [
     "benchmark/index.md",
     { "Golden set" = "benchmark/golden-set.md" },
-    { "Method" = "benchmark/method.md" },
-    { "Ingestion results" = "benchmark/ingestion.md" },
-    { "Retrieval results" = "benchmark/retrieval.md" },
-    { "Agent results" = "benchmark/agent.md" },
-    { "Comparison with other tools" = "benchmark/comparison.md" },
+    { "Method" = [
+      "benchmark/method/index.md",
+      { "Metrics and statistics" = "benchmark/method/metrics.md" },
+      { "Running and refreshing" = "benchmark/method/runs.md" },
+    ] },
+    { "Ingestion results" = [
+      "benchmark/ingestion/index.md",
+      { "Every run" = "benchmark/ingestion/history.md" },
+    ] },
+    { "Retrieval results" = [
+      "benchmark/retrieval/index.md",
+      { "Every result" = "benchmark/retrieval/results.md" },
+      { "Rank 1 at no more context" = "benchmark/retrieval/rank-one.md" },
+      { "Rank 1: every table" = "benchmark/retrieval/rank-one-tables.md" },
+      { "Grouped by article" = "benchmark/retrieval/grouping.md" },
+      { "Every run" = "benchmark/retrieval/history.md" },
+    ] },
+    { "Agent results" = [
+      "benchmark/agent/index.md",
+      { "Every table" = "benchmark/agent/results.md" },
+      { "What each run found" = "benchmark/agent/findings.md" },
+      { "Runs" = "benchmark/agent/runs.md" },
+      { "Every run" = "benchmark/agent/history.md" },
+    ] },
+    { "Comparison with other tools" = [
+      "benchmark/comparison/index.md",
+      { "Agents, per documentation arm" = "benchmark/comparison/agents.md" },
+      { "Coding tasks" = "benchmark/comparison/coding.md" },
+      { "Fairness and reproducing" = "benchmark/comparison/fairness.md" },
+      { "How Grounded Docs was measured" = "benchmark/comparison/grounded-docs.md" },
+      { "Grounded Docs: every table" = "benchmark/comparison/grounded-docs-results.md" },
+      { "Every run" = "benchmark/comparison/history.md" },
+    ] },
     { "Recommended defaults" = "benchmark/defaults.md" },
   ] },
 ]
 
 [project.theme]
 language = "en"
-# The mole of the web UI's band (web/src/shared/ui/wordmark.tsx, `Mark`): the small-size cut from
-# web/public/brand/, copied to docs/assets/logo/. extra.css swaps it for the on-dark cut in the dark
-# scheme. The favicon is the web UI's favicon.svg.
-logo = "assets/logo/exactdocs-mark-small.svg"
+# The lockup of the web UI's band (web/src/shared/ui/wordmark.tsx, `Wordmark`), copied from
+# web/public/brand/ to docs/assets/logo/. extra.css swaps it for the dark cut in the dark scheme.
+# The favicon is the web UI's favicon.svg.
+logo = "assets/logo/exactdocs-lockup-light.svg"
 favicon = "assets/logo/favicon.svg"
-# The web UI's faces (web/DESIGN.md, "Typography").
-font.text = "Schibsted Grotesk"
-font.code = "JetBrains Mono"
+# The web UI's faces (web/DESIGN.md, "Typography"), self-hosted like the UI's: no Google Fonts.
+# docs/stylesheets/fonts.css loads them from docs/assets/fonts/ and extra.css names them.
+font = false
 features = [
   "content.action.edit",
   "content.code.annotate",

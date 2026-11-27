@@ -9,7 +9,10 @@ import shutil
 import sqlite3
 import stat
 import textwrap
+import threading
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic import op
@@ -30,6 +33,7 @@ from exactdocs.bootstrap.database import (
     database_file,
     migrate,
     open_database,
+    open_spend_ledger_database,
 )
 from exactdocs.bootstrap.http import create_app
 from exactdocs.bootstrap.settings import Settings
@@ -37,6 +41,7 @@ from exactdocs.catalog.adapters.driven.sqlite import SqliteLibraryRepository
 from exactdocs.catalog.dtos import GetLibraryQuery, ListLibrariesQuery
 from exactdocs.catalog.errors import LibraryNotFoundError
 from exactdocs.catalog.models import HostKind, Library, LibraryId
+from sqlite_guard import no_connection_left_open
 
 ORPHAN_VERSION = (
     "INSERT INTO catalog_library_versions (library_id, ref, kind, commit_sha, imported_at) "
@@ -116,6 +121,42 @@ async def test_a_read_only_container_runs_once_at_a_time() -> None:
 
     async with reader.running():  # stopped, it may run again
         assert await current_revision(reader.engine) == head()
+
+
+@pytest.mark.parametrize(
+    "opener",
+    [open_database, lambda s: open_database(s, read_only=True), open_spend_ledger_database],
+    ids=["read_write", "read_only", "spend_ledger"],
+)
+async def test_a_connect_cancelled_while_sqlite_opens_closes_the_connection(
+    opener: Callable[[Settings], AsyncEngine], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async with Container.build(Settings()).running():
+        pass  # a database to open
+    engine = opener(Settings())
+    entered, release = threading.Event(), threading.Event()
+    real_connect = sqlite3.connect
+
+    def held(database: str, **kwargs: Any) -> sqlite3.Connection:
+        entered.set()
+        release.wait(5)
+        return real_connect(database, **kwargs)
+
+    async def connect() -> None:
+        async with engine.connect():
+            pass
+
+    monkeypatch.setattr(sqlite3, "connect", held)
+    try:
+        with no_connection_left_open():  # the cancellation must not leave it open (#630)
+            task = asyncio.create_task(connect())
+            await asyncio.to_thread(entered.wait, 5)
+            task.cancel()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+    finally:
+        await engine.dispose()
 
 
 async def test_nothing_survives_in_another_data_dir(tmp_path: Path) -> None:

@@ -22,6 +22,8 @@ export const messages = defineMessages(
         ownership_transferred: "Ownership transfers",
         library_created: "Creations",
         library_deleted: "Removals",
+        rule_added: "Role rules added",
+        rule_removed: "Role rules removed",
       } satisfies Record<Change, string>,
       library: "Library",
       libraryHint: "The full ID; removed libraries keep their log.",
@@ -50,6 +52,8 @@ export const messages = defineMessages(
         ownership_transferred: "Ownership transferred",
         library_created: "Library created",
         library_deleted: "Library removed",
+        rule_added: "Rule added",
+        rule_removed: "Rule removed",
       },
       /** A role change for screen readers; the screen shows "viewer → admin". */
       fromTo: (from: string, to: string) => `from ${from} to ${to}`,
@@ -103,6 +107,8 @@ export const messages = defineMessages(
       gave: " gave ",
       gaveThe: " the ",
       gaveTail: " role",
+      ruleAdded: " added the role rule ",
+      ruleRemoved: " removed the role rule ",
       /** A role as the server names it; an unknown one shows as sent. */
       roles: {
         viewer: "viewer",
@@ -138,6 +144,8 @@ export const messages = defineMessages(
         ownership_transferred: "Przekazania własności",
         library_created: "Utworzenia bibliotek",
         library_deleted: "Usunięcia bibliotek",
+        rule_added: "Dodane reguły ról",
+        rule_removed: "Usunięte reguły ról",
       },
       library: "Biblioteka",
       libraryHint: "Pełny identyfikator; usunięte biblioteki zachowują swój dziennik.",
@@ -164,6 +172,8 @@ export const messages = defineMessages(
         ownership_transferred: "Przekazana własność",
         library_created: "Utworzona biblioteka",
         library_deleted: "Usunięta biblioteka",
+        rule_added: "Dodana reguła",
+        rule_removed: "Usunięta reguła",
       },
       fromTo: (from, to) => `z ${from} na ${to}`,
       actions: {
@@ -214,6 +224,8 @@ export const messages = defineMessages(
       gave: " nadał ",
       gaveThe: " rolę ",
       gaveTail: "",
+      ruleAdded: " dodał regułę ról ",
+      ruleRemoved: " usunął regułę ról ",
       roles: {
         viewer: "czytelnik",
         contributor: "współtwórca",

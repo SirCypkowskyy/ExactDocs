@@ -10,7 +10,7 @@
     - A reranker that times out or fails never fails the search: the mode's order is kept.
 
 Every mode is built: BM25, `vector`, `hybrid` (BM25 and vectors fused with reciprocal rank fusion,
-#92), `hybrid_hyde` (#94) and `agentic` (#98), and so is reranking (#93).
+\#92), `hybrid_hyde` (#94) and `agentic` (#98), and so is reranking (#93).
 [Search and AI models](../search/index.md) describes each.
 
 ## Which mode answers
@@ -97,4 +97,4 @@ flowchart TD
     style planned stroke-dasharray: 5 5
 ```
 
-The internals of each mode are in [AI retrieval](../architecture/ai-retrieval.md).
+The internals of each mode are in [AI retrieval](../architecture/ai-retrieval/index.md).

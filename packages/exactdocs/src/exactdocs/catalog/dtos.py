@@ -1,7 +1,8 @@
 """Data crossing the catalog boundary (into and out of driving ports). Immutable, validated."""
 
+import operator
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Annotated, Any, Literal, Self
 
@@ -202,20 +203,24 @@ class ResolvedVersion(VersionOut):
 
     library: str
     """Library ID, `/owner/repo`."""
+    notes: list[str] = Field(default_factory=list, exclude_if=operator.not_)
+    """How the request was read where it differs from what was sent: a ref read as the one
+    imported version it names but for a leading `v`. Absent when it was read as sent."""
 
     @classmethod
-    def from_library(cls, library: Library, version: Version) -> Self:
+    def from_library(cls, library: Library, version: Version, *, notes: Sequence[str] = ()) -> Self:
         """Map the library and the chosen version.
 
         Args:
             library: The library.
             version: The version the ID resolved to.
+            notes: How the ref was read, where it differs from what was sent.
 
         Returns:
             The version, naming its library.
         """
         found = VersionOut.from_model(version, is_default=version == library.default_version())
-        return cls(library=str(library.id), **found.model_dump())
+        return cls(library=str(library.id), notes=list(notes), **found.model_dump())
 
 
 class LibrarySummary(_Dto):
@@ -900,6 +905,9 @@ class ArticleList(_Dto):
     """Pass as `cursor` to get the next page; null on the last page."""
     total: int
     """How many articles match the filters (`path_prefix`, `tags`, `q`), across every page."""
+    notes: list[str] = Field(default_factory=list, exclude_if=operator.not_)
+    """How the request was read where it differs from what was sent: a ref read as the one
+    imported version it names but for a leading `v`. Absent when it was read as sent."""
 
 
 class ListTagsQuery(_Dto):
@@ -951,6 +959,9 @@ class TagList(_Dto):
     """The tags and their counts; its schema description is ``TAG_LIST_DESCRIPTION``."""
     truncated: bool
     """True when the version has more tags than are listed."""
+    notes: list[str] = Field(default_factory=list, exclude_if=operator.not_)
+    """How the request was read where it differs from what was sent: a ref read as the one
+    imported version it names but for a leading `v`. Absent when it was read as sent."""
 
 
 class GetArticleQuery(_Dto):
@@ -1190,19 +1201,23 @@ class Article(ArticleInfo):
 
     content: str
     """The article's Markdown, verbatim as imported."""
+    notes: list[str] = Field(default_factory=list, exclude_if=operator.not_)
+    """How the request was read where it differs from what was sent: a ref read as the one
+    imported version it names but for a leading `v`. Absent when it was read as sent."""
 
     @classmethod
-    def with_content(cls, info: ArticleInfo, content: str) -> Self:
+    def with_content(cls, info: ArticleInfo, content: str, *, notes: Sequence[str] = ()) -> Self:
         """Add the text to an article's metadata.
 
         Args:
             info: The metadata.
             content: The article's Markdown.
+            notes: How the request was read, where it differs from what was sent.
 
         Returns:
             The whole article.
         """
-        return cls(**dict(info), content=content)
+        return cls(**dict(info), content=content, notes=list(notes))
 
 
 class ManualTagsIn(_Dto):

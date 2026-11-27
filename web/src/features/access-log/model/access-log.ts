@@ -2,6 +2,7 @@ import type { components } from "@/shared/lib/api-schema";
 import { HttpError } from "@/shared/lib/http";
 import { currentLanguage, type Language } from "@/shared/lib/i18n";
 import { textParam } from "@/shared/lib/list-sort";
+import { ruleText } from "@/shared/lib/role-rules";
 import {
   parseFacet,
   parseTableSearch,
@@ -21,6 +22,8 @@ export const CHANGES = [
   "ownership_transferred",
   "library_created",
   "library_deleted",
+  "rule_added",
+  "rule_removed",
 ] as const satisfies readonly Change[];
 const LIBRARY_ID = /^\/[^/\s]+\/[^/\s]+$/;
 
@@ -255,6 +258,13 @@ export function describeEvent(event: AccessEvent, language: Language = currentLa
   const roleName = (role: string) => t.roles[role] ?? role;
   const role: Part = { key: "role", text: roleName(event.role ?? ""), kind: "role" };
   switch (event.change) {
+    case "rule_added":
+    case "rule_removed":
+      return [
+        ...actor,
+        ...words("verb", event.change === "rule_added" ? t.ruleAdded : t.ruleRemoved),
+        { key: "rule", text: event.rule ? ruleText(event.rule, language) : "", kind: "role" },
+      ];
     case "library_created":
       return [...actor, ...words("verb", t.created)];
     case "library_deleted":

@@ -23,6 +23,7 @@ import { Route as AppPlaygroundRouteImport } from './routes/_app.playground'
 import { Route as AppSearchRouteImport } from './routes/_app.search'
 import { Route as AppUsersRouteImport } from './routes/_app.users'
 import { Route as AppLibrariesNewRouteImport } from './routes/_app.libraries.new'
+import { Route as AppUsersRulesRouteImport } from './routes/_app.users_.rules'
 import { Route as AppUsersTokensRouteImport } from './routes/_app.users_.tokens'
 import { Route as AppLibrariesOwnerRepoRouteImport } from './routes/_app.libraries.$owner.$repo'
 import { Route as AppLibrariesOwnerRepoAccessLogRouteImport } from './routes/_app.libraries.$owner.$repo_.access-log'
@@ -98,6 +99,11 @@ const AppLibrariesNewRoute = AppLibrariesNewRouteImport.update({
   path: '/libraries/new',
   getParentRoute: () => AppRoute,
 } as any)
+const AppUsersRulesRoute = AppUsersRulesRouteImport.update({
+  id: '/users_/rules',
+  path: '/users/rules',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppUsersTokensRoute = AppUsersTokensRouteImport.update({
   id: '/users_/tokens',
   path: '/users/tokens',
@@ -141,6 +147,7 @@ export interface FileRoutesByFullPath {
   '/search': typeof AppSearchRoute
   '/users': typeof AppUsersRoute
   '/libraries/new': typeof AppLibrariesNewRoute
+  '/users/rules': typeof AppUsersRulesRoute
   '/users/tokens': typeof AppUsersTokensRoute
   '/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
   '/libraries/$owner/$repo/access-log': typeof AppLibrariesOwnerRepoAccessLogRoute
@@ -161,6 +168,7 @@ export interface FileRoutesByTo {
   '/users': typeof AppUsersRoute
   '/': typeof AppIndexRoute
   '/libraries/new': typeof AppLibrariesNewRoute
+  '/users/rules': typeof AppUsersRulesRoute
   '/users/tokens': typeof AppUsersTokensRoute
   '/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
   '/libraries/$owner/$repo/access-log': typeof AppLibrariesOwnerRepoAccessLogRoute
@@ -183,6 +191,7 @@ export interface FileRoutesById {
   '/_app/users': typeof AppUsersRoute
   '/_app/': typeof AppIndexRoute
   '/_app/libraries/new': typeof AppLibrariesNewRoute
+  '/_app/users_/rules': typeof AppUsersRulesRoute
   '/_app/users_/tokens': typeof AppUsersTokensRoute
   '/_app/libraries/$owner/$repo': typeof AppLibrariesOwnerRepoRoute
   '/_app/libraries/$owner/$repo_/access-log': typeof AppLibrariesOwnerRepoAccessLogRoute
@@ -205,6 +214,7 @@ export interface FileRouteTypes {
     | '/search'
     | '/users'
     | '/libraries/new'
+    | '/users/rules'
     | '/users/tokens'
     | '/libraries/$owner/$repo'
     | '/libraries/$owner/$repo/access-log'
@@ -225,6 +235,7 @@ export interface FileRouteTypes {
     | '/users'
     | '/'
     | '/libraries/new'
+    | '/users/rules'
     | '/users/tokens'
     | '/libraries/$owner/$repo'
     | '/libraries/$owner/$repo/access-log'
@@ -246,6 +257,7 @@ export interface FileRouteTypes {
     | '/_app/users'
     | '/_app/'
     | '/_app/libraries/new'
+    | '/_app/users_/rules'
     | '/_app/users_/tokens'
     | '/_app/libraries/$owner/$repo'
     | '/_app/libraries/$owner/$repo_/access-log'
@@ -359,6 +371,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppLibrariesNewRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/users_/rules': {
+      id: '/_app/users_/rules'
+      path: '/users/rules'
+      fullPath: '/users/rules'
+      preLoaderRoute: typeof AppUsersRulesRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/users_/tokens': {
       id: '/_app/users_/tokens'
       path: '/users/tokens'
@@ -409,6 +428,7 @@ interface AppRouteChildren {
   AppUsersRoute: typeof AppUsersRoute
   AppIndexRoute: typeof AppIndexRoute
   AppLibrariesNewRoute: typeof AppLibrariesNewRoute
+  AppUsersRulesRoute: typeof AppUsersRulesRoute
   AppUsersTokensRoute: typeof AppUsersTokensRoute
   AppLibrariesOwnerRepoRoute: typeof AppLibrariesOwnerRepoRoute
   AppLibrariesOwnerRepoAccessLogRoute: typeof AppLibrariesOwnerRepoAccessLogRoute
@@ -428,6 +448,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppUsersRoute: AppUsersRoute,
   AppIndexRoute: AppIndexRoute,
   AppLibrariesNewRoute: AppLibrariesNewRoute,
+  AppUsersRulesRoute: AppUsersRulesRoute,
   AppUsersTokensRoute: AppUsersTokensRoute,
   AppLibrariesOwnerRepoRoute: AppLibrariesOwnerRepoRoute,
   AppLibrariesOwnerRepoAccessLogRoute: AppLibrariesOwnerRepoAccessLogRoute,

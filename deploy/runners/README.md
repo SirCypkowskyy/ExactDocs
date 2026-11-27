@@ -4,39 +4,24 @@
   <img src="../../docs/assets/logo/exactdocs-lockup-light.svg" alt="ExactDocs" width="220">
 </picture>
 
-# Self-hosted runners (GB10)
+# Self-hosted runners (GCP)
 
-> **What runs here (#478)** depends on the repository variable `RUNNER_MODE`
-> (docs/releasing/runners.md, *CI/CD and runners*). In `hybrid` (the default): the release's eval, web
-> and Python builds and its arm64 image legs, GHCR retention, and the manual workflows
-> (`eval-providers.yml`, `agent-bench.yml`, `azure-search.yml`, `pinecone.yml`); CI and the docs
-> run on GitHub-hosted runners. In `self-hosted` (when the GitHub-hosted minutes ran out): every
-> job of every workflow, including CI and the release's amd64 image legs, which are cross-built
-> here with QEMU.
-
-Jobs run on our own hardware: two LXD **virtual machines** on the Dell Pro Max GB10
-(`dellpromaxgb10`, Ubuntu 24.04, ARM64). VMs, not containers or host services, because the host
-runs other production containers and a job with Docker access on the host could reach them.
+CI runs on five GCP VMs (docs/decisions/ci-runners.md). Which job runs on them is set by the
+repository variable `RUNNER_MODE` (docs/releasing/runners.md, *CI/CD and runners*); it is
+`self-hosted`, so every job of a trusted run does, and a fork's pull request runs on
+GitHub-hosted `ubuntu-24.04`.
 
 | | |
 |---|---|
-| VMs | `exactdocs-runner-1`, `exactdocs-runner-2` (LXD profile `exactdocs-runner`: 4 vCPU, 8 GiB, 50 GiB sparse disk) |
-| Labels | `self-hosted`, `linux`, `ARM64`, `exactdocs`; workflows use `runs-on: [self-hosted, linux, ARM64, exactdocs]` |
+| VMs | `exactdocs-gcp-runner-1` to `exactdocs-gcp-runner-5`, `t2a-standard-2` (2 vCPU, 8 GiB, ARM64), 50 GiB `pd-balanced` disk, Ubuntu 24.04 |
+| Labels | `self-hosted`, `Linux`, `ARM64`, `exactdocs`, `gcp`; workflows use `runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]` |
 | Scope | this repository only |
+| GCP identity | none: the VMs have no service account |
 | Tooling | Docker + buildx + compose + QEMU (amd64 images are emulated), git, gh, jq; uv, Node and pnpm come from setup actions |
+| Provisioning | Terraform in the maintainer's private infrastructure repository; a startup script installs the toolchain, the pinned runner binary and its systemd service, and registers the VM once |
 
-## Existing VMs
-
-`create-vms.sh` only provisions new VMs. When it gains a package, install it once on the running
-ones, e.g. for the compose plugin the PostgreSQL smoke step needs (#103). Until then that step
-warns and uses a pinned standalone compose binary in the job's temp directory (it never changes
-the host):
-
-```bash
-for vm in exactdocs-runner-1 exactdocs-runner-2; do
-  sudo lxc exec "$vm" -- sh -c 'apt-get update -q && apt-get install -y -q docker-compose-v2'
-done
-```
+The earlier LXD VMs on the maintainer's workstation and their `create-vms.sh` / `register.sh`
+are gone. Any runner registered without the `gcp` label gets no job.
 
 ## Browser dependencies
 
@@ -52,37 +37,27 @@ APT children in the privileged timeout process group; it does not run pnpm as ro
 the user PATH into sudo. Browser download also has a 180-second deadline; each readiness
 probe has a 30-second deadline.
 
-## Setup
+## Job-started hook
 
-From a workstation with `gh` logged in (NVIDIA Sync's SSH config provides the `dellpromaxgb10.local` host):
+`job-started.sh` cleans Docker before every job. A job that ends without its own cleanup
+(cancelled, its runner lost, the disk full) leaves its service containers,
+`exactdocs-supabase-<run>` or a release's buildx builder behind, and the next job on that VM
+inherits them: the hook removes every container, anonymous volume and buildx builder state, since
+a runner takes one job at a time, and at 80% disk or more also build cache and images older than
+72 hours. Named volumes such as `exactdocs-ci-data` and recent layers stay.
 
-```bash
-scp -r deploy/runners dellpromaxgb10.local:~/exactdocs-runners
-ssh dellpromaxgb10.local '~/exactdocs-runners/create-vms.sh 1 2'
-
-token=$(gh api -X POST repos/SirCypkowskyy/ExactDocs/actions/runners/registration-token --jq .token)
-ssh dellpromaxgb10.local "~/exactdocs-runners/register.sh SirCypkowskyy/ExactDocs $token"
-gh api repos/SirCypkowskyy/ExactDocs/actions/runners --jq '.runners[] | [.name, .status] | @tsv'
-```
-
-`register.sh` also installs `job-started.sh` as the runner's job-started hook
-(`ACTIONS_RUNNER_HOOK_JOB_STARTED` in `/opt/actions-runner/.env`; its output is in each job's
-*Set up runner* step). A job that ends without its own cleanup (cancelled, its runner lost, the
-disk full) leaves its service containers, `exactdocs-supabase-<run>` or a release's buildx
-builder behind, and the next job on that VM inherits them: the hook removes every container,
-anonymous volume and buildx builder state before each job, since a runner takes one job at a
-time, and at 80% disk or more also build cache and images older than 72 hours. Named volumes
-such as `exactdocs-ci-data` and recent layers stay. Runners registered before the hook existed
-get it from another `register.sh` run with a fresh token (`--replace` keeps their names).
-
-Add a third runner: `create-vms.sh 3`, then `RUNNERS=3 register.sh ...`.
-
-Remove: `register.sh --remove SirCypkowskyy/ExactDocs <remove-token>`, then `sudo lxc delete --force exactdocs-runner-N`.
+The runner VMs' startup script in the infrastructure repository installs it as
+`/opt/runner-hooks/job-started.sh` (owned by root, mode 0755), outside the runner's own directory
+as GitHub's docs advise, and sets `ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/runner-hooks/job-started.sh`
+in `/opt/actions-runner/.env`, restarting the runner service only when that file changed. VMs that
+existed before the hook get it from that repository's `scripts/install-hook.sh`, which skips busy
+runners. Its output is in each job's *Set up runner* step.
 
 ## Security notes
 
-- The repository is private. If it ever goes public, set *Settings → Actions → Fork pull request
-  workflows* to require approval for all outside collaborators; self-hosted runners must never
-  run untrusted fork code unattended.
-- Runners are persistent (not ephemeral): `_work` and the Docker cache survive between jobs. That
-  keeps builds fast; recreate a VM if it ever runs something untrusted.
+- The repository is public. *Settings → Actions → Fork pull request workflows* requires approval
+  for all external contributors, and the CI and Docs workflows send a fork's run to
+  GitHub-hosted runners. Self-hosted runners must never run untrusted fork code.
+- Runners are persistent (not ephemeral): `_work` and the Docker cache survive between jobs, and
+  the runner user has passwordless sudo. That keeps builds fast; recreate a VM if it ever runs
+  something untrusted.

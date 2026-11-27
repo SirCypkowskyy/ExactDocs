@@ -113,7 +113,14 @@ function ProgressCell({ job }: { job: Job }) {
 /** The person whose request queued the job; the instance's own work, or nobody recorded, muted. */
 function StartedBy({ job }: { job: Job }) {
   const t = useMessages(jobsMessages);
-  if (job.created_by) return <Person name={job.created_by.username} />;
+  if (job.created_by)
+    return (
+      <Person name={job.created_by.username}>
+        {job.created_by.via === "mcp" && (
+          <span className="shrink-0 text-small text-muted-foreground">{t.viaMcp}</span>
+        )}
+      </Person>
+    );
   if (job.origin === "auto") return <span className="text-muted-foreground">{t.automatic}</span>;
   return (
     <Tooltip label={t.notRecordedHint}>

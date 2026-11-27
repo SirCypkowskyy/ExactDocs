@@ -3,6 +3,7 @@
 Each is ``Final`` and documented; see docs/architecture/conventions.md.
 """
 
+import ipaddress
 import re
 from typing import Final
 
@@ -44,6 +45,10 @@ NOTICE: Final[str] = (
 )
 """The notice every MCP result starts with: what follows is untrusted repository data, or model
 output written from it."""
+
+# ---------------------------------------------------------------- refs
+MAX_NAMED_VERSIONS: Final[int] = 20
+"""Versions a "no such version" error names, newest first (#605)."""
 
 # ---------------------------------------------------------------- tags
 MAX_TAG_LENGTH: Final[int] = 40
@@ -112,6 +117,10 @@ _ALWAYS_DIRECT_NAMES: Final[frozenset[str]] = frozenset({"localhost", "metadata.
 proxy would answer with its own identity."""
 _ALWAYS_DIRECT_SUFFIX: Final[str] = ".localhost"
 """RFC 6761: every name under ``localhost`` is this machine."""
+_NAT64: Final[ipaddress.IPv6Network] = ipaddress.IPv6Network("64:ff9b::/96")
+"""The well-known NAT64 prefix: its addresses carry an IPv4 address in their last 32 bits."""
+_IPV4_COMPATIBLE: Final[ipaddress.IPv6Network] = ipaddress.IPv6Network("::/96")
+"""Deprecated IPv4-compatible IPv6 addresses (``::127.0.0.1``): IPv4 in the last 32 bits."""
 _PUBLISHED_DIRECT: Final[tuple[str, ...]] = (
     "localhost",
     "127.0.0.1",

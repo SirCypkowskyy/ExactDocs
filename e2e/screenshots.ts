@@ -2,7 +2,7 @@
 // this after screenshots.py has started and seeded the server. Each picture is taken in the light
 // and the dark theme, at 1440 px wide and twice the pixels; screenshots.py writes them as WebP.
 import { readFileSync } from "node:fs";
-import { type BrowserContext, expect, type Page, test } from "@playwright/test";
+import { type Browser, type BrowserContext, expect, type Page, test } from "@playwright/test";
 import { settled, signIn } from "./helpers";
 
 const env = (name: string) => {
@@ -154,12 +154,14 @@ const READER = "/libraries/acme/payments?version=v1.4.0&path=docs%2Fguide%2Fresi
  * Each picture: its name, the viewport's height (the least, with `fullPage`: then the whole page
  * is taken, for a page whose end belongs in the picture), and how to bring the page to it.
  */
-const SHOTS: {
+interface Shot {
   name: string;
   height: number;
   fullPage?: boolean;
   open: (page: Page) => Promise<void>;
-}[] = [
+}
+
+const SHOTS: Shot[] = [
   {
     name: "libraries",
     height: 520,
@@ -240,25 +242,72 @@ const SHOTS: {
   },
 ];
 
-test("the README's and the documentation's screenshots", async ({ browser }) => {
-  const replies: Reply[] = JSON.parse(readFileSync(env("SHOTS_MCP"), "utf-8"));
+// The users pages sit in the docs with the admin pictures of #565, taken from the live instance at
+// about 1664 CSS pixels wide in 1384: these are taken at that scale, so they match them.
+const USERS_WIDTH = 1664;
+const USERS_SCALE = 1384 / USERS_WIDTH;
+const USERS_SHOTS: Shot[] = [
+  {
+    name: "users",
+    height: 685,
+    open: async (page) => {
+      await page.goto("/users");
+      await expect(page.getByText("group platform → instance admin").first()).toBeVisible();
+    },
+  },
+  {
+    name: "users-tokens",
+    height: 571,
+    open: async (page) => {
+      await page.goto("/users/tokens");
+      await expect(page.getByRole("cell", { name: "Cursor" })).toBeVisible();
+    },
+  },
+  {
+    name: "users-rules",
+    height: 577,
+    open: async (page) => {
+      await page.goto("/users/rules");
+      await expect(page.getByRole("table", { name: "Role rules" })).toBeVisible();
+    },
+  },
+];
+
+/** A signed-in page in each theme; `deviceScaleFactor` overrides the configuration's. */
+async function signedIn(browser: Browser, deviceScaleFactor?: number) {
   const pages: [string, Page][] = [];
   for (const colorScheme of ["light", "dark"] as const) {
     // Nothing stored: the theme follows the system's, set before the first paint.
-    const context = await browser.newContext({ colorScheme });
+    const context = await browser.newContext({
+      colorScheme,
+      ...(deviceScaleFactor && { deviceScaleFactor }),
+    });
     await stableContext(context);
     const page = await context.newPage();
     await signIn(page, USER, PASSWORD);
     pages.push([colorScheme, page]);
   }
-  // A picture at a time in both themes, so both show the instance in the same state.
-  for (const { name, height, fullPage = false, open } of SHOTS) {
+  return pages;
+}
+
+/** A picture at a time in both themes, so both show the instance in the same state. */
+async function shootAll(pages: [string, Page][], shots: Shot[], width: number) {
+  for (const { name, height, fullPage = false, open } of shots) {
     for (const [scheme, page] of pages) {
-      await page.setViewportSize({ width: WIDTH, height }); // before the page lays out
+      await page.setViewportSize({ width, height }); // before the page lays out
       await open(page);
       await shoot(page, name, scheme, fullPage);
     }
   }
+}
+
+test("the README's and the documentation's screenshots", async ({ browser }) => {
+  const replies: Reply[] = JSON.parse(readFileSync(env("SHOTS_MCP"), "utf-8"));
+  const users = await signedIn(browser, USERS_SCALE);
+  await shootAll(users, USERS_SHOTS, USERS_WIDTH);
+  for (const [, page] of users) await page.context().close();
+  const pages = await signedIn(browser);
+  await shootAll(pages, SHOTS, WIDTH);
   // The MCP figure: the two real replies, drawn with the UI's own colours and type.
   for (const [scheme, page] of pages) {
     await page.evaluate((html) => {

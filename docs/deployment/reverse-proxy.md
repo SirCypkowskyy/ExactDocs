@@ -58,7 +58,7 @@ time and MCP clients need only the Access service-token headers.
 2. **Create a self-hosted Access application** for the public host name. Copy its
    **Application Audience (AUD) tag** (application overview) and note your team domain
    (`https://<team>.cloudflareaccess.com`, under Zero Trust settings).
-3. **Configure ExactDocs** (all fields: [Cloudflare Access](../configuration/sign-in.md#cloudflare-access)):
+3. **Configure ExactDocs** (all fields: [Cloudflare Access](../configuration/sign-in/cloudflare-access.md)):
 
     ```yaml
     services:
@@ -80,7 +80,7 @@ time and MCP clients need only the Access service-token headers.
 4. **For MCP clients and scripts**, create an Access **service token**, add a *Service Auth*
    policy for it to the application, create the account it acts as on the **Users** page (for
    example `ci-bot`, then give it library roles), and map the token's client ID to that account
-   in `service_tokens`. See [MCP behind Cloudflare Access](../mcp.md#behind-cloudflare-access).
+   in `service_tokens`. See [MCP behind Cloudflare Access](../mcp/connect.md#behind-cloudflare-access).
 
 What people see: after the Access login, the web UI opens signed in, with no sign-in form. The
 **Account** page says the sign-in comes from Cloudflare Access, and **Sign out** goes to

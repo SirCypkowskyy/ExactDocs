@@ -38,7 +38,7 @@ def test_an_mcp_request_names_the_user_name_its_token_carries(
     )
     monkeypatch.setattr(caller, "get_access_token", lambda: token)
 
-    assert asyncio.run(REQUESTER()) == Person(id="acc-2", username="bob")
+    assert asyncio.run(REQUESTER()) == Person(id="acc-2", username="bob", via="mcp")
 
 
 def test_an_account_without_a_known_name_is_named_by_its_id(
@@ -47,7 +47,7 @@ def test_an_account_without_a_known_name_is_named_by_its_id(
     token = AccessToken(token="", client_id="acc-3", scopes=[], claims={})
     monkeypatch.setattr(caller, "get_access_token", lambda: token)
 
-    assert asyncio.run(REQUESTER()) == Person(id="acc-3", username="acc-3")
+    assert asyncio.run(REQUESTER()) == Person(id="acc-3", username="acc-3", via="mcp")
 
 
 async def test_the_container_records_the_person_of_the_request_on_the_jobs_it_queues() -> None:
@@ -70,6 +70,6 @@ async def test_the_container_records_the_person_of_the_request_on_the_jobs_it_qu
     created_by, origin = manual
     assert origin is VersionOrigin.MANUAL
     assert isinstance(created_by, PersonSummary)
-    assert created_by.model_dump() == {"id": "acc-1", "username": "ada"}
+    assert created_by.model_dump() == {"id": "acc-1", "username": "ada", "via": None}
     assert auto == (None, VersionOrigin.AUTO)  # the instance's own job names nobody
     assert instance.created_by is None  # the command line: nobody bound

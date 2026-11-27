@@ -17,6 +17,9 @@ from exactdocs.identity.models import (
     AccessLogFilter,
     AccountId,
     LibraryRole,
+    RoleRule,
+    RuleGrant,
+    RuleSource,
     SubjectKind,
 )
 from exactdocs.identity.ports import AccessLog
@@ -203,3 +206,28 @@ async def test_a_keyset_walk_and_an_offset_agree_under_every_sort(log: AccessLog
             assert walked == whole, sort
             assert jumped == whole[6:9], sort
             assert len(whole) == await log.count(where) == 14
+
+
+async def test_a_rule_event_keeps_the_rule_as_it_was(log: AccessLog) -> None:
+    rule = RoleRule(
+        id="r1",
+        provider="gh",
+        source=RuleSource.GITHUB_TEAM,
+        value="acme/docs-writers",
+        grant=RuleGrant.CONTRIBUTOR,
+        libraries=frozenset({LIBRARY, OTHER}),
+        created_by=AccountId("alice"),
+        created_at=AT,
+    )
+    event = AccessEvent(
+        id=str(uuid7()),
+        library="",
+        at=AT,
+        actor=AccountId("alice"),
+        change=AccessChange.RULE_ADDED,
+        rule=rule,
+    )
+    await log.record(event)
+
+    assert await newest(log, AccessLogFilter()) == [event]
+    assert await newest(log, AccessLogFilter(library=LIBRARY)) == []

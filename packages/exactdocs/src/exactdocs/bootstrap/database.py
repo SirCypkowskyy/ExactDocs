@@ -80,6 +80,68 @@ logger = logging.getLogger(__name__)
 registry.register(LIBSQL_DIALECT_NAME, LIBSQL_DIALECT_MODULE, LIBSQL_DIALECT_CLASS)
 
 
+_closing: set[asyncio.Future[None]] = set()  # the closes of cancelled connects, until done
+
+
+async def _connect_closed_if_cancelled(
+    database: str,
+    **kwargs: Any,  # ruff: ignore[any-type]
+) -> aiosqlite.Connection:
+    """``aiosqlite.connect``, but a caller cancelled while it connects leaves nothing open (#630).
+
+    aiosqlite answers that cancellation by stopping its worker thread, which still opens the
+    ``sqlite3.Connection``, and nobody closes it: the pool never got it, so ``engine.dispose()``
+    cannot either. A background task the server cancels as it stops (the nightly upkeep, the
+    sign-in revalidation) can be opening its connection just then. So the connect runs as a task of
+    its own, shielded; a cancelled caller waits for it (milliseconds), closes it, then is cancelled.
+
+    Args:
+        database: The database file, as SQLAlchemy passes it.
+        kwargs: ``sqlite3.connect``'s other arguments, as SQLAlchemy passes them.
+
+    Returns:
+        The connection.
+
+    Raises:
+        CancelledError: The caller was cancelled; the connection is closed by then.
+    """
+    connection = aiosqlite.connect(database, **kwargs)
+    # As SQLAlchemy's own connect does (aiosqlite 0.22 keeps its worker thread here).
+    connection._thread.daemon = True  # ruff: ignore[private-member-access]
+    opening = asyncio.ensure_future(connection)
+    try:
+        return await asyncio.shield(opening)
+    except asyncio.CancelledError:
+        closing = asyncio.ensure_future(_close_once_open(opening))
+        _closing.add(closing)
+        closing.add_done_callback(_closing.discard)
+        await asyncio.shield(closing)
+        raise
+
+
+async def _close_once_open(opening: asyncio.Future[aiosqlite.Connection]) -> None:
+    """Close a connection its caller no longer waits for, once it is open; log a failure.
+
+    Args:
+        opening: The connect that is still running.
+    """
+    try:
+        await (await opening).close()
+    except Exception:
+        logger.warning(
+            "closing a SQLite connection whose opener was cancelled failed", exc_info=True
+        )
+
+
+def _sqlite_connect_args() -> dict[str, Any]:
+    """The SQLite engines' connect arguments (``open_database`` says why no ``isolation_level``).
+
+    Returns:
+        A new dict for ``create_async_engine``'s ``connect_args``.
+    """
+    return {"isolation_level": None, "async_creator_fn": _connect_closed_if_cancelled}
+
+
 class ClosingQueuePool(QueuePool):
     """A ``QueuePool`` that closes a connection returned to it once it is disposed (#333).
 
@@ -209,7 +271,7 @@ def open_database(settings: Settings, *, read_only: bool = False) -> AsyncEngine
         _prepare_directory(Path(url.database).parent)
     # isolation_level=None: SQLAlchemy emits BEGIN itself (see `_begin`), so DDL is transactional
     # too, and the PRAGMAs below run in autocommit mode (WAL cannot be set inside a transaction).
-    engine = create_async_engine(url, connect_args={"isolation_level": None})
+    engine = create_async_engine(url, connect_args=_sqlite_connect_args())
     event.listen(engine.sync_engine, "connect", _configure_connection)
     event.listen(engine.sync_engine, "begin", _begin)
     return engine
@@ -296,7 +358,7 @@ def _open_read_only(url: URL) -> AsyncEngine:
         The engine.
     """
     uri = _existing_file(url, mode="ro")
-    engine = create_async_engine(uri, connect_args={"isolation_level": None})
+    engine = create_async_engine(uri, connect_args=_sqlite_connect_args())
     event.listen(engine.sync_engine, "connect", _configure_read_only_connection)
     event.listen(engine.sync_engine, "begin", _begin)
     return engine
@@ -367,7 +429,7 @@ def open_spend_ledger_database(settings: Settings) -> AsyncEngine:
         event.listen(engine.sync_engine, "begin", _begin_postgres)
         return engine
     engine = create_async_engine(
-        _existing_file(url, mode="rw"), connect_args={"isolation_level": None}
+        _existing_file(url, mode="rw"), connect_args=_sqlite_connect_args()
     )
     event.listen(engine.sync_engine, "connect", _configure_spend_ledger_connection)
     event.listen(engine.sync_engine, "begin", _begin)

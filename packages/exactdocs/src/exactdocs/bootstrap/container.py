@@ -35,6 +35,7 @@ from exactdocs.bootstrap.bridges import (
     CatalogLibraryLogos,
     CatalogLibrarySettings,
     CatalogLibrarySources,
+    CatalogLibraryVersions,
     CatalogManualTags,
     CatalogNewLibraries,
     CatalogRemovals,
@@ -134,6 +135,8 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteFailedSignInLog,
     SqliteLibraryGrantRepository,
     SqlitePreferencesRepository,
+    SqlitePrivateLibraries,
+    SqliteRoleRuleRepository,
     SqliteSessionRepository,
     SqliteSignInAttemptRepository,
     SqliteTokenRepository,
@@ -158,6 +161,7 @@ from exactdocs.ingestion.adapters.driven.sqlite import (
     SqliteWebhookSecrets,
 )
 from exactdocs.ingestion.adapters.driving.dbos_worker import DbosJobWorker
+from exactdocs.ingestion.adapters.driving.mcp import ResolveHost, resolve_addresses
 from exactdocs.ingestion.constants import QUEUE, SCHEDULE, STEPS_VERSION, WORKFLOW
 from exactdocs.ingestion.dtos import QueueEmbeddingCommand
 from exactdocs.ingestion.errors import GitNotInstalledError
@@ -476,7 +480,8 @@ def _identity(settings: Settings, engine: AsyncEngine, stand_ins: SignInStandIns
     clock = stand_ins.clock or SystemClock()
     wanted = settings.auth.providers or settings.auth.cloudflare_access is not None
     client = sign_in_client(stand_ins.transport, outbound_network(settings)) if wanted else None
-    providers, policies = sign_in_providers(settings, client, clock) if client else ({}, {})
+    rules = SqliteRoleRuleRepository(engine=engine)
+    providers, policies = sign_in_providers(settings, client, clock, rules) if client else ({}, {})
     access = cloudflare_access(settings, client, clock) if client else None
     creation = settings.auth.library_creation
     identity = IdentityModule.build(
@@ -502,6 +507,8 @@ def _identity(settings: Settings, engine: AsyncEngine, stand_ins: SignInStandIns
         policies=policies,
         access_verifier=None if access is None else access[0],
         access_policy=None if access is None else access[1],
+        role_rules=rules,
+        private_libraries=SqlitePrivateLibraries(engine=engine),
     )
     return _Identity(module=identity, client=client)
 
@@ -520,6 +527,7 @@ def _access_policy(identity: IdentityModule) -> IdentityAccessPolicy:
         can_create_library=identity.can_create_library,
         claim_library=identity.claim_library,
         drop_library_grants=identity.drop_library_grants,
+        mark_library_private=identity.mark_library_private,
         caller=current_account_id,
         external_identity=current_external_identity,
         api_identity=current_api_identity,
@@ -801,6 +809,7 @@ def _build_read_side(
         judge=PydanticAiCandidateJudge(ledger=spend),
         pipelines=pipelines,
         suggestions=CatalogArticleSuggestions(get_article=catalog.get_article),
+        known_versions=CatalogLibraryVersions(get_library=catalog.get_library),
         query_docs_token_budget=settings.query_docs_token_budget,
         tracer=search_tracer(settings),
         vectors=vectors,
@@ -1120,6 +1129,9 @@ class Container:
     set_library_retrieval: SetLibraryRetrieval
     """Retrieval's ``set_library_retrieval``, then a ``reprocess`` queued when the library's repo
     guidance was turned on (REST ``/libraries/{owner}/{repo}/retrieval``)."""
+    access: IdentityAccessPolicy
+    """The library roles and the creation permission of the request's caller (the MCP tools
+    that add libraries are shown to those who may create them, #613)."""
     work_owner: Path | None = field(default=None, repr=False)
     """On PostgreSQL: this process's own work folder, held (``workdirs.held``) while it runs."""
     search_choice: PostgresSearchChoice | None = field(default=None, repr=False)
@@ -1132,6 +1144,8 @@ class Container:
     """Calls the identity providers; ``None`` when none is configured. Closed by ``running()``."""
     index_backends: IndexBackends = field(default_factory=IndexBackends, repr=False)
     """The external search and vector backends (#352), opened in ``running()``."""
+    resolve_host: ResolveHost = field(default=resolve_addresses, repr=False)
+    """Resolves a host name, for the address check of the MCP tools that add libraries (#613)."""
     drift: DriftWatch | None = field(default=None, repr=False)
     """Compares the external backends with the database while the server runs; ``None`` when
     every index lives in the database."""
@@ -1160,6 +1174,7 @@ class Container:
         agent_reads: AgentReads | None = None,
         sign_in: SignInStandIns | None = None,
         index_backends: IndexBackends | None = None,
+        resolve_host: ResolveHost | None = None,
     ) -> Self:
         """Choose driven adapters and connect domains through bridges.
 
@@ -1191,6 +1206,7 @@ class Container:
             sign_in: Replace the identity domain's time and the identity providers' network.
             index_backends: Replace the external backends the settings name (tests: several
                 containers sharing one in-memory backend).
+            resolve_host: Replaces the system resolver of the MCP import address check.
 
         Returns:
             The container, not running yet.
@@ -1335,6 +1351,8 @@ class Container:
         return cls(
             settings=settings,
             engine=engine,
+            access=_access_policy(identity.module),
+            resolve_host=resolve_host or resolve_addresses,
             work_owner=work_owner,
             sign_in_client=identity.client,
             index_backends=read.index_backends,

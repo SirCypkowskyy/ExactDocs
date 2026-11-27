@@ -8,8 +8,8 @@ It runs on the store of the database ``Settings`` picks: SQLite (sqlite-vec) by 
 (#243) with ``EXACTDOCS_DATABASE_URL`` naming an empty PostgreSQL database (and
 ``EXACTDOCS_SECRET_KEY`` set).
 
-The target (docs/decisions/ai-retrieval.md, *Vector store*) is a p95 under 150 ms on the CI
-runner; above it, an ANN index per space is the follow-up.
+The target (docs/decisions/ai-retrieval/local-models.md, *Vector store*) is a p95 under 150 ms on
+the CI runner; above it, an ANN index per space is the follow-up.
 """
 
 import asyncio

@@ -45,7 +45,7 @@ What `uvx exactdocs serve` needs:
   start on an older one.
 
 An agent that only reads an existing database can use `uvx exactdocs serve --stdio`, which needs
-neither `git` nor a port (see [stdio](../mcp.md#without-a-network-port-stdio)).
+neither `git` nor a port (see [stdio](../mcp/connect.md#without-a-network-port-stdio)).
 
 !!! tip "Image variants"
     The image comes in three variants. All of them run plain BM25 search until you configure a
@@ -117,7 +117,7 @@ and only the files that changed are chunked again.
     - Its title and description win over the README's.
     - Its rules come first in every `query-docs` answer.
 
-    The [REST API](../rest-api/libraries.md#context7json) page has the details.
+    The [REST API](../rest-api/libraries/adding.md#context7json) page has the details.
 
     The import also looks for the project's logo:
 
@@ -163,7 +163,7 @@ curl -H "$A" -G "$U/api/v1/libraries/encode/httpx/search" -d ref=0.28.1 -d q=tim
 ```
 
 Step 8: point your agent at `http://localhost:3000/mcp` with the token, as described in
-[MCP](../mcp.md), and call `query-docs` with `libraryId` `/encode/httpx/0.28.1`.
+[MCP](../mcp/index.md), and call `query-docs` with `libraryId` `/encode/httpx/0.28.1`.
 
 [^ci]: CI itself needs no network for this: it imports a fixture repository served locally.
 
@@ -174,7 +174,7 @@ uvx exactdocs config --client claude            # claude, claude-desktop, cursor
 uvx exactdocs config --client codex --stdio     # local, read-only, no token
 ```
 
-`config` prints a snippet to paste into the client's configuration. [MCP](../mcp.md) covers the
+`config` prints a snippet to paste into the client's configuration. [MCP](../mcp/index.md) covers the
 snippet, tokens, stdio and every tool.
 
 ## Next steps
