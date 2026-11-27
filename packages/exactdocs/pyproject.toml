@@ -85,7 +85,7 @@ chroma-local = ["chromadb==1.5.9"]
 # EXACTDOCS_VECTOR_BACKEND=redis): imported only by `retrieval/adapters/driven/redis_index.py`,
 # and only once an operator names the backend. Not in the image. Exact pin, tested against the
 # official `redis` 8 server image (CI service).
-redis = ["redis==8.1.0"]
+redis = ["redis==8.2.0"]
 # Milvus as the vector backend (#360, EXACTDOCS_VECTOR_BACKEND=milvus): imported only by
 # `retrieval/adapters/driven/milvus_index.py`, and only once an operator names the backend. Not in
 # any image. `milvus` is the client alone (a Milvus server or Zilliz Cloud); `milvus-lite` adds
