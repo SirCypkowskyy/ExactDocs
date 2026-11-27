@@ -46,10 +46,12 @@ inherits them: the hook removes every container, anonymous volume and buildx bui
 a runner takes one job at a time, and at 80% disk or more also build cache and images older than
 72 hours. Named volumes such as `exactdocs-ci-data` and recent layers stay.
 
-Install it on a VM as `/opt/actions-runner/hooks/job-started.sh` (mode 0755) and add
-`ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/actions-runner/hooks/job-started.sh` to
-`/opt/actions-runner/.env`, then restart the runner service. Its output is in each job's *Set up
-runner* step.
+The runner VMs' startup script in the infrastructure repository installs it as
+`/opt/runner-hooks/job-started.sh` (owned by root, mode 0755), outside the runner's own directory
+as GitHub's docs advise, and sets `ACTIONS_RUNNER_HOOK_JOB_STARTED=/opt/runner-hooks/job-started.sh`
+in `/opt/actions-runner/.env`, restarting the runner service only when that file changed. VMs that
+existed before the hook get it from that repository's `scripts/install-hook.sh`, which skips busy
+runners. Its output is in each job's *Set up runner* step.
 
 ## Security notes
 
