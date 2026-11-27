@@ -7,6 +7,12 @@ updates:
     target-branch: develop
     groups:
       python: { patterns: ["*"] }
+    # The 9.x elasticsearch client refuses Elasticsearch 8 servers, which we support, so the extra
+    # stays on 8.x (see the comment on it in packages/exactdocs/pyproject.toml). Moving to 9.x
+    # means dropping Elasticsearch 8 support first. With target-branch set, this ignore holds for
+    # version updates only; security updates still come.
+    ignore:
+      - { dependency-name: elasticsearch, update-types: ["version-update:semver-major"] }
   - package-ecosystem: npm
     directory: /web
     schedule: { interval: weekly }
