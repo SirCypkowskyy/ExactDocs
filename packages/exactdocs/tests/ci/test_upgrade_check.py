@@ -1,4 +1,4 @@
-"""deploy/upgrade_check.py still installs a previous release that PyPI has yanked (#533)."""
+"""deploy/upgrade_check.py still installs a previous release after PyPI yanks it (#533)."""
 
 import runpy
 import sys
