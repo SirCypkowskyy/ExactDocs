@@ -67,9 +67,13 @@ jobs:
           retention-days: 30
 
   merge:
-    if: contains(github.event.head_commit.message, '[merge]')
+    # [merge <run id>]: put the shards' finished cells together; every cell is resumed, none runs
+    if: contains(github.event.head_commit.message, '[merge ')
     runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
     timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -80,5 +84,22 @@ jobs:
       - run: uv sync --locked
       - env:
           GH_TOKEN: ${{ github.token }}
-          RUN_ID: ${{ vars.RECORD_RUN_ID }}
-        run: echo merge placeholder
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          run_id=$(grep -o '\[merge [0-9]*\]' <<<"$MESSAGE" | grep -o '[0-9]*')
+          gh run download "$run_id" -R "$GITHUB_REPOSITORY" -p 'grid-*' -D "$RUNNER_TEMP/shards"
+          mkdir -p reports/grid/cells
+          cp "$RUNNER_TEMP"/shards/*/cells/*.json reports/grid/cells/
+          ls reports/grid/cells
+      - run: >-
+          uv run python packages/exactdocs/evals/run_retrieval_grid.py
+          --cells 'grep,rag:window-256+64/bge-small,window-*,h6/hybrid:bge-small+*,default/hybrid:bge-base,hybrid:bge-base-en-v1.5'
+          --out reports/grid
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: grid-merged
+          path: |
+            reports/grid/
+            !reports/grid/embeddings/
+          retention-days: 30
