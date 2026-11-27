@@ -1,7 +1,7 @@
 # CI/CD and runners
 
 !!! abstract "TL;DR"
-    - CI runs on our five GCP self-hosted runners (ARM64, 2 vCPU and 8 GiB each), labelled
+    - CI runs on our eight GCP self-hosted runners (ARM64, 2 vCPU and 8 GiB each), labelled
       `[self-hosted, linux, ARM64, exactdocs, gcp]`. The decision is in
       [CI runs on our GCP self-hosted runners](../decisions/ci-runners.md).
     - The repository variable `RUNNER_MODE` is `self-hosted`, so every job of a trusted run goes
@@ -65,7 +65,7 @@ flowchart LR
         docs["Docs<br/>Mermaid check, zensical build --strict"]
         relh["Release: meta, amd64 image-scan + image,<br/>pypi-kernel, pypi, image-publish, github-release"]
     end
-    subgraph gcp ["GCP (ARM64): five self-hosted runner VMs"]
+    subgraph gcp ["GCP (ARM64): eight self-hosted runner VMs"]
         rels["Release: eval, web, python, arm64 image-scan + image,<br/>integration python (dry run that asks)"]
         ret["GHCR retention"]
         manual["Manual: eval, eval-providers, agent-bench,<br/>azure-search, pinecone"]
@@ -128,9 +128,12 @@ Trivy only reads the saved image, so the scan is unchanged.
 
 ### Queues and limits
 
-- Five runners with 2 vCPU each take one job at a time. A CI run of a pull request is nine jobs
+- Eight runners with 2 vCPU each take one job at a time. A CI run of a pull request is nine jobs
   (lint, three pytest shards, two behave shards, coding tasks, web and the summary job) plus
   two docs jobs, so two pull requests at once already queue.
+- The summary job, the required check `Python (ruff, ty, pytest, behave)`, always runs on
+  GitHub-hosted `ubuntu-24.04` (free for a public repository): it runs no repository code, so it
+  never waits for a runner after the shards have passed.
 - A pytest shard takes about 20 minutes and a behave shard about 18 (timeouts 40 and 45). The
   real-providers benchmark has a 720-minute timeout, since its recorded local subset took
   3 h 22 min on 4 CPUs.

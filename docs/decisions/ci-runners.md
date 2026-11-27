@@ -1,7 +1,7 @@
 # CI runs on our GCP self-hosted runners
 
 !!! abstract "TL;DR"
-    - CI runs on five GCP VMs registered as self-hosted runners, and every self-hosted job asks
+    - CI runs on eight GCP VMs registered as self-hosted runners, and every self-hosted job asks
       for `[self-hosted, linux, ARM64, exactdocs, gcp]`. The runner on the maintainer's
       workstation gets no job.
     - `RUNNER_MODE` stays, set to `self-hosted`. `hybrid` is the way back to GitHub-hosted
@@ -51,10 +51,13 @@
   them with `check_artifacts.py --no-python`. CI and the integration jobs skip the amd64-only
   Pinecone Local and libSQL local-file cases. Using hosted amd64 runners for those legs was not
   chosen, since it depends on the hosted quota again.
-- **Shards for five 2-vCPU runners.** In `self-hosted` mode CI runs pytest in three shards and
+- **Shards for 2-vCPU runners.** In `self-hosted` mode CI runs pytest in three shards and
   behave in two, about 20 and 18 minutes each on these VMs (one behave shard took 35 minutes,
   against a 45-minute timeout). The real-providers benchmark gets a 720-minute timeout, since its
   recorded local subset took 3 h 22 min on 4 CPUs.
+- **The required Python check runs GitHub-hosted.** It only reads its `needs` results and the
+  shards' coverage, and on a self-hosted runner it sat in the queue after every shard had passed
+  (#652). Standard hosted runners are free for a public repository.
 
 ## Security measures
 
@@ -85,10 +88,10 @@
 - **State survives between jobs.** `_work`, the Docker cache and the BuildKit cache stay on a VM,
   and the runner user has passwordless sudo. A job can see or change what the next job on the
   same VM runs with, and in `self-hosted` mode that includes the release's publishing jobs and
-  their OIDC tokens. The job-started hook in `deploy/runners/` removes leftover containers but is
-  not yet installed on the GCP VMs.
-- **Capacity is 5 × 2 vCPU.** One pull request's CI is nine jobs plus two for the docs, so two
-  pull requests at once queue. A self-hosted job can run up to 5 days.
+  their OIDC tokens. The job-started hook in `deploy/runners/` removes leftover containers and is
+  installed on every GCP VM.
+- **Capacity is 8 × 2 vCPU** (five VMs at first, three more since 27 November 2026). One pull
+  request's CI is nine jobs plus two for the docs, so two pull requests at once queue. A self-hosted job can run up to 5 days.
 - **The arm64 numbers stay comparable.** The recorded benchmark runs were Linux aarch64, as are
   these VMs, though with 2 CPUs instead of 4.
 - **Follow-up:** ephemeral runners, one fresh VM per job and deregistered after it, which removes
