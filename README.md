@@ -49,8 +49,8 @@ It runs on your laptop or your own server, so private docs stay on your network.
 library IDs match context7's, so an agent already set up for context7 only needs a new URL.
 
 > [!NOTE]
-> The newest release is **v0.6.0** ([PyPI](https://pypi.org/project/exactdocs/), ghcr.io,
-> [release notes](https://github.com/SirCypkowskyy/ExactDocs/releases/tag/v0.6.0)). This README
+> The newest release is **v0.8.0** ([PyPI](https://pypi.org/project/exactdocs/), ghcr.io,
+> [release notes](https://github.com/SirCypkowskyy/ExactDocs/releases/tag/v0.8.0)). This README
 > describes the `develop` branch, which can be ahead of the release.
 
 ## Why ExactDocs
