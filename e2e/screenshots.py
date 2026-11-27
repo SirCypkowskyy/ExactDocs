@@ -10,7 +10,10 @@ a new data directory, and seeds it through the REST API and MCP with fictional d
   served by `git http-backend` as if from `git.example.com`;
 - a stand-in model gateway on `models.example.com` (`tests/fixtures/fake_llm.py`) that embeds by
   hashing terms, so hybrid search and the AI page have something to show without a model;
-- an admin and two users, two API tokens, and the two `query-docs` calls of the MCP figure.
+- an admin and a user with a password, and two accounts made at their first sign-in through a
+  stand-in OpenID Connect provider (`tests/fixtures/fake_oidc.py`, on a loopback port), whose
+  groups match role rules: one of the configuration file and three added over REST;
+- two API tokens, and the two `query-docs` calls of the MCP figure.
 
 Both hosts are answered by a proxy in this process. The server's proxy settings point to it, and
 it refuses every other host, so nothing leaves the machine. Then `screenshots.ts` takes every
@@ -27,6 +30,7 @@ import http.server
 import json
 import os
 import shutil
+import socket
 import sys
 import tempfile
 import threading
@@ -41,6 +45,7 @@ import httpx2
 from fastmcp import Client
 from fastmcp.client.transports import StreamableHttpTransport
 from PIL import Image
+from uvicorn import Config, Server
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = ROOT / "packages/exactdocs/tests/fixtures"
@@ -49,6 +54,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import run  # ruff: ignore[module-import-not-at-top-of-file]  (e2e/run.py: starts the server)
 
 import fake_llm  # ruff: ignore[module-import-not-at-top-of-file]  (test support, not installed)
+import fake_oidc  # ruff: ignore[module-import-not-at-top-of-file]
 import fixture_repo  # ruff: ignore[module-import-not-at-top-of-file]
 
 OUT = ROOT / "docs/assets/screenshots"
@@ -56,7 +62,15 @@ SHOTS = Path(__file__).parent / "shots/screenshots"
 GIT_HOST = "git.example.com"
 MODELS_HOST = "models.example.com"
 ADMIN = "maya"
-USERS = ("theo", "priya")
+USERS = ("theo",)
+SSO = "sso"
+SSO_USERS = {"lena": ["engineering", "docs-writers"], "omar": ["platform", "engineering"]}
+"""Accounts made through the SSO provider, and their groups there."""
+RULES = [  # added over REST; the configuration file's one (`platform`) is in _server_env
+    {"value": "engineering", "grant": "viewer"},
+    {"value": "docs-writers", "grant": "contributor", "libraries": ["/acme/payments"]},
+    {"value": "docs-writers", "grant": "create_libraries"},
+]
 PASSWORD = "a demo passphrase, not a real one"  # ruff: ignore[hardcoded-password-string]
 QUESTION = "How do I start the sandbox with Docker?"
 LIBRARIES = {  # library ID, also its repository's path on GIT_HOST: the refs, the default first
@@ -171,7 +185,30 @@ def _serving(handler: type[http.server.BaseHTTPRequestHandler]) -> Generator[int
         server.server_close()
 
 
-def _server_env(tmp: Path, proxy: str) -> dict[str, str]:
+@contextlib.contextmanager
+def _issuer() -> Generator[fake_oidc.FakeIssuer]:
+    """Serve a stand-in OpenID Connect provider on a free loopback port until the block ends.
+
+    Yields:
+        The issuer, which knows SSO_USERS.
+    """
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    issuer = fake_oidc.FakeIssuer(issuer=f"http://127.0.0.1:{sock.getsockname()[1]}")
+    for name, groups in SSO_USERS.items():
+        issuer.add_user(name, name, email=f"{name}@example.com", groups=groups)
+    server = Server(Config(issuer.app, log_level="warning"))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+    thread.start()
+    try:
+        _until("the start of the identity provider", lambda: server.started)
+        yield issuer
+    finally:
+        server.should_exit = True
+        thread.join()
+
+
+def _server_env(tmp: Path, proxy: str, issuer: str) -> dict[str, str]:
     """The server's environment: none of the caller's settings, git and the gateway via `proxy`.
 
     Returns:
@@ -193,6 +230,17 @@ dimensions = {fake_llm.TERM_DIMENSIONS}
 
 [ai.prices."gateway:demo-embedding"]
 input_usd_per_mtok = 0.02
+
+[auth.providers.{SSO}]
+kind = "oidc"
+display_name = "Acme SSO"
+issuer = "{issuer}"
+client_id = "{fake_oidc.CLIENT_ID}"
+allow_any_user = true
+
+[[auth.providers.{SSO}.rules]]
+group = "platform"
+grant = "instance_admin"
 """,
         encoding="utf-8",
     )
@@ -200,6 +248,8 @@ input_usd_per_mtok = 0.02
         **env,
         "EXACTDOCS_CONFIG_FILE": str(config),
         "EXACTDOCS_AI__PROVIDERS__GATEWAY__API_KEY": "not-a-real-key",
+        f"EXACTDOCS_AUTH__PROVIDERS__{SSO.upper()}__CLIENT_SECRET": fake_oidc.CLIENT_SECRET,
+        "EXACTDOCS_PUBLIC_URL": "http://localhost:3000",  # the address the pictures show
         # git reads these; anything else that tries the network meets the same proxy
         **dict.fromkeys(("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"), proxy),
         **dict.fromkeys(("no_proxy", "NO_PROXY"), "localhost,127.0.0.1"),
@@ -269,7 +319,17 @@ async def _ask(url: str, token: str) -> list[dict[str, object]]:
     return replies
 
 
-def seed(url: str, shots: Path) -> dict[str, str]:
+def _sign_in_once(url: str, issuer: fake_oidc.FakeIssuer, name: str) -> None:
+    """Sign `name` in through the SSO provider, which makes the account and stores its groups."""
+    with httpx.Client(base_url=url, trust_env=False, timeout=60) as browser:
+        begun = browser.get(f"/api/v1/auth/{SSO}/start")
+        callback = issuer.authorize(begun.headers["location"], name)
+        finished = browser.get(callback)
+        if finished.headers.get("location") != "/":  # the sign-in page, with an error
+            sys.exit(f"the sign-in of {name} ended {finished.status_code}: {finished.text}")
+
+
+def seed(url: str, shots: Path, issuer: fake_oidc.FakeIssuer) -> dict[str, str]:
     """Fill the instance with what the pictures show.
 
     Returns:
@@ -292,6 +352,11 @@ def seed(url: str, shots: Path) -> dict[str, str]:
                 job = added.raise_for_status().json()["job_id"]
                 _until(f"the import of {library} {ref}", lambda job=job: _imported(api, job))
         api.patch("/api/v1/libraries/acme/store", json={"title": "Acme Store"}).raise_for_status()
+        for rule in RULES:
+            body = {"provider": SSO, "source": "group", **rule}
+            api.post("/api/v1/role-rules", json=body).raise_for_status()
+        for name in SSO_USERS:
+            _sign_in_once(url, issuer, name)
         grant = {"kind": "user", "subject": USERS[0], "role": "viewer"}
         api.put("/api/v1/libraries/acme/payments/grants", json=grant).raise_for_status()
         token = api.post("/api/v1/tokens", json={"name": "Claude Code"}).raise_for_status().json()
@@ -338,15 +403,16 @@ def main() -> int:
         with (
             fixture_repo.serve_copy(tmp / "git", token=None) as git,
             fake_llm.gateway(by_terms=True) as gateway,
+            _issuer() as issuer,
         ):
             routes = {
                 GIT_HOST: ("127.0.0.1", urlsplit(git.url).port or 80),
                 MODELS_HOST: ("127.0.0.1", urlsplit(gateway.url).port or 80),
             }
             with _serving(_proxy(routes)) as proxy_port:
-                server_env = _server_env(tmp, f"http://127.0.0.1:{proxy_port}")
+                server_env = _server_env(tmp, f"http://127.0.0.1:{proxy_port}", issuer.issuer)
                 with run.exactdocs(run.server_command(), tmp / "data", server_env) as url:
-                    env = {**os.environ, "EXACTDOCS_URL": url, **seed(url, SHOTS)}
+                    env = {**os.environ, "EXACTDOCS_URL": url, **seed(url, SHOTS, issuer)}
                     args = ["--config", "screenshots.config.ts", *sys.argv[1:]]
                     if code := run.playwright(args, env):
                         return code
