@@ -3,9 +3,10 @@
 Each page under ``docs/benchmark/`` holds generated blocks between ``<!-- bench:<name> -->`` and
 ``<!-- /bench -->``; everything around them is written by hand. This rewrites the blocks from
 ``evals/results/*.json`` (ingestion, retrieval, agent, coding tasks, harnesses, and other tools'
-runs such as ``grounded-docs.json``) and the golden set, with the benchmarks' own Markdown renderers, adds the
-reports' new rows to ``results/history.json`` (``bench_history``), and with ``--check`` fails when
-a page or the history differs from what they give. See docs/benchmark/method/runs.md.
+runs such as ``grounded-docs.json``) and the golden set, with the benchmarks' own Markdown
+renderers, adds the reports' new rows to ``results/history.json`` (``bench_history``), and with
+``--check`` fails when a page or the history differs from what they give. See
+docs/benchmark/method/runs.md.
 """
 
 import argparse
