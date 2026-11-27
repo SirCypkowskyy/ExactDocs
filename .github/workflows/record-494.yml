@@ -28,7 +28,7 @@ jobs:
             cells: h6/hybrid:bge-small+parent,h6/hybrid:bge-small+article
             timeout: 900
           - shard: app-base
-            cells: hybrid:bge-base-en-v1.5
+            cells: hybrid:bge-base-en-v1.5@default
             timeout: 900
           - shard: grid-base
             cells: default/hybrid:bge-base
@@ -93,7 +93,7 @@ jobs:
           ls reports/grid/cells
       - run: >-
           uv run python packages/exactdocs/evals/run_retrieval_grid.py
-          --cells 'grep,rag:window-256+64/bge-small,window-*,h6/hybrid:bge-small+*,default/hybrid:bge-base,hybrid:bge-base-en-v1.5'
+          --cells 'grep,rag:window-256+64/bge-small,window-*,h6/hybrid:bge-small+*,default/hybrid:bge-base,hybrid:bge-base-en-v1.5@default'
           --out reports/grid
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
