@@ -1,7 +1,7 @@
 # CI/CD and runners
 
 !!! abstract "TL;DR"
-    - CI runs on our eight GCP self-hosted runners (ARM64, 2 vCPU and 8 GiB each), labelled
+    - CI runs on our one GCP self-hosted runner (ARM64, 2 vCPU and 8 GiB), labelled
       `[self-hosted, linux, ARM64, exactdocs, gcp]`. The decision is in
       [CI runs on our GCP self-hosted runners](../decisions/ci-runners.md).
     - The repository variable `RUNNER_MODE` is `self-hosted`, so every job of a trusted run goes
@@ -65,7 +65,7 @@ flowchart LR
         docs["Docs<br/>Mermaid check, zensical build --strict"]
         relh["Release: meta, amd64 image-scan + image,<br/>pypi-kernel, pypi, image-publish, github-release"]
     end
-    subgraph gcp ["GCP (ARM64): eight self-hosted runner VMs"]
+    subgraph gcp ["GCP (ARM64): one self-hosted runner VM"]
         rels["Release: eval, web, python, arm64 image-scan + image,<br/>integration python (dry run that asks)"]
         ret["GHCR retention"]
         manual["Manual: eval, eval-providers, agent-bench,<br/>azure-search, pinecone"]
