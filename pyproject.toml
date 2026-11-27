@@ -30,6 +30,7 @@ dev = [
     "exactdocs[pinecone]",
     "exactdocs[qdrant]",
     "exactdocs[redis]",
+    "exactdocs[weaviate]",
     # libSQL's driver (#358) is only needed for a local file and has a Python 3.14 wheel for
     # Linux x86_64 only.
     "exactdocs[libsql] ; sys_platform == 'linux' and platform_machine == 'x86_64'",

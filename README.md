@@ -182,7 +182,7 @@ of failing. Articles are cut at their headings, never inside a code block or a t
 - SQLite or PostgreSQL (with several server processes), backups, health probes, OpenTelemetry
   traces and Prometheus metrics.
 - Search and vector indexes in ExactDocs' own database, or in Azure AI Search, Chroma, DuckDB,
-  Elasticsearch, OpenSearch, LanceDB, libSQL, Milvus, MongoDB, Pinecone, Qdrant or Redis. See
+  Elasticsearch, OpenSearch, LanceDB, libSQL, Milvus, MongoDB, Pinecone, Qdrant, Redis or Weaviate. See
   [External index backends](docs/architecture/index-backends.md).
 
 ## Benchmark

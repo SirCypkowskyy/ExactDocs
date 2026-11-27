@@ -100,7 +100,7 @@ In `self-hosted` mode, the current one, every box above runs in the GCP group.
 - **Every other service and helper image** is published for `linux/arm64`: ParadeDB, PgBouncer,
   Qdrant, Elasticsearch, OpenSearch, Chroma, Redis, MongoDB Atlas Local, Supabase Postgres, Milvus,
   libSQL server. This was checked with `docker buildx imagetools inspect` on the pinned digests,
-  2026-11-23.
+  2026-11-23; Weaviate's (the Docker Hub index behind `cr.weaviate.io`) on 2026-11-27.
 - **The images** are built and smoke-tested for arm64. The amd64 *runtime-tools* step runs under
   QEMU (`docker/setup-qemu-action`), which only runs apt-get, git, ssh and tini.
 - *Free disk space* runs on hosted runners only.
