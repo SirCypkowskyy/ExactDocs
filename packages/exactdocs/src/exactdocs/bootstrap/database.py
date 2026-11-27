@@ -120,7 +120,11 @@ async def _connect_closed_if_cancelled(
 
 
 async def _close_once_open(opening: asyncio.Future[aiosqlite.Connection]) -> None:
-    """Close a connection its caller no longer waits for, once it is open; log a failure."""
+    """Close a connection its caller no longer waits for, once it is open; log a failure.
+
+    Args:
+        opening: The connect that is still running.
+    """
     try:
         await (await opening).close()
     except Exception:
@@ -129,11 +133,13 @@ async def _close_once_open(opening: asyncio.Future[aiosqlite.Connection]) -> Non
         )
 
 
-_SQLITE_CONNECT_ARGS: dict[str, Any] = {
-    "isolation_level": None,
-    "async_creator_fn": _connect_closed_if_cancelled,
-}
-"""The SQLite engines' connect arguments (``open_database`` says why no ``isolation_level``)."""
+def _sqlite_connect_args() -> dict[str, Any]:
+    """The SQLite engines' connect arguments (``open_database`` says why no ``isolation_level``).
+
+    Returns:
+        A new dict for ``create_async_engine``'s ``connect_args``.
+    """
+    return {"isolation_level": None, "async_creator_fn": _connect_closed_if_cancelled}
 
 
 class ClosingQueuePool(QueuePool):
@@ -265,7 +271,7 @@ def open_database(settings: Settings, *, read_only: bool = False) -> AsyncEngine
         _prepare_directory(Path(url.database).parent)
     # isolation_level=None: SQLAlchemy emits BEGIN itself (see `_begin`), so DDL is transactional
     # too, and the PRAGMAs below run in autocommit mode (WAL cannot be set inside a transaction).
-    engine = create_async_engine(url, connect_args=_SQLITE_CONNECT_ARGS)
+    engine = create_async_engine(url, connect_args=_sqlite_connect_args())
     event.listen(engine.sync_engine, "connect", _configure_connection)
     event.listen(engine.sync_engine, "begin", _begin)
     return engine
@@ -352,7 +358,7 @@ def _open_read_only(url: URL) -> AsyncEngine:
         The engine.
     """
     uri = _existing_file(url, mode="ro")
-    engine = create_async_engine(uri, connect_args=_SQLITE_CONNECT_ARGS)
+    engine = create_async_engine(uri, connect_args=_sqlite_connect_args())
     event.listen(engine.sync_engine, "connect", _configure_read_only_connection)
     event.listen(engine.sync_engine, "begin", _begin)
     return engine
@@ -422,7 +428,9 @@ def open_spend_ledger_database(settings: Settings) -> AsyncEngine:
         )
         event.listen(engine.sync_engine, "begin", _begin_postgres)
         return engine
-    engine = create_async_engine(_existing_file(url, mode="rw"), connect_args=_SQLITE_CONNECT_ARGS)
+    engine = create_async_engine(
+        _existing_file(url, mode="rw"), connect_args=_sqlite_connect_args()
+    )
     event.listen(engine.sync_engine, "connect", _configure_spend_ledger_connection)
     event.listen(engine.sync_engine, "begin", _begin)
     return engine
