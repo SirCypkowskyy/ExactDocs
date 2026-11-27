@@ -81,7 +81,7 @@ def this_version(wheels: Path | None) -> tuple[int, ...] | None:
 def previous_release(below: tuple[int, ...] | None) -> str | None:
     """Return the newest stable release on PyPI older than ``below`` (any when it is ``None``).
 
-    A yanked release counts: 0.1.0 to 0.2.0 are yanked (#533) and are still what a data
+    A yanked release counts: 0.1.0 to 0.2.0 should be yanked (#533) and are still what a data
     directory may come from. ``commands`` pins it exactly, which installs a yanked release.
     """
     with urllib.request.urlopen("https://pypi.org/pypi/exactdocs/json", timeout=30) as response:
