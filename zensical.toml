@@ -278,6 +278,9 @@ nav = [
     ] },
     { "Comparison with other tools" = [
       "benchmark/comparison/index.md",
+      { "Agents, per documentation arm" = "benchmark/comparison/agents.md" },
+      { "Coding tasks" = "benchmark/comparison/coding.md" },
+      { "Fairness and reproducing" = "benchmark/comparison/fairness.md" },
       { "How Grounded Docs was measured" = "benchmark/comparison/grounded-docs.md" },
       { "Grounded Docs: every table" = "benchmark/comparison/grounded-docs-results.md" },
       { "Every run" = "benchmark/comparison/history.md" },

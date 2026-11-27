@@ -196,7 +196,11 @@ yet. In the
 [agent benchmark](docs/benchmark/agent/index.md) (60 questions, two open-weight models on Ollama Cloud,
 an LLM judge not yet checked against people), an agent with the ExactDocs MCP tools answered 40%
 (`gpt-oss:120b`) and 83% (`kimi-k3`) of the questions right, against 13% and 33% from memory, and
-2 of its 120 answers held only for another version, against 20 from memory.
+2 of its 120 answers held only for another version, against 20 from memory. Against Grounded Docs
+3.4.1 on the same questions, BM25 is ahead of its full-text search (recall@5 91.4% against 83.5%)
+and level with its `bge-small` search (87.3%), and in the agent benchmark the two are level;
+[Comparison with other tools](docs/benchmark/comparison/index.md) has every arm, where ExactDocs
+loses and how to rerun each run (Context7 is not published).
 [Benchmark](docs/benchmark/index.md) has the method, every table and the known weak spots.
 
 ## How it works

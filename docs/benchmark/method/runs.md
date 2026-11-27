@@ -65,8 +65,8 @@ versions where the right code differs. The task format, the sandbox and the comm
 The tables on the benchmark pages are not typed by hand. Each page holds generated blocks between
 `<!-- bench:<name> -->` and `<!-- /bench -->` markers, and `just bench-pages` refills them from
 `packages/exactdocs/evals/results/ingestion.json`, `retrieval.json`, `agent.json`,
-`grounded-docs.json`, the grid's `retrieval-grid-rank1.json` and `retrieval-grid-grouped.json`
-and the golden set, with the benchmarks' own Markdown renderers. Everything outside the markers is
+`grounded-docs.json`, `harness-bench.json`, `coding-tasks.json`, the grid's
+`retrieval-grid-rank1.json` and `retrieval-grid-grouped.json` and the golden set, with the benchmarks' own Markdown renderers. Everything outside the markers is
 prose.
 
 A recorded report is overwritten by the next run, so `just bench-pages` also keeps every run in
