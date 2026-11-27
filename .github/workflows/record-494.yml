@@ -87,9 +87,9 @@ jobs:
           MESSAGE: ${{ github.event.head_commit.message }}
         run: |
           run_id=$(grep -o '\[merge [0-9]*\]' <<<"$MESSAGE" | grep -o '[0-9]*')
-          gh run download "$run_id" -R "$GITHUB_REPOSITORY" -p 'grid-*' -D "$RUNNER_TEMP/shards"
+          gh run download "$run_id" -R "$GITHUB_REPOSITORY" -n grid-h6-small -D "$RUNNER_TEMP/shards"
           mkdir -p reports/grid/cells
-          cp "$RUNNER_TEMP"/shards/*/cells/*.json reports/grid/cells/
+          cp "$RUNNER_TEMP"/shards/cells/*.json reports/grid/cells/
           ls reports/grid/cells
       - run: >-
           uv run python packages/exactdocs/evals/run_retrieval_grid.py
