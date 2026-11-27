@@ -3,8 +3,9 @@
 !!! abstract "TL;DR"
     - **Retrieval** (321 golden questions, 27 November 2026): ExactDocs' BM25 against Grounded
       Docs 3.4.1. Full-text only, ExactDocs leads on every metric (recall@5 91.4% against 83.5%,
-      significant). With `bge-small-en-v1.5`, Grounded Docs is level with BM25 (recall@5 87.3%,
-      p 0.073), and ExactDocs' hybrid search with the same model is ahead (93.3%, significant).
+      significant). With `bge-small-en-v1.5`, Grounded Docs shows no significant difference from
+      BM25 (recall@5 87.3%, p 0.073), and ExactDocs' hybrid search with the same model is ahead
+      (93.3%, significant).
     - **Agents** (60 questions, two models): ExactDocs and Grounded Docs both lift accuracy far
       above no docs (`kimi-k3`: 83.3% and 81.7% against 33.3%) and are level with each other;
       Grounded Docs needs fewer tool calls and less time.
