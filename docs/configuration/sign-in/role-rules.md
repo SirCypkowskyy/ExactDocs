@@ -54,6 +54,15 @@ for any provider without `configured_rules_only`. Every such change goes to the 
 who made it. A change to an `instance_admin` rule that would leave no enabled admin is refused;
 as for disabling an account, an admin counts while the account is enabled.
 
+<figure class="xd-shot" markdown>
+
+![The Role rules tab of the Users page listing four rules: a group rule from the configuration file giving instance admin, and three added by an admin giving viewer on every library, contributor on one library and library creation](../../assets/screenshots/users-rules-light.webp#only-light){ loading=lazy }
+![The Role rules tab of the Users page listing four rules: a group rule from the configuration file giving instance admin, and three added by an admin giving viewer on every library, contributor on one library and library creation](../../assets/screenshots/users-rules-dark.webp#only-dark){ loading=lazy }
+
+<figcaption>The <strong>Role rules</strong> tab: the configuration file's rules are read-only, the others can be removed.</figcaption>
+
+</figure>
+
 How rules combine with everything else:
 
 - A rule only adds. An account's access is the highest of what it was given directly (the Users

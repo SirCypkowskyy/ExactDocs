@@ -110,10 +110,10 @@ Rules:
 
 <figure class="xd-shot" markdown>
 
-![The Users page listing four accounts with their role, how they sign in, status and number of tokens](../assets/screenshots/users-light.webp#only-light){ loading=lazy }
-![The Users page listing four accounts with their role, how they sign in, status and number of tokens](../assets/screenshots/users-dark.webp#only-dark){ loading=lazy }
+![The Users page listing four accounts with their role, how they sign in, their groups, the role rules they match and their status](../assets/screenshots/users-light.webp#only-light){ loading=lazy }
+![The Users page listing four accounts with their role, how they sign in, their groups, the role rules they match and their status](../assets/screenshots/users-dark.webp#only-dark){ loading=lazy }
 
-<figcaption>The <strong>Users</strong> page: role, sign-in method, status and tokens of each account.</figcaption>
+<figcaption>The <strong>Users</strong> page: role, sign-in method, groups, matching role rules and status of each account.</figcaption>
 
 </figure>
 
