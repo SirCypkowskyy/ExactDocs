@@ -131,6 +131,9 @@ Trivy only reads the saved image, so the scan is unchanged.
 - Eight runners with 2 vCPU each take one job at a time. A CI run of a pull request is nine jobs
   (lint, three pytest shards, two behave shards, coding tasks, web and the summary job) plus
   two docs jobs, so two pull requests at once already queue.
+- The summary job, the required check `Python (ruff, ty, pytest, behave)`, always runs on
+  GitHub-hosted `ubuntu-24.04` (free for a public repository): it runs no repository code, so it
+  never waits for a runner after the shards have passed.
 - A pytest shard takes about 20 minutes and a behave shard about 18 (timeouts 40 and 45). The
   real-providers benchmark has a 720-minute timeout, since its recorded local subset took
   3 h 22 min on 4 CPUs.

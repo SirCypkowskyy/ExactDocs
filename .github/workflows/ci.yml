@@ -202,12 +202,14 @@ jobs:
           retention-days: 14
 
   # The required check (branch protection): waits for the Python jobs, fails unless every one
-  # passed, and combines the shards' coverage into one report.
+  # passed, and combines the shards' coverage into one report. Always GitHub-hosted (free for a
+  # public repository): it runs no repository code, and on a self-hosted runner it waited in the
+  # queue after every shard had passed, holding up the merge.
   python:
     name: Python (ruff, ty, pytest, behave)
     needs: [lint, pytest, behave, coding-tasks]
     if: ${{ !cancelled() }}
-    runs-on: ${{ (vars.RUNNER_MODE == 'self-hosted' && !github.event.pull_request.head.repo.fork) && fromJSON('["self-hosted","linux","ARM64","exactdocs","gcp"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       # The sources the coverage report names.

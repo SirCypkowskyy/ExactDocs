@@ -55,6 +55,9 @@
   behave in two, about 20 and 18 minutes each on these VMs (one behave shard took 35 minutes,
   against a 45-minute timeout). The real-providers benchmark gets a 720-minute timeout, since its
   recorded local subset took 3 h 22 min on 4 CPUs.
+- **The required Python check runs GitHub-hosted.** It only reads its `needs` results and the
+  shards' coverage, and on a self-hosted runner it sat in the queue after every shard had passed
+  (#652). Standard hosted runners are free for a public repository.
 
 ## Security measures
 
