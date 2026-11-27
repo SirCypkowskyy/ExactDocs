@@ -8,6 +8,8 @@
       membership check.
     - A rule for every library leaves out private libraries, which ingestion reports to identity.
 
+Why rules work this way, and what else was weighed: [the role rules decision](../../decisions/role-rules.md).
+
 A `RoleRule` (#577) gives everyone with one membership at a provider a role. Its source is a
 `group`, a `role` value, a `github_org` or a `github_team`; its grant `instance_admin`,
 `create_libraries`, or a library role (`viewer`, `contributor`, `admin`; never `creator`) on every
