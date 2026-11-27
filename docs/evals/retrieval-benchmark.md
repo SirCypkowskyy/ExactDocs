@@ -7,9 +7,9 @@
       hosted models ([Recommendation and statistics](statistics.md)).
     - It scores `search_docs` as an agent reads it: grouped by article since #575, each group one
       result.
-    - In the recorded run BM25 reaches recall@5 92.5% at `h2` and 91.0% at `default`. Hybrid on
-      bge-small at `default` reaches 92.5%, as much as BM25 at `h2`: under the 5-point margin and
-      not significant (p 1), so BM25 stays the default
+    - In the recorded run BM25 reaches recall@5 92.9% at `h2` and 91.4% at `default`. Hybrid on
+      bge-small at `merge-400` reaches 94.0%, 1.1 points over BM25 at `h2`: under the 5-point
+      margin and not significant (p 0.50), so BM25 stays the default
       ([The recorded run](retrieval-runs.md#the-recorded-run)).
     - A run exits with 1 on a result of another version, a read outside the version, or a failed
       question.

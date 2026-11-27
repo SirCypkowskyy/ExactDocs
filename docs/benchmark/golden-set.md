@@ -190,8 +190,8 @@ What this means for the results:
 - Until #501, recall@k counted only the first listed section, and these sections counted for
   nDCG@10 and section recall as parts the answer also needed.
 
-The golden set's fingerprint changed three times. The [ingestion run](ingestion/index.md) and the
-[retrieval run](retrieval/index.md) were recorded again after the first two:
+The golden set's fingerprint changed four times. The [ingestion run](ingestion/index.md) and the
+[retrieval run](retrieval/index.md) were recorded again after each:
 
 | Change | Fingerprint |
 |---|---|
@@ -202,12 +202,11 @@ The golden set's fingerprint changed three times. The [ingestion run](ingestion/
 
 Since #571 the chunker cuts a heading's attribute list (`{#config-both}`) out of its heading path,
 so one Pydantic v2.5.3 case now names its section `[Config and model_config both defined]`. The
-ingestion run and the text scorer's calibration were recorded again on it (#591). The retrieval
-run and the [Grounded Docs run](comparison/index.md) still carry `sha256:a00997851150e3b0`. Their results
-measured with the earlier chunker, which kept the attribute list in the heading, found that
-section at rank 1 and stand; the results run again on 25 November with #571's chunker miss it, one
-answerable case lower at every k. The retrieval benchmark's `--check` refuses a run on another
-fingerprint, so the retrieval run is to be recorded again before it is checked next.
+ingestion run and the text scorer's calibration were recorded again on it (#591), and the
+retrieval run and the [Grounded Docs run](comparison/index.md) on 26 and 27 November (#598). On
+`sha256:a00997851150e3b0` the results run on 25 November with #571's chunker missed that case;
+on the new fingerprint BM25 finds it at rank 1 again, one answerable case (0.4 points) higher at
+every k.
 
 ### Wording
 

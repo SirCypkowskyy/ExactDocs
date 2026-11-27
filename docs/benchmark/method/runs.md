@@ -44,7 +44,8 @@ EXACTDOCS_MODELS_DIR=~/.cache/exactdocs/models just retrieval-bench --offline \
 ```
 
 The second is the recorded retrieval run ([The recorded run](../../evals/retrieval-runs.md#the-recorded-run)): 3 h
-17 min on a 4-CPU runner, most of it embedding the corpus and the cross-encoder.
+17 min on a 4-CPU runner, most of it embedding the corpus and the cross-encoder. The run recorded
+now was split by chunking over five 2-vCPU VMs, 7 h 23 min in all.
 
 ## Coding tasks
 

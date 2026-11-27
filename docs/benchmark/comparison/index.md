@@ -2,19 +2,18 @@
 
 !!! abstract "TL;DR"
     - Grounded Docs 3.4.1 against ExactDocs' BM25 at `default`, on the whole golden set, indexed
-      on 24 November 2026 and asked again on 25 November, next to ExactDocs' search grouped by
-      article (#575).
-    - Full-text only: ExactDocs leads on every metric, recall@1 70.4% against 58.4%, recall@5
-      91.0% against 83.2%, recall@10 93.3% against 85.0% (all significant).
-    - With `bge-small-en-v1.5`: recall@1 71.2% against 70.4%, no longer a significant lead (p 0.82;
-      before grouping 12.7 points, p 0.0005); recall@5 85.4% against 91.0% and recall@10 88.8%
-      against 93.3%, both significant for ExactDocs.
-    - Its results hold about twice the context: 7,360 to 7,935 estimated tokens per question,
-      against 3,464.
+      and asked on 27 November 2026 on the same machine as ExactDocs' recorded run, ExactDocs'
+      search grouped by article (#575).
+    - Full-text only: ExactDocs leads on every metric, recall@1 70.8% against 59.2%, recall@5
+      91.4% against 83.5%, recall@10 93.6% against 85.4% (all significant).
+    - With `bge-small-en-v1.5`: recall@1 71.9% against 70.8% (p 0.74), recall@5 87.3% against
+      91.4% (p 0.073) and recall@10 90.6% against 93.6% (p 0.15), none significant. Against
+      ExactDocs' hybrid search with the same model, recall@5 93.3% is significantly ahead.
+    - Its results hold about twice the context: 7,352 to 7,964 estimated tokens per question,
+      against 3,465.
     - At the same amount of context ExactDocs finds the answer more often: within 1,000 tokens,
-      42.7% against 34.1% with whole results and 80.2% against 58.1% with the text cut (Grounded
-      Docs with `bge-small-en-v1.5`); it leads at 2,000 and 4,000 too, all significant. Grouping
-      narrowed that lead with whole results (77.9% against 34.1% before).
+      43.1% against 34.5% with whole results and 80.5% against 57.7% with the text cut (Grounded
+      Docs with `bge-small-en-v1.5`); it leads at 2,000 and 4,000 too, all significant.
 
 ExactDocs next to other documentation tools, on the same [golden set](../golden-set.md): the same
 questions about the same projects at the same pinned versions.
@@ -41,21 +40,21 @@ separately and searches it with full-text search, and with vector search when an
 is configured. It ran on this machine, so it indexed exactly what ExactDocs imports. How the run
 works, and how to repeat it: [Grounded Docs](../../evals/grounded-docs.md) in the evals reference.
 
-Grounded Docs 3.4.1 indexed the golden corpus on 24 November 2026, in both configurations. Its
-questions were asked again on 25 November on the indexes it built, next to ExactDocs' BM25 at
-`default` asked and scored the same way, with its results grouped by article (#575;
-[before and after grouping](#before-and-after-grouping-by-article)). A hit is a result that answers
-any section the case lists, a part or one of its alternatives, as in
+Grounded Docs 3.4.1 indexed the golden corpus and answered the golden set on 27 November 2026,
+in both configurations, on a 2-vCPU Linux aarch64 runner VM like those of ExactDocs' recorded
+run. ExactDocs' BM25 at `default` is asked and scored the same way, with its results grouped by
+article (#575; [before and after grouping](#before-and-after-grouping-by-article)). A hit is a
+result that answers any section the case lists, a part or one of its alternatives, as in
 [Retrieval metrics](../method/metrics.md#retrieval-metrics):
 
 - **Full-text search only**, against ExactDocs' BM25:
 
     | Metric | Grounded Docs | ExactDocs BM25 | Significant |
     |---|---|---|---|
-    | recall@1 | 58.4% | 70.4% | yes |
-    | recall@5 | 83.2% | 91.0% | yes |
-    | recall@10 | 85.0% | 93.3% | yes |
-    | nDCG@10 | 0.655 | 0.754 | yes |
+    | recall@1 | 59.2% | 70.8% | yes |
+    | recall@5 | 83.5% | 91.4% | yes |
+    | recall@10 | 85.4% | 93.6% | yes |
+    | nDCG@10 | 0.660 | 0.757 | yes |
 
     It returns 7.5 results per question rather than 10, because it merges the nearby matches of a
     page into one result. ExactDocs' ten chunks come in 5.6 article groups per question.
@@ -64,62 +63,67 @@ any section the case lists, a part or one of its alternatives, as in
 
     | Metric | Grounded Docs | ExactDocs BM25 | Significant |
     |---|---|---|---|
-    | recall@1 | 71.2% | 70.4% | no (p 0.82) |
-    | MRR | 0.781 | 0.792 | no |
-    | recall@5 | 85.4% | 91.0% | yes |
-    | recall@10 | 88.8% | 93.3% | yes |
+    | recall@1 | 71.9% | 70.8% | no (p 0.74) |
+    | MRR | 0.795 | 0.796 | no (p 0.97) |
+    | recall@5 | 87.3% | 91.4% | no (p 0.073) |
+    | recall@10 | 90.6% | 93.6% | no (p 0.15) |
 
-    nDCG@10 does not differ significantly either.
+    nDCG@10 does not differ significantly either (0.742 against 0.757). On 25 November, on the
+    index it built on 24 November on 4 shared x86_64 CPUs, it scored 85.4% recall@5 and 88.8% recall@10,
+    both significantly below BM25; this index ranks a few cases higher, and the difference is no
+    longer significant.
 
     Against ExactDocs' hybrid search with the same model (the recorded run, scored by chunk ID),
-    recall@1 is lower (71.2% against 76.0%, not significant, p 0.12), and recall@5 (92.5%),
-    recall@10 (93.3%), MRR (0.832) and nDCG@10 (0.787) are significantly lower.
-- **Twice the context.** Its results hold 7,360 to 7,935 estimated tokens per question, against
-  ExactDocs' 3,464, and 2,004 to 2,332 tokens up to the first hit, against 1,448. That bigger
-  context also holds more of the cases' facts (92% to 94%, against 87%).
+    recall@5 (93.3%) and nDCG@10 (0.791) are significantly higher; recall@1 (76.4%, p 0.15),
+    recall@10 (93.6%, p 0.16) and MRR (0.837, p 0.078) are higher but not significantly.
+- **Twice the context.** Its results hold 7,352 to 7,964 estimated tokens per question, against
+  ExactDocs' 3,465, and 2,032 to 2,282 tokens up to the first hit, against 1,444. That bigger
+  context also holds more of the cases' facts (92% to 93%, against 87%).
 - **At the same amount of context, ExactDocs finds the answer more often**: how often a
   section that answers is within the first 1,000, 2,000 and 4,000 estimated tokens of what each
   tool returned ([Method](../method/metrics.md#retrieval-metrics)):
 
     | Within | ExactDocs BM25 | Grounded Docs, `bge-small-en-v1.5` | Grounded Docs, full-text |
     |---|---|---|---|
-    | 1,000 tokens, whole results | 42.7% | 34.1% | 24.7% |
-    | 2,000 tokens, whole results | 71.2% | 58.4% | 53.2% |
-    | 4,000 tokens, whole results | 89.1% | 75.3% | 69.7% |
-    | 1,000 tokens, text cut | 80.2% | 58.1% | 44.2% |
-    | 2,000 tokens, text cut | 88.4% | 72.7% | 65.5% |
-    | 4,000 tokens, text cut | 92.9% | 82.0% | 76.8% |
+    | 1,000 tokens, whole results | 43.1% | 34.5% | 25.1% |
+    | 2,000 tokens, whole results | 71.5% | 58.4% | 53.6% |
+    | 4,000 tokens, whole results | 89.5% | 76.8% | 70.8% |
+    | 1,000 tokens, text cut | 80.5% | 57.7% | 44.9% |
+    | 2,000 tokens, text cut | 88.8% | 71.5% | 65.9% |
+    | 4,000 tokens, text cut | 93.3% | 84.3% | 77.9% |
 
     - Reading whole results is the harder rule for a tool with long results; cutting the text at
       the budget (the result the budget cuts counts when its part within the budget answers)
       favours them. ExactDocs leads at every budget under both, and every difference is
-      significant (McNemar, p 0.014 or under).
-    - ExactDocs' hybrid search with the same model finds it in 42.3%, 73.4% and 90.3%, whole
-      results, each significantly more often than Grounded Docs (p 0.012 or under).
-    - A group of ExactDocs' results now holds about 620 tokens (3,464 in 5.6 groups), a Grounded
-      Docs result about 1,000. An answer in a group's second or third chunk ends further into
-      the text than it did as a result of its own, so ExactDocs' lead with whole results is
-      narrower than before it grouped ([below](#before-and-after-grouping-by-article)).
+      significant (McNemar, p 0.015 or under).
+    - ExactDocs' hybrid search with the same model finds it in 42.3%, 74.2% and 90.6%, whole
+      results, each significantly more often than Grounded Docs (p 0.019 or under).
+    - A group of ExactDocs' results holds about 620 tokens (3,465 in 5.6 groups), a Grounded Docs
+      result about 1,000. An answer in a group's second or third chunk ends further into the text
+      than it did as a result of its own, so ExactDocs' lead with whole results is narrower than
+      before it grouped ([below](#before-and-after-grouping-by-article)).
 - **Changelogs are left out.** Its default exclusion patterns skip `changelog.md` and
   `changelog.mdx` (and hidden files).
     - So it did not index Pydantic v1's and Zod v4's changelogs, and four answerable Zod v4 cases
       list no section outside `changelog.mdx` (two more list it next to another page).
-    - Without those four (263 answerable cases), recall@5 is 84.4% full-text and 86.7% with the
-      embedding model, against ExactDocs' 90.9%.
+    - Without those four (263 answerable cases), recall@5 is 84.8% full-text and 88.6% with the
+      embedding model, against ExactDocs' 91.3%.
     - The `version-change` questions, which lean on such pages, are where it trails most
-      (recall@5 80.4% in both configurations, against 96.4%).
+      (recall@5 80.4% full-text and 82.1% with the embedding model, against 96.4%).
 - **No result of another version** from either tool (wrong-version rate 0); about 80% of both
   tools' results are version-neutral, so this says little on its own.
-- **Indexing** the whole corpus (1,716 articles, 6,263 chunks) took 95 seconds with full-text
-  search only (a 29.9 MB database) and 27 minutes with the embedding model on 4 shared CPUs
-  (80.6 MB), almost all of it embedding 2.5 million tokens.
+- **Indexing** the whole corpus (1,716 articles, 6,263 chunks) took 122 seconds with full-text
+  search only (a 30.0 MB database) and 91 minutes with the embedding model on 2 vCPUs (80.8 MB),
+  almost all of it embedding 2.5 million tokens (27 minutes on 4 shared CPUs on 24 November).
 
 ### Before and after grouping by article
 
 ExactDocs' search returned one chunk per result until #575; it now groups them by article
 ([Retrieval results](../retrieval/grouping.md)). The grid ran it both ways on the same
 code and machine on 25 November, scored by chunk ID, and Grounded Docs with `bge-small-en-v1.5`
-is tested against each on the same cases:
+was tested against each on the same cases. This table is from the Grounded Docs run of
+25 November, on the golden set before #594 (`sha256:a00997851150e3b0`); it was not computed
+again on the run above:
 
 | Grounded Docs minus ExactDocs | BM25, one chunk per result | BM25, grouped | hybrid, one chunk per result | hybrid, grouped |
 |---|---|---|---|---|
