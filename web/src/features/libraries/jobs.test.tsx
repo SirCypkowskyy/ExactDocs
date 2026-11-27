@@ -43,8 +43,8 @@ function serve(count = 45) {
     job(i + 1, {
       ...(i === 1 && { state: "failed", error: "unreachable", error_code: "repo_unreachable" }),
       ...(i === 2 && { state: "running", finished_at: null, cancellable: true, done: 2, total: 5 }),
-      // Job 1 was queued by alice; jobs 4 and 5 by the instance on its own.
-      ...(i === 0 && { created_by: { id: "u1", username: "alice" } }),
+      // Job 1 was queued by alice's agent over MCP; jobs 4 and 5 by the instance on its own.
+      ...(i === 0 && { created_by: { id: "u1", username: "alice", via: "mcp" } }),
       ...((i === 3 || i === 4) && { origin: "auto", created_by: null }),
     }),
   );
@@ -345,6 +345,7 @@ describe("the jobs table", () => {
     const rowOf = (library: string) =>
       within(table).getByRole("link", { name: library }).closest("tr") as HTMLElement;
     expect(within(rowOf("/acme/lib1")).getByText("alice")).toBeInTheDocument();
+    expect(within(rowOf("/acme/lib1")).getByText("via MCP")).toBeInTheDocument();
     expect(within(rowOf("/acme/lib4")).getByText("Automatic")).toBeInTheDocument();
     // A manual job without a person: the command line, or from before it was recorded.
     expect(within(rowOf("/acme/lib2")).getByText("Not recorded")).toBeInTheDocument();

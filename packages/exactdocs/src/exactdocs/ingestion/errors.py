@@ -45,6 +45,7 @@ class InvalidRepositoryUrlError(ValidationError):
             problem: What is wrong with the URL.
         """
         super().__init__(f"not a usable git URL: {problem.value}")
+        self.problem = problem
 
 
 class InvalidChunkingConfigError(ValidationError):
@@ -827,3 +828,48 @@ class InvalidStatsRangeError(ValidationError):
             reason: Why the range is refused, for people.
         """
         super().__init__(reason)
+
+
+class SourceProblem(StrEnum):
+    """Why ``add_docs`` refuses a source (#613). Fixed texts: none repeats what the agent sent."""
+
+    LIBRARY_ID = "a library ID is /owner/repo"
+    MALFORMED = "the URL is malformed"
+    SCHEME = "only https:// URLs are imported over MCP"
+    CREDENTIALS = "credentials are not accepted over MCP: add a private repository in the web UI"
+    PORT = "no port other than 443 is used over MCP"
+    HOST = "the host is not one imports over MCP may use (EXACTDOCS_MCP_IMPORT_HOSTS)"
+    UNRESOLVED = "the host name does not resolve"
+    PRIVATE = "the host name resolves to an address that is not public"
+
+
+class SourceNotAllowedError(ValidationError):
+    """A source an agent may not import from over MCP (#613): checked before anything is fetched."""
+
+    code = "source_not_allowed"
+
+    def __init__(self, problem: SourceProblem | UrlProblem) -> None:
+        """Say why the source is refused, without repeating it (it may hold a credential).
+
+        Args:
+            problem: What is wrong with it.
+        """
+        super().__init__(str(problem))
+
+
+class LibraryExistsError(ConflictError):
+    """The library ID a URL proposes belongs to another repository's library, or a hidden one."""
+
+    code = "library_exists"
+
+    def __init__(self, library_id: str) -> None:
+        """Name the library that has the ID.
+
+        Args:
+            library_id: The existing library's ID.
+        """
+        super().__init__(
+            f"the library ID {library_id} belongs to another repository, or to a library you "
+            "cannot see; nothing was changed"
+        )
+        self.library_id = library_id

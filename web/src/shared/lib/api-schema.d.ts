@@ -5484,6 +5484,12 @@ export interface components {
              * @description The account's user name, as it was when they asked.
              */
             readonly username: string;
+            /**
+             * Via
+             * @description `mcp` when they asked through an MCP client (an agent's `add_docs`); null for the web UI
+             *     and REST.
+             */
+            readonly via?: string | null;
         };
         /**
          * PlanSourcesCommand

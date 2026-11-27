@@ -8,6 +8,7 @@ import pytest
 from exactdocs_kernel import (
     OUTBOUND_VARIABLES,
     OutboundNetwork,
+    is_public_address,
     proxy_failure,
     redact_url,
     resolve_outbound,
@@ -325,3 +326,24 @@ def test_the_tls_context_trusts_the_bundle_and_always_verifies(tmp_path: Path) -
     assert context is not None
     assert context.verify_mode == ssl.CERT_REQUIRED
     assert context.check_hostname
+
+
+@pytest.mark.parametrize(
+    ("address", "public"),
+    [
+        ("140.82.112.3", True),
+        ("2606:50c0:8000::153", True),
+        ("10.0.0.5", False),
+        ("169.254.169.254", False),
+        ("100.64.0.1", False),
+        ("::ffff:127.0.0.1", False),
+        ("64:ff9b::a00:5", False),
+        ("::127.0.0.1", False),
+        ("::", False),
+        ("64:ff9b::8c52:7003", True),
+        ("224.0.0.1", False),
+        ("github.com", False),
+    ],
+)
+def test_only_global_unicast_addresses_are_public(address: str, public: bool) -> None:
+    assert is_public_address(address) is public

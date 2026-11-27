@@ -37,7 +37,9 @@ from exactdocs_kernel.constants import (
     _ALWAYS_DIRECT_NAMES,
     _ALWAYS_DIRECT_SUFFIX,
     _DEFAULT_PORTS,
+    _IPV4_COMPATIBLE,
     _MIN_SECRET,
+    _NAT64,
     _PROXY_AUTH_MARKERS,
     _PROXY_REFUSED_MARKERS,
     _PROXY_SCHEMES,
@@ -383,6 +385,28 @@ def _address(host: str) -> _Address | None:
     if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
         return address.ipv4_mapped
     return address
+
+
+def is_public_address(text: str) -> bool:
+    """Whether an IP address is on the public internet: an import over MCP may reach it (#613).
+
+    Refused: loopback, private, shared (``100.64.0.0/10``), link-local (the cloud metadata
+    endpoints), unique-local, unspecified, multicast and reserved addresses. An IPv4-mapped,
+    NAT64 (``64:ff9b::/96``) or IPv4-compatible (``::/96``) IPv6 address counts as the IPv4
+    address it carries.
+
+    Args:
+        text: The address, as ``getaddrinfo`` gives it.
+
+    Returns:
+        True when it is a global unicast address; False for any other address or a name.
+    """
+    address = _address(text)
+    if isinstance(address, ipaddress.IPv6Address) and (
+        address in _NAT64 or address in _IPV4_COMPATIBLE
+    ):
+        address = ipaddress.IPv4Address(int(address) & 0xFFFFFFFF)
+    return address is not None and address.is_global and not address.is_multicast
 
 
 def _always_direct(host: str) -> bool:
