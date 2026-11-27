@@ -184,6 +184,11 @@ jobs:
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           enable-cache: true
+      # The coding-tasks test installs and runs npm packages. The GCP runners have no Node of
+      # their own, so it comes from here, the version ci.yml's coding-tasks job uses.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
       - name: Install
         run: uv sync --locked
       # #244: Supabase's own PostgreSQL image, with SSL on (a throwaway certificate), for the
