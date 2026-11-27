@@ -22,7 +22,7 @@ questions as the last one.
 | [Ingestion results](ingestion/index.md) | what the importer makes of the corpus under each chunking configuration |
 | [Retrieval results](retrieval/index.md) | every retrieval configuration at every chunking, per question kind and project |
 | [Agent results](agent/index.md) | the same agent answering the golden set with no docs, with the ExactDocs MCP tools and with Grounded Docs';<br/>accuracy, time and tokens per arm |
-| [Comparison with other tools](comparison/index.md) | other documentation tools on the same golden set, scored from their text: Grounded Docs |
+| [Comparison with other tools](comparison/index.md) | ExactDocs against no docs and Grounded Docs in retrieval, the agent benchmark and coding tasks per harness;<br/>fairness notes and the commands to rerun each; Context7 is not published |
 | [Recommended defaults](defaults.md) | the configuration to use with no models, local models and hosted models |
 
 !!! info "Where the numbers come from"
