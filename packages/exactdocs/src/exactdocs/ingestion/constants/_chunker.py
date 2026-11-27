@@ -9,12 +9,13 @@ _ANCHOR_DROP: Final[re.Pattern[str]] = re.compile(r"[^\w\- ]")
 """Characters a heading anchor drops (as GitHub does)."""
 _ATTRIBUTE_LIST: Final[re.Pattern[str]] = re.compile(
     r"\s*\{:?[ \t]*"
-    r"(?:(?:#[\w.:-]+|\.[\w:-]+|[\w-]+=(?:\"[^\"]*\"|'[^']*'|[^\s{}\"']+))[ \t]*)+"
+    r"(?:(?:#[\w.:-]+|\.[\w:-]+|[\w-]+=(?:\"[^\"]*\"|'[^']*'|[^\s{}\"']+))(?=[ \t}])[ \t]*)+"
     r"\}\s*$"
 )
 """A heading's trailing attribute list: ``{ #id }`` (MkDocs attr_list), ``{#id}`` (Docusaurus),
 ``{: #id .class key=value }``. Only ids, classes and ``key=value`` count, so ``{}`` or ``{1, 2}``
-stay text. The web reader's ``parse.ts`` has the same pattern."""
+stay text. Each item ends at a blank or the ``}``, so a run of characters splits into items one
+way only (no exponential backtracking). The web reader's ``parse.ts`` has the same pattern."""
 _ATTRIBUTE_ID: Final[re.Pattern[str]] = re.compile(r"(?<![^\s{:])#([\w.:-]+)")
 """An ``#id`` in an attribute list, not one inside a quoted value (the last one wins)."""
 _LANGUAGE: Final[re.Pattern[str]] = re.compile(r"[\w+#-]+")

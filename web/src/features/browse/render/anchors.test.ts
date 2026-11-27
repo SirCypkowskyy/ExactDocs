@@ -12,3 +12,19 @@ describe("heading anchors match the chunk anchors", () => {
     expect(top).toEqual(anchors);
   });
 });
+
+// CodeQL's worst cases for the old attribute-list pattern (exponential): they stay heading text.
+describe("a near attribute list", () => {
+  it.each([
+    `{{-=${"!-=".repeat(5000)}`,
+    `{{.${"---=!.".repeat(5000)}`,
+    `{{#${"-.-#".repeat(5000)}`,
+  ])(
+    "fails fast",
+    (tail) => {
+      const [heading] = headingAnchors(`## T ${tail}\n`);
+      expect(heading?.text).toBe(`T ${tail}`);
+    },
+    5000,
+  );
+});
