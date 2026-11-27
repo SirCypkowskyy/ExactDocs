@@ -189,9 +189,9 @@ of failing. Articles are cut at their headings, never inside a code block or a t
 
 ExactDocs is measured on a [golden set](docs/benchmark/golden-set.md) of 321 questions about the
 docs of Starlette, Pydantic, TanStack Query, Zod and Electron, at three pinned versions each. With
-no model at all, BM25 puts a section that answers first for 70.4% of the 267 answerable
-questions and in the top 5 for 91.0%, at 133 ms p95 on 4 shared CPUs. Hybrid search on a small
-local embedding model (bge-small) reaches 76.0% and 92.5%. Hosted retrieval models have not run
+no model at all, BM25 puts a section that answers first for 70.8% of the 267 answerable
+questions and in the top 5 for 91.4%, at 120 ms p95 on 2 vCPUs. Hybrid search on a small
+local embedding model (bge-small) reaches 76.4% and 93.3%. Hosted retrieval models have not run
 yet. In the
 [agent benchmark](docs/benchmark/agent/index.md) (60 questions, two open-weight models on Ollama Cloud,
 an LLM judge not yet checked against people), an agent with the ExactDocs MCP tools answered 40%

@@ -42,7 +42,8 @@ Why each one ran:
   in every configuration; it now names the heading as the chunker cuts it, which changed the golden
   set's fingerprint ([Golden set](../golden-set.md#the-independent-review)).
 - **#575** groups `search_docs`' results by article, which moved every BM25 column. That run was
-  on macOS arm64, 10 CPUs, and the chunk columns are the same as on Linux.
+  on macOS arm64, 10 CPUs. Run again on Linux aarch64 (2 vCPUs) for #598, it gave the same report
+  byte for byte.
 
 [^first-run]: The report does not record the ExactDocs commit or the machine.
 [^renames]: `default` is what was `h3-max-4000`, and `h6` what was `default`.

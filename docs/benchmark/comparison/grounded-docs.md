@@ -54,8 +54,8 @@
 
 <!-- bench:grounded-docs-run -->
 - Grounded Docs 3.4.1 (npm `@arabold/docs-mcp-server`, integrity `sha512-IZQKYKs3p939Tt7N...`), Node.js v22.23.5; questions through its `search_docs` MCP tool with the case's library and version, 10 results.
-- Run 2026-11-25T15:50:09+00:00: golden set 321 cases, fingerprint `sha256:a00997851150e3b0`, projects starlette, pydantic, tanstack-query, zod, electron; ExactDocs commit `bdefaa90e0630622c5d4c87d1bb7cb6ab764ad87`, Python 3.14.6, Linux x86_64, 4 CPUs.
+- Run 2026-11-27T03:18:27+00:00: golden set 321 cases, fingerprint `sha256:100484c7ccdb1b89`, projects starlette, pydantic, tanstack-query, zod, electron; ExactDocs commit `aea221ac47d2c7bd29862eebce61925d37e4ad2f`, Python 3.14.10, Linux aarch64, 2 CPUs.
 - `full-text`: no embedding model: full-text search only, what it does when no provider credentials are set. Environment: none.
 - `bge-small-en-v1.5`: full-text and vector search, BAAI/bge-small-en-v1.5 served locally through an OpenAI-compatible endpoint (OPENAI_API_BASE). Environment: `DOCS_MCP_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5`, `OPENAI_API_BASE=<endpoint>/v1`, `OPENAI_API_KEY=local`.
-  Embedding model BAAI/bge-small-en-v1.5 (revision `aa8f8b060edb`, 384 dimensions, stored at 512), served by retrieval_eval.openai_embeddings (fastembed, the ONNX file `exactdocs models pull` fetched): indexing 6,263 texts, 2,466,665 tokens, 1,599 s of embedding (0 requests abandoned by the client); questions 321 texts, 11 s.
+  Embedding model BAAI/bge-small-en-v1.5 (revision `aa8f8b060edb`, 384 dimensions, stored at 512), served by retrieval_eval.openai_embeddings (fastembed, the ONNX file `exactdocs models pull` fetched): indexing 6,263 texts, 2,482,651 tokens, 5,389 s of embedding (0 requests abandoned by the client); questions 321 texts, 13 s.
 <!-- /bench -->
