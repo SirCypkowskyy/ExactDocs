@@ -1,0 +1,84 @@
+name: Record 494 (temporary)
+
+# Temporary, on chore/494-record only: records the remaining local cells of the retrieval grid
+# (#494) on the GCP runners. Nothing here calls a hosted provider.
+on:
+  push:
+    branches: [chore/494-record]
+
+permissions:
+  contents: read
+
+env:
+  FORCE_COLOR: "1"
+  EXACTDOCS_MODELS_DIR: ${{ github.workspace }}/.models
+
+jobs:
+  shard:
+    if: contains(github.event.head_commit.message, '[record]')
+    name: grid ${{ matrix.shard }}
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2 # leaves runners for the other branches' CI
+      matrix:
+        include:
+          - shard: h6-small
+            cells: h6/hybrid:bge-small+parent,h6/hybrid:bge-small+article
+            timeout: 900
+          - shard: app-base
+            cells: hybrid:bge-base-en-v1.5
+            timeout: 900
+          - shard: grid-base
+            cells: default/hybrid:bge-base
+            timeout: 900
+          - shard: win-256
+            cells: rag:window-256+64/bge-small,window-256+64/hybrid:bge-small
+            timeout: 720
+          - shard: win-256-ctx
+            cells: window-256+64/hybrid:bge-small+context-embedded
+            timeout: 720
+          - shard: win-512
+            cells: window-512+128/hybrid:bge-small
+            timeout: 720
+          - shard: plain
+            cells: grep,window-256+64/bm25,window-512+128/bm25
+            timeout: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run exactdocs models pull BAAI/bge-small-en-v1.5 BAAI/bge-base-en-v1.5
+      - run: >-
+          uv run python packages/exactdocs/evals/run_retrieval_grid.py
+          --cells '${{ matrix.cells }}' --out reports/grid
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: grid-${{ matrix.shard }}
+          path: |
+            reports/grid/
+            !reports/grid/embeddings/
+          retention-days: 30
+
+  merge:
+    if: contains(github.event.head_commit.message, '[merge]')
+    runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ vars.RECORD_RUN_ID }}
+        run: echo merge placeholder
