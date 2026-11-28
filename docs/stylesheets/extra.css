@@ -386,10 +386,6 @@ html {
   opacity: 1;
 }
 
-.md-footer-meta {
-  background-color: var(--xd-frame);
-}
-
 .md-footer__link {
   transition: color var(--xd-dur-fast) ease;
 }
@@ -907,6 +903,135 @@ html {
 
 .md-typeset .md-button:active {
   transform: scale(0.97);
+}
+
+/* --------------------------------------------------------------- footer */
+
+/* The web UI's footer (web/src/features/instance-status/components/app-footer.tsx, Tailwind
+   classes in pixels here over 20): on the frame under the sheet, 12px muted words, the mole at 20px,
+   the version in mono; links a line high (28px) with a mouse and 44px on touch, ink and an
+   underline on hover, the arrow and "leaves the site" icons nudge where they lead. Stacked below the
+   UI's `sm` (640px). The markup is overrides/partials/footer.html. */
+.xd-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  column-gap: 1.2rem;
+  padding: 0.2rem max(0.8rem, env(safe-area-inset-right)) max(0.2rem, env(safe-area-inset-bottom))
+    max(0.8rem, env(safe-area-inset-left));
+  background-color: var(--xd-frame);
+  color: var(--xd-muted);
+  font-size: 0.6rem;
+  line-height: 0.9rem;
+}
+
+.xd-footer__sign,
+.xd-footer__links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.xd-footer__sign {
+  gap: 0.4rem;
+  min-height: 2.2rem;
+}
+
+.xd-footer__links {
+  column-gap: 0.8rem;
+}
+
+.xd-footer__mark {
+  width: 1rem;
+  height: 1rem;
+}
+
+[data-md-color-scheme="slate"] .xd-footer__mark {
+  content: url("../assets/logo/exactdocs-mark-small-on-dark.svg");
+}
+
+.xd-footer__name {
+  color: var(--xd-ink);
+  font-weight: 500;
+}
+
+.xd-footer__sign {
+  max-width: 100%;
+}
+
+.xd-footer__version {
+  min-width: 0;
+  font-family: var(--md-code-font), monospace;
+  overflow-wrap: anywhere;
+}
+
+.xd-footer .xd-footer__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+  min-height: 2.2rem;
+  border-radius: 0.1rem;
+  color: var(--xd-muted);
+  text-underline-offset: 0.2rem;
+  transition: color var(--xd-dur-fast) var(--xd-ease);
+}
+
+.xd-footer__link svg {
+  width: 0.6rem;
+  height: 0.6rem;
+}
+
+@media (pointer: fine) {
+  .xd-footer__sign,
+  .xd-footer .xd-footer__link {
+    min-height: 1.4rem;
+  }
+}
+
+@media (hover: hover) {
+  .xd-footer .xd-footer__link:hover {
+    color: var(--xd-ink);
+    text-decoration: underline;
+  }
+}
+
+.xd-footer .xd-footer__link:focus-visible {
+  color: var(--xd-ink);
+}
+
+/* Reduced motion: the icons stay put (DESIGN.md, Motion). */
+@media (prefers-reduced-motion: no-preference) {
+  .xd-footer__link svg {
+    transition: transform var(--xd-dur) var(--xd-ease);
+  }
+
+  .xd-footer__link:is(:hover, :focus-visible) .lucide-arrow-right {
+    transform: translateX(2px);
+  }
+
+  .xd-footer__link:is(:hover, :focus-visible) .lucide-external-link {
+    transform: translate(1.5px, -1.5px);
+  }
+}
+
+.xd-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+@media screen and (max-width: 39.99em) {
+  .xd-footer {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
 
 /* --------------------------------------------------------------- motion */

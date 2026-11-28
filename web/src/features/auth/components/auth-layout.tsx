@@ -27,7 +27,7 @@ export function AuthLayout({
   const heading = usePageTitle(title);
   const t = useMessages(messages);
   return (
-    <div className="relative grid min-h-dvh place-items-center bg-frame px-4 py-12">
+    <div className="relative grid flex-1 place-items-center bg-frame px-4 py-12">
       <div className="absolute top-2 right-2 flex items-center sm:top-3 sm:right-3">
         <TextSizeControl />
         <ThemeButton />

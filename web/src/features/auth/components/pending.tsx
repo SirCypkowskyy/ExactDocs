@@ -5,7 +5,7 @@ import { messages } from "../messages";
 export function Pending() {
   const t = useMessages(messages);
   return (
-    <main className="pending-in grid min-h-dvh place-items-center">
+    <main className="pending-in grid flex-1 place-items-center">
       <p role="status" className="text-section text-muted-foreground">
         <span className="sr-only">{t.screens.loading}</span>
         ExactDocs
