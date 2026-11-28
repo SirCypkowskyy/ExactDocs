@@ -254,6 +254,21 @@ async def test_connections_use_wal_foreign_keys_and_a_busy_timeout() -> None:
     assert pragmas == {"journal_mode": "wal", "foreign_keys": 1, "busy_timeout": BUSY_TIMEOUT_MS}
 
 
+async def test_a_write_waits_for_a_writer_that_takes_longer_than_five_seconds() -> None:
+    # A starved runner: another writer's short transaction took over 5 s to commit, and the
+    # write behind it failed with "database is locked" (#672).
+    container = Container.build(Settings())
+    async with container.running(jobs=False), container.engine.connect() as holder:
+        await holder.execution_options(begin_immediate=True)
+        async with holder.begin():  # BEGIN IMMEDIATE: holds the write lock
+            saving = asyncio.create_task(
+                SqliteLibraryRepository(engine=container.engine).save(library("/acme/payments"))
+            )
+            await asyncio.sleep(6)
+            assert not saving.done()  # still waiting, not failed
+        await saving
+
+
 async def test_foreign_keys_are_enforced_within_a_domain() -> None:
     container = Container.build(Settings())
     async with container.running():

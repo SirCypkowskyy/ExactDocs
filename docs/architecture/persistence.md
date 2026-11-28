@@ -52,7 +52,7 @@ What changes:
   transactions that rely on it (the first admin, activations, the search index) keep that guarantee
   across processes.
 - A turn waits at most `WRITE_LOCK_TIMEOUT_MS` (30 s, `SET LOCAL lock_timeout`), then fails with
-  `WriteTurnTimeoutError`, as SQLite gives up after `BUSY_TIMEOUT_MS`.
+  `WriteTurnTimeoutError`, as SQLite gives up after `BUSY_TIMEOUT_MS` (also 30 s).
 - `migrate()` runs in one transaction under another advisory lock: processes starting together
   migrate one after the other.
 
@@ -183,7 +183,7 @@ extension is installed and builds the BM25 index if no valid one exists.
 - **Processes starting together on one SQLite file** take turns first on an exclusive `flock` of
   `exactdocs.db-migration.lock`, next to the database.
     - A process waits there for as long as another one's migration takes (SQLite's own
-      `BUSY_TIMEOUT_MS`, 5 s, is too short on a busy machine, #320), and the kernel drops the lock
+      `BUSY_TIMEOUT_MS`, 30 s, does not depend on how long a migration takes, #320), and the kernel drops the lock
       of a process that dies.
     - A waiter logs a warning naming the lock file and its holder (pid and host, written into the
       file) after 5 s and then every minute.
