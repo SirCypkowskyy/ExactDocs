@@ -30,6 +30,7 @@ import { LibraryCombobox } from "@/shared/ui/library-combobox";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { Tooltip } from "@/shared/ui/tooltip";
 import { jobsSource, pickerLibrariesQueryOptions } from "../api/libraries-query";
+import { jobsHelp } from "../help";
 import { jobsMessages } from "../messages/jobs";
 import {
   JOB_KINDS,
@@ -343,6 +344,7 @@ export function JobsPage() {
         title={t.title}
         icon={<Activity />}
         headingRef={heading}
+        help={jobsHelp}
         description={
           model.total !== undefined && (
             <p role="status" className="num">
@@ -351,26 +353,30 @@ export function JobsPage() {
           )
         }
       />
-      <DataTableToolbar model={model} search={{ label: t.find, placeholder: t.findPlaceholder }}>
-        <LibraryCombobox
-          variant="filter"
-          label={t.columns.library}
-          query={pickerLibrariesQueryOptions}
-          value={model.param("library")}
-          onChange={(library) => model.setParam("library", library)}
+      <div data-tour="jobs-toolbar">
+        <DataTableToolbar model={model} search={{ label: t.find, placeholder: t.findPlaceholder }}>
+          <LibraryCombobox
+            variant="filter"
+            label={t.columns.library}
+            query={pickerLibrariesQueryOptions}
+            value={model.param("library")}
+            onChange={(library) => model.setParam("library", library)}
+          />
+        </DataTableToolbar>
+      </div>
+      <div data-tour="jobs-table">
+        <DataTable
+          model={model}
+          label={t.title}
+          rowActions={actions}
+          rowLabel={(job) =>
+            t.row(job.library, job.version ?? t.allVersions, nameOf(t.kinds, job.kind))
+          }
+          empty={{ icon: Activity, title: t.empty.title, body: t.empty.body }}
+          noMatch={{ title: t.noMatch.title, body: t.noMatch.body }}
+          errorMessage={t.loadFailed}
         />
-      </DataTableToolbar>
-      <DataTable
-        model={model}
-        label={t.title}
-        rowActions={actions}
-        rowLabel={(job) =>
-          t.row(job.library, job.version ?? t.allVersions, nameOf(t.kinds, job.kind))
-        }
-        empty={{ icon: Activity, title: t.empty.title, body: t.empty.body }}
-        noMatch={{ title: t.noMatch.title, body: t.noMatch.body }}
-        errorMessage={t.loadFailed}
-      />
+      </div>
       <DataTablePagination model={model} />
       <CancelJobDialog job={cancelling} onClose={() => setCancelling(undefined)} />
     </Page>

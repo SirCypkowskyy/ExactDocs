@@ -17,6 +17,7 @@ import { LibraryMark } from "@/shared/ui/library-mark";
 import { EmptyState, Page, PageHeader } from "@/shared/ui/page";
 import { kbd } from "@/shared/ui/recipes";
 import { libraryQueryOptions } from "../api/browse-queries";
+import { libraryHelp } from "../help";
 import { messages } from "../messages";
 import {
   type BrowseSearch,
@@ -114,7 +115,11 @@ function VersionBrowser({
         q={slots ? search.q : undefined}
         match={search.match}
       />
-      <section aria-label={searching ? t.searchRegion : t.articleRegion} className="min-w-0">
+      <section
+        aria-label={searching ? t.searchRegion : t.articleRegion}
+        data-tour="library-reader"
+        className="min-w-0"
+      >
         {searching ? (
           slots.results(scope)
         ) : search.path ? (
@@ -177,6 +182,7 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
       <PageHeader
         headingRef={heading}
         title={library.title || library.id}
+        help={libraryHelp}
         mark={<LibraryMark id={library.id} logo={library.logo} size="xl" />}
         above={
           <Breadcrumb>
@@ -248,6 +254,7 @@ export function BrowsePage({ owner, repo, search, slots }: BrowsePageProps) {
             <Link
               to="/libraries/$owner/$repo/settings"
               params={{ owner, repo }}
+              data-tour="library-settings"
               className={buttonVariants({
                 variant: "outline",
                 size: "sm",

@@ -112,6 +112,7 @@ export function TokensSection() {
             <p className="mt-1 text-body text-muted-foreground">{t.description}</p>
           </div>
           <Button
+            data-tour="token-new"
             aria-disabled={full}
             aria-describedby={full ? "token-limit" : undefined}
             className="aria-disabled:cursor-not-allowed aria-disabled:bg-primary/60 aria-disabled:hover:bg-primary/60"
@@ -130,32 +131,34 @@ export function TokensSection() {
           {announcement}
         </p>
 
-        <DataTableToolbar
-          model={model}
-          search={{ label: m.list.find, placeholder: m.list.namePlaceholder }}
-        />
-        <DataTable
-          model={model}
-          label={m.list.label}
-          rowActions={actions}
-          rowLabel={(token) => token.name}
-          empty={{
-            icon: KeyRound,
-            title: t.emptyTitle,
-            body: t.emptyBody,
-            action: (
-              <Button variant="outline" onClick={() => setCreating(true)}>
-                <Plus aria-hidden="true" data-icon-motion="turn" />
-                {t.createFirst}
-              </Button>
-            ),
-          }}
-          noMatch={{
-            title: m.list.noMatchTitle,
-            body: searchOnly ? m.list.noMatch(view.q ?? "") : undefined,
-          }}
-          errorMessage={tokens.isError ? explainTokenError(tokens.error, language) : undefined}
-        />
+        <div data-tour="token-list">
+          <DataTableToolbar
+            model={model}
+            search={{ label: m.list.find, placeholder: m.list.namePlaceholder }}
+          />
+          <DataTable
+            model={model}
+            label={m.list.label}
+            rowActions={actions}
+            rowLabel={(token) => token.name}
+            empty={{
+              icon: KeyRound,
+              title: t.emptyTitle,
+              body: t.emptyBody,
+              action: (
+                <Button variant="outline" onClick={() => setCreating(true)}>
+                  <Plus aria-hidden="true" data-icon-motion="turn" />
+                  {t.createFirst}
+                </Button>
+              ),
+            }}
+            noMatch={{
+              title: m.list.noMatchTitle,
+              body: searchOnly ? m.list.noMatch(view.q ?? "") : undefined,
+            }}
+            errorMessage={tokens.isError ? explainTokenError(tokens.error, language) : undefined}
+          />
+        </div>
         <DataTablePagination model={model} />
       </div>
 

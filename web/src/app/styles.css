@@ -432,6 +432,10 @@
     outline: 2px solid var(--ring);
     outline-offset: 2px;
   }
+  /* A Help tour scrolls its ringed part into view clear of the sticky band (page-help.tsx). */
+  [data-tour] {
+    scroll-margin-block: 4.5rem 1rem;
+  }
   input::placeholder,
   textarea::placeholder {
     color: var(--muted-foreground);

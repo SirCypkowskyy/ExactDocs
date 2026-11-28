@@ -1,5 +1,6 @@
 import type { ReactNode, Ref } from "react";
 import { cn } from "@/shared/lib/utils";
+import { type HelpTopic, PageHelp } from "./page-help";
 
 /*
  * Page frame (DESIGN.md, Layout). Two widths only: `operate` (lists, settings, forms: 1152px) and
@@ -41,6 +42,7 @@ export function PageHeader({
   description,
   actions,
   above,
+  help,
   className,
 }: {
   title: ReactNode;
@@ -56,6 +58,8 @@ export function PageHeader({
   actions?: ReactNode;
   /** A breadcrumb or route strip above the title. */
   above?: ReactNode;
+  /** The page's tour: a Help button after the actions walks through it (page-help.tsx). */
+  help?: HelpTopic | undefined;
   className?: string;
 }) {
   return (
@@ -94,8 +98,11 @@ export function PageHeader({
         </div>
         {/* At most the row's width, so on a phone a long set of actions wraps instead of
             pushing the page sideways. */}
-        {actions && (
-          <div className="flex max-w-full flex-none flex-wrap items-center gap-2">{actions}</div>
+        {(actions || help) && (
+          <div className="flex max-w-full flex-none flex-wrap items-center gap-2">
+            {actions}
+            {help && <PageHelp topic={help} />}
+          </div>
         )}
       </div>
     </header>

@@ -7,7 +7,7 @@ import { listMessages } from "../messages/list";
 export function AddLibraryLink() {
   const t = useMessages(listMessages);
   return (
-    <Link to="/libraries/new" className={buttonVariants()}>
+    <Link to="/libraries/new" data-tour="add-library" className={buttonVariants()}>
       <Plus aria-hidden="true" data-icon-motion="turn" />
       {t.addLibrary}
     </Link>

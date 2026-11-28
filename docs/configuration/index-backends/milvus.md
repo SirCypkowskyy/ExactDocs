@@ -20,7 +20,7 @@ answer hybrid searches itself. Its client is an optional extra, not in the image
 
 `pip install 'exactdocs[milvus]'` or `uvx --from 'exactdocs[milvus]' exactdocs serve` (combine it
 with `ai` for hosted embedding models: `exactdocs[ai,milvus]`). It is tested against the
-`milvusdb/milvus:v3.0.5` standalone server (pymilvus 3.0.2) and Milvus Lite 3.2.2; use a Milvus
+`milvusdb/milvus:v3.0.5` standalone server (pymilvus 3.0.3) and Milvus Lite 3.2.2; use a Milvus
 3.0 server.
 
 ```toml

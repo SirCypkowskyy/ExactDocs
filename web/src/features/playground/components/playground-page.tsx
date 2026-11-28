@@ -12,6 +12,7 @@ import {
   answerAvailabilityQueryOptions,
   playgroundLibrariesQueryOptions,
 } from "../api/playground-queries";
+import { playgroundHelp } from "../help";
 import { messages } from "../messages";
 import {
   AGENT,
@@ -133,6 +134,7 @@ export function PlaygroundPage() {
       <Page>
         <PageHeader
           icon={<FlaskConical />}
+          help={playgroundHelp}
           title={t.page.title}
           headingRef={heading}
           description={t.page.description}
@@ -142,27 +144,31 @@ export function PlaygroundPage() {
           className="max-w-3xl space-y-5 rounded-lg border border-border bg-raised p-5"
           aria-label={t.page.form}
         >
-          <Field
-            id="playground-q"
-            label={t.page.query}
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder={t.page.queryPlaceholder}
-            maxLength={2000}
-          />
-          <LibraryCombobox
-            multiple
-            label={t.page.libraries}
-            placeholder={t.page.allLibraries}
-            options={options}
-            loading={librariesQuery.isPending}
-            failed={librariesQuery.isError}
-            onRetry={() => void librariesQuery.refetch()}
-            value={chosen}
-            onChange={setChosen}
-            className="max-w-md"
-          />
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div data-tour="playground-query">
+            <Field
+              id="playground-q"
+              label={t.page.query}
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder={t.page.queryPlaceholder}
+              maxLength={2000}
+            />
+          </div>
+          <div data-tour="playground-libraries">
+            <LibraryCombobox
+              multiple
+              label={t.page.libraries}
+              placeholder={t.page.allLibraries}
+              options={options}
+              loading={librariesQuery.isPending}
+              failed={librariesQuery.isError}
+              onRetry={() => void librariesQuery.refetch()}
+              value={chosen}
+              onChange={setChosen}
+              className="max-w-md"
+            />
+          </div>
+          <div data-tour="playground-mode" className="grid gap-4 sm:grid-cols-2">
             <ModeSelect
               id="playground-mode"
               label={t.page.mode}
@@ -182,7 +188,10 @@ export function PlaygroundPage() {
           {agentChosen ? (
             <p className="text-body text-muted-foreground">{t.page.agentNote}</p>
           ) : (
-            <label className="flex min-h-11 cursor-pointer items-center gap-2.5 text-body md:min-h-9">
+            <label
+              data-tour="playground-compare"
+              className="flex min-h-11 cursor-pointer items-center gap-2.5 text-body md:min-h-9"
+            >
               <input
                 type="checkbox"
                 checked={compare}

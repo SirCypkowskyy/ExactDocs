@@ -13,6 +13,7 @@ import { EmptyState, Page, PageHeader } from "@/shared/ui/page";
 import { kbd } from "@/shared/ui/recipes";
 import { Commit } from "@/shared/ui/route";
 import { globalSearchQueryOptions } from "../api/global-search-queries";
+import { searchHelp } from "../help";
 import { messages } from "../messages";
 import {
   countLine,
@@ -92,7 +93,7 @@ function Facets({ data, q, library }: { data: GlobalResults; q: string; library?
   const shownIds = new Set(shown.map((f) => f.library));
   const rest = data.libraries.filter((f) => !shownIds.has(f.library));
   return (
-    <nav aria-label={t.facets.label} className="space-y-2">
+    <nav aria-label={t.facets.label} data-tour="search-facets" className="space-y-2">
       <ul className="flex flex-wrap gap-x-2 gap-y-2 lg:flex-col lg:gap-y-1">
         <li className="lg:w-full">
           <Link
@@ -444,6 +445,7 @@ export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; l
     <Page>
       <PageHeader
         icon={<Search />}
+        help={searchHelp}
         title={
           q ? t.page.title(<span className="[overflow-wrap:anywhere]">{q}</span>) : t.box.searchAll
         }
@@ -451,9 +453,12 @@ export function GlobalSearchPage({ q: raw, library }: { q: string | undefined; l
       />
       {/* The band's box steps aside on this page (the CSS in GlobalSearchBox): this is the one field.
           Focused while there is no query (Back from an article must not bring the keyboard up). */}
-      <GlobalSearchBox place="page" prominent autoFocus={q === undefined} className="mb-8" />
+      <div data-tour="search-box" className="mb-8">
+        <GlobalSearchBox place="page" prominent autoFocus={q === undefined} />
+      </div>
       <section
         id={GLOBAL_RESULTS_ID}
+        data-tour="search-results"
         aria-labelledby={heading}
         aria-busy={result.isFetching}
         className="min-w-0"

@@ -568,7 +568,8 @@ and the lamp on the one lit thing.
 | `Table` and its parts | `ui/table.tsx` | The shadcn table primitives on the tokens: headers `text-small` muted, rows on `rule` hairlines, figures tabular (`.num`, which DataTable's end-aligned cells get; not the whole table, as tabular figures widen this face's comma and full stop). `TableRowHeader` is a body cell that names its row (`<th scope="row">`), set like any cell. |
 | `DataTable` (v2) | `ui/data-table/` | Every list with many rows (Data tables below): `useDataTable`, `DataTable`, `DataTableToolbar`, `DataTablePagination`, row actions and the cell kit. `ui/data-table.tsx` is v1 ("Load more"), kept until the last page moves. |
 | `Skeleton` | `ui/skeleton.tsx` | A flat bar at the size of the value it stands for; no pulse. |
-| `Dialog`, `Sheet` | `ui/` | shadcn on these tokens. A dialog only for confirmations (as an `AlertDialog`) and for showing a secret once. |
+| `Dialog`, `Sheet` | `ui/` | shadcn on these tokens. A dialog only for confirmations (as an `AlertDialog`), for showing a secret once, and for a page's Help tour. |
+| `PageHelp`, `HelpTopic` | `ui/page-help.tsx` | A page's Help tour (Help tours below). `PageHeader help={topic}` adds the Help button after the actions. |
 | `Toaster` / `toast` | `ui/sonner.tsx` | Mounted once in `__root`, bottom right, on `popover` with a hairline. |
 
 ### Buttons
@@ -822,6 +823,35 @@ link leads to `#main`; each page has one h1, focused on navigation. Status chang
 (`role="status"` or `role="alert"`); toasts duplicate an inline status and are never its only form.
 Icon-only controls have accessible names; tooltips repeat them.
 
+### Help tours
+The key pages explain themselves behind a Help button: a short tour that rings one part of the page
+at a time on a dimmed page, with a card saying what that part is for.
+
+- **Writing one.** A `HelpTopic` in the feature's `help.ts`: a `title` and 3 to 6 `steps`, every text
+  as `{ en, pl }` (the `Localized` type makes both required). A step has a lucide `icon`, a two-to-
+  four-word `title`, a one-or-two-sentence `body`, the `target` it rings and the `guide` it links to.
+  Pass it to the header: `<PageHeader help={librariesHelp} … />`. Say what a part is for, not how to
+  click it, and only what the UI really does.
+- **Targets.** A step's `target` names a `data-tour="…"` attribute on the page; wrap a component
+  that does not pass the attribute through in a `div`. A target that is missing or folded away (a
+  phone hides some parts) rings nothing and the card still explains. `src/app/help-topics.test.ts`
+  fails when a target or a guide link no longer exists.
+- **Guide links.** Relative to the docs site (`DOCS_URL`, zensical's `site_url`), as the site
+  publishes them: `docs/mcp/connect.md` is `mcp/connect/`, a heading is `#its-slug`. The site is in
+  English; the Polish link text says so.
+- **The ring.** The target is scrolled into view (clear of the band, `scroll-margin`), and a 2px
+  `ring` outline 2px off an 8px box marks it, its 100vmax shadow in `overlay` dimming the rest.
+  A target taller than 60% of the screen scrolls to its top and is ringed where it shows. The ring
+  does not travel between steps: each one fades in where its part is (`fade-in`).
+- **The card.** A modal Dialog on `popover` with `shadow-float`: 26rem in the lower right corner from
+  48rem, a bottom sheet on a phone, and at the top when the ringed part sits low. The title row with
+  the close button, the step (icon tile, name, text), the dots and "2 of 5", Back and Next ("Got it"
+  on the last step), then the guide link. It fades in, zooming from 0.97 at its corner (sliding up
+  on a phone); steps cross-fade. Reduced motion keeps only the fades.
+- **Keyboard and readers.** Focus lands on Next; Tab stays in the card; the arrow keys step back
+  and forward; Enter presses the focused button; Escape or the close button leaves and focus
+  returns to Help. The step region is `aria-live`, so each step is read with its "2 of 5".
+
 ### States and feedback
 - **Loading:** `Skeleton` bars at the size of the value, in the final layout, no pulse. A cold load
   waits 150ms before showing anything (`pending-in`). Every route with a loader has a
@@ -866,6 +896,6 @@ Shift+F10 or the Menu key.
 - **Don't** put a shadow on anything at rest, or any shadow but `shadow-float` on a floating layer.
 - **Don't** animate a height, a width or `grid-template-rows`.
 - **Don't** let a tooltip carry information the control's name does not.
-- **Don't** use a dialog except for confirmations and for showing a secret once.
+- **Don't** use a dialog except for confirmations, for showing a secret once and for a Help tour.
 - **Don't** scale a button up on hover, or let anything bounce or overshoot.
 - **Don't** give a chart a second hue for its series: `chart-series`, with `chart-highlight` for the one lit thing.
