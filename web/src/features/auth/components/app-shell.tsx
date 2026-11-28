@@ -398,7 +398,7 @@ export function AppShell({
   const visible = groups(t.nav).filter((group) => !group.admin || isAdmin);
 
   return (
-    <div className="flex min-h-dvh flex-col bg-frame">
+    <div className="flex flex-1 flex-col bg-frame">
       <a
         href="#main"
         className="sr-only z-50 rounded-md bg-background px-3 py-2 text-body font-medium focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:ring-2 focus:ring-ring"

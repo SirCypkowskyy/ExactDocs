@@ -1,0 +1,74 @@
+{#-
+  The theme's footer (zensical-ui partials/footer.html) with its previous/next links kept and its
+  meta line replaced by the web UI's footer (web/src/features/instance-status/components/
+  app-footer.tsx): the same links in the same order, styled in docs/stylesheets/extra.css
+  ("footer"). `extra.release` is the latest stable release, written in by docs.yml at build time;
+  a local build leaves it empty and shows no version.
+-#}
+<footer class="md-footer">
+  {% if "navigation.footer" in features %}
+    {% if page.previous_page or page.next_page %}
+      {% if page.meta and page.meta.hide %}
+        {% set hidden = "hidden" if "footer" in page.meta.hide %}
+      {% endif %}
+      <nav class="md-footer__inner md-grid" aria-label="{{ lang.t('footer') }}" {{ hidden }}>
+        {% if page.previous_page %}
+          {% set direction = lang.t("footer.previous") %}
+          <a href="{{ page.previous_page.url | url }}" class="md-footer__link md-footer__link--prev" aria-label="{{ direction }}: {{ page.previous_page.title | e }}">
+            <div class="md-footer__button md-icon">
+              {% set icon = config.theme.icon.previous or "material/arrow-left" %}
+              {% include ".icons/" ~ icon ~ ".svg" %}
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                {{ direction }}
+              </span>
+              <div class="md-ellipsis">
+                {{ page.previous_page.title }}
+              </div>
+            </div>
+          </a>
+        {% endif %}
+        {% if page.next_page %}
+          {% set direction = lang.t("footer.next") %}
+          <a href="{{ page.next_page.url | url }}" class="md-footer__link md-footer__link--next" aria-label="{{ direction }}: {{ page.next_page.title | e }}">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                {{ direction }}
+              </span>
+              <div class="md-ellipsis">
+                {{ page.next_page.title }}
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              {% set icon = config.theme.icon.next or "material/arrow-right" %}
+              {% include ".icons/" ~ icon ~ ".svg" %}
+            </div>
+          </a>
+        {% endif %}
+      </nav>
+    {% endif %}
+  {% endif %}
+  {% set away = 'target="_blank" rel="noopener noreferrer"' %}
+  {% set out %}{% include ".icons/lucide/external-link.svg" %}<span class="xd-sr">(opens a new tab)</span>{% endset %}
+  {% set repo = "https://github.com/SirCypkowskyy/ExactDocs" %}
+  <div class="xd-footer">
+    <p class="xd-footer__sign">
+      <img class="xd-footer__mark" src="{{ 'assets/logo/exactdocs-mark-small.svg' | url }}" alt="" width="20" height="20">
+      <span class="xd-footer__name">ExactDocs</span>
+      {% if config.extra.release %}
+        <span class="xd-footer__version"><span class="xd-sr">Release </span>{{ config.extra.release }}</span>
+      {% endif %}
+    </p>
+    <nav aria-label="About ExactDocs">
+      <ul class="xd-footer__links">
+        <li><a class="xd-footer__link" href="{{ 'mcp/connect/' | url }}">Connect an agent{% include ".icons/lucide/arrow-right.svg" %}</a></li>
+        <li><a class="xd-footer__link" href="{{ '.' | url }}">Documentation</a></li>
+        <li><a class="xd-footer__link" href="{{ 'rest-api/' | url }}">REST API</a></li>
+        <li><a class="xd-footer__link" href="{{ repo }}/blob/main/web/openapi.json" {{ away }}>OpenAPI{{ out }}</a></li>
+        <li><a class="xd-footer__link" href="{{ repo }}" {{ away }}>GitHub{{ out }}</a></li>
+        <li><a class="xd-footer__link" href="{{ repo }}/blob/main/LICENSE" {{ away }}>Apache-2.0 license{{ out }}</a></li>
+      </ul>
+    </nav>
+  </div>
+</footer>

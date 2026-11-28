@@ -293,6 +293,8 @@ nav = [
 
 [project.theme]
 language = "en"
+# The footer is the web UI's (overrides/partials/footer.html).
+custom_dir = "overrides"
 # The lockup of the web UI's band (web/src/shared/ui/wordmark.tsx, `Wordmark`), copied from
 # web/public/brand/ to docs/assets/logo/. extra.css swaps it for the dark cut in the dark scheme.
 # The favicon is the web UI's favicon.svg.
@@ -339,6 +341,11 @@ primary = "custom"
 accent = "custom"
 toggle.icon = "lucide/moon"
 toggle.name = "Switch to system preference"
+
+# The footer's version: the latest stable release, written in by .github/workflows/docs.yml before
+# the build (the same git tag uv-dynamic-versioning builds the package from). Empty: no version.
+[project.extra]
+release = ""
 
 [project.markdown_extensions]
 abbr = {}

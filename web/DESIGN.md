@@ -491,6 +491,12 @@ file first.
 - **Auth pages:** the lockup at 48px over one 400px card that is itself a sheet (16px corners, a
   hairline) on the frame, a line under it about the product; the three interface controls sit in
   the top right corner.
+- **Footer:** one footer for every page (app, auth, not found, errors), on the frame under the
+  sheet (`AppFooter`, rendered by the root route): the mole at 20px, the name, the version
+  `/api/health` reports in mono, then the links in 12px muted ink (Connect an agent when signed in,
+  Documentation, REST API, OpenAPI, GitHub, the licence). Links leaving the app open a new tab with
+  ExternalLink; ink and an underline on hover. One line from `sm`, stacked below. The docs site
+  shows the same footer (`overrides/partials/footer.html`).
 - **Page widths:** `Page width="operate"` (1152px) for lists, settings and forms; `wide` for the
   library page and reader; `narrow` (720px) only for single-form pages. The reader's measure is 68ch.
 - **Every page** starts with `PageHeader`: an h1 (`text-title`), one line about the data, and the
