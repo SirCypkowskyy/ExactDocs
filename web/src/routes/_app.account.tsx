@@ -7,7 +7,7 @@ import {
   SignInSettings,
   usePreferencesStatus,
 } from "@/features/auth";
-import { parseTokensView, TokensSection } from "@/features/tokens";
+import { accountHelp, parseTokensView, TokensSection } from "@/features/tokens";
 import { useMessages } from "@/shared/lib/i18n";
 import { InterfaceSettings } from "@/shared/ui/interface-settings";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
@@ -57,7 +57,10 @@ export const Route = createFileRoute("/_app/account")({
       [navigate],
     );
     return (
-      <AccountPanel onSignedOut={() => router.navigate({ to: "/sign-in", replace: true })}>
+      <AccountPanel
+        help={accountHelp}
+        onSignedOut={() => router.navigate({ to: "/sign-in", replace: true })}
+      >
         <Tabs
           value={tab ?? (linkResult ? "sign-in" : "tokens")}
           onValueChange={(next) =>
@@ -67,7 +70,7 @@ export const Route = createFileRoute("/_app/account")({
             })
           }
         >
-          <TabsList aria-label={t.tabs}>
+          <TabsList aria-label={t.tabs} data-tour="account-tabs">
             <TabsTrigger value="sign-in">
               <LogIn aria-hidden="true" data-icon-motion="forward" />
               {t.signIn}

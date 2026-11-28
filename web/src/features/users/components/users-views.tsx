@@ -26,7 +26,7 @@ const VIEWS: readonly {
 export function UsersViews({ current }: { current: UsersViewName }) {
   const t = useMessages(messages).views;
   return (
-    <nav aria-label={t.label} className="mb-6">
+    <nav aria-label={t.label} data-tour="users-views" className="mb-6">
       <ul className="flex flex-wrap gap-1 border-b border-border">
         {VIEWS.map(({ name, to, icon: Icon }) => {
           const here = name === current;

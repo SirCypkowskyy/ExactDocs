@@ -19,6 +19,8 @@ const ALLOWED_IN_JS = [
   // Recharts' state libraries (the overview's lazy chart chunk): text of a thrown error, never fetched
   /^https:\/\/redux(-toolkit)?\.js\.org\/Errors\?code=\$\{/,
   /^https:\/\/bit\.ly\/3cXEKWf$/,
+  // the Help tours' "Read about this in the guide" links: opened by the reader in a new tab, never fetched
+  /^https:\/\/sircypkowskyy\.github\.io\/ExactDocs\/$/,
 ];
 // A host starts with a letter or digit: `"https://" + x` and `https://${x}` build one at run time.
 const ABSOLUTE = /https?:\/\/[A-Za-z0-9][^\s"'`)\\<>]+/g;

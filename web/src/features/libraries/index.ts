@@ -7,5 +7,6 @@ export { JobsPage } from "./components/jobs-page";
 export { JobsSkeleton } from "./components/jobs-skeleton";
 export { LibrariesPage } from "./components/libraries-page";
 export { LibrariesSkeleton } from "./components/libraries-skeleton";
+export { jobsHelp, librariesHelp } from "./help";
 export { parseJobsView } from "./model/jobs-view";
 export { parseListView } from "./model/list-view";

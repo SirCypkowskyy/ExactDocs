@@ -33,6 +33,7 @@ import { FormAlert } from "@/shared/ui/form-alert";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { roleRulesQueryOptions } from "../api/role-rules-query";
 import { setUserDisabled, usersKey, usersSource } from "../api/users-query";
+import { usersHelp } from "../help";
 import { messages } from "../messages";
 import {
   PASSWORD,
@@ -379,6 +380,7 @@ export function UsersPage({
         title={t.title}
         icon={<Users />}
         headingRef={heading}
+        help={usersHelp}
         description={
           <>
             <p>
@@ -392,7 +394,7 @@ export function UsersPage({
           </>
         }
         actions={
-          <Button onClick={() => setCreating(true)}>
+          <Button data-tour="users-new" onClick={() => setCreating(true)}>
             <Plus aria-hidden="true" data-icon-motion="turn" />
             {t.newUser}
           </Button>
@@ -405,30 +407,32 @@ export function UsersPage({
       {toggle.isError && !disabling && (
         <FormAlert id="users-alert" message={explainUserError(toggle.error, language)} />
       )}
-      <DataTableToolbar
-        model={model}
-        search={{ label: m.list.find, placeholder: m.list.usernamePlaceholder }}
-      />
-      <DataTable
-        model={model}
-        label={m.list.label}
-        rowActions={actions}
-        rowLabel={(user) => user.username}
-        empty={{
-          icon: Users,
-          title: t.emptyTitle,
-          body: t.emptyBody,
-          action: (
-            <Button variant="outline" onClick={() => setCreating(true)}>
-              <Plus aria-hidden="true" data-icon-motion="turn" />
-              {t.newUser}
-            </Button>
-          ),
-        }}
-        noMatch={{ title: m.list.noMatchTitle, body: m.list.noMatch }}
-        // Why the shown page failed, in words (a non-operator is refused, 403).
-        errorMessage={model.error ? explainUserError(model.error, language) : t.loadFailed}
-      />
+      <div data-tour="users-table">
+        <DataTableToolbar
+          model={model}
+          search={{ label: m.list.find, placeholder: m.list.usernamePlaceholder }}
+        />
+        <DataTable
+          model={model}
+          label={m.list.label}
+          rowActions={actions}
+          rowLabel={(user) => user.username}
+          empty={{
+            icon: Users,
+            title: t.emptyTitle,
+            body: t.emptyBody,
+            action: (
+              <Button variant="outline" onClick={() => setCreating(true)}>
+                <Plus aria-hidden="true" data-icon-motion="turn" />
+                {t.newUser}
+              </Button>
+            ),
+          }}
+          noMatch={{ title: m.list.noMatchTitle, body: m.list.noMatch }}
+          // Why the shown page failed, in words (a non-operator is refused, 403).
+          errorMessage={model.error ? explainUserError(model.error, language) : t.loadFailed}
+        />
+      </div>
       <DataTablePagination model={model} />
 
       <CreateUserDialog
