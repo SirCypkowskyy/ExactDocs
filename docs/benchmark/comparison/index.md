@@ -12,8 +12,8 @@
     - **Coding tasks** (six tasks): Codex CLI and OpenCode, with and without ExactDocs. Every
       difference is within noise at this size.
     - **Not measured yet**: Context7 in any benchmark (#493, its terms forbid publishing),
-      Grounded Docs in the coding tasks, Claude Code and Gemini CLI, and the plain baselines of
-      #494.
+      Grounded Docs in the coding tasks, Claude Code and Gemini CLI, and #494's fixed-window RAG
+      baseline.
 
 ExactDocs next to other documentation tools and next to no documentation, on the same
 [golden set](../golden-set.md): the same questions about the same projects at the same pinned
@@ -42,9 +42,10 @@ when a page no longer matches its run.
 
 - **Retrieval**: ExactDocs and Grounded Docs (both configurations). Context7's run is built
   (#493) but no number of it is published
-  ([Terms of service](../../evals/context7.md#terms-of-service)). The plain baselines of #494
-  (keyword grep over the raw Markdown, a fixed-window RAG) are declared in the grid but not in
-  its recorded run.
+  ([Terms of service](../../evals/context7.md#terms-of-service)). Of #494's plain baselines,
+  the keyword grep over the raw Markdown is recorded (55.8% recall@5 against BM25's 91.4%,
+  [Windows and baselines](../retrieval/grid-variants.md)); the fixed-window RAG is declared in
+  the grid but has not run.
 - **Agents** ([Agents](agents.md)): no docs, ExactDocs and Grounded Docs. The `context7` arm is
   built (#495) and has not run.
 - **Coding tasks** ([Coding tasks](coding.md)): no docs and ExactDocs, without a harness and in
