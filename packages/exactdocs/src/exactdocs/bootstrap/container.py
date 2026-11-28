@@ -141,7 +141,7 @@ from exactdocs.identity.adapters.driven.sqlite import (
     SqliteSignInAttemptRepository,
     SqliteTokenRepository,
 )
-from exactdocs.identity.models import LibraryCreationPolicy
+from exactdocs.identity.models import LibraryCreationPolicy, LibraryRole
 from exactdocs.ingestion import IngestionModule, TagLocks, collect_job, import_job
 from exactdocs.ingestion.adapters.driven.dbos import (
     DbosCheckpoints,
@@ -509,6 +509,9 @@ def _identity(settings: Settings, engine: AsyncEngine, stand_ins: SignInStandIns
         access_policy=None if access is None else access[1],
         role_rules=rules,
         private_libraries=SqlitePrivateLibraries(engine=engine),
+        default_library_role=None
+        if settings.auth.default_library_role is None
+        else LibraryRole(settings.auth.default_library_role),
     )
     return _Identity(module=identity, client=client)
 

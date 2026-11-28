@@ -23,6 +23,7 @@ from exactdocs.identity.adapters.driven.memory import (
 from exactdocs.identity.dtos import (
     AddRoleRuleCommand,
     CreateFirstAdminCommand,
+    CreateUserCommand,
     DropLibraryGrantsCommand,
     ExternalTokenIdentity,
     FinishExternalSignInCommand,
@@ -52,14 +53,17 @@ from exactdocs.identity.models import (
     ExternalClaims,
     ExternalGrant,
     LibraryCreationPolicy,
+    LibraryRole,
     Memberships,
     Role,
     RoleRule,
     RuleGrant,
     RuleSource,
     SignInPolicy,
+    default_library_role_rule,
 )
 from exactdocs.identity.module import IdentityModule
+from exactdocs.identity.use_cases import RoleRules
 
 ISSUER = "https://idp.example.com"
 DOCS, OTHER, SECRET = "/acme/docs", "/acme/other", "/acme/secret"
@@ -178,7 +182,9 @@ def corp(**overrides: Any) -> SignInPolicy:
 
 
 def build(
-    policy: SignInPolicy | None = None, creation: LibraryCreationPolicy | None = None
+    policy: SignInPolicy | None = None,
+    creation: LibraryCreationPolicy | None = None,
+    default_role: LibraryRole | None = None,
 ) -> World:
     clock = Clock()
     accounts = InMemoryAccountRepository()
@@ -206,6 +212,7 @@ def build(
         library_creation=creation,
         role_rules=rules,
         private_libraries=private,
+        default_library_role=default_role,
     )
     return World(identity, provider, rules, private, clock, accounts, grants, log)
 
@@ -732,3 +739,190 @@ async def test_an_admin_rule_whose_roles_would_leave_no_admin_is_refused() -> No
         )
     assert world.rules.rules == {}
     assert await world.role(member) is Role.ADMIN
+
+
+# ---------------------------------------------------------------- the default library role
+
+
+async def local_user(world: World, username: str = "bob") -> str:
+    created = await world.identity.create_user(
+        CreateUserCommand(username=username, password=SecretStr("a long enough passphrase"))
+    )
+    return created.id
+
+
+@pytest.mark.parametrize("role", [LibraryRole.CONTRIBUTOR, LibraryRole.ADMIN, LibraryRole.CREATOR])
+def test_the_default_role_is_only_ever_viewer(role: LibraryRole) -> None:
+    with pytest.raises((InvalidRoleRuleError, ValueError)):
+        default_library_role_rule(role)
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [
+        {"configured": False},
+        {"provider": "corp"},
+        {"libraries": frozenset({DOCS})},
+        {"grant": RuleGrant.CREATE_LIBRARIES},
+        {"grant": RuleGrant.INSTANCE_ADMIN},
+    ],
+)
+def test_only_the_default_role_matches_every_account(rule: dict[str, Any]) -> None:
+    values: dict[str, Any] = {
+        "id": "r",
+        "provider": None,
+        "source": RuleSource.EVERYONE,
+        "value": "",
+        "grant": RuleGrant.VIEWER,
+        "configured": True,
+    }
+    with pytest.raises(InvalidRoleRuleError):
+        RoleRule(**{**values, **rule})
+
+
+def test_the_default_role_matches_local_and_every_providers_accounts() -> None:
+    rule = default_library_role_rule(LibraryRole.VIEWER)
+    for provider in (None, "corp", "cloudflare-access", "unconfigured"):
+        assert rule.matches(Memberships(provider=provider), {"corp": corp()})
+
+
+async def test_the_default_role_lets_every_account_read_every_library_but_private_ones() -> None:
+    world = build(default_role=LibraryRole.VIEWER)
+    ada = await operator(world)
+    await world.identity.mark_library_private(
+        MarkLibraryPrivateCommand(library=SECRET, private=True)
+    )
+    bob = await local_user(world)
+    member = await world.sign_in("u1")
+
+    for account in (bob, member):
+        assert await world.roles(account, DOCS, SECRET, "/new/library") == {
+            DOCS: "viewer",
+            "/new/library": "viewer",
+        }
+    assert await world.roles(ada, SECRET) == {SECRET: "creator"}
+
+
+async def test_without_the_default_role_a_local_account_holds_nothing() -> None:
+    world = build()
+    await operator(world)
+    bob = await local_user(world)
+
+    assert await world.roles(bob, DOCS) == {}
+
+
+async def test_the_default_role_only_adds_to_what_an_account_holds() -> None:
+    world = build(default_role=LibraryRole.VIEWER)
+    ada = await operator(world)
+    bob = await local_user(world)
+    await world.identity.grant_library_role(
+        GrantLibraryRoleCommand(
+            caller_id=ada, library=DOCS, kind="user", subject="bob", role="contributor"
+        )
+    )
+
+    assert await world.roles(bob, DOCS, OTHER) == {DOCS: "contributor", OTHER: "viewer"}
+
+
+async def test_a_disabled_or_unknown_account_gets_nothing_from_the_default_role() -> None:
+    world = build(default_role=LibraryRole.VIEWER)
+    await operator(world)
+    bob = await local_user(world)
+    await world.identity.set_user_disabled(SetUserDisabledCommand(id=bob, disabled=True))
+
+    assert await world.roles(bob, DOCS) == {}
+    assert await world.roles("nobody", DOCS) == {}
+
+
+async def test_the_default_role_never_lets_anyone_create_libraries() -> None:
+    world = build(creation=LibraryCreationPolicy(), default_role=LibraryRole.VIEWER)
+    await operator(world)
+    bob = await local_user(world)
+
+    assert not await world.identity.can_create_library(LibraryCreationQuery(account_id=bob))
+
+
+async def test_the_default_role_shows_read_only_on_the_users_list_and_a_librarys_grants() -> None:
+    world = build(default_role=LibraryRole.VIEWER)
+    ada = await operator(world)
+    bob = await local_user(world)
+    member = await world.sign_in("u1")
+    await world.identity.mark_library_private(
+        MarkLibraryPrivateCommand(library=SECRET, private=True)
+    )
+
+    users = {u.id: u for u in (await world.identity.list_users(UserListQuery())).users}
+    listed = await world.identity.list_role_rules(ListRoleRulesQuery(caller_id=ada))
+    docs = await world.identity.list_library_grants(
+        ListLibraryGrantsQuery(caller_id=ada, library=DOCS)
+    )
+    secret = await world.identity.list_library_grants(
+        ListLibraryGrantsQuery(caller_id=ada, library=SECRET)
+    )
+
+    default = "config:default_library_role"
+    assert users[bob].rules == [default]
+    assert users[member].rules == [default]
+    shown = next(rule for rule in listed.rules if rule.id == default)
+    assert (shown.source, shown.grant, shown.configured, shown.libraries) == (
+        "everyone",
+        "viewer",
+        True,
+        None,
+    )
+    assert [rule.id for rule in docs.rules] == [default]
+    assert secret.rules == []
+    with pytest.raises(ConfiguredRuleError):
+        await world.identity.remove_role_rule(RemoveRoleRuleCommand(caller_id=ada, rule_id=default))
+
+
+async def test_an_oauth_caller_gets_the_default_role() -> None:
+    world = build(default_role=LibraryRole.VIEWER)
+    world.provider.add("u1")
+
+    caller = await world.identity.identify_external_token("corp", "u1")
+    found = await world.identity.resolve_library_roles(
+        LibraryRolesQuery(account_id=caller.account.id, libraries=[DOCS], external_identity=caller)
+    )
+
+    assert found.roles == {DOCS: "viewer"}
+
+
+class NoStoredRules:
+    """Stored rules that must not be read."""
+
+    async def stored(self) -> list[RoleRule]:
+        message = "a local account's rules need no stored rule"
+        raise AssertionError(message)
+
+    async def add(self, rule: RoleRule) -> bool:
+        del rule
+        return False
+
+    async def remove(self, rule_id: str) -> RoleRule | None:
+        del rule_id
+
+
+async def test_a_local_account_is_matched_without_reading_the_stored_rules() -> None:
+    default = default_library_role_rule(LibraryRole.VIEWER)
+    rules = RoleRules(policies={}, stored=NoStoredRules(), default_role=default)
+
+    assert await rules.matching(Memberships(provider=None)) == [default]
+
+
+async def test_without_the_private_libraries_port_the_default_role_reaches_nothing() -> None:
+    rules = RoleRules(policies={}, default_role=default_library_role_rule(LibraryRole.VIEWER))
+
+    assert await rules.library_roles(Memberships(provider=None), {DOCS}) == {}
+    assert await rules.reaching(DOCS) == []
+
+
+async def test_a_disabled_account_shows_no_rule_on_the_users_list() -> None:
+    world = build(default_role=LibraryRole.VIEWER)
+    await operator(world)
+    bob = await local_user(world)
+    await world.identity.set_user_disabled(SetUserDisabledCommand(id=bob, disabled=True))
+
+    users = {u.id: u for u in (await world.identity.list_users(UserListQuery())).users}
+
+    assert users[bob].rules == []

@@ -18,6 +18,7 @@ from exactdocs.identity.constants import (
     ABSOLUTE_TIMEOUT,
     ACCESS_LOGOUT_PATH,
     ACCESS_PROVIDER,
+    DEFAULT_LIBRARY_ROLE_RULE,
     FIRST_WAIT,
     FORGET_FAILURES_AFTER,
     FREE_FAILURES,
@@ -1070,7 +1071,10 @@ class LibraryCreationPolicy:
 
 
 class RuleSource(StrEnum):
-    """What a role rule matches: a GitHub organization or team, a group, or a role value."""
+    """What a role rule matches: a GitHub organization or team, a group, a role value, or anyone."""
+
+    EVERYONE = "everyone"
+    """Every account, local or of any provider: only ``[auth].default_library_role``."""
 
     GITHUB_ORG = "github_org"
     """Active members of a GitHub organization (group ``github:<org>``)."""
@@ -1175,12 +1179,8 @@ class RoleRule:
         # The configuration file's group names (admin_groups) are taken as they are written.
         if not self.configured and (not self.value or self.value != self.value.strip()):
             return "the source must not be blank or padded"
-        if self.provider is None and not (
-            self.configured
-            and self.source is RuleSource.GROUP
-            and self.grant is RuleGrant.CREATE_LIBRARIES
-        ):
-            return "only [auth.library_creation].groups apply to every provider"
+        if scope := self._scope_problem():
+            return scope
         if self.source in patterns and not re.fullmatch(patterns[self.source][0], self.value):
             return patterns[self.source][1]
         if self.libraries is not None and self.grant.library_role is None:
@@ -1193,6 +1193,29 @@ class RoleRule:
             )
         ):
             return "libraries must be lower-case /owner/repo IDs"
+        return None
+
+    def _scope_problem(self) -> str | None:
+        """Say what is wrong with whom the rule matches: any provider, or every account.
+
+        Returns:
+            The reason, or ``None``.
+        """
+        if self.source is RuleSource.EVERYONE:
+            # The default role only reads, and never reaches a private library.
+            usable = (
+                self.configured
+                and self.provider is None
+                and self.grant is RuleGrant.VIEWER
+                and self.libraries is None
+            )
+            return None if usable else "only [auth].default_library_role matches every account"
+        if self.provider is None and not (
+            self.configured
+            and self.source is RuleSource.GROUP
+            and self.grant is RuleGrant.CREATE_LIBRARIES
+        ):
+            return "only [auth.library_creation].groups apply to every provider"
         return None
 
     def matches(self, memberships: Memberships, policies: Mapping[str, SignInPolicy]) -> bool:
@@ -1209,6 +1232,8 @@ class RoleRule:
         Returns:
             Whether it applies.
         """
+        if self.source is RuleSource.EVERYONE:
+            return True
         if self.provider is None:
             return self.value in memberships.groups
         policy = policies.get(self.provider)
@@ -1224,6 +1249,26 @@ class RoleRule:
             return f"{policy.group_prefix}{self.value}" in memberships.groups
         name = f"{policy.group_prefix}github:{self.value}".casefold()
         return policy.github and any(group.casefold() == name for group in memberships.groups)
+
+
+def default_library_role_rule(role: LibraryRole) -> RoleRule:
+    """Return ``[auth].default_library_role`` as a read-only rule matching every account.
+
+    Args:
+        role: The default role; only ``viewer`` makes a usable rule.
+
+    Returns:
+        The rule, for every library that is not private; building it refuses any other role
+        (``InvalidRoleRuleError``).
+    """
+    return RoleRule(
+        id=DEFAULT_LIBRARY_ROLE_RULE,
+        provider=None,
+        source=RuleSource.EVERYONE,
+        value="",
+        grant=RuleGrant(role.value),
+        configured=True,
+    )
 
 
 def github_rule_targets(

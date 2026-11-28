@@ -963,6 +963,7 @@ class LibraryGrants(_Dto):
 
 
 _RuleSource = Literal["github_org", "github_team", "group", "role"]
+_ShownRuleSource = Literal["github_org", "github_team", "group", "role", "everyone"]
 _RuleGrant = Literal["instance_admin", "create_libraries", "viewer", "contributor", "admin"]
 
 
@@ -974,8 +975,9 @@ class RoleRuleSummary(_Dto):
     provider: str | None
     """The sign-in provider whose accounts it matches; null for any (only
     `[auth.library_creation].groups`, whose names carry their provider's prefix)."""
-    source: _RuleSource
-    """`github_org`, `github_team`, `group` or `role` (a value of the provider's `role_claim`)."""
+    source: _ShownRuleSource
+    """`github_org`, `github_team`, `group`, `role` (a value of the provider's `role_claim`), or
+    `everyone` (`[auth].default_library_role`: every account, with an empty `value`)."""
     value: str
     """The organization, `org/team`, group or role value, as the provider names it."""
     grant: _RuleGrant

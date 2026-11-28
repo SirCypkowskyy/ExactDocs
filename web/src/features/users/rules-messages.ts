@@ -25,6 +25,7 @@ export const rulesMessages = defineMessages(
       configured: "Configuration file",
       configuredHint: "Set in the configuration file; change it there.",
       anyProvider: "Any provider",
+      everyAccount: "Every account (local included)",
       remove: (rule: string) => `Remove rule ${rule}`,
       emptyTitle: "No rules yet",
       emptyBody:
@@ -121,6 +122,7 @@ export const rulesMessages = defineMessages(
       configured: "Plik konfiguracyjny",
       configuredHint: "Ustawiona w pliku konfiguracyjnym; zmień ją tam.",
       anyProvider: "Każdy dostawca",
+      everyAccount: "Każde konto (również lokalne)",
       remove: (rule) => `Usuń regułę ${rule}`,
       emptyTitle: "Nie ma jeszcze reguł",
       emptyBody:

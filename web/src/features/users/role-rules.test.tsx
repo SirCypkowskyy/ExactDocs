@@ -37,6 +37,14 @@ const stored = {
   created_by: "ada",
   created_at: "2026-11-26T10:00:00Z",
 };
+const everyone = {
+  ...configured,
+  id: "config:default_library_role",
+  provider: null,
+  source: "everyone",
+  value: "",
+  grant: "viewer",
+};
 const providers = [
   {
     name: "corp",
@@ -55,8 +63,8 @@ const providers = [
 ];
 
 /** A role rules API: list, add, remove (removing `r1` refused as the last admin when asked). */
-function stubApi({ lastAdmin = false } = {}) {
-  let rules: Record<string, unknown>[] = [configured, stored];
+function stubApi({ lastAdmin = false, extra = [] as Record<string, unknown>[] } = {}) {
+  let rules: Record<string, unknown>[] = [configured, ...extra, stored];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? "GET";
     if (url === "/api/v1/role-rules" && method === "GET") return json({ rules, providers });
@@ -130,6 +138,18 @@ describe("role rules page", () => {
     expect(screen.getByText(/Corp SSO takes only the configuration file's rules/)).toBeVisible();
   });
 
+  it("shows the default library role as a read-only rule for every account", async () => {
+    stubApi({ extra: [everyone] });
+    renderAt("/users/rules");
+
+    const table = await screen.findByRole("table", { name: "Role rules" });
+    const row = within(table).getByRole("row", { name: /every account/ });
+    expect(row).toHaveTextContent("viewer on every library");
+    expect(row).toHaveTextContent("Every account (local included)");
+    expect(row).toHaveTextContent("Configuration file");
+    expect(within(row).queryByRole("button")).toBeNull();
+  });
+
   it("adds a rule for a provider that takes stored rules", async () => {
     const fetchMock = stubApi();
     renderAt("/users/rules");
@@ -200,6 +220,7 @@ describe("role rule words", () => {
       ruleText({ ...stored, source: "github_team", grant: "admin", libraries: ["/a/b"] } as never),
     ).toBe("GitHub team acme/docs-writers → admin on /a/b");
     expect(ruleText({ ...configured } as never, "pl")).toBe("grupa ops → administrator instancji");
+    expect(ruleText(everyone as never, "en")).toBe("every account → viewer on every library");
   });
 
   it("offer GitHub names only on GitHub and role values only with a role claim", () => {
