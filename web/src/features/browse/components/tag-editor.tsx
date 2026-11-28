@@ -31,7 +31,7 @@ interface TagEditorProps {
 }
 
 const small =
-  "inline-flex h-11 cursor-pointer items-center gap-1 rounded-full px-3 text-small font-medium outline-none transition-[background-color,color,transform] duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] disabled:cursor-progress disabled:opacity-60 lg:h-6 lg:px-2.5";
+  "inline-flex h-11 cursor-pointer items-center gap-1 rounded-full px-3 text-small font-medium outline-none transition-[background-color,color,scale] duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring motion-safe:active:scale-[0.97] disabled:cursor-progress disabled:opacity-60 lg:h-6 lg:px-2.5";
 /** One manual tag's identity: the same tag can be set on this path and on an older one. */
 const keyOf = (m: ManualTag) => `${m.path}\u0000${m.tag}`;
 const quiet = `${small} border border-dashed border-input text-muted-foreground can-hover:hover:bg-accent can-hover:hover:text-foreground`;

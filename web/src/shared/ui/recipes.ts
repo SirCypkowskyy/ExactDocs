@@ -16,7 +16,7 @@ export const select = `${control} ${controlHeight} cursor-pointer appearance-non
 
 /** A button that opens a picker (version, files): looks like a control, acts like a button. */
 export const trigger =
-  "flex h-11 min-w-0 cursor-pointer items-center justify-between gap-2 rounded-md border border-input bg-background px-3 text-body outline-none transition-[border-color,background-color,transform] duration-(--dur-fast) hover:border-muted-foreground/45 focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.99] aria-expanded:border-ring fine:h-9";
+  "flex h-11 min-w-0 cursor-pointer items-center justify-between gap-2 rounded-md border border-input bg-background px-3 text-body outline-none transition-[border-color,background-color,scale] duration-(--dur-fast) hover:border-muted-foreground/45 focus-visible:ring-2 focus-visible:ring-ring motion-safe:active:scale-[0.99] aria-expanded:border-ring fine:h-9";
 
 /** Monospace text shown as it is: a token, a config snippet, server output. */
 export const codeWell =

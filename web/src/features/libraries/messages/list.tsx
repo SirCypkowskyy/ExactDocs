@@ -58,6 +58,8 @@ export const listMessages = defineMessages(
       leastRecentlyImported: "Least recently imported",
       mostVersions: "Most versions",
       fewestVersions: "Fewest versions",
+      mostArticles: "Most articles",
+      fewestArticles: "Fewest articles",
     },
     noMatch: {
       title: "No libraries match",
@@ -197,6 +199,8 @@ export const listMessages = defineMessages(
       leastRecentlyImported: "Najdawniej importowane",
       mostVersions: "Najwięcej wersji",
       fewestVersions: "Najmniej wersji",
+      mostArticles: "Najwięcej artykułów",
+      fewestArticles: "Najmniej artykułów",
     },
     noMatch: {
       title: "Żadna biblioteka nie pasuje",

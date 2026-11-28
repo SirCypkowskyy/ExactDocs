@@ -12,8 +12,10 @@ import {
   Menu,
   ScrollText,
   Search,
+  ShieldCheck,
   Trophy,
   Users,
+  Wrench,
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { toast } from "sonner";
@@ -73,7 +75,7 @@ type Nav = (typeof messages)["en"]["nav"];
 /** `motion`: the icon's reaction when its row is hovered or focused (app/icon-motion.css). */
 type Motion = "tilt" | "pop" | "down";
 type Entry = { to: To; label: string; description: string; icon: LucideIcon; motion: Motion };
-type Group = { id: string; label: string; admin?: boolean; items: Entry[] };
+type Group = { id: string; label: string; icon: LucideIcon; admin?: boolean; items: Entry[] };
 
 /** Where people work every day: one click away. */
 const primary = (t: Nav): Entry[] => [
@@ -86,6 +88,7 @@ const groups = (t: Nav): Group[] => [
   {
     id: "tools",
     label: t.tools,
+    icon: Wrench,
     items: [
       {
         to: "/playground",
@@ -107,6 +110,7 @@ const groups = (t: Nav): Group[] => [
   {
     id: "admin",
     label: t.admin,
+    icon: ShieldCheck,
     admin: true,
     items: [
       {
@@ -188,6 +192,7 @@ function DesktopNav({ entries, groups }: { entries: Entry[]; groups: Group[] }) 
           <NavigationMenuItem key={entry.to}>
             <NavigationMenuPlainLink asChild active={current(entry.to)}>
               <Link to={entry.to} className={navigationMenuTriggerStyle()}>
+                <entry.icon aria-hidden="true" className="size-4" />
                 {entry.label}
               </Link>
             </NavigationMenuPlainLink>
@@ -198,6 +203,7 @@ function DesktopNav({ entries, groups }: { entries: Entry[]; groups: Group[] }) 
           return (
             <NavigationMenuItem key={group.id}>
               <NavigationMenuTrigger data-active={lit || undefined}>
+                <group.icon aria-hidden="true" className="size-4" />
                 {group.label}
               </NavigationMenuTrigger>
               <NavigationMenuContent>
@@ -234,7 +240,7 @@ function UserMenu() {
     <DropdownMenu>
       <DropdownMenuTrigger
         aria-label={t.account.menuLabel(account.username)}
-        className="inline-flex h-11 min-w-0 cursor-pointer items-center gap-2 rounded-md px-1.5 text-body outline-none transition-[background-color,transform] duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] data-[state=open]:bg-band-hover fine:h-9 can-hover:hover:bg-band-hover lg:pr-2.5"
+        className="inline-flex h-11 min-w-0 cursor-pointer items-center gap-2 rounded-md px-1.5 text-body outline-none transition-[background-color,scale] duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring motion-safe:active:scale-[0.97] data-[state=open]:bg-band-hover fine:h-9 can-hover:hover:bg-band-hover lg:pr-2.5"
       >
         <span
           aria-hidden="true"
@@ -294,7 +300,7 @@ function MobileNav({ entries, groups }: { entries: Entry[]; groups: Group[] }) {
   const { pending, run } = useSignOut();
   const accessSignOut = session?.source === "cloudflare_access" ? session.sign_out_url : null;
   const row =
-    "flex min-h-11 items-start gap-3 rounded-md px-3 py-2.5 text-body outline-none transition-colors duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring aria-[current=page]:bg-route-soft can-hover:hover:bg-accent";
+    "flex min-h-11 items-start gap-3 rounded-md px-3 py-2.5 text-body outline-none transition-[color,background-color,scale] duration-(--dur-fast) ease-(--ease-out) motion-safe:active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-ring aria-[current=page]:bg-route-soft can-hover:hover:bg-accent";
   const close = () => setOpen(false);
   return (
     <Sheet open={open} onOpenChange={setOpen}>
@@ -328,7 +334,13 @@ function MobileNav({ entries, groups }: { entries: Entry[]; groups: Group[] }) {
           >
             {groups.map((group) => (
               <AccordionItem key={group.id} value={group.id}>
-                <AccordionTrigger>{group.label}</AccordionTrigger>
+                <AccordionTrigger>
+                  {/* Wrapped: the trigger turns its own direct svg (the chevron) when open. */}
+                  <span className="flex items-center gap-3">
+                    <group.icon aria-hidden="true" className="size-[1.125rem] flex-none" />
+                    {group.label}
+                  </span>
+                </AccordionTrigger>
                 <AccordionContent className="grid gap-0.5">
                   {group.items.map((entry) => (
                     <Link
@@ -410,7 +422,7 @@ export function AppShell({
         <Link
           to="/"
           aria-label={t.nav.home}
-          className="inline-flex h-11 flex-none items-center rounded-md px-1 outline-none transition-transform duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] fine:h-9"
+          className="inline-flex h-11 flex-none items-center rounded-md px-1 outline-none transition-transform duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring motion-safe:active:scale-[0.97] fine:h-9"
         >
           <Wordmark className="h-7" />
         </Link>

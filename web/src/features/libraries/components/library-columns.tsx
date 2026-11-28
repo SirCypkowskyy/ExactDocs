@@ -52,7 +52,7 @@ export const columnsOf = (t: ListMessages): ColumnDef<Library>[] => [
     accessorKey: "title",
     header: t.columns.library,
     enableHiding: false,
-    meta: { priority: 1, skeleton: "avatar" },
+    meta: { priority: 1, skeleton: "avatar", rowLink: true },
     cell: ({ row }) => (
       <LibraryCell
         id={row.original.id}
@@ -78,10 +78,10 @@ export const columnsOf = (t: ListMessages): ColumnDef<Library>[] => [
     cell: ({ row }) => <Count value={row.original.version_count} />,
   },
   {
-    // The default version's articles (#513); not a sort field of `GET /libraries`.
+    // The default version's articles (#513); the API sorts by them, the ID breaking ties.
     accessorKey: "article_count",
     header: t.columns.articles,
-    enableSorting: false,
+    sortDescFirst: true,
     meta: { priority: 3, align: "end", skeleton: "number", className: "max-lg:hidden" },
     cell: ({ row }) => <Articles value={row.original.article_count} t={t.row} />,
   },

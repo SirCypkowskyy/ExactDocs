@@ -31,7 +31,7 @@ interface FileTreeProps {
 const INDENT = 12;
 const MAX_INDENT_LEVELS = 6;
 const rowBase =
-  "flex min-h-11 w-full cursor-pointer items-center gap-1.5 rounded-md pr-2 text-left text-body outline-none transition-colors duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring lg:min-h-8 lg:text-body";
+  "flex min-h-11 w-full cursor-pointer items-center gap-1.5 rounded-md pr-2 text-left text-body outline-none transition-[color,background-color,scale] duration-(--dur-fast) ease-(--ease-out) motion-safe:active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring lg:min-h-8 lg:text-body";
 const hoverable = "can-hover:hover:bg-accent";
 
 const indent = (depth: number) => ({

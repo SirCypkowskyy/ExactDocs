@@ -4,6 +4,7 @@ import {
   type RowData,
   useTable,
 } from "@tanstack/react-table";
+import { ChevronsDown } from "lucide-react";
 import { useState } from "react";
 import { useMessages } from "@/shared/lib/i18n";
 import { cn } from "@/shared/lib/utils";
@@ -146,6 +147,7 @@ export function ListFooter({
       <p className="num">{t.showing(shown, total)}</p>
       {hasMore && (
         <Button variant="outline" onClick={onLoadMore} disabled={loadingMore}>
+          <ChevronsDown aria-hidden="true" data-icon-motion="down" />
           {t.loadMore}
         </Button>
       )}

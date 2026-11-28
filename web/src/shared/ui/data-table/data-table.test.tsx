@@ -4,6 +4,7 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  Link,
   Outlet,
   RouterProvider,
   useSearch,
@@ -305,6 +306,78 @@ describe("DataTable v2 in client mode", () => {
     expect(JSON.parse(localStorage.getItem("exactdocs-table-sizes") ?? "{}")).toEqual({
       things: 5,
     });
+  });
+});
+
+/** A table whose name cell is the row's link (`meta.rowLink`), with a kebab on every row. */
+function LinkedThings() {
+  const model = useLocalDataTable({
+    config: CLIENT,
+    rows: THINGS.slice(0, 3),
+    columns: [
+      {
+        accessorKey: "name",
+        header: "Name",
+        meta: { priority: 1, rowLink: true },
+        cell: ({ row }) => <Link to="/jobs">{row.original.name}</Link>,
+      },
+      columns[1] as ColumnDef<Thing>,
+    ],
+    getRowId: (t) => t.id,
+  });
+  return <DataTable model={model} label="Things" rowActions={actions} />;
+}
+
+describe("a row link", () => {
+  function renderLinked() {
+    const history = createMemoryHistory({ initialEntries: ["/things"] });
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <TooltipProvider>
+          <TestRouter
+            history={history}
+            pages={{ "/things": LinkedThings, "/jobs": () => <p>Opened</p> }}
+          />
+        </TooltipProvider>
+      </QueryClientProvider>,
+    );
+    return history;
+  }
+
+  it("stretches the title link over its row, the row's one tab stop besides its kebab", async () => {
+    renderLinked();
+    const table = await screen.findByRole("table", { name: "Things" });
+    const [row] = within(table).getAllByRole("row").slice(1);
+    if (!row) throw new Error("no row");
+    expect(row).toHaveAttribute("data-row-link");
+    expect(row).toHaveClass("relative");
+    const link = within(row).getByRole("link", { name: "Thing 01" });
+    expect(link.closest("[data-row-link-cell]")).not.toBeNull();
+    // Nothing but the link and the kebab takes focus: the row itself is not a fake button.
+    expect(row).not.toHaveAttribute("role");
+    expect(row).toHaveAttribute("tabindex", "-1");
+    const kebab = within(row).getByRole("button", { name: /Thing 01|t1/ });
+    expect(link.contains(kebab)).toBe(false);
+    expect(within(row).getAllByRole("link")).toEqual([link]);
+  });
+
+  it("keeps the row's other controls their own: the kebab opens its menu, nothing navigates", async () => {
+    const history = renderLinked();
+    const table = await screen.findByRole("table", { name: "Things" });
+    const [row] = within(table).getAllByRole("row").slice(1);
+    if (!row) throw new Error("no row");
+
+    await userEvent.click(within(row).getByRole("button", { name: /Thing 01|t1/ }));
+
+    expect(await screen.findByRole("menuitem", { name: "Open thing" })).toBeInTheDocument();
+    expect(history.location.pathname).toBe("/things");
+  });
+
+  it("follows the link when the row is clicked through it", async () => {
+    const history = renderLinked();
+    await userEvent.click(await screen.findByRole("link", { name: "Thing 02" }));
+
+    await waitFor(() => expect(history.location.pathname).toBe("/jobs"));
   });
 });
 

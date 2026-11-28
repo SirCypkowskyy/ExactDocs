@@ -25,6 +25,8 @@ const SORTS = [
   "last_imported_at",
   "-version_count",
   "version_count",
+  "-article_count",
+  "article_count",
 ] as const;
 
 /** Phones get rows as cards, without sortable headers: the order is picked here instead. */
@@ -39,6 +41,8 @@ export function PhoneSort({ view }: { view: ListView }) {
     last_imported_at: t.leastRecentlyImported,
     "-version_count": t.mostVersions,
     version_count: t.fewestVersions,
+    "-article_count": t.mostArticles,
+    article_count: t.fewestArticles,
   };
   return (
     <div className="w-full md:hidden">

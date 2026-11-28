@@ -4,7 +4,7 @@ import {
   type UseQueryOptions,
   useQuery,
 } from "@tanstack/react-query";
-import { Check, ChevronsUpDown, CircleAlert, ListFilter, Plus } from "lucide-react";
+import { Check, ChevronsUpDown, CircleAlert, ListFilter, Plus, RefreshCw } from "lucide-react";
 import type * as React from "react";
 import { type ReactNode, useCallback, useEffect, useId, useState } from "react";
 import { common, useMessages } from "@/shared/lib/i18n";
@@ -437,6 +437,7 @@ function ListStates({ source }: { source: Source }) {
           {t.failed}
         </p>
         <Button variant="outline" size="sm" onClick={source.retry}>
+          <RefreshCw aria-hidden="true" data-icon-motion="refresh" />
           {c.retry}
         </Button>
       </div>

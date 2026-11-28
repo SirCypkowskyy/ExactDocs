@@ -445,6 +445,42 @@
   }
 }
 
+/*
+ * Row links (DataTable `meta.rowLink`): a row that opens one page keeps its title as the real link
+ * and stretches that link's hit area over the row, so a click anywhere on the row follows it, and
+ * middle-click, Cmd/Ctrl-click and the keyboard work as on any link (one tab stop per row). Every
+ * other control in the row (the kebab, a copy button, a tooltip's trigger, a tag link) is lifted
+ * above the stretch and keeps its own click. In the components layer, so a utility such as
+ * `absolute` or `sr-only` on a lifted element still wins.
+ */
+@layer components {
+  [data-row-link-cell] a::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+  }
+  [data-row-link]
+    :is(
+      a,
+      button,
+      input,
+      select,
+      textarea,
+      summary,
+      label,
+      [role="button"],
+      [tabindex="0"],
+      [data-state]
+    ):not([data-row-link-cell] a) {
+    position: relative;
+    z-index: 1;
+  }
+  /* The row shows where keyboard focus is, as it does on hover. */
+  [data-row-link]:has([data-row-link-cell] a:focus-visible) {
+    background-color: var(--raised);
+  }
+}
+
 /* A theme switch cross-fades the whole page (preferences.ts skips it under reduced motion). */
 html.theme-fade::view-transition-old(root),
 html.theme-fade::view-transition-new(root) {
