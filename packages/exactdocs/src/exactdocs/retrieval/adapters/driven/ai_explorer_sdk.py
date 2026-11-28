@@ -13,13 +13,13 @@ Code Mode would hand back to the model as a retry ends it too (``RunEnders``). S
 fails on the host: its error is recorded by class and the sandbox sees only ``READ_FAILED``, so no
 SQL, DSN or path reaches the model, a result or a span.
 
-Guardrails (#99). The harness 0.60.0 has no loop detection, so ``RunEnders`` is ours: the same
-call (tool name and a hash of its arguments, ``run_code`` or a read inside it) made
-``max_repeated_calls`` times (3 by default) ends the run (``agent_loop_detected``); a read call
-that repeats, and every read after it, sees only ``REPEATED_CALL``. The harness
-``OutputGuardrail`` checks the answer: a pick the browser does not ``admit`` (another version's,
-one the tag filter excludes, a made-up ID) is removed before the answer leaves the agent, and
-only the count is logged.
+Guardrails (#99). The harness 0.60.0 had no loop detection (``DetectLoops`` came in 0.69.0, not used
+here), so ``RunEnders`` is ours: the same call (tool name and a hash of its arguments, ``run_code``
+or a read inside it) made ``max_repeated_calls`` times (3 by default) ends the run
+(``agent_loop_detected``); a read call that repeats, and every read after it, sees only
+``REPEATED_CALL``. The harness ``OutputGuardrail`` checks the answer: a pick the browser does not
+``admit`` (another version's, one the tag filter excludes, a made-up ID) is removed before the
+answer leaves the agent, and only the count is logged.
 
 Telemetry: the model is instrumented with ``include_content=False`` (the factory's, or ours when
 it is not), so the agent run, each model request and each tool call get a span without prompts,
@@ -56,7 +56,7 @@ from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.guardrails import GuardrailResult, OutputGuardrail
-from pydantic_ai_harness.spend import SpendLimitExceeded
+from pydantic_ai_harness.spend_limits import SpendLimitExceeded
 
 from exactdocs.retrieval.adapters.driven.ai_guidance_sdk import (
     UsageFloor,
@@ -684,7 +684,7 @@ def code_mode[B](bounds: AgentBounds, tools: Sequence[str]) -> CodeMode[Reads[B]
         tools=list(tools),
         max_tool_calls=bounds.max_tool_calls,
         resource_limits={
-            "max_duration_secs": bounds.sandbox_seconds,
+            "max_duration_seconds": bounds.sandbox_seconds,
             "max_memory": bounds.sandbox_memory,
             "max_suspensions": bounds.sandbox_suspensions,
         },

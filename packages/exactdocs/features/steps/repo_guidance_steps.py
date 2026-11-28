@@ -142,7 +142,7 @@ def _system(context: Context) -> str:
 def step_user_note(context: Context) -> None:
     notes = _notes(context)
     assert len(notes) == 1, notes
-    assert notes[0].startswith('<context-file path="AGENTS.md">\n'), notes
+    assert notes[0].startswith('<context_file path="AGENTS.md">'), notes
     assert LAYOUT in notes[0], notes
     assert LAYOUT not in _system(context)
 

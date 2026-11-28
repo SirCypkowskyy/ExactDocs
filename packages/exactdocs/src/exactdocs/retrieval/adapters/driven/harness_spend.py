@@ -2,9 +2,10 @@
 
 LLM agents (HyDE, the judge, the agentic explorer) are limited by the harness ``SpendLimits``
 capability over ``LedgerSpendStore``: the same ``retrieval_ai_spend`` rows embedding and rerank
-calls write to. The harness builds its keys with private helpers (``store_key`` and ``bucket`` in
-``pydantic_ai_harness/spend/_budget.py``); ``ledger_key`` parses the key it hands over into the
-ledger's own ``SpendKey`` instead of importing them, and a contract test pins the 0.60.0 format.
+calls write to. The harness builds its keys with private helpers (``store_key`` and ``bucket``
+in ``pydantic_ai_harness/spend_limits/_budget.py``); ``ledger_key`` parses the key it hands over
+into the ledger's own ``SpendKey`` instead of importing them, and a contract test pins the 0.73.0
+format.
 
 Imported only by the code that runs an agent, so a process with no LLM configured never loads
 pydantic-ai.
@@ -19,8 +20,8 @@ from decimal import Decimal
 from pydantic_ai import RunContext
 from pydantic_ai.messages import ModelResponse
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness.spend import Budget, SpendLimits, Spent
-from pydantic_ai_harness.spend import SpendEntry as HarnessEntry
+from pydantic_ai_harness.spend_limits import Budget, SpendLimits, Spent
+from pydantic_ai_harness.spend_limits import SpendEntry as HarnessEntry
 
 from exactdocs.retrieval.constants import (
     HARNESS_ANY_SCOPE,

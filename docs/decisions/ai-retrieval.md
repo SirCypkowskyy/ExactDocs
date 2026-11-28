@@ -70,7 +70,7 @@ Each issue of the milestone points here instead of deciding these again.
 
 | Topic | Decision |
 |---|---|
-| Chat and agents | **pydantic-ai-slim 2.60.0** models and providers, one profile per endpoint, always given explicit URLs and keys (never the SDKs' environment variables);<br/>harness 0.60.0 for Code Mode, spend limits and guardrails |
+| Chat and agents | **pydantic-ai-slim 2.73.0** models and providers, one profile per endpoint, always given explicit URLs and keys (never the SDKs' environment variables);<br/>harness 0.73.0 for Code Mode, spend limits and guardrails |
 | Embeddings | Our own `Embeddings` port; adapters over `pydantic_ai.Embedder` (remote) and **fastembed** (local) |
 | Rerankers | Our own `Reranker` port (Cohere-compatible and TEI HTTP adapters, fastembed cross-encoder) and a separate `CandidateJudge` port for an LLM judge under the harness `SpendLimits`;<br/>a per-library setting chooses (default: cross-encoder) |
 | Vector store | One `VectorIndex` port;<br/>**sqlite-vec** on SQLite, **pgvector** on PostgreSQL and Supabase;<br/>one table per embedding space, exact search scoped to the manifest |
