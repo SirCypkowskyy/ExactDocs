@@ -31,7 +31,7 @@ import { focusGlobalInput, onArrows } from "./keyboard";
 const VISIBLE_FACETS = 8;
 
 const chip =
-  "inline-flex h-11 max-w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-3 text-body outline-none transition-[background-color,transform] duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] lg:h-9 lg:w-full lg:justify-between";
+  "inline-flex h-11 max-w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-3 text-body outline-none transition-[background-color,scale] duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring motion-safe:active:scale-[0.97] lg:h-9 lg:w-full lg:justify-between";
 
 const chipTone = (selected: boolean) =>
   selected

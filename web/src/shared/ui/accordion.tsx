@@ -23,7 +23,7 @@ export function AccordionTrigger({
     <A.Header className="flex">
       <A.Trigger
         className={cn(
-          "flex min-h-11 flex-1 cursor-pointer items-center justify-between gap-3 rounded-md px-3 text-left text-section font-medium outline-none transition-colors duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring can-hover:hover:bg-accent [&[data-state=open]>svg]:rotate-180",
+          "flex min-h-11 flex-1 cursor-pointer items-center justify-between gap-3 rounded-md px-3 text-left text-section font-medium outline-none transition-[color,background-color,scale] duration-(--dur-fast) ease-(--ease-out) motion-safe:active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-ring can-hover:hover:bg-accent [&[data-state=open]>svg]:rotate-180",
           className,
         )}
         {...props}

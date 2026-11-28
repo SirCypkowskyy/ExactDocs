@@ -29,7 +29,7 @@ function ToggleGroupItem({ className, ...props }: React.ComponentProps<typeof T.
     <T.Item
       data-slot="toggle-group-item"
       className={cn(
-        "inline-flex h-fit min-h-11 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-sm px-3 py-1 text-center text-body font-medium text-muted-foreground outline-none transition-[background-color,color,transform] duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 data-[state=on]:bg-selection-soft data-[state=on]:text-foreground fine:min-h-8 can-hover:hover:text-foreground [&_svg]:size-4 [&_svg]:shrink-0",
+        "inline-flex h-fit min-h-11 min-w-0 cursor-pointer items-center justify-center gap-1.5 rounded-sm px-3 py-1 text-center text-body font-medium text-muted-foreground outline-none transition-[background-color,color,scale] duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring motion-safe:active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 data-[state=on]:bg-selection-soft data-[state=on]:text-foreground fine:min-h-8 can-hover:hover:text-foreground [&_svg]:size-4 [&_svg]:shrink-0",
         className,
       )}
       {...props}

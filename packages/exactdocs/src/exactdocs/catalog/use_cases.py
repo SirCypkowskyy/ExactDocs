@@ -283,6 +283,8 @@ class ListLibrariesUseCase:
             and (only is None or lib.id.value.lower() in only)
         ]
         libraries = [lib for lib in libraries if _library_matches(lib, query)]
+        # Sorting by articles needs every match's count; otherwise only the page's are asked for.
+        counts = await self._article_counts(libraries) if sort.field == "article_count" else {}
         page = sorted_page(
             libraries,
             sort=sort,
@@ -292,17 +294,29 @@ class ListLibrariesUseCase:
                 "title": lambda lib: lib.title.lower(),
                 "last_imported_at": _last_imported,
                 "version_count": lambda lib: len(lib.versions),
+                "article_count": lambda lib: counts.get(lib.id.value, 0),
             },
             key=lambda lib: lib.id.value,
             limit=query.limit,
             cursor=query.cursor,
             offset=query.offset,
         )
-        defaults = [(lib.id, d.ref) for lib in page.items if (d := lib.default_version())]
+        if sort.field != "article_count":
+            counts = await self._article_counts(page.items)
+        return LibraryList.from_page(page, article_counts=counts)
+
+    async def _article_counts(self, libraries: Sequence[Library]) -> dict[str, int]:
+        """Count the articles of each library's default version, in one query.
+
+        Args:
+            libraries: The libraries to count.
+
+        Returns:
+            The count by library ID; a library without a default version is left out.
+        """
+        defaults = [(lib.id, d.ref) for lib in libraries if (d := lib.default_version())]
         counts = await self.articles.count_articles(defaults) if defaults else {}
-        return LibraryList.from_page(
-            page, article_counts={lib.value: n for (lib, _), n in counts.items()}
-        )
+        return {lib.value: n for (lib, _), n in counts.items()}
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

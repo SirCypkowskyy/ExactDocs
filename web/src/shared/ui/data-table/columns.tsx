@@ -30,6 +30,12 @@ export interface DataColumnMeta {
   skeleton?: SkeletonShape;
   /** Figures align at the end. */
   align?: "end";
+  /**
+   * The link in this column's cell is the row's destination: its hit area covers the whole row
+   * (or phone card), so a click anywhere on it opens the link, while the row's other controls
+   * keep their own clicks (styles.css, "Row links"). One column per table at most.
+   */
+  rowLink?: boolean;
 }
 
 /** A column's name in words: its `meta.label`, else its header when that is text. */
@@ -52,7 +58,7 @@ export function SortHeader<T extends RowData>({ header }: { header: Header<T> })
       type="button"
       aria-label={t.sortBy(columnLabel(header.column), dir)}
       onClick={header.column.getToggleSortingHandler()}
-      className="-mx-1 inline-flex cursor-pointer items-center gap-1 rounded px-1 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      className="-mx-1 inline-flex cursor-pointer items-center gap-1 rounded px-1 outline-none transition-[color,scale] duration-(--dur-fast) ease-(--ease-out) motion-safe:active:scale-[0.97] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
     >
       {label}
       {dir === "asc" ? (

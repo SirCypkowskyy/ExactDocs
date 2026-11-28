@@ -606,8 +606,10 @@ Built on shadcn's Navigation Menu after the free shadcnblocks `navbar1`, `navbar
 - **Information architecture:** where people work every day is one click away (Libraries, Search);
   everything else sits in two panels: Tools (Playground, Jobs) and Admin (AI, Users, Access log;
   operators only, the API refuses anyone else).
-- **Triggers and links:** 14px / 500 in muted ink, 6px radius, hover and open fill `accent` with
-  ink text; a trigger carries a chevron that turns when open. The current page, or the panel that
+- **Triggers and links:** 14px / 500 in muted ink with a 16px leading icon (LibraryBig, Search,
+  Wrench for Tools, ShieldCheck for Admin; the phone's accordion uses the same), 6px radius, hover
+  and open fill `accent` with ink text, press scales to 0.97; a trigger carries a chevron that
+  turns when open. The current page, or the panel that
   holds it, turns ink and gets a 2px `route` underline (ink in light, the lamp in dark) that grows
   from the centre on the band's lower edge.
 - **Panels:** one column, 23rem, on `popover` with `border`, `radius-lg` and `shadow-float`. Each row
@@ -709,7 +711,12 @@ shadcn/ui's data-table guide) is the one way to show a list with many rows.
   the menu was opened with the keyboard or the mouse. Below `md` rows
   become cards: the `meta.priority` 1 cell as the title, 2 and 3 under it with their column named
   for screen readers, the row menu at the right; the Columns menu is not offered there. Give
-  every cell a reader needs to tell rows apart (the version, not only the library) a priority. Page changes swap rows at once; only rows that
+  every cell a reader needs to tell rows apart (the version, not only the library) a priority.
+  A row that opens one page (a library, an article) marks its title column `meta.rowLink`: the
+  title stays the real link and its hit area stretches over the whole row or card (styles.css,
+  "Row links"), so a click anywhere opens it and middle-click, Cmd-click and the keyboard behave as
+  on the link; the kebab, tooltips and any other control stay above it. Text under the stretch
+  cannot be drag-selected (the link wins the press). Page changes swap rows at once; only rows that
   arrive on a refresh use `row-in`.
 - **Cells** (`cells.tsx`): `RelativeTime` (`future` for an expiry: "in 12 days"), `VersionCell`,
   `LibraryCell` (title link, mono ID, `description` line from `lg`), `Person`, `StateBadge`,
@@ -730,8 +737,11 @@ version station (ring plus a mono ref) and a short SHA in muted mono.
 Motion explains state. It is never decoration. Durations and easing come from the tokens (listed in
 the sidecar's `motion`), never from literals.
 
-- **Press:** buttons scale to 0.97, band icons to 0.94. Nothing scales up on hover, and nothing
-  bounces or overshoots: every curve is `--ease-out`.
+- **Press:** buttons, nav triggers, tabs, chips and segmented controls scale to 0.97, band icons
+  to 0.94, wide rows (nav panel rows, the file tree, accordion triggers) to 0.99, in 120ms
+  (`--dur-fast`). Write it `motion-safe:active:scale-[…]` and list `scale` (not `transform`) in the
+  transition: Tailwind's scale utilities set the `scale` property. Nothing scales up on hover, and
+  nothing bounces or overshoots: every curve is `--ease-out`.
 - **Tooltips:** 125ms in (fade plus a 0.96 scale from the trigger), 120ms out.
 - **Menus and popovers:** 150ms in (`--dur-menu`), 100ms out (`--dur-exit`), scaling from the
   trigger's corner.

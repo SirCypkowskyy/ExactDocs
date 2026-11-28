@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, TriangleAlert } from "lucide-react";
+import { Check, Copy, Plus, TriangleAlert } from "lucide-react";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { common, useLanguage, useMessages } from "@/shared/lib/i18n";
@@ -189,6 +189,7 @@ function Body({
           {c.cancel}
         </Button>
         <Button type="submit" pending={pending}>
+          {!pending && <Plus aria-hidden="true" data-icon-motion="turn" />}
           {t.submit}
         </Button>
       </div>

@@ -23,7 +23,7 @@ export type ImportedWithin = (typeof IMPORTED_WITHIN)[number];
 /** The libraries table (DataTable v2): sortable by the API's fields; the API sorts by ID unless told. */
 export const LIBRARIES_TABLE: TableConfig = {
   id: "libraries",
-  sortFields: ["id", "title", "last_imported_at", "version_count"],
+  sortFields: ["id", "title", "last_imported_at", "version_count", "article_count"],
 };
 
 export interface ListView extends TableSearch {

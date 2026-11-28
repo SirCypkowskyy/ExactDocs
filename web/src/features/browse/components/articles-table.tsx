@@ -73,7 +73,7 @@ const columnsOf = (t: TableMessages, to: Target): ColumnDef<ArticleSummary>[] =>
     accessorKey: "path",
     header: t.path,
     enableHiding: false,
-    meta: { priority: 1, skeleton: "mono" },
+    meta: { priority: 1, skeleton: "mono", rowLink: true },
     cell: ({ row }) => (
       <Link
         to="/libraries/$owner/$repo"

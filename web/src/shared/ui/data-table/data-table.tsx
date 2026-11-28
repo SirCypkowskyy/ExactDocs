@@ -144,6 +144,11 @@ interface RowsProps<T extends RowData> {
   fresh: ReadonlySet<string>;
 }
 
+/** The column whose link opens the row (`meta.rowLink`), if the table has one. */
+function rowLinkColumn<T extends RowData>(model: DataTableModel<T>): string | undefined {
+  return model.table.getVisibleLeafColumns().find((c) => c.columnDef.meta?.rowLink)?.id;
+}
+
 /** The column that names a row: its `priority: 1` column (a phone card's title), else the first. */
 function titleColumn<T extends RowData>(model: DataTableModel<T>): string | undefined {
   const visible = model.table.getVisibleLeafColumns();
@@ -166,6 +171,7 @@ function DesktopRows<T extends RowData>({
   const t = useMessages(messages).dataTable;
   const { table, status, rows } = model;
   const title = titleColumn(model);
+  const link = rowLinkColumn(model);
   return (
     <Table
       aria-label={label}
@@ -218,13 +224,22 @@ function DesktopRows<T extends RowData>({
                 <TableRow
                   tabIndex={-1}
                   data-row-id={row.id}
+                  data-row-link={link ? "" : undefined}
                   aria-rowindex={model.offset + i + 2}
-                  className={cn(fresh.has(row.id) && "row-in", model.busy && "opacity-60")}
+                  className={cn(
+                    link && "relative",
+                    fresh.has(row.id) && "row-in",
+                    model.busy && "opacity-60",
+                  )}
                 >
                   {row.getVisibleCells().map((cell) => {
                     const Cell = cell.column.id === title ? TableRowHeader : TableCell;
                     return (
-                      <Cell key={cell.id} className={cellClass(cell)}>
+                      <Cell
+                        key={cell.id}
+                        className={cellClass(cell)}
+                        data-row-link-cell={cell.column.id === link ? "" : undefined}
+                      >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </Cell>
                     );
@@ -271,6 +286,7 @@ function PhoneRows<T extends RowData>(props: RowsProps<T>) {
 function Cards<T extends RowData>({ model, label, actionsOf, nameOf, fresh }: RowsProps<T>) {
   const visible = model.table.getVisibleLeafColumns();
   const title = titleColumn(model);
+  const link = rowLinkColumn(model);
   const meta = visible
     .filter((c) => c.columnDef.meta?.priority === 2 || c.columnDef.meta?.priority === 3)
     .sort((a, b) => (a.columnDef.meta?.priority ?? 0) - (b.columnDef.meta?.priority ?? 0))
@@ -290,15 +306,21 @@ function Cards<T extends RowData>({ model, label, actionsOf, nameOf, fresh }: Ro
             <li
               tabIndex={-1}
               data-row-id={row.id}
+              data-row-link={link ? "" : undefined}
               className={cn(
                 "flex items-start gap-3 px-4 py-3 outline-none focus-visible:bg-raised",
+                link &&
+                  "relative transition-colors duration-(--dur-fast) first:rounded-t-lg last:rounded-b-lg can-hover:hover:bg-raised",
                 fresh.has(row.id) && "row-in",
                 model.busy && "opacity-60",
               )}
             >
               <div className="min-w-0 flex-1">
                 {head && (
-                  <div className="min-w-0 font-medium">
+                  <div
+                    className="min-w-0 font-medium"
+                    data-row-link-cell={head.column.id === link ? "" : undefined}
+                  >
                     {flexRender(head.column.columnDef.cell, head.getContext())}
                   </div>
                 )}
@@ -308,7 +330,11 @@ function Cards<T extends RowData>({ model, label, actionsOf, nameOf, fresh }: Ro
                       const cell = cells.get(id);
                       if (!cell) return null;
                       return (
-                        <span key={id} className="inline-flex min-w-0 items-center">
+                        <span
+                          key={id}
+                          className="inline-flex min-w-0 items-center"
+                          data-row-link-cell={id === link ? "" : undefined}
+                        >
                           <span className="sr-only">{columnLabel(cell.column)}: </span>
                           {flexRender(cell.column.columnDef.cell, cell.getContext())}
                         </span>

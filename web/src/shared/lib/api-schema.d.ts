@@ -11200,7 +11200,7 @@ export interface operations {
                  *     walk. Not with `cursor`; the page's `next_cursor` goes on from it.
                  */
                 readonly offset?: number | null;
-                /** @description Sort by one of id, title, last_imported_at, version_count; prefix `-` for descending. Default: `id`. An unknown field is a 422. */
+                /** @description Sort by one of id, title, last_imported_at, version_count, article_count; prefix `-` for descending. Default: `id`. An unknown field is a 422. */
                 readonly sort?: string | null;
                 /** @description Only libraries whose ID, title or description contains this text (any case). */
                 readonly q?: string | null;

@@ -19,7 +19,7 @@ interface DefaultPinProps {
 }
 
 const ACTION =
-  "flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1 text-left text-body outline-none transition-colors duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-disabled:cursor-progress aria-disabled:opacity-60 lg:min-h-9 can-hover:hover:bg-accent";
+  "flex min-h-11 w-full cursor-pointer items-center gap-2 rounded-md px-2.5 py-1 text-left text-body outline-none transition-[color,background-color,scale] duration-(--dur-fast) ease-(--ease-out) motion-safe:active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring aria-disabled:cursor-progress aria-disabled:opacity-60 lg:min-h-9 can-hover:hover:bg-accent";
 
 type Texts = (typeof messages)["en"]["versions"];
 

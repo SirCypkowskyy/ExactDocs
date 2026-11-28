@@ -77,7 +77,7 @@ export function TabsTrigger({ className, ...props }: ComponentProps<typeof T.Tri
   return (
     <T.Trigger
       className={cn(
-        "relative inline-flex h-11 cursor-pointer items-center gap-2 rounded-t-md px-3 text-body font-medium text-muted-foreground outline-none transition-colors duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:text-foreground fine:h-10 can-hover:hover:text-foreground [&_svg]:size-4",
+        "relative inline-flex h-11 cursor-pointer items-center gap-2 rounded-t-md px-3 text-body font-medium text-muted-foreground outline-none transition-[color,scale] duration-(--dur-fast) ease-(--ease-out) motion-safe:active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:text-foreground fine:h-10 can-hover:hover:text-foreground [&_svg]:size-4",
         className,
       )}
       {...props}
