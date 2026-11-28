@@ -38,8 +38,9 @@ dev = [
     "exactdocs[libsql-database]",
     "httpx>=0.28",
     # The retrieval eval suite (packages/exactdocs/evals, docs/decisions/ai-retrieval/cost.md):
-    # exact pin, it moves with pydantic-ai-slim in the `ai` extra.
-    "pydantic-evals==2.73.0",
+    # it pins pydantic-ai-slim exactly, so it follows the harness in the `ai` extra (a floor here,
+    # and Dependabot leaves it alone, .github/dependabot.yml).
+    "pydantic-evals>=2.73.0",
     "pytest>=9",
     "pytest-asyncio>=1.2",
     "pytest-cov>=7",

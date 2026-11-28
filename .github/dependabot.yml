@@ -5,8 +5,8 @@ updates:
     schedule: { interval: weekly }
     cooldown: { default-days: 4 }
     target-branch: develop
-    # pydantic-ai-harness and pydantic-evals pin pydantic-ai-slim exactly, so the stack moves in
-    # one PR or not at all. A dependency joins the first group it matches, so this one stays first.
+    # The pydantic-ai stack comes in one PR. A dependency joins the first group it matches, so this
+    # one stays first.
     groups:
       pydantic-ai:
         patterns: [pydantic-ai-slim, pydantic-ai-harness, pydantic-evals, pydantic-monty]
@@ -17,6 +17,15 @@ updates:
     # version updates only; security updates still come.
     ignore:
       - { dependency-name: elasticsearch, update-types: ["version-update:semver-major"] }
+      # duckdb-extension-fts requires one exact DuckDB release, and pydantic-ai-harness one exact
+      # pydantic-ai-slim release, which pydantic-evals pins exactly too. A bump of duckdb, slim or
+      # evals on its own can't resolve, grouped or not (the run fails with
+      # dependency_file_not_resolvable), so only the extension and the harness are watched. The
+      # pyprojects give the others a floor, and uv.lock moves them when the extension or harness
+      # moves. Drop an entry once nothing pins that package exactly.
+      - { dependency-name: duckdb }
+      - { dependency-name: pydantic-ai-slim }
+      - { dependency-name: pydantic-evals }
   - package-ecosystem: npm
     directory: /web
     schedule: { interval: weekly }
