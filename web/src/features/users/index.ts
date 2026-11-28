@@ -2,5 +2,6 @@
 export { AllTokensPage } from "./components/all-tokens-page";
 export { RoleRulesPage } from "./components/role-rules-page";
 export { UsersPage } from "./components/users-page";
+export { roleRulesHelp, usersHelp } from "./help";
 export { parseAllTokensView } from "./model/all-tokens-view";
 export { parseUsersView } from "./model/list-view";

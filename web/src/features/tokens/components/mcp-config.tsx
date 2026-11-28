@@ -45,7 +45,7 @@ export function McpConfig({ className }: { className?: string }) {
   }
 
   return (
-    <div className={className}>
+    <div data-tour="mcp-config" className={className}>
       <div className="flex items-center justify-between gap-3">
         <h3 className="flex items-center gap-2 text-body font-medium">
           <Plug aria-hidden="true" className="size-4 text-muted-foreground" />
