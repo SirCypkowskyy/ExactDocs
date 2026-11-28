@@ -137,3 +137,22 @@ async def test_an_account_with_no_grant_reads_over_mcp_and_rest_and_changes_noth
     assert (rename.status_code, rename.json()["error"]) == (403, "forbidden")
     assert (sync.status_code, sync.json()["error"]) == (403, "forbidden")
     assert private.status_code in {403, 404}
+
+
+async def test_a_rule_for_every_account_cannot_be_added_over_rest(
+    instance: tuple[Container, FastAPI, str],
+) -> None:
+    _container, app, _token = instance
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://localhost"
+    ) as client:
+        signed_in = await client.post(
+            "/api/v1/session", json={"username": "ada", "password": PHRASE}
+        )
+        assert signed_in.status_code == 201, signed_in.text
+        added = await client.post(
+            "/api/v1/role-rules",
+            json={"provider": "corp", "source": "everyone", "value": "x", "grant": "viewer"},
+        )
+
+    assert added.status_code == 422, added.text

@@ -61,10 +61,13 @@ export function RoleRulesPage() {
     .filter((p) => p.configured_rules_only)
     .map((p) => p.display_name)
     .join(", ");
-  const providerName = (name: string | null) =>
-    name === null
-      ? t.list.anyProvider
-      : (list.data?.providers.find((p) => p.name === name)?.display_name ?? name);
+  const providerName = (rule: RoleRule) =>
+    rule.source === "everyone"
+      ? t.list.everyAccount
+      : rule.provider === null
+        ? t.list.anyProvider
+        : (list.data?.providers.find((p) => p.name === rule.provider)?.display_name ??
+          rule.provider);
 
   return (
     <Page>
@@ -138,7 +141,7 @@ export function RoleRulesPage() {
                   {ruleSource(rule, language)}
                 </TableRowHeader>
                 <TableCell>{ruleGrant(rule, language)}</TableCell>
-                <TableCell className="max-md:hidden">{providerName(rule.provider)}</TableCell>
+                <TableCell className="max-md:hidden">{providerName(rule)}</TableCell>
                 <TableCell className="max-md:hidden">
                   {rule.configured ? (
                     <Badge title={t.list.configuredHint}>{t.list.configured}</Badge>

@@ -63,6 +63,7 @@ from exactdocs.identity.models import (
     default_library_role_rule,
 )
 from exactdocs.identity.module import IdentityModule
+from exactdocs.identity.use_cases import RoleRules
 
 ISSUER = "https://idp.example.com"
 DOCS, OTHER, SECRET = "/acme/docs", "/acme/other", "/acme/secret"
@@ -873,3 +874,55 @@ async def test_the_default_role_shows_read_only_on_the_users_list_and_a_librarys
     assert secret.rules == []
     with pytest.raises(ConfiguredRuleError):
         await world.identity.remove_role_rule(RemoveRoleRuleCommand(caller_id=ada, rule_id=default))
+
+
+async def test_an_oauth_caller_gets_the_default_role() -> None:
+    world = build(default_role=LibraryRole.VIEWER)
+    world.provider.add("u1")
+
+    caller = await world.identity.identify_external_token("corp", "u1")
+    found = await world.identity.resolve_library_roles(
+        LibraryRolesQuery(account_id=caller.account.id, libraries=[DOCS], external_identity=caller)
+    )
+
+    assert found.roles == {DOCS: "viewer"}
+
+
+class NoStoredRules:
+    """Stored rules that must not be read."""
+
+    async def stored(self) -> list[RoleRule]:
+        message = "a local account's rules need no stored rule"
+        raise AssertionError(message)
+
+    async def add(self, rule: RoleRule) -> bool:
+        del rule
+        return False
+
+    async def remove(self, rule_id: str) -> RoleRule | None:
+        del rule_id
+
+
+async def test_a_local_account_is_matched_without_reading_the_stored_rules() -> None:
+    default = default_library_role_rule(LibraryRole.VIEWER)
+    rules = RoleRules(policies={}, stored=NoStoredRules(), default_role=default)
+
+    assert await rules.matching(Memberships(provider=None)) == [default]
+
+
+async def test_without_the_private_libraries_port_the_default_role_reaches_nothing() -> None:
+    rules = RoleRules(policies={}, default_role=default_library_role_rule(LibraryRole.VIEWER))
+
+    assert await rules.library_roles(Memberships(provider=None), {DOCS}) == {}
+    assert await rules.reaching(DOCS) == []
+
+
+async def test_a_disabled_account_shows_no_rule_on_the_users_list() -> None:
+    world = build(default_role=LibraryRole.VIEWER)
+    await operator(world)
+    bob = await local_user(world)
+    await world.identity.set_user_disabled(SetUserDisabledCommand(id=bob, disabled=True))
+
+    users = {u.id: u for u in (await world.identity.list_users(UserListQuery())).users}
+
+    assert users[bob].rules == []

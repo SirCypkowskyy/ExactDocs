@@ -1077,7 +1077,8 @@ class ListUsersUseCase:
                     provider=provider,
                     groups=groups,
                     token_count=counts.get(account.id, 0),
-                    rules=matched.get(account.id, local),
+                    # A disabled account holds nothing, so no rule gives it a role.
+                    rules=[] if account.is_disabled else matched.get(account.id, local),
                 )
             )
         users = [
@@ -2435,8 +2436,9 @@ class RoleRules:
         Returns:
             The rules.
         """
-        if memberships.provider is None and not memberships.groups and self.default_role is None:
-            return []
+        if memberships.provider is None and not memberships.groups:
+            # A local account matches only the default role: no need to read the stored rules.
+            return [] if self.default_role is None else [self.default_role]
         return [r for r in await self.in_force() if r.matches(memberships, self.policies)]
 
     async def instance_role(self, memberships: Memberships) -> Role:
