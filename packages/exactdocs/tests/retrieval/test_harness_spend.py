@@ -1,7 +1,7 @@
 """LLM agents are limited by the harness ``SpendLimits`` over the ledger (RET-07).
 
 The ledger owns its key format; ``ledger_key`` parses the harness's. These tests pin the key
-format of pydantic-ai-harness 0.60.0: a bump that changes it fails here instead of splitting the
+format of pydantic-ai-harness 0.73.0: a bump that changes it fails here instead of splitting the
 spend over two sets of rows. Agents run on pydantic-ai's ``TestModel``: no provider is called.
 """
 
@@ -14,8 +14,8 @@ import pytest
 from pydantic_ai import Agent
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.spend import BatchSpendStore, SpendLimitExceeded, SpendLimits, Spent
-from pydantic_ai_harness.spend import SpendEntry as HarnessEntry
+from pydantic_ai_harness.spend_limits import BatchSpendStore, SpendLimitExceeded, SpendLimits, Spent
+from pydantic_ai_harness.spend_limits import SpendEntry as HarnessEntry
 
 from exactdocs.retrieval.adapters.driven.harness_spend import (
     LedgerSpendStore,
@@ -123,7 +123,7 @@ async def test_an_agent_step_counts_to_the_callers_rows_in_the_pinned_key_format
 
     await agent.run("Which version?", usage_limits=limits.usage)
 
-    # Pinned: pydantic-ai-harness 0.60.0 keys are <name>|<window>|<scope>|<bucket>.
+    # Pinned: pydantic-ai-harness 0.73.0 keys are <name>|<window>|<scope>|<bucket>.
     assert set(store.keys) == {
         "instance|day|*|2026-11-07",
         "instance|month|*|2026-11",

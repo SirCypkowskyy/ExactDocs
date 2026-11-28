@@ -9,7 +9,7 @@ pydantic-ai's ``UsageLimits``. The model comes instrumented from the factory, wi
 from pydantic_ai import Agent
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai_harness.spend import SpendLimitExceeded
+from pydantic_ai_harness.spend_limits import SpendLimitExceeded
 
 from exactdocs.retrieval.adapters.driven.harness_spend import agent_limits
 from exactdocs.retrieval.constants import HYDE_INSTRUCTIONS, HYDE_MAX_TOKENS

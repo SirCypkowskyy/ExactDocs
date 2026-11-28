@@ -458,6 +458,14 @@ async def test_the_browser_reads_only_the_pinned_manifest() -> None:
 # ---------------------------------------------------------------- Code Mode
 
 
+def _catalog(info: AgentInfo) -> str:
+    """The read functions' signatures, which Code Mode states in the instructions (harness 0.63.0
+    on, ``dynamic_catalog``), not in the ``run_code`` description."""
+    instructions = info.instructions or ""
+    start = instructions.index('<pyai:context id="toolset:code_mode:catalog">')
+    return instructions[start : instructions.index("</pyai:context>", start)]
+
+
 async def test_the_read_tools_exist_only_inside_run_code_with_typed_returns() -> None:
     seen: list[AgentInfo] = []
 
@@ -473,7 +481,7 @@ async def test_the_read_tools_exist_only_inside_run_code_with_typed_returns() ->
 
     (tool,) = seen[0].function_tools
     assert tool.name == "run_code"
-    described = tool.description or ""
+    described = _catalog(seen[0])
     for name in EXPLORER_TOOLS:
         assert f"async def {name}(" in described, name
     for typed in ["-> list[ArticleItem]", "-> ArticleOutlineResult", "-> ArticleRead",
@@ -969,9 +977,7 @@ async def test_the_caller_s_scope_is_the_agent_s_deps_never_a_tool_argument() ->
     assert set(parameters) <= {"code", "restart"}  # Code Mode's own
     assert not [p for p in parameters for w in SCOPE_WORDS if w in p.split("_")]
     signatures = [
-        line
-        for line in (tool.description or "").splitlines()
-        if line.lstrip().startswith("async def")
+        line for line in _catalog(seen[0]).splitlines() if line.lstrip().startswith("async def")
     ]
     assert len(signatures) == len(EXPLORER_TOOLS)
     for line in signatures:

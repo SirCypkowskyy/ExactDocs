@@ -128,7 +128,7 @@ The same in the environment: `EXACTDOCS_AI__PROVIDERS__CORP__KIND=openai-compati
 - A test asserts that tiktoken is never used: a chat role does not import it, and no encoding is
   ever loaded.[^tiktoken-import]
 
-[^tiktoken-import]: ../pydantic-ai 2.60.0's `pydantic_ai.embeddings.openai` imports tiktoken when it
+[^tiktoken-import]: ../pydantic-ai 2.73.0's `pydantic_ai.embeddings.openai` imports tiktoken when it
     loads, so an OpenAI-API embedding role imports the module, but never calls it. Found in #241.
 
 **What stays on the instance.**

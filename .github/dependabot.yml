@@ -5,7 +5,11 @@ updates:
     schedule: { interval: weekly }
     cooldown: { default-days: 4 }
     target-branch: develop
+    # pydantic-ai-harness and pydantic-evals pin pydantic-ai-slim exactly, so the stack moves in
+    # one PR or not at all. A dependency joins the first group it matches, so this one stays first.
     groups:
+      pydantic-ai:
+        patterns: [pydantic-ai-slim, pydantic-ai-harness, pydantic-evals, pydantic-monty]
       python: { patterns: ["*"] }
     # The 9.x elasticsearch client refuses Elasticsearch 8 servers, which we support, so the extra
     # stays on 8.x (see the comment on it in packages/exactdocs/pyproject.toml). Moving to 9.x

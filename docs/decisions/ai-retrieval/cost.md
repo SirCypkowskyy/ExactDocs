@@ -51,7 +51,7 @@
       SQLite and PostgreSQL, across processes
     - **LLM agents** (HyDE, judge, agentic) are limited by the harness `SpendLimits` capability.
       Our store implements the harness **`BatchSpendStore`** protocol (`get_many` / `add_many`
-      over `SpendEntry`) structurally. Its older `SpendStore` protocol is deprecated in 0.60.0:
+      over `SpendEntry`) structurally. Its older `SpendStore` protocol is deprecated since 0.60.0:
       `SpendLimits` wraps it, warns, and loses the token-based deduplication of replays.
     - **Embedding and rerank calls** (`Embedder`, the HTTP rerankers, fastembed) never run
       through an agent, so `SpendLimits` cannot see them. Retrieval records and checks them
@@ -59,9 +59,9 @@
       call (rerank); fastembed's calls are recorded but never checked (local models, above).
     - **We own the key format.** A ledger row is keyed by (scope kind, scope id, window, window
       start), in our own format. The harness builds its `SpendEntry.key` with private helpers
-      (`store_key`, `bucket` in `pydantic_ai_harness/spend/_budget.py`, not exported), so our
+      (`store_key`, `bucket` in `pydantic_ai_harness/spend_limits/_budget.py`, not exported), so our
       `BatchSpendStore` adapter parses each key the harness hands it into our row key, and never
-      imports the private module. A contract test pins the harness 0.60.0 key format: a harness
+      imports the private module. A contract test pins the harness 0.73.0 key format: a harness
       bump that changes it fails the test instead of splitting the spend over two sets of rows.
     - A check runs before each call or batch, so a burst can overshoot by at most the calls
       already in flight.
@@ -119,7 +119,7 @@
 
 ## Evaluation
 
-- **Pydantic Evals 2.60.0** (dev dependency group, not an extra), datasets in the repository: the
+- **Pydantic Evals 2.73.0** (dev dependency group, not an extra), datasets in the repository: the
   fixture library's expected queries plus natural-language questions, each with the expected
   version, article path and heading (#90).
 - **Metrics per mode:** recall@1/5/10, MRR, **wrong-version rate**, p50 and p95 latency, tokens and

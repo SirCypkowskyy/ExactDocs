@@ -7,8 +7,8 @@ gets the files of the manifest it searches (``GuidanceFiles``, already bounded a
 no checkout, no host path, no command. Harness ``RepoContext`` reads them from it:
 
 - **nested traversal** (always): when the agent opens a folder (lists it, or reads an article or
-  a chunk in it), that folder's file is enqueued as a **user-channel** note, inside a
-  ``<context-file>`` block, never as system instructions;
+  a chunk in it), that folder's file, and each one above it not yet seen, is enqueued as a
+  **user-channel** note, inside a ``<context_file>`` block, never as system instructions;
 - **walk-up autoload** (only for a trusted library): the root's file becomes part of the system
   instructions too.
 
@@ -43,7 +43,7 @@ from pydantic_ai.workspaces import (
     WorkspaceReadOnlyError,
     WorkspaceRef,
 )
-from pydantic_ai_harness.filesystem import DirectoryListedEvent, FileReadEvent
+from pydantic_ai_harness.file_system import DirectoryListedEvent, FileReadEvent
 from pydantic_ai_harness.repo_context import RepoContext
 
 from exactdocs.retrieval.constants import (

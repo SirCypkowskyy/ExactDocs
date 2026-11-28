@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai_harness.spend import SpendLimitExceeded
+from pydantic_ai_harness.spend_limits import SpendLimitExceeded
 
 from exactdocs.retrieval.adapters.driven.harness_spend import agent_limits
 from exactdocs.retrieval.constants import JUDGE_INSTRUCTIONS, JUDGE_MAX_SCORE

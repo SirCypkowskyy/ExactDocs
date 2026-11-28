@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     SystemPromptPart,
+    TextContent,
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
@@ -329,8 +330,14 @@ def _texts(
     found: list[str] = []
     for message in messages:
         if isinstance(message, ModelRequest):
-            parts = [p for p in message.parts if isinstance(p, kind)]
-            found.extend(p.content for p in parts if isinstance(p.content, str))
+            for part in message.parts:
+                if not isinstance(part, kind):
+                    continue
+                if isinstance(part.content, str):
+                    found.append(part.content)
+                else:  # a framed capability part (a repo note) arrives as text items
+                    texts = [i.content for i in part.content if isinstance(i, TextContent)]
+                    found.append("".join(texts))
     return found
 
 

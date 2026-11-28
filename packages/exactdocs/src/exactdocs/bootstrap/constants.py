@@ -815,7 +815,7 @@ DEFAULT_BASE_URLS: Final[dict[str, str]] = {
     "sambanova": "https://api.sambanova.ai/v1",
     "alibaba": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
 }
-"""The endpoint of each hosted kind, passed explicitly (pydantic-ai's own defaults, 2.60.0) so no
+"""The endpoint of each hosted kind, passed explicitly (pydantic-ai's own defaults, 2.73.0) so no
 SDK ever falls back to a ``*_BASE_URL`` environment variable.
 """
 AZURE_OPENAI_HOST: Final[re.Pattern[str]] = re.compile(r"[a-z0-9-]+\.openai\.azure\.com")

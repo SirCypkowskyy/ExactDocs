@@ -107,14 +107,15 @@ A profile has a `kind`:
     - \#241's socket-guard test runs with those variables set and proves none of them is used.
 - **Custom endpoints** use `OpenAIProvider(base_url=…, api_key=…)` with `OpenAIChatModel` (Chat
   Completions, the most widely implemented API). pydantic-ai's `OpenAICompatibleProvider`,
-  named in the first plan, is an internal base class in 2.60.0, not an entry point.
+  named in the first plan, was an internal base class in 2.60.0, not an entry point (2.73.0
+  makes it a public provider; the custom kind stays on `OpenAIProvider`).
 - **Platforms whose SDK is not included** (Bedrock, for Claude too, pulls boto3; the others their
   own clients). The images do not include them. They are reached in one of three ways:
     - through their OpenAI-compatible endpoint, as `openai-compatible`
     - through a LiteLLM gateway
     - with `uvx`, by adding the SDK: `uvx --from 'exactdocs[ai]' --with
-      'pydantic-ai-slim[bedrock]==2.60.0' exactdocs serve`
-- **One HTTP client per profile** on `httpx2` (what pydantic-ai 2.60.0 uses), with:
+      'pydantic-ai-slim[bedrock]==2.73.0' exactdocs serve`
+- **One HTTP client per profile** on `httpx2` (what pydantic-ai 2.73.0 uses), with:
     - the proxy on the transport (a retrying transport stops httpx reading `HTTPS_PROXY`)
     - extra headers (values masked in logs)
     - exactly one retry layer
@@ -133,7 +134,7 @@ A profile has a `kind`:
 
 ### Embeddings: a small port with two kinds of adapter
 
-pydantic-ai 2.60.0 has `Embedder` with OpenAI (and every OpenAI-compatible provider), Cohere,
+pydantic-ai 2.73.0 has `Embedder` with OpenAI (and every OpenAI-compatible provider), Cohere,
 Bedrock, Google/Vertex, Voyage and sentence-transformers models. Two limits apply:
 
 - On Python 3.14 the Voyage and sentence-transformers extras are not installable (their
