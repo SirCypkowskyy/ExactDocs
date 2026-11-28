@@ -6,14 +6,14 @@
 
 # Self-hosted runners (GCP)
 
-CI runs on five GCP VMs (docs/decisions/ci-runners.md). Which job runs on them is set by the
+CI runs on one GCP VM (docs/decisions/ci-runners.md). Which job runs on them is set by the
 repository variable `RUNNER_MODE` (docs/releasing/runners.md, *CI/CD and runners*); it is
 `self-hosted`, so every job of a trusted run does, and a fork's pull request runs on
 GitHub-hosted `ubuntu-24.04`.
 
 | | |
 |---|---|
-| VMs | `exactdocs-gcp-runner-1` to `exactdocs-gcp-runner-5`, `t2a-standard-2` (2 vCPU, 8 GiB, ARM64), 50 GiB `pd-balanced` disk, Ubuntu 24.04 |
+| VMs | `exactdocs-gcp-runner-1` to `exactdocs-gcp-runner-8`, `t2a-standard-2` (2 vCPU, 8 GiB, ARM64), 50 GiB `pd-balanced` disk, Ubuntu 24.04 |
 | Labels | `self-hosted`, `Linux`, `ARM64`, `exactdocs`, `gcp`; workflows use `runs-on: [self-hosted, linux, ARM64, exactdocs, gcp]` |
 | Scope | this repository only |
 | GCP identity | none: the VMs have no service account |

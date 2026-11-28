@@ -45,6 +45,8 @@ GRID_RESULTS: Final[str] = "retrieval-grid-rank1.json"
 """The recorded run of the grid's rank-1 cells (#575), in ``RESULTS``."""
 GRID_GROUPED: Final[str] = "retrieval-grid-grouped.json"
 """The recorded run of the grid's app cells grouped by article and not (#575), in ``RESULTS``."""
+GRID_VARIANTS: Final[str] = "retrieval-grid-variants.json"
+"""The recorded run of the grid's windows, baselines, h6 hybrid cells and bge-base (#494)."""
 BLOCK: Final[re.Pattern[str]] = re.compile(
     r"(<!-- bench:(?P<name>[a-z-]+) -->\n)(?:(?!<!-- bench:).)*?(^<!-- /bench -->)",
     re.DOTALL | re.MULTILINE,
@@ -310,7 +312,11 @@ def blocks(results: Path = RESULTS, rows: list[bench_history.Row] | None = None)
             (results / "coding-tasks.json").read_text("utf-8")
         )
         competitors = page_blocks(grounded) | comparison_blocks(agent, grounded, harness, coding)
-    grids = {"retrieval-grid": GRID_RESULTS, "retrieval-grouping": GRID_GROUPED}
+    grids = {
+        "retrieval-grid": GRID_RESULTS,
+        "retrieval-grouping": GRID_GROUPED,
+        "retrieval-grid-variants": GRID_VARIANTS,
+    }
     rank_one = {
         name: grid_block(GridReport.model_validate_json((results / file).read_text("utf-8")))
         for name, file in grids.items()

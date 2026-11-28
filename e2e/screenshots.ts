@@ -271,6 +271,16 @@ const USERS_SHOTS: Shot[] = [
       await expect(page.getByRole("table", { name: "Role rules" })).toBeVisible();
     },
   },
+  {
+    name: "new-user",
+    height: 777,
+    open: async (page) => {
+      await page.goto("/users");
+      await expect(page.getByText("group platform → instance admin").first()).toBeVisible();
+      await page.getByRole("button", { name: "New user" }).click();
+      await expect(page.getByRole("dialog", { name: "New user" })).toBeVisible();
+    },
+  },
 ];
 
 /** A signed-in page in each theme; `deviceScaleFactor` overrides the configuration's. */

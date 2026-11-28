@@ -25,3 +25,4 @@ backend lost data, run `exactdocs index rebuild` ([Deployment](../../deployment/
 | [Pinecone](pinecone.md) | | yes |
 | [Qdrant](qdrant.md) | | yes |
 | [Redis](redis.md) | yes | yes |
+| [Weaviate](weaviate.md) | yes | yes |

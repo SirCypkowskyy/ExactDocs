@@ -35,9 +35,10 @@ function slug(text: string, used: Set<string>): string {
 }
 
 // A heading's trailing attribute list, `{ #id }` / `{#id}` / `{: #id .class key=value }`: the
-// same patterns as `_ATTRIBUTE_LIST` and `_ATTRIBUTE_ID` in the chunker's constants.
+// same patterns as `_ATTRIBUTE_LIST` and `_ATTRIBUTE_ID` in the chunker's constants. Each item
+// ends at a blank or the `}`, so the items split one way only (no exponential backtracking).
 const ATTRIBUTE_LIST =
-  /\s*\{:?[ \t]*(?:(?:#[\p{L}\p{N}_.:-]+|\.[\p{L}\p{N}_:-]+|[\p{L}\p{N}_-]+=(?:"[^"]*"|'[^']*'|[^\s{}"']+))[ \t]*)+\}\s*$/u;
+  /\s*\{:?[ \t]*(?:(?:#[\p{L}\p{N}_.:-]+|\.[\p{L}\p{N}_:-]+|[\p{L}\p{N}_-]+=(?:"[^"]*"|'[^']*'|[^\s{}"']+))(?=[ \t}])[ \t]*)+\}\s*$/u;
 const ATTRIBUTE_ID = /(?<![^\s{:])#([\p{L}\p{N}_.:-]+)/gu;
 
 // The list is markup: it leaves the heading's last text (not a code span) and its id goes in `meta`.

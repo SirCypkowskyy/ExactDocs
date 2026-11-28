@@ -27,6 +27,7 @@ the default each budget gets is on [Recommended defaults](../defaults.md).
 | [Rank 1 at no more context](rank-one.md) | the grid's variants for rank 1 (#575): what they found |
 | [Rank 1: every table](rank-one-tables.md) | the grid's tables behind it |
 | [Grouped by article](grouping.md) | the grid run of the grouping as shipped, and what it changed |
+| [Windows and baselines](grid-variants.md) | the grid's keyword grep baseline, fixed token windows and `h6` hybrid cells (#494) |
 | [Every run](history.md) | every recorded run of the benchmark and the grid, sortable and filterable |
 
 ## The recorded run

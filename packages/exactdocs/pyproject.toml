@@ -85,7 +85,7 @@ chroma-local = ["chromadb==1.5.9"]
 # EXACTDOCS_VECTOR_BACKEND=redis): imported only by `retrieval/adapters/driven/redis_index.py`,
 # and only once an operator names the backend. Not in the image. Exact pin, tested against the
 # official `redis` 8 server image (CI service).
-redis = ["redis==8.1.0"]
+redis = ["redis==8.2.0"]
 # Milvus as the vector backend (#360, EXACTDOCS_VECTOR_BACKEND=milvus): imported only by
 # `retrieval/adapters/driven/milvus_index.py`, and only once an operator names the backend. Not in
 # any image. `milvus` is the client alone (a Milvus server or Zilliz Cloud); `milvus-lite` adds
@@ -124,6 +124,12 @@ pinecone = ["pinecone==10.3.0"]
 # an azure-core dependency), so no aiohttp; Entra ID through the sync `azure-identity`
 # credentials (the same pin as the `ai` extra). Exact pins: 12.0.0 speaks the 2026-04-01 API.
 azure-search = ["azure-search-documents==12.0.0", "azure-identity==1.27.0"]
+# Weaviate as the search and vector backend (#359, EXACTDOCS_SEARCH_BACKEND / VECTOR_BACKEND =
+# weaviate): imported only by `retrieval/adapters/driven/weaviate_index.py`, and only once an
+# operator names the backend. Not in the image. Exact pin: 4.25.0 is the first release that allows
+# protobuf 7 (4.24.x wanted `protobuf<7`), tested against the
+# `cr.weaviate.io/semitechnologies/weaviate` server in CI.
+weaviate = ["weaviate-client==4.25.0"]
 
 [project.scripts]
 exactdocs = "exactdocs.bootstrap.cli:main"

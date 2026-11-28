@@ -16,6 +16,13 @@ GCP = ["self-hosted", "linux", "ARM64", "exactdocs", "gcp"]
 GCP_IN_EXPRESSION = "fromJSON('" + str(GCP).replace("'", '"').replace(" ", "") + "')"
 NOT_A_FORK = "!github.event.pull_request.head.repo.fork"
 HOSTED = "'ubuntu-24.04'"
+HOSTED_GATES = {"ci.yml:python"}
+"""Gate jobs that only read their ``needs`` and run no repository code: always GitHub-hosted, so
+they never wait in the self-hosted queue after the jobs they gate have passed."""
+
+
+def test_the_gate_jobs_exist() -> None:
+    assert {job.id for job in JOBS} >= HOSTED_GATES
 
 
 def _jobs() -> list[Any]:
@@ -46,9 +53,12 @@ def test_every_self_hosted_job_asks_for_the_gcp_runners(runs_on: str | list[str]
 
 @pytest.mark.parametrize(("runs_on", "on"), JOBS)
 def test_a_pull_request_from_a_fork_gets_a_hosted_runner(
-    runs_on: str | list[str], on: dict[str, Any]
+    runs_on: str | list[str], on: dict[str, Any], request: pytest.FixtureRequest
 ) -> None:
     assert "pull_request_target" not in on
+    if request.node.callspec.id in HOSTED_GATES:
+        assert runs_on == "ubuntu-24.04"
+        return
     if "pull_request" not in on:
         return
     assert isinstance(runs_on, str), runs_on

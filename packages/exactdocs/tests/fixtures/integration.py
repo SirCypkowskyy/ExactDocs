@@ -69,6 +69,7 @@ MONGODB = needs("EXACTDOCS_TEST_MONGODB_URL")
 LIBSQL = needs("EXACTDOCS_TEST_LIBSQL_URL")
 """A libSQL server for the libSQL index backend (#358)."""
 PINECONE = needs("EXACTDOCS_TEST_PINECONE_URL")
+WEAVIATE = needs("EXACTDOCS_TEST_WEAVIATE_URL")
 AZURE_SEARCH = needs("EXACTDOCS_TEST_AZURE_SEARCH_URL")
 """A real Azure AI Search service (the manual ``azure-search.yml`` workflow)."""
 PROXY_IMAGE = "EXACTDOCS_TEST_PROXY_IMAGE"

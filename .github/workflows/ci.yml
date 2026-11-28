@@ -16,7 +16,7 @@ name: CI
 #   hybrid (default, also when unset): every job on GitHub-hosted ubuntu-24.04 (amd64).
 #   self-hosted (the current setting: docs/decisions/ci-runners.md): every job on our GCP
 #     self-hosted ARM64 runners [self-hosted, linux, ARM64, exactdocs, gcp], with fewer shards
-#     (pytest three instead of six, behave two instead of three): there are five 2-vCPU runners.
+#     (pytest three instead of six, behave two instead of three): shards queue on the self-hosted runners (one 2-vCPU VM since 28 November 2026).
 #   A pull request from a fork always runs on GitHub-hosted runners, whatever RUNNER_MODE says: a
 #   fork's code never reaches the self-hosted machines through these jobs. (A fork can still edit
 #   runs-on in its own copy, so approval for outside contributors stays on in the settings.)
@@ -96,6 +96,7 @@ jobs:
       EXACTDOCS_TEST_MILVUS_URL: http://127.0.0.1:9
       EXACTDOCS_TEST_MONGODB_URL: mongodb://127.0.0.1:9/?directConnection=true
       EXACTDOCS_TEST_PINECONE_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_WEAVIATE_URL: http://127.0.0.1:9
       EXACTDOCS_TEST_AZURE_SEARCH_URL: http://127.0.0.1:9
       EXACTDOCS_TEST_MODELS_DIR: /nonexistent/models
     steps:
@@ -148,6 +149,7 @@ jobs:
       EXACTDOCS_TEST_MILVUS_URL: http://127.0.0.1:9
       EXACTDOCS_TEST_MONGODB_URL: mongodb://127.0.0.1:9/?directConnection=true
       EXACTDOCS_TEST_PINECONE_URL: http://127.0.0.1:9
+      EXACTDOCS_TEST_WEAVIATE_URL: http://127.0.0.1:9
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
@@ -202,12 +204,14 @@ jobs:
           retention-days: 14
 
   # The required check (branch protection): waits for the Python jobs, fails unless every one
-  # passed, and combines the shards' coverage into one report.
+  # passed, and combines the shards' coverage into one report. Always GitHub-hosted (free for a
+  # public repository): it runs no repository code, and on a self-hosted runner it waited in the
+  # queue after every shard had passed, holding up the merge.
   python:
     name: Python (ruff, ty, pytest, behave)
     needs: [lint, pytest, behave, coding-tasks]
     if: ${{ !cancelled() }}
-    runs-on: ${{ (vars.RUNNER_MODE == 'self-hosted' && !github.event.pull_request.head.repo.fork) && fromJSON('["self-hosted","linux","ARM64","exactdocs","gcp"]') || 'ubuntu-24.04' }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       # The sources the coverage report names.

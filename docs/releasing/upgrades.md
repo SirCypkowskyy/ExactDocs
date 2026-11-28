@@ -52,9 +52,10 @@ started by hand (see [Fast and integration tests](tests.md#when-ci-runs-them)).
 Run it locally with `python3 deploy/upgrade_check.py` (`--previous X.Y.Z` to pick the release).
 
 !!! info "Yanked releases"
-    A yanked release still counts and still installs (0.1.0 to 0.2.0 are yanked, #533). The check
-    pins both `exactdocs==X.Y.Z` and `exactdocs-kernel==X.Y.Z` itself, because uv takes a yanked
-    version only for an exact pin the user gives, not for one in another package's metadata.
+    A yanked release still counts and still installs (0.1.0 to 0.2.0 should be yanked, #533).
+    The check pins both `exactdocs==X.Y.Z` and `exactdocs-kernel==X.Y.Z` itself, because uv takes
+    a yanked version only for an exact pin the user gives, not for one in another package's
+    metadata.
 
 ### The in-process half
 

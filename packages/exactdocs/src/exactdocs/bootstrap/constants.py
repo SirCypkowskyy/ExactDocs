@@ -633,6 +633,15 @@ INDEX_BACKENDS: Final[Mapping[str, IndexBackendKind]] = MappingProxyType(
             packages=("redis",),
             outbound=True,
         ),
+        "weaviate": IndexBackendKind(
+            name="weaviate",
+            module="exactdocs.retrieval.adapters.driven.weaviate_index",
+            search="search_backend",
+            vectors="vector_backend",
+            extra="weaviate",
+            packages=("weaviate",),
+            outbound=True,
+        ),
     }
 )
 """The external index backends, by name. Adding one is one adapter module in

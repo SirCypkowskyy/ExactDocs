@@ -314,6 +314,20 @@ def _redis_cases() -> list[BackendCase]:
     ]
 
 
+def _weaviate_cases() -> list[BackendCase]:
+    """Weaviate (#359), search and vectors (native hybrid), on ``EXACTDOCS_TEST_WEAVIATE_URL``."""
+    _required("WEAVIATE")  # CI: never skipped there
+    return [
+        BackendCase(
+            name="weaviate",
+            search=_lazy("weaviate_server", "weaviate_search"),
+            vectors=_lazy("weaviate_server", "weaviate_vectors"),
+            stale_statistics=True,
+            marks=integration.WEAVIATE,
+        ),
+    ]
+
+
 def _milvus_cases() -> list[BackendCase]:
     """Milvus (#360): Milvus Lite always, a server on ``EXACTDOCS_TEST_MILVUS_URL``."""
     import milvus_server  # ruff: ignore[import-outside-top-level] -- the extra, only here
@@ -518,6 +532,7 @@ EXTERNAL_BACKENDS: list[BackendCase] = [
     ),
     *_chroma_cases(),
     *_redis_cases(),
+    *_weaviate_cases(),
     *_milvus_cases(),
     *_mongodb_cases(),
     *_libsql_cases(),

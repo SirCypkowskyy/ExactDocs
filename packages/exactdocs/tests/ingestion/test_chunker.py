@@ -360,6 +360,15 @@ def test_an_attribute_list_leaves_the_heading_path_and_names_the_anchor() -> Non
     ]
 
 
+@pytest.mark.parametrize(
+    "tail", ["{{-=" + "!-=" * 5000, "{{." + "---=!." * 5000, "{{#" + "-.-#" * 5000]
+)
+def test_a_near_attribute_list_fails_fast(chunker: Chunker, tail: str) -> None:
+    """CodeQL's worst cases for the old pattern (exponential); they stay heading text."""
+    (chunk,) = chunker.chunk(parse_article("a.md", f"## T {tail}\n"))
+    assert chunk.heading_path == (f"T {tail}",)
+
+
 def test_braces_inside_a_code_span_stay_in_the_heading(chunker: Chunker) -> None:
     (chunk,) = chunker.chunk(parse_article("a.md", "## The `{#x}` and `{}` forms\n"))
     assert chunk.heading_path == ("The {#x} and {} forms",)

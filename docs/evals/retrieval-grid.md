@@ -129,8 +129,10 @@ The report is `<out>/retrieval-grid.json` and `.md` (default `reports/evals/grid
 - Every cell also reports recall within 1,000, 2,000 and 4,000 tokens, under *Within a token
   budget*: whole results for every cell, and cut at the budget for the cells scored from text.
 - `just bench-pages` shows the recorded runs of the rank-1 cells
-  (`results/retrieval-grid-rank1.json`, #575) and of the app cells grouped by article and not
-  (`results/retrieval-grid-grouped.json`) on [Retrieval results](../benchmark/retrieval/index.md).
+  (`results/retrieval-grid-rank1.json`, #575), of the app cells grouped by article and not
+  (`results/retrieval-grid-grouped.json`), and of the baselines, windows and `h6` hybrid cells
+  (`results/retrieval-grid-variants.json`, #494) on
+  [Retrieval results](../benchmark/retrieval/index.md).
 
 !!! note "Wrong versions in text-scored cells"
     A text-scored cell searches only the version asked. A result the text scorer places only in
@@ -153,5 +155,7 @@ By hand.
   (`tests/evals/test_retrieval_grid.py`, `retrieval_grid.feature`). No model is downloaded, and
   their numbers are never results.
 - A full grid embeds the corpus once per embedding cell: about 50 minutes per chunking for
-  `bge-base` on a 4-CPU runner (see [the recorded run](retrieval-runs.md#the-recorded-run)). So it
-  is meant for the self-hosted runner.
+  `bge-base` on a 4-CPU runner (see [the recorded run](retrieval-runs.md#the-recorded-run)), and
+  1 h 40 min for `bge-small` at `default` on a 2-vCPU runner VM
+  ([Windows and baselines](../benchmark/retrieval/grid-variants.md)). So it is meant for the
+  self-hosted runner, split into a few cells per machine.

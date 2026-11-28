@@ -116,3 +116,7 @@ Each names the issue whose benchmark found it; none has an issue of its own yet.
   sampling noise only (which cases happen to be in the set), not mistakes in the cases.
 - **Gaps in the matrix.** `hybrid:bge-base-en-v1.5` did not run, and every hosted configuration
   is unmeasured (#347).
+- **Eval-only variants.** The grid's best variant, hybrid on bge-small at `h6` grouped by
+  article, leads BM25 at `default` by 3.8 points of recall@5 (p 0.013), under the 5-point
+  margin, and loses within every token budget
+  ([Windows and baselines](retrieval/grid-variants.md)). It does not change a default.

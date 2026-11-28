@@ -233,6 +233,7 @@ REPORTS: Final[dict[str, Callable[[Report, str], list[Row]]]] = {
     "retrieval": retrieval,
     "retrieval-grid-rank1": retrieval,
     "retrieval-grid-grouped": retrieval,
+    "retrieval-grid-variants": retrieval,
     "agent": agent,
     "grounded-docs": comparison,
 }

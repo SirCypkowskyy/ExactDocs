@@ -59,6 +59,7 @@ SERVICES: dict[str, tuple[str, ...]] = {
     "chroma_server": integration.CHROMA.args,
     "milvus_server": integration.MILVUS.args,
     "pinecone": integration.PINECONE.args,
+    "weaviate": integration.WEAVIATE.args,
 }
 """The tags that name a service, and the variables that configure it: a scenario with one is an
 integration scenario."""

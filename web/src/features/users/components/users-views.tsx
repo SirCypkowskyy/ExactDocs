@@ -7,7 +7,8 @@ import { messages } from "../messages";
 /*
  * The users page's views as links that look like the kit's underline tabs: the accounts
  * (`/users`) and every account's API tokens (`/users/tokens`). Each view is its own URL with its
- * own table view, so these are links with `aria-current`, not a tablist.
+ * own table view, so these are links with `aria-current`, not a tablist. They wrap like the kit's
+ * tabs when the text size leaves no room for them on one row (#576).
  */
 
 export type UsersViewName = "accounts" | "tokens" | "rules";
@@ -26,7 +27,7 @@ export function UsersViews({ current }: { current: UsersViewName }) {
   const t = useMessages(messages).views;
   return (
     <nav aria-label={t.label} className="mb-6">
-      <ul className="flex gap-1 border-b border-border">
+      <ul className="flex flex-wrap gap-1 border-b border-border">
         {VIEWS.map(({ name, to, icon: Icon }) => {
           const here = name === current;
           return (
