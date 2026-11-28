@@ -152,7 +152,13 @@ MAX_RENAME_HOPS: Final[int] = 100
 """Versions a path is followed across at most, from one version to another; farther is no move."""
 
 # ---------------------------------------------------------------- lists
-LIBRARY_SORT_FIELDS: Final[tuple[str, ...]] = ("id", "title", "last_imported_at", "version_count")
+LIBRARY_SORT_FIELDS: Final[tuple[str, ...]] = (
+    "id",
+    "title",
+    "last_imported_at",
+    "version_count",
+    "article_count",
+)
 """What the libraries list can be sorted by; `id` is the default."""
 VERSION_SORT_FIELDS: Final[tuple[str, ...]] = ("ref", "kind", "imported_at", "origin")
 """What a library's versions can be sorted by; `ref` is the default."""

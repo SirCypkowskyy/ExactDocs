@@ -491,6 +491,12 @@ file first.
 - **Auth pages:** the lockup at 48px over one 400px card that is itself a sheet (16px corners, a
   hairline) on the frame, a line under it about the product; the three interface controls sit in
   the top right corner.
+- **Footer:** one footer for every page (app, auth, not found, errors), on the frame under the
+  sheet (`AppFooter`, rendered by the root route): the mole at 20px, the name, the version
+  `/api/health` reports in mono, then the links in 12px muted ink (Connect an agent when signed in,
+  Documentation, REST API, OpenAPI, GitHub, the licence). Links leaving the app open a new tab with
+  ExternalLink; ink and an underline on hover. One line from `sm`, stacked below. The docs site
+  shows the same footer (`overrides/partials/footer.html`).
 - **Page widths:** `Page width="operate"` (1152px) for lists, settings and forms; `wide` for the
   library page and reader; `narrow` (720px) only for single-form pages. The reader's measure is 68ch.
 - **Every page** starts with `PageHeader`: an h1 (`text-title`), one line about the data, and the
@@ -568,7 +574,8 @@ and the lamp on the one lit thing.
 | `Table` and its parts | `ui/table.tsx` | The shadcn table primitives on the tokens: headers `text-small` muted, rows on `rule` hairlines, figures tabular (`.num`, which DataTable's end-aligned cells get; not the whole table, as tabular figures widen this face's comma and full stop). `TableRowHeader` is a body cell that names its row (`<th scope="row">`), set like any cell. |
 | `DataTable` (v2) | `ui/data-table/` | Every list with many rows (Data tables below): `useDataTable`, `DataTable`, `DataTableToolbar`, `DataTablePagination`, row actions and the cell kit. `ui/data-table.tsx` is v1 ("Load more"), kept until the last page moves. |
 | `Skeleton` | `ui/skeleton.tsx` | A flat bar at the size of the value it stands for; no pulse. |
-| `Dialog`, `Sheet` | `ui/` | shadcn on these tokens. A dialog only for confirmations (as an `AlertDialog`) and for showing a secret once. |
+| `Dialog`, `Sheet` | `ui/` | shadcn on these tokens. A dialog only for confirmations (as an `AlertDialog`), for showing a secret once, and for a page's Help tour. |
+| `PageHelp`, `HelpTopic` | `ui/page-help.tsx` | A page's Help tour (Help tours below). `PageHeader help={topic}` adds the Help button after the actions. |
 | `Toaster` / `toast` | `ui/sonner.tsx` | Mounted once in `__root`, bottom right, on `popover` with a hairline. |
 
 ### Buttons
@@ -599,8 +606,10 @@ Built on shadcn's Navigation Menu after the free shadcnblocks `navbar1`, `navbar
 - **Information architecture:** where people work every day is one click away (Libraries, Search);
   everything else sits in two panels: Tools (Playground, Jobs) and Admin (AI, Users, Access log;
   operators only, the API refuses anyone else).
-- **Triggers and links:** 14px / 500 in muted ink, 6px radius, hover and open fill `accent` with
-  ink text; a trigger carries a chevron that turns when open. The current page, or the panel that
+- **Triggers and links:** 14px / 500 in muted ink with a 16px leading icon (LibraryBig, Search,
+  Wrench for Tools, ShieldCheck for Admin; the phone's accordion uses the same), 6px radius, hover
+  and open fill `accent` with ink text, press scales to 0.97; a trigger carries a chevron that
+  turns when open. The current page, or the panel that
   holds it, turns ink and gets a 2px `route` underline (ink in light, the lamp in dark) that grows
   from the centre on the band's lower edge.
 - **Panels:** one column, 23rem, on `popover` with `border`, `radius-lg` and `shadow-float`. Each row
@@ -702,7 +711,12 @@ shadcn/ui's data-table guide) is the one way to show a list with many rows.
   the menu was opened with the keyboard or the mouse. Below `md` rows
   become cards: the `meta.priority` 1 cell as the title, 2 and 3 under it with their column named
   for screen readers, the row menu at the right; the Columns menu is not offered there. Give
-  every cell a reader needs to tell rows apart (the version, not only the library) a priority. Page changes swap rows at once; only rows that
+  every cell a reader needs to tell rows apart (the version, not only the library) a priority.
+  A row that opens one page (a library, an article) marks its title column `meta.rowLink`: the
+  title stays the real link and its hit area stretches over the whole row or card (styles.css,
+  "Row links"), so a click anywhere opens it and middle-click, Cmd-click and the keyboard behave as
+  on the link; the kebab, tooltips and any other control stay above it. Text under the stretch
+  cannot be drag-selected (the link wins the press). Page changes swap rows at once; only rows that
   arrive on a refresh use `row-in`.
 - **Cells** (`cells.tsx`): `RelativeTime` (`future` for an expiry: "in 12 days"), `VersionCell`,
   `LibraryCell` (title link, mono ID, `description` line from `lg`), `Person`, `StateBadge`,
@@ -723,8 +737,11 @@ version station (ring plus a mono ref) and a short SHA in muted mono.
 Motion explains state. It is never decoration. Durations and easing come from the tokens (listed in
 the sidecar's `motion`), never from literals.
 
-- **Press:** buttons scale to 0.97, band icons to 0.94. Nothing scales up on hover, and nothing
-  bounces or overshoots: every curve is `--ease-out`.
+- **Press:** buttons, nav triggers, tabs, chips and segmented controls scale to 0.97, band icons
+  to 0.94, wide rows (nav panel rows, the file tree, accordion triggers) to 0.99, in 120ms
+  (`--dur-fast`). Write it `motion-safe:active:scale-[…]` and list `scale` (not `transform`) in the
+  transition: Tailwind's scale utilities set the `scale` property. Nothing scales up on hover, and
+  nothing bounces or overshoots: every curve is `--ease-out`.
 - **Tooltips:** 125ms in (fade plus a 0.96 scale from the trigger), 120ms out.
 - **Menus and popovers:** 150ms in (`--dur-menu`), 100ms out (`--dur-exit`), scaling from the
   trigger's corner.
@@ -812,6 +829,35 @@ link leads to `#main`; each page has one h1, focused on navigation. Status chang
 (`role="status"` or `role="alert"`); toasts duplicate an inline status and are never its only form.
 Icon-only controls have accessible names; tooltips repeat them.
 
+### Help tours
+The key pages explain themselves behind a Help button: a short tour that rings one part of the page
+at a time on a dimmed page, with a card saying what that part is for.
+
+- **Writing one.** A `HelpTopic` in the feature's `help.ts`: a `title` and 3 to 6 `steps`, every text
+  as `{ en, pl }` (the `Localized` type makes both required). A step has a lucide `icon`, a two-to-
+  four-word `title`, a one-or-two-sentence `body`, the `target` it rings and the `guide` it links to.
+  Pass it to the header: `<PageHeader help={librariesHelp} … />`. Say what a part is for, not how to
+  click it, and only what the UI really does.
+- **Targets.** A step's `target` names a `data-tour="…"` attribute on the page; wrap a component
+  that does not pass the attribute through in a `div`. A target that is missing or folded away (a
+  phone hides some parts) rings nothing and the card still explains. `src/app/help-topics.test.ts`
+  fails when a target or a guide link no longer exists.
+- **Guide links.** Relative to the docs site (`DOCS_URL`, zensical's `site_url`), as the site
+  publishes them: `docs/mcp/connect.md` is `mcp/connect/`, a heading is `#its-slug`. The site is in
+  English; the Polish link text says so.
+- **The ring.** The target is scrolled into view (clear of the band, `scroll-margin`), and a 2px
+  `ring` outline 2px off an 8px box marks it, its 100vmax shadow in `overlay` dimming the rest.
+  A target taller than 60% of the screen scrolls to its top and is ringed where it shows. The ring
+  does not travel between steps: each one fades in where its part is (`fade-in`).
+- **The card.** A modal Dialog on `popover` with `shadow-float`: 26rem in the lower right corner from
+  48rem, a bottom sheet on a phone, and at the top when the ringed part sits low. The title row with
+  the close button, the step (icon tile, name, text), the dots and "2 of 5", Back and Next ("Got it"
+  on the last step), then the guide link. It fades in, zooming from 0.97 at its corner (sliding up
+  on a phone); steps cross-fade. Reduced motion keeps only the fades.
+- **Keyboard and readers.** Focus lands on Next; Tab stays in the card; the arrow keys step back
+  and forward; Enter presses the focused button; Escape or the close button leaves and focus
+  returns to Help. The step region is `aria-live`, so each step is read with its "2 of 5".
+
 ### States and feedback
 - **Loading:** `Skeleton` bars at the size of the value, in the final layout, no pulse. A cold load
   waits 150ms before showing anything (`pending-in`). Every route with a loader has a
@@ -856,6 +902,6 @@ Shift+F10 or the Menu key.
 - **Don't** put a shadow on anything at rest, or any shadow but `shadow-float` on a floating layer.
 - **Don't** animate a height, a width or `grid-template-rows`.
 - **Don't** let a tooltip carry information the control's name does not.
-- **Don't** use a dialog except for confirmations and for showing a secret once.
+- **Don't** use a dialog except for confirmations, for showing a secret once and for a Help tour.
 - **Don't** scale a button up on hover, or let anything bounce or overshoot.
 - **Don't** give a chart a second hue for its series: `chart-series`, with `chart-highlight` for the one lit thing.

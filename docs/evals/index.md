@@ -28,7 +28,7 @@ they recommend in the [Benchmark](../benchmark/index.md) section.
 - The code is in
   [`packages/exactdocs/evals/`](https://github.com/SirCypkowskyy/ExactDocs/tree/develop/packages/exactdocs/evals),
   outside the package.
-- [Pydantic Evals](https://ai.pydantic.dev/evals/) (`pydantic-evals` 2.60.0) is in the `dev`
+- [Pydantic Evals](https://ai.pydantic.dev/evals/) (`pydantic-evals` 2.73.0) is in the `dev`
   dependency group, not in an extra.
 - Nothing of it ships in the wheel or the image.
 

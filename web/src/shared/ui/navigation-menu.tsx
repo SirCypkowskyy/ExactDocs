@@ -50,7 +50,7 @@ export function NavigationMenuItem({ className, ...props }: React.ComponentProps
  * underline in `route` when its page (or one of its panel's pages) is the current one.
  */
 export const navigationMenuTriggerStyle = cva(
-  "group relative inline-flex h-11 w-max cursor-pointer items-center justify-center gap-1 rounded-md px-3 text-body font-medium text-band-muted outline-none transition-[color,background-color] duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-band-hover data-[state=open]:text-band-foreground aria-[current=page]:text-band-foreground data-[active=true]:text-band-foreground fine:h-9 can-hover:hover:bg-band-hover can-hover:hover:text-band-foreground after:pointer-events-none after:absolute after:inset-x-3 after:-bottom-[7px] after:h-0.5 after:origin-center after:scale-x-0 after:rounded-full after:bg-route after:transition-transform after:duration-(--dur) after:ease-(--ease-out) aria-[current=page]:after:scale-x-100 data-[active=true]:after:scale-x-100",
+  "group relative inline-flex h-11 w-max cursor-pointer items-center justify-center gap-1.5 rounded-md px-3 text-body font-medium text-band-muted outline-none transition-[color,background-color,scale] duration-(--dur-fast) ease-(--ease-out) motion-safe:active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring data-[state=open]:bg-band-hover data-[state=open]:text-band-foreground aria-[current=page]:text-band-foreground data-[active=true]:text-band-foreground fine:h-9 can-hover:hover:bg-band-hover can-hover:hover:text-band-foreground after:pointer-events-none after:absolute after:inset-x-3 after:-bottom-[7px] after:h-0.5 after:origin-center after:scale-x-0 after:rounded-full after:bg-route after:transition-transform after:duration-(--dur) after:ease-(--ease-out) aria-[current=page]:after:scale-x-100 data-[active=true]:after:scale-x-100",
 );
 
 export function NavigationMenuTrigger({
@@ -111,7 +111,7 @@ export function NavigationMenuLink({ className, ...props }: React.ComponentProps
   return (
     <N.Link
       className={cn(
-        "flex gap-3 rounded-md p-3 text-body outline-none transition-colors duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring data-[active=true]:bg-route-soft can-hover:hover:bg-accent",
+        "flex gap-3 rounded-md p-3 text-body outline-none transition-[color,background-color,scale] duration-(--dur-fast) ease-(--ease-out) motion-safe:active:scale-[0.99] focus-visible:ring-2 focus-visible:ring-ring data-[active=true]:bg-route-soft can-hover:hover:bg-accent",
         className,
       )}
       {...props}

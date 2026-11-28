@@ -287,6 +287,69 @@ test("the reader, the search pills and the phone library page keep their proport
   await context.close();
 });
 
+// A library row opens its library from anywhere on it, through the title link stretched over it;
+// the row's kebab keeps its own click. Pressed controls shrink a touch, except under reduced motion.
+test("a library row opens from anywhere on it, and presses follow reduced motion", async ({
+  browser,
+}) => {
+  for (const viewport of [
+    { width: 1280, height: 800 },
+    { width: 390, height: 844 },
+  ]) {
+    const context = await browser.newContext({ baseURL, viewport });
+    const page = await context.newPage();
+    await signIn(page);
+    const link = page.locator('a[href="/libraries/fixture/docs-repo"]').first();
+    await expect(link).toBeVisible();
+    const row = link.locator("xpath=ancestor::*[@data-row-link][1]");
+    const box = await row.boundingBox();
+    if (!box) throw new Error("no row");
+
+    // The kebab is above the stretched link: it opens its menu and the page stays.
+    await row.getByRole("button", { name: /More actions/ }).click();
+    await expect(page.getByRole("menuitem").first()).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toBeHidden();
+    await expect(page).toHaveURL(/\/$/);
+
+    // A spot of the row's background, away from the title: the browser hits the link there.
+    const spot = { x: box.x + box.width * 0.6, y: box.y + box.height - 4 };
+    const hit = await page.evaluate(
+      ({ x, y }) => document.elementFromPoint(x, y)?.closest("a")?.getAttribute("href"),
+      spot,
+    );
+    expect(hit).toBe("/libraries/fixture/docs-repo");
+    await page.mouse.click(spot.x, spot.y);
+    await expect(page).toHaveURL(/\/libraries\/fixture\/docs-repo$/);
+    await context.close();
+  }
+
+  for (const reducedMotion of ["no-preference", "reduce"] as const) {
+    const context = await browser.newContext({ baseURL, reducedMotion });
+    const page = await context.newPage();
+    await signIn(page);
+    const button = page.getByRole("link", { name: "Add library" }).first();
+    // Measured once the list and its count are in, so the header no longer moves.
+    await expect(page.locator('a[href="/libraries/fixture/docs-repo"]').first()).toBeVisible();
+    await expect(page.getByText(/^1 library/)).toBeVisible();
+    await settled(page);
+    const box = await button.boundingBox();
+    if (!box) throw new Error("no button");
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+    await page.mouse.down();
+    // The press transition takes 120 ms; read the scale it lands on.
+    await page.waitForTimeout(300);
+    const [scale, reduced] = await button.evaluate((el) => [
+      getComputedStyle(el).scale,
+      document.documentElement.hasAttribute("data-reduce-motion"),
+    ]);
+    await page.mouse.up();
+    expect(reduced, reducedMotion).toBe(reducedMotion === "reduce");
+    expect(scale, reducedMotion).toBe(reducedMotion === "reduce" ? "none" : "0.97");
+    await context.close();
+  }
+});
+
 // #427, "lists stay responsive with large libraries": the real UI build in a real browser, with the
 // two lists that grow answered from synthetic data (300 libraries in pages of 50; a version of 7,000 articles that
 // pages 100 at a time). It records load time, long tasks (> 50 ms) and frame times while scrolling,
@@ -587,4 +650,50 @@ test("the main pages reflow at the two largest text sizes", async ({ browser }) 
     }
   }
   expect(problems).toEqual([]);
+});
+
+// A page's Help tour: it opens from the header, rings each part on a dimmed page, steps by
+// keyboard, leaves with Escape back on the Help button, and reads cleanly in both themes and on a
+// phone. Runs after the first test: the libraries page lists the library it imported.
+test("the libraries page's Help tour walks the page by keyboard", async ({ browser }) => {
+  for (const colorScheme of ["light", "dark"] as const) {
+    for (const [size, viewport] of [
+      ["desktop", { width: 1280, height: 800 }],
+      ["phone", { width: 375, height: 812 }],
+    ] as const) {
+      const context = await browser.newContext({ baseURL, colorScheme, viewport });
+      const page = await context.newPage();
+      await signIn(page);
+      const help = page.getByRole("main").getByRole("button", { name: "Help" });
+      await help.click();
+      const tour = page.getByRole("dialog", { name: "Using the library list" });
+      await expect(tour.getByRole("button", { name: "Next" })).toBeFocused();
+      await expect(tour.getByText("1 of 4", { exact: true })).toBeVisible();
+      const ring = page.locator('[data-slot="tour-spotlight"]');
+      await expect(ring).toBeVisible();
+      await settled(page);
+      await page.screenshot({ path: `shots/tour-${colorScheme}-${size}-1.png` });
+      await expectNoViolations(page, `tour ${colorScheme} ${size}`);
+
+      await page.keyboard.press("ArrowRight");
+      await expect(tour.getByText("2 of 4", { exact: true })).toBeVisible();
+      await page.keyboard.press("Enter");
+      await page.keyboard.press("Enter");
+      await expect(tour.getByText("Add a library")).toBeVisible();
+      // The ringed part is scrolled into view.
+      await expect(page.locator('[data-tour="add-library"]').first()).toBeInViewport();
+      await settled(page);
+      await page.screenshot({ path: `shots/tour-${colorScheme}-${size}-4.png` });
+      const sideways = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(sideways, `tour ${colorScheme} ${size} scrolls sideways`).toBeLessThanOrEqual(0);
+
+      await page.keyboard.press("Escape");
+      await expect(tour).toBeHidden();
+      await expect(ring).toHaveCount(0);
+      await expect(help).toBeFocused();
+      await context.close();
+    }
+  }
 });

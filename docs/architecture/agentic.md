@@ -70,7 +70,7 @@ loads `ai_explorer_sdk.py` at the first agentic search. That module runs a pydan
 ### Guardrails (#99)
 
 - `_RunEnders` also counts every call by tool name and a hash of its arguments (pydantic-ai-harness
-  0.60.0 has no loop detection).
+  0.60.0 had no loop detection; the `DetectLoops` capability of 0.69.0 and later is not used).
 - The `max_repeated_calls`-th identical call (3 by default) ends the run with `agent_loop_detected`:
     - a repeated `run_code` before it runs;
     - a repeated read by raising the fixed `REPEATED_CALL` into the sandbox (so do the reads after
@@ -246,7 +246,7 @@ read-only workspace backend holding only those files:
 
 | Mode | Nested traversal | Walk-up autoload |
 |---|---|---|
-| `notes` | always: a folder's file as a user-channel note once the agent opens it | no |
+| `notes` | always: a folder's file (and those above it) as a user-channel note once the agent opens it | no |
 | `trusted` | always | yes: the root's file in the system instructions |
 
 `Traversals` emits the harness's filesystem events after each read tool.

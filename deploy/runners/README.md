@@ -6,7 +6,7 @@
 
 # Self-hosted runners (GCP)
 
-CI runs on one GCP VM (docs/decisions/ci-runners.md). Which job runs on them is set by the
+CI runs on four GCP VMs (docs/decisions/ci-runners.md). Which job runs on them is set by the
 repository variable `RUNNER_MODE` (docs/releasing/runners.md, *CI/CD and runners*); it is
 `self-hosted`, so every job of a trusted run does, and a fork's pull request runs on
 GitHub-hosted `ubuntu-24.04`.

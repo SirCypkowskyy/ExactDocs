@@ -93,6 +93,7 @@ describe("the libraries list view", () => {
     expect(
       parseListView({ sort: "password", ai: "maybe", versions: "all", imported: "1y", q: "" }),
     ).toEqual({});
+    expect(parseListView({ sort: "-article_count" })).toEqual({ sort: "-article_count" });
     const now = Date.parse("2026-11-23T12:00:30Z");
     expect(
       listParams(listFilters({ q: "a b", sort: "-last_imported_at", ai: "off" }, now), 20, "c1"),
@@ -168,6 +169,26 @@ describe("the libraries list view", () => {
       "aria-sort",
       "descending",
     );
+  });
+
+  it("sorts by the default version's articles, most first, and back", async () => {
+    const fetchMock = serve();
+    const history = renderPage();
+    await screen.findByText("Library 1");
+
+    await userEvent.click(screen.getByRole("button", { name: "Sort by Articles" }));
+
+    await waitFor(() =>
+      expect(urls(fetchMock)).toContain("/api/v1/libraries?limit=20&sort=-article_count&offset=0"),
+    );
+    expect(history.location.search).toContain("sort=-article_count");
+    const header = screen.getByRole("columnheader", { name: /Articles/ });
+    expect(header).toHaveAttribute("aria-sort", "descending");
+
+    await userEvent.click(screen.getByRole("button", { name: /^Sort by Articles/ }));
+
+    await waitFor(() => expect(history.location.search).toContain("sort=article_count"));
+    expect(header).toHaveAttribute("aria-sort", "ascending");
   });
 
   it("filters with a facet on the server", async () => {

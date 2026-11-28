@@ -2,9 +2,23 @@ import { defineMessages } from "@/shared/lib/i18n";
 
 const code = (text: string) => <code className="font-mono text-small break-all">{text}</code>;
 
-/** The instance banner's words (operators only). `resets` is a relative time ("in 5 hours"). */
+/**
+ * The instance banner's words (operators only; `resets` is a relative time, "in 5 hours") and the
+ * footer's on every page.
+ */
 export const messages = defineMessages(
   {
+    footer: {
+      nav: "About ExactDocs",
+      version: "Server version",
+      connect: "Connect an agent",
+      docs: "Documentation",
+      api: "REST API",
+      openapi: "OpenAPI",
+      source: "GitHub",
+      license: "Apache-2.0 license",
+      newTab: "(opens a new tab)",
+    },
     region: "Instance notices",
     dismiss: "Dismiss",
     reindex: {
@@ -32,6 +46,17 @@ export const messages = defineMessages(
     },
   },
   {
+    footer: {
+      nav: "O ExactDocs",
+      version: "Wersja serwera",
+      connect: "Połącz agenta",
+      docs: "Dokumentacja",
+      api: "REST API",
+      openapi: "OpenAPI",
+      source: "GitHub",
+      license: "Licencja Apache-2.0",
+      newTab: "(otwiera się w nowej karcie)",
+    },
     region: "Komunikaty instancji",
     dismiss: "Zamknij komunikat",
     reindex: {

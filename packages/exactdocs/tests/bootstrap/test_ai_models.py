@@ -1009,7 +1009,7 @@ async def test_older_claude_gets_a_budget_with_room_above_the_answers_cap(
 
 
 async def test_openai_reasoning_models_get_their_reasoning_effort(fake: FakeGateway) -> None:
-    body = await _thinking_body(fake, ProviderKind.OPENAI, "gpt-5", "/v1", LOW)
+    body = await _thinking_body(fake, ProviderKind.OPENAI, "gpt-5.6-sol", "/v1", LOW)
 
     assert body["reasoning"]["effort"] == "low", body
 

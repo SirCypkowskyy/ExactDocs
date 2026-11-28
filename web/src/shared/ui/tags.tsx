@@ -25,7 +25,7 @@ const base =
 
 /** A toggle reads like a choice (body text); a removable chip like a note about the list (small). */
 const toggle =
-  "cursor-pointer px-3 text-body outline-none transition-[background-color,transform] duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.97] fine:px-2.5";
+  "cursor-pointer px-3 text-body outline-none transition-[background-color,scale] duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-safe:active:scale-[0.97] fine:px-2.5";
 
 type TagProps = {
   children: ReactNode;

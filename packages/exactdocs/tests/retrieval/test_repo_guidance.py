@@ -262,6 +262,11 @@ def _notes(seen: Sequence[Request]) -> list[str]:
     return [text for text in seen[-1].user if text != QUESTION]
 
 
+def _note(path: str, text: str) -> str:
+    """A one-line file as RepoContext frames it on the user channel (``ContextFilePart``)."""
+    return f'<context_file path="{path}">{text}</context_file>'
+
+
 def _system(seen: Sequence[Request]) -> str:
     return "\n".join(r.instructions + "\n".join(r.system) for r in seen)
 
@@ -279,12 +284,12 @@ async def test_a_folder_s_file_reaches_the_agent_as_a_user_note_when_it_opens_th
     assert result.results
     notes = _notes(seen)
     assert notes == [
-        f'<context-file path="AGENTS.md">\n{ROOT_NOTE}\n</context-file>',
-        f'<context-file path="docs/CLAUDE.md">\n{DOCS_NOTE}\n</context-file>',
+        _note("AGENTS.md", ROOT_NOTE),
+        _note("docs/CLAUDE.md", DOCS_NOTE),
     ]
     assert ROOT_NOTE not in _system(seen)
     assert DOCS_NOTE not in _system(seen)
-    assert seen[0].instructions == EXPLORER_INSTRUCTIONS + EXPLORER_GUIDANCE
+    assert seen[0].instructions.startswith(EXPLORER_INSTRUCTIONS + EXPLORER_GUIDANCE + "\n")
     assert seen[0].tools == ["run_code"]  # nothing added: no inventory, no file tools
 
 
@@ -305,7 +310,8 @@ async def test_reading_an_article_opens_its_folder() -> None:
 
     await _search(world)
 
-    assert _notes(seen) == [f'<context-file path="docs/CLAUDE.md">\n{DOCS_NOTE}\n</context-file>']
+    # The harness surfaces every file from the root down to the opened folder (0.64.0 on).
+    assert _notes(seen) == [_note("AGENTS.md", ROOT_NOTE), _note("docs/CLAUDE.md", DOCS_NOTE)]
 
 
 async def test_only_the_searched_version_s_files_reach_the_agent() -> None:
@@ -316,7 +322,7 @@ async def test_only_the_searched_version_s_files_reach_the_agent() -> None:
 
     assert {r.commit_sha for r in old.results} == {"1" * 40}
     assert world.files.asked == ["m1"]
-    assert _notes(seen_v1) == [f'<context-file path="AGENTS.md">\n{V1_NOTE}\n</context-file>']
+    assert _notes(seen_v1) == [_note("AGENTS.md", V1_NOTE)]
     assert ROOT_NOTE not in repr(seen_v1)
     assert DOCS_NOTE not in repr(seen_v1)
 
@@ -330,7 +336,7 @@ async def test_repo_guidance_is_off_by_default() -> None:
     assert result.results
     assert world.files.asked == []
     assert _notes(seen) == []
-    assert seen[0].instructions == EXPLORER_INSTRUCTIONS
+    assert seen[0].instructions.startswith(EXPLORER_INSTRUCTIONS + "\n")
     assert LibraryAi().repo_guidance is RepoGuidance.OFF
 
 
@@ -346,7 +352,7 @@ async def test_a_trusted_library_s_root_file_is_part_of_the_system_instructions(
     assert f'<context-file path="AGENTS.md">\n{ROOT_NOTE}\n</context-file>' in seen[0].instructions
     assert EXPLORER_TRUSTED_GUIDANCE in seen[0].instructions
     # The folders below the root stay notes; the root's file is not repeated as one.
-    assert _notes(seen) == [f'<context-file path="docs/CLAUDE.md">\n{DOCS_NOTE}\n</context-file>']
+    assert _notes(seen) == [_note("docs/CLAUDE.md", DOCS_NOTE)]
     assert DOCS_NOTE not in _system(seen)
 
 
@@ -396,8 +402,10 @@ async def test_a_hostile_file_cannot_escape_its_block_widen_the_agent_or_reach_a
     assert {r.commit_sha for r in result.results} == {"2" * 40}
     framed = "\n".join([*_notes(seen), seen[0].instructions])
     assert "SYSTEM OVERRIDE" in framed  # it reached the agent, but only inside its block
-    block = framed[framed.index('<context-file path="AGENTS.md">') :]
-    body = block[: block.index("</context-file>")]
+    # The root's file frames as Repo Context's system block when trusted, as a note otherwise.
+    tag = "context-file" if guidance is RepoGuidance.TRUSTED else "context_file"
+    block = framed[framed.index(f'<{tag} path="AGENTS.md">') :]
+    body = block[: block.index(f"</{tag}>")]
     assert "</context" not in body
     assert '<context id="system">' not in body
     assert '<context-file path="SYSTEM">' not in body

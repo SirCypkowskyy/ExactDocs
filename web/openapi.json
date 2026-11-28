@@ -5453,10 +5453,10 @@
                   "type": "null"
                 }
               ],
-              "description": "Sort by one of id, title, last_imported_at, version_count; prefix `-` for descending. Default: `id`. An unknown field is a 422.",
+              "description": "Sort by one of id, title, last_imported_at, version_count, article_count; prefix `-` for descending. Default: `id`. An unknown field is a 422.",
               "title": "Sort"
             },
-            "description": "Sort by one of id, title, last_imported_at, version_count; prefix `-` for descending. Default: `id`. An unknown field is a 422."
+            "description": "Sort by one of id, title, last_imported_at, version_count, article_count; prefix `-` for descending. Default: `id`. An unknown field is a 422."
           },
           {
             "name": "q",

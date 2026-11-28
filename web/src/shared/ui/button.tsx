@@ -18,7 +18,7 @@ import { Tooltip } from "./tooltip";
  * A label that doesn't fit the width it is given wraps; the button never shrinks for its row.
  */
 const buttonVariants = cva(
-  "inline-flex cursor-pointer items-center justify-center max-w-full shrink-0 gap-2 rounded-md text-center text-body font-medium outline-none select-none transition-[background-color,border-color,color,transform] duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 aria-disabled:cursor-progress aria-disabled:active:scale-100 [&_svg]:size-4 [&_svg]:shrink-0",
+  "inline-flex cursor-pointer items-center justify-center max-w-full shrink-0 gap-2 rounded-md text-center text-body font-medium outline-none select-none transition-[background-color,border-color,color,scale] duration-(--dur-fast) ease-(--ease-out) focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background motion-safe:active:scale-[0.97] disabled:pointer-events-none disabled:opacity-50 aria-disabled:cursor-progress aria-disabled:active:scale-100 [&_svg]:size-4 [&_svg]:shrink-0",
   {
     variants: {
       variant: {
@@ -31,7 +31,7 @@ const buttonVariants = cva(
           "border border-destructive/40 bg-background text-destructive hover:border-destructive hover:bg-destructive-soft",
         "destructive-solid":
           "bg-destructive text-white hover:bg-destructive/90 dark:text-background aria-disabled:bg-destructive/75",
-        band: "relative shrink-0 text-band-muted focus-visible:ring-offset-band active:scale-[0.94] disabled:opacity-40 data-[state=open]:bg-band-hover data-[state=open]:text-band-foreground can-hover:hover:bg-band-hover can-hover:hover:text-band-foreground [&_svg]:size-[1.125rem]",
+        band: "relative shrink-0 text-band-muted focus-visible:ring-offset-band motion-safe:active:scale-[0.94] disabled:opacity-40 data-[state=open]:bg-band-hover data-[state=open]:text-band-foreground can-hover:hover:bg-band-hover can-hover:hover:text-band-foreground [&_svg]:size-[1.125rem]",
       },
       size: {
         // At least 44/36 px, taller when a long label wraps in a narrow box (#576).

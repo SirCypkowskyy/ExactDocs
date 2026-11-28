@@ -113,7 +113,7 @@ can let the agent use these files with `repo_guidance` in its retrieval settings
 | `repo_guidance` | What imports keep | What the agent gets |
 |---|---|---|
 | `off` (default) | nothing | nothing |
-| `notes` | each version's root `AGENTS.md` / `CLAUDE.md` and those of every folder holding a selected file, also outside the selected paths[^guidance-files] | a folder's file, once it opens that folder (lists it, or reads an article or a chunk in it), as an untrusted user-channel note in a `<context-file>` block, never as system instructions |
+| `notes` | each version's root `AGENTS.md` / `CLAUDE.md` and those of every folder holding a selected file, also outside the selected paths[^guidance-files] | a folder's file and those of the folders above it, once it opens that folder (lists it, or reads an article or a chunk in it), as an untrusted user-channel note in a `<context_file>` block, never as system instructions |
 | `trusted` | the same | as `notes`, and the root's file is also part of its system instructions: only for a repository you trust as much as your own instructions |
 
 [^guidance-files]: At most 32 folders. A file over 32 KiB, a file that is not text, or a link that

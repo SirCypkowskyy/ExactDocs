@@ -81,3 +81,58 @@ describe("the page's own motion", () => {
     expect(rule?.body).toMatch(/--tw-exit-scale: 1 !important/);
   });
 });
+
+describe("press feedback", () => {
+  // Every class string of the app, read as text (the sources, not the built CSS). By path from
+  // the working directory (web/): the runner's import.meta.url is not a file URL here.
+  const fs = process.getBuiltinModule("node:fs") as unknown as {
+    readdirSync: (path: string, options: { recursive: true }) => string[];
+    readFileSync: (path: string, encoding: "utf8") => string;
+  };
+  const dir = `${(globalThis as unknown as { process: { cwd: () => string } }).process.cwd()}/src/`;
+  const sources = Object.fromEntries(
+    fs
+      .readdirSync(dir, { recursive: true })
+      .filter((f) => /\.tsx?$/.test(f) && !/\.test\.tsx?$/.test(f))
+      .map((f) => [f, fs.readFileSync(dir + f, "utf8")]),
+  );
+
+  it("scales a control on press only when motion is allowed, and animates the scale", () => {
+    const presses = Object.entries(sources).flatMap(([file, text]) =>
+      [...text.matchAll(/[\w:[\]=-]*active:scale-\[[\d.]+\]/g)].map(([cls]) => ({ file, cls })),
+    );
+    expect(presses.length).toBeGreaterThan(10);
+    for (const { file, cls } of presses) {
+      expect(cls, file).toMatch(/^motion-safe:active:scale-/);
+    }
+    // Tailwind's scale utilities set the `scale` property, which a `transform` transition misses
+    // (a variant such as the band's inherits its button's transition, so per file).
+    for (const file of new Set(presses.map((p) => p.file))) {
+      expect(sources[file], file).toMatch(/transition-(transform|\[[^\]]*\bscale\b[^\]]*\])/);
+    }
+  });
+
+  it("reads the person's reduced-motion choice, not only the system's", () => {
+    expect(styles).toContain(
+      "@custom-variant motion-safe (&:where(:root:not([data-reduce-motion]) *));",
+    );
+  });
+});
+
+describe("row links", () => {
+  const layer = styles.slice(styles.indexOf("@layer components {"));
+
+  it("stretch the title link over its row, below utilities like `absolute`", () => {
+    const stretch = rules(layer).find((r) => r.selector === "[data-row-link-cell] a::after");
+    expect(stretch?.body).toMatch(/position: absolute/);
+    expect(stretch?.body).toMatch(/inset: 0/);
+  });
+
+  it("lift every other control of the row above the stretch", () => {
+    const lift = rules(layer).find((r) => r.selector.startsWith("[data-row-link] :is("));
+    expect(lift?.selector).toMatch(/\ba\b.*\bbutton\b.*\[data-state\]/);
+    expect(lift?.selector).toContain(":not([data-row-link-cell] a)");
+    expect(lift?.body).toMatch(/position: relative/);
+    expect(lift?.body).toMatch(/z-index: 1/);
+  });
+});

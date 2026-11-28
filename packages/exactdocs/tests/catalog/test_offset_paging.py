@@ -187,3 +187,40 @@ async def test_an_offset_out_of_bounds_is_refused(
 ) -> None:
     with pytest.raises(ValidationError, match="offset"):
         await fetch(catalog, {"offset": offset})
+
+
+async def test_libraries_sort_by_the_articles_of_their_default_version(
+    catalog: CatalogModule,
+) -> None:
+    # ledger and billing tie on 2 articles, so the ID breaks the tie in the sort's direction
+    for name, ref, kind, paths in [
+        ("ledger", "main", RefKind.BRANCH, ["a.md", "b.md"]),
+        ("billing", "main", RefKind.BRANCH, ["a.md", "b.md"]),
+        ("audit", "main", RefKind.BRANCH, ["a.md", "b.md", "c.md"]),
+    ]:
+        stored = await catalog.store_manifest(
+            StoreManifestCommand(
+                library=f"/acme/{name}",
+                ref=ref,
+                kind=kind,
+                commit_sha="d" * 40,
+                articles=[article(path, size=1) for path in paths],
+            )
+        )
+        await catalog.activate_manifest(ActivateManifestCommand(manifest_id=stored.manifest_id))
+
+    async def order(sort: str) -> list[tuple[str, int]]:
+        found, cursor = [], None
+        while True:
+            page = await catalog.list_libraries(
+                ListLibrariesQuery.model_validate({"sort": sort, "limit": 2, "cursor": cursor})
+            )
+            found += [(lib.id, lib.article_count) for lib in page.libraries]
+            if (cursor := page.next_cursor) is None:
+                return found
+
+    descending = await order("-article_count")
+
+    assert descending[:3] == [("/acme/audit", 3), ("/acme/ledger", 2), ("/acme/billing", 2)]
+    assert [n for _, n in descending] == sorted((n for _, n in descending), reverse=True)
+    assert await order("article_count") == descending[::-1]

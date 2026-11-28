@@ -21,15 +21,17 @@ classifiers = [
 [project.optional-dependencies]
 # AI retrieval (docs/decisions/ai-retrieval.md): imported only once a model role is configured, so
 # an install without it, or with it and nothing configured, stays a BM25 server (RUN-02). Exact
-# pins: the harness 0.60.0 requires pydantic-ai-slim 2.60.0. The harness is taken without its
+# pins, except pydantic-ai-slim: the harness 0.73.0 requires pydantic-ai-slim 2.73.0 exactly, so
+# the harness fixes it and it only has a floor here (Dependabot leaves it alone,
+# .github/dependabot.yml). The harness is taken without its
 # `[codemode]` extra (that extra pulls a DuckDuckGo search client); Monty is listed directly.
 # On a harness bump, re-check: the agentic loop detection (#99) relies on Code Mode sending the
 # nested read calls through the parent's `root_capability` (`ToolManager.handle_call`), so our
 # `wrap_tool_execute` sees them; `test_the_repeated_read_and_every_read_after_it_never_run` fails
 # if it stops doing so.
 ai = [
-    "pydantic-ai-slim[openai,anthropic,google]==2.60.0",
-    "pydantic-ai-harness==0.60.0",
+    "pydantic-ai-slim[openai,anthropic,google]>=2.73.0",
+    "pydantic-ai-harness==0.73.0",
     "pydantic-monty==1.6.0",
     "sqlite-vec==0.1.9",
     "pgvector==0.5.1",
@@ -68,9 +70,10 @@ lancedb = ["lancedb==0.41.0"]
 # DuckDB as the search and vector backend (#357): EXACTDOCS_SEARCH_BACKEND / _VECTOR_BACKEND=duckdb.
 # Imported only when a backend names it. The `fts` extension ships as a wheel (the signed binary
 # DuckDB publishes, repackaged per DuckDB release) and is loaded from that file, never downloaded:
-# DuckDB checks its signature at LOAD. Both pins move together: the extension's wheel requires the
-# exact DuckDB release it was built for.
-duckdb = ["duckdb==2.0.0", "duckdb-extension-fts==2.0.0"]
+# DuckDB checks its signature at LOAD. The extension's wheel requires the exact DuckDB release it
+# was built for, so only the extension is pinned and it fixes `duckdb`; `duckdb` stays listed, as
+# the adapter imports it, and Dependabot leaves it alone (.github/dependabot.yml).
+duckdb = ["duckdb>=2.0.0", "duckdb-extension-fts==2.0.0"]
 # Chroma as the vector backend (#361, EXACTDOCS_VECTOR_BACKEND=chroma): imported only by
 # `retrieval/adapters/driven/chroma_index.py`, and only once an operator names the backend. Not in
 # any image. `chroma` is the HTTP-only client (a Chroma server or Chroma Cloud: no onnxruntime, no
@@ -90,11 +93,11 @@ redis = ["redis==8.2.0"]
 # `retrieval/adapters/driven/milvus_index.py`, and only once an operator names the backend. Not in
 # any image. `milvus` is the client alone (a Milvus server or Zilliz Cloud); `milvus-lite` adds
 # Milvus Lite, the embedded engine on a local `.db` directory (pure Python with faiss-cpu: wheels
-# for Linux x86_64 and ARM64, macOS). Exact pins (pymilvus 3.0.2 of 2026-09-18, milvus-lite 3.2.2
+# for Linux x86_64 and ARM64, macOS). Exact pins (pymilvus 3.0.3 of 2026-11-10, milvus-lite 3.2.2
 # of 2026-10-13, both more than 14 days old when taken), tested against the
 # `milvusdb/milvus` standalone server in CI and Milvus Lite on a temporary directory.
-milvus = ["pymilvus==3.0.2"]
-milvus-lite = ["pymilvus==3.0.2", "milvus-lite==3.2.2"]
+milvus = ["pymilvus==3.0.3"]
+milvus-lite = ["pymilvus==3.0.3", "milvus-lite==3.2.2"]
 # MongoDB (Atlas Search and Atlas Vector Search, or MongoDB Community with `mongot`) as the search
 # and vector backend (#363, EXACTDOCS_SEARCH_BACKEND / EXACTDOCS_VECTOR_BACKEND=mongodb): pymongo's
 # own async API, imported only by `retrieval/adapters/driven/mongodb_index.py`, and only once an

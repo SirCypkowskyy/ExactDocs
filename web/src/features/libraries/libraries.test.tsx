@@ -133,12 +133,12 @@ describe("libraries slice", () => {
     expect(summary()).toHaveTextContent("1 library");
   });
 
-  it("counts the default version's articles in a column the API does not sort", async () => {
+  it("counts the default version's articles in a sortable column", async () => {
     serve([library(), library({ id: "/acme/empty", title: "Empty", article_count: 0 })]);
     renderPage();
     const table = await screen.findByRole("table", { name: "Libraries" });
-    expect(within(table).getByRole("columnheader", { name: "Articles" })).toBeInTheDocument();
-    expect(within(table).queryByRole("button", { name: /Sort by Articles/ })).toBeNull();
+    expect(within(table).getByRole("columnheader", { name: /Articles/ })).toBeInTheDocument();
+    expect(within(table).getByRole("button", { name: "Sort by Articles" })).toBeInTheDocument();
     const count = await within(table).findByText("1,234");
     // It makes room below `lg`, like the versions count.
     expect(count.closest("td")).toHaveClass("max-lg:hidden");

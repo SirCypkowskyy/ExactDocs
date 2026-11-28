@@ -221,7 +221,7 @@ function NotInVersion({
 }
 
 const toggle =
-  "inline-flex h-11 min-w-20 items-center justify-center gap-1.5 rounded-[5px] px-3 text-body font-medium outline-none transition-[background-color,color] duration-(--dur-fast) focus-visible:ring-2 focus-visible:ring-ring lg:h-7";
+  "inline-flex h-11 min-w-20 items-center justify-center gap-1.5 rounded-[5px] px-3 text-body font-medium outline-none transition-[background-color,color,scale] duration-(--dur-fast) ease-(--ease-out) motion-safe:active:scale-[0.97] focus-visible:ring-2 focus-visible:ring-ring lg:h-7";
 
 type View = "rendered" | "source";
 
