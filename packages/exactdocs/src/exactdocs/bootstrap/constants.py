@@ -192,8 +192,9 @@ STAGING_PREFIX: Final[str] = ".exactdocs-backup-"
 # ---------------------------------------------------------------- database
 MIGRATIONS: Final[Path] = Path(__file__).parent / "migrations"
 """Folder of the Alembic revisions that build the database."""
-BUSY_TIMEOUT_MS: Final[int] = 5000
-"""How long SQLite waits for a lock held by another connection before it gives up."""
+BUSY_TIMEOUT_MS: Final[int] = 30_000
+"""How long SQLite waits for a lock held by another connection before it gives up: as long as a
+write turn on PostgreSQL (``WRITE_LOCK_TIMEOUT_MS``). 5 s was too short on a busy machine (#672)."""
 SPEND_LEDGER_TABLES: Final[frozenset[str]] = frozenset(
     {
         "retrieval_ai_spend",
