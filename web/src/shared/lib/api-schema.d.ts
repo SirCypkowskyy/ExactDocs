@@ -6278,10 +6278,11 @@ export interface components {
             readonly provider: string | null;
             /**
              * Source
-             * @description `github_org`, `github_team`, `group` or `role` (a value of the provider's `role_claim`).
+             * @description `github_org`, `github_team`, `group`, `role` (a value of the provider's `role_claim`), or
+             *     `everyone` (`[auth].default_library_role`: every account, with an empty `value`).
              * @enum {string}
              */
-            readonly source: "github_org" | "github_team" | "group" | "role";
+            readonly source: "github_org" | "github_team" | "group" | "role" | "everyone";
             /**
              * Value
              * @description The organization, `org/team`, group or role value, as the provider names it.

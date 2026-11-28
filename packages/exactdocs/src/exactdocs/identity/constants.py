@@ -444,3 +444,6 @@ GITHUB_TEAM_PATTERN: Final[str] = r"[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9][A-Za-z0
 """A GitHub team as ``org/team-slug``, as a role rule names it."""
 ROLE_RULES_ACTION: Final[str] = "manages role rules"
 """What only an operator does with role rules (#577), for the refusal."""
+
+DEFAULT_LIBRARY_ROLE_RULE: Final[str] = "config:default_library_role"
+"""The ID of the read-only rule ``[auth].default_library_role`` shows as."""

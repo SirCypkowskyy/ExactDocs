@@ -1067,7 +1067,7 @@ class ListUsersUseCase:
         sort = parse_sort(query.sort, allowed=USER_SORT_FIELDS, default="created_at")
         links = await self.externals.groups_by_account()
         counts = await self.tokens.count_by_account(self.clock.now())
-        matched = await self._matched_rules()
+        matched, local = await self._matched_rules()
         users = []
         for account in await self.accounts.list_all():
             provider, groups = links.get(account.id, (None, []))
@@ -1077,7 +1077,7 @@ class ListUsersUseCase:
                     provider=provider,
                     groups=groups,
                     token_count=counts.get(account.id, 0),
-                    rules=matched.get(account.id, []),
+                    rules=matched.get(account.id, local),
                 )
             )
         users = [
@@ -1106,19 +1106,21 @@ class ListUsersUseCase:
         )
         return UserList.from_page(page)
 
-    async def _matched_rules(self) -> dict[AccountId, list[str]]:
-        """Return the IDs of the role rules that match each account created through a provider.
+    async def _matched_rules(self) -> tuple[dict[AccountId, list[str]], list[str]]:
+        """Return the IDs of the role rules that match each account, in the order of the rules.
 
         Returns:
-            The IDs, in the order of the rules, by account.
+            The IDs by account created through a provider, and those of a local account (the
+            default role's, if set).
         """
         if self.rules is None:
-            return {}
-        rules = await self.rules.in_force()
+            return {}, []
+        rules, policies = await self.rules.in_force(), self.rules.policies
+        local = Memberships(provider=None)
         return {
-            account: [rule.id for rule in rules if rule.matches(found, self.rules.policies)]
+            account: [rule.id for rule in rules if rule.matches(found, policies)]
             for account, found in (await self.externals.memberships_by_account()).items()
-        }
+        }, [rule.id for rule in rules if rule.matches(local, policies)]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2409,17 +2411,20 @@ class RoleRules:
     private: PrivateLibraries | None = None
     """Which libraries are private; ``None`` treats every library as private, so a rule for
     every library reaches none (fails closed)."""
+    default_role: RoleRule | None = None
+    """``[auth].default_library_role`` as a rule matching every account; ``None`` when unset."""
 
     async def in_force(self) -> list[RoleRule]:
-        """Return every rule: each provider's configured ones, ``[library_creation]``'s, stored.
+        """Return every rule: the configured ones (providers', creation's, default role's), stored.
 
         Returns:
             The rules.
         """
         configured = [rule for p in self.policies.values() for rule in p.configured_role_rules]
         creation = () if self.library_creation is None else self.library_creation.role_rules
+        default = () if self.default_role is None else (self.default_role,)
         stored = [] if self.stored is None else await self.stored.stored()
-        return [*configured, *creation, *stored]
+        return [*configured, *creation, *default, *stored]
 
     async def matching(self, memberships: Memberships) -> list[RoleRule]:
         """Return the rules that apply to an account with these memberships.
@@ -2430,7 +2435,7 @@ class RoleRules:
         Returns:
             The rules.
         """
-        if memberships.provider is None and not memberships.groups:
+        if memberships.provider is None and not memberships.groups and self.default_role is None:
             return []
         return [r for r in await self.in_force() if r.matches(memberships, self.policies)]
 

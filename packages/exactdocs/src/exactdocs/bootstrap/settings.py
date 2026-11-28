@@ -57,7 +57,7 @@ from exactdocs.identity.constants import (
     TENANT_PLACEHOLDER,
 )
 from exactdocs.identity.errors import InvalidUsernameError
-from exactdocs.identity.models import Username
+from exactdocs.identity.models import LibraryRole, Username
 from exactdocs.ingestion.constants import DEFAULT_MCP_IMPORT_HOSTS
 from exactdocs.retrieval.constants import (
     DEFAULT_AGENT_CACHE_TTL_DAYS,
@@ -1041,6 +1041,32 @@ class AuthSettings(BaseModel):
     cloudflare_access: CloudflareAccessSettings | None = None
     """Sign in by the Cloudflare Access identity of each request (`[auth.cloudflare_access]`);
     off when unset."""
+    default_library_role: str | None = None
+    """The library role every enabled account holds on every library that is not private (local
+    accounts and those of any provider, Cloudflare Access included); only `viewer`. Unset, an
+    account holds only the roles it was given and its rules give."""
+
+    @field_validator("default_library_role")
+    @classmethod
+    def _read_only_default(cls, value: str | None) -> str | None:
+        """Refuse a default library role other than ``viewer``.
+
+        Args:
+            value: The configured role, if any.
+
+        Returns:
+            The role, unchanged.
+
+        Raises:
+            ValueError: It is anything but ``viewer``.
+        """
+        if value is not None and value != LibraryRole.VIEWER.value:
+            message = (
+                f"default_library_role {value!r} is not allowed: only 'viewer' can be given to"
+                " every account, so a default role never lets anyone change a library"
+            )
+            raise ValueError(message)
+        return value
 
     @field_validator("providers")
     @classmethod

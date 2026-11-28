@@ -8,7 +8,13 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Self
 
-from exactdocs.identity.models import AccessPolicy, LibraryCreationPolicy, SignInPolicy
+from exactdocs.identity.models import (
+    AccessPolicy,
+    LibraryCreationPolicy,
+    LibraryRole,
+    SignInPolicy,
+    default_library_role_rule,
+)
 from exactdocs.identity.ports.driven import (
     AccessAssertionVerifier,
     AccessLog,
@@ -240,6 +246,7 @@ class IdentityModule:
         access_policy: AccessPolicy | None = None,
         role_rules: RoleRuleRepository | None = None,
         private_libraries: PrivateLibraries | None = None,
+        default_library_role: LibraryRole | None = None,
     ) -> Self:
         """Assemble the use cases around the given driven adapters.
 
@@ -265,6 +272,8 @@ class IdentityModule:
             role_rules: The role rules admins added; ``None`` for the configured ones only.
             private_libraries: Which libraries are private, which a rule for every library
                 leaves out; ``None`` makes such a rule reach no library.
+            default_library_role: ``[auth].default_library_role``: the role every enabled
+                account holds on every library that is not private; ``None`` for none.
 
         Returns:
             The module, its driving ports wired.
@@ -298,6 +307,9 @@ class IdentityModule:
             stored=role_rules,
             library_creation=library_creation,
             private=private_libraries,
+            default_role=None
+            if default_library_role is None
+            else default_library_role_rule(default_library_role),
         )
         rule_admin = RuleAdmin(
             accounts=repository, externals=externals, rules=rules, log=access_log, clock=clock

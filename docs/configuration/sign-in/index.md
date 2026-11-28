@@ -7,6 +7,8 @@
     - Each provider admits people by `allowed_groups`, by GitHub membership filters, or by `allow_any_user = true`.
     - Behind Cloudflare Access, ExactDocs can sign people in by the identity Access already checked.
     - `[auth.library_creation]` limits who may create libraries; by default every signed-in user may.
+    - `[auth] default_library_role = "viewer"` lets every account read every library that is not
+      private, local accounts and Cloudflare Access ones included.
     - [Role rules](role-rules.md) map a provider's groups, role values, GitHub organizations and teams
       to instance admin, library creation, or a library role on every library or on chosen ones.
 
@@ -120,3 +122,32 @@ permission regardless of these lists. Local internal commands, stdio MCP and sch
 retain their existing instance access. Read-only repository checks and previews remain available;
 adding a library is checked before Git access, credential storage or import queueing, including
 additions made by sources apply. Changing this configuration requires restarting the server.
+
+## Let every account read every library
+
+On an instance whose docs everyone who can sign in may read, one setting makes every account a
+viewer of every library, so nobody shares libraries one by one:
+
+```toml
+[auth]
+default_library_role = "viewer"
+```
+
+Or `EXACTDOCS_AUTH__DEFAULT_LIBRARY_ROLE=viewer` in the environment.
+
+- It reaches every enabled account: local accounts, the accounts of every sign-in provider and
+  those Cloudflare Access created, including accounts and libraries added later. A disabled
+  account gets nothing.
+- `viewer` is the only value. Anything else stops the server at start, so the setting can never
+  let anyone import, configure or remove a library.
+- It leaves out private libraries (imported with a token or a deploy key), which stay their
+  creator's to share.
+- It only adds: an account keeps a higher role it was given directly or by a
+  [role rule](role-rules.md).
+- It does not let anyone create libraries. That stays with `[auth.library_creation]`; to keep the
+  MCP tools `add_docs` and `import_status` from ordinary accounts, set `[auth.library_creation]`
+  empty (operators only) as well.
+- The Users page, the role rules list and each library's sharing page show it as the rule
+  "every account → viewer on every library", set by the configuration file and read-only.
+- To take it away, remove the line and restart: roles from it are worked out at every request and
+  never written as grants, so nothing is left behind.

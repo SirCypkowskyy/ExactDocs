@@ -20742,10 +20742,11 @@
               "github_org",
               "github_team",
               "group",
-              "role"
+              "role",
+              "everyone"
             ],
             "title": "Source",
-            "description": "`github_org`, `github_team`, `group` or `role` (a value of the provider's `role_claim`)."
+            "description": "`github_org`, `github_team`, `group`, `role` (a value of the provider's `role_claim`), or\n`everyone` (`[auth].default_library_role`: every account, with an empty `value`)."
           },
           "value": {
             "type": "string",

@@ -200,6 +200,10 @@ describe("role rule words", () => {
       ruleText({ ...stored, source: "github_team", grant: "admin", libraries: ["/a/b"] } as never),
     ).toBe("GitHub team acme/docs-writers → admin on /a/b");
     expect(ruleText({ ...configured } as never, "pl")).toBe("grupa ops → administrator instancji");
+    const everyone = { ...configured, provider: null, source: "everyone", value: "" };
+    expect(ruleText({ ...everyone, grant: "viewer" } as never, "en")).toBe(
+      "every account → viewer on every library",
+    );
   });
 
   it("offer GitHub names only on GitHub and role values only with a role claim", () => {

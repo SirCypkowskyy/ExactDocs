@@ -81,6 +81,9 @@ How rules combine with everything else:
   at their next sign-in or membership check.
 - `admin_groups` and `[auth.library_creation].groups` keep working unchanged; they count as rules
   of the configuration file.
+- No rule matches local accounts or Cloudflare Access accounts. To let every account read every
+  library, use [`default_library_role`](index.md#let-every-account-read-every-library), which
+  shows here as the configured rule "every account → viewer on every library".
 - On GitHub, every organization and team a rule names is checked like `allowed_teams` (active
   membership, restricted organizations), and the active ones become groups `github:<org>` and
   `github:<org>/<team>`. Who signs in stays with `allowed_orgs` and `allowed_teams` (and with

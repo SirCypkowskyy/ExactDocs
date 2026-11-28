@@ -17,8 +17,15 @@ library or on chosen ones.
 
 - **Where rules come from.** `RoleRules.in_force` reads, in order: each provider's configured
   rules (`admin_groups` as `instance_admin` rules, then `[[rules]]`), `[auth.library_creation].groups`
-  as `create_libraries` rules of any provider, and `identity_role_rules` (`RoleRuleRepository`).
+  as `create_libraries` rules of any provider, `[auth].default_library_role` as the one
+  `everyone` rule (`RoleRules.default_role`), and `identity_role_rules` (`RoleRuleRepository`).
   The configured ones are `configured`, so read-only.
+- **The default role.** `default_library_role_rule` builds a rule of source `everyone`, no
+  provider and grant `viewer` on every library; `RoleRule` refuses any other `everyone` rule
+  (stored, of a provider, on chosen libraries, or another grant). It matches every account, local
+  ones too (`RoleRules.matching` skips local accounts only while it is unset), so it goes through
+  the same path as the other rules: private libraries left out, disabled accounts and unknown
+  callers get nothing (`_caller_memberships`), never creation or instance admin.
 - **Matching.** `RoleRule.matches` compares the account's `Memberships`: its origin's provider,
   its stored groups and its stored role values. A rule matches only accounts of its provider, while
   that provider is configured; a stored rule not at all while the provider has

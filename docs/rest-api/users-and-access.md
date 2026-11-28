@@ -207,6 +207,11 @@ grants and how they combine; rules from the configuration file are listed here w
     }
     ```
 
+`[auth] default_library_role` shows in the list as a configured rule with the ID
+`config:default_library_role`, `"provider": null`, `"source": "everyone"`, an empty `value` and
+`"grant": "viewer"`. It is also in the `rules` of every account on `GET /users` and of every library
+that is not private on `GET .../grants`.
+
 `POST /role-rules` with `{"provider", "source", "value", "grant", "libraries"?}` adds one and
 answers it (201).
 

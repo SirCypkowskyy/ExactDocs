@@ -23,7 +23,9 @@ their own words and implemented once by `bootstrap/bridges.py:IdentityAccessPoli
 - A grant (`identity_library_grants`, one row per library, user-or-group and subject) gives a role
   to an account or to every member of a group. Groups are those of `identity_account_groups`, so
   only external accounts have any.
-- An account's **effective role** is the highest it holds, directly or through a group.
+- An account's **effective role** is the highest it holds, directly, through a group, or from
+  a [role rule](role-rules.md). `[auth].default_library_role` is such a rule: `viewer` on every
+  library that is not private, for every enabled account.
 - An operator (account role `admin`) is `creator` of every library, so a library nobody holds is
   still managed.
 - A disabled account holds nothing.
@@ -130,4 +132,5 @@ Reading it:
 ## Upgrading
 
 Libraries that exist when the migration runs get no grant. Operators keep full access; other
-accounts hold no role until an operator or the creator shares the library.
+accounts hold no role until an operator or the creator shares the library, or
+`[auth].default_library_role` makes every account a viewer.

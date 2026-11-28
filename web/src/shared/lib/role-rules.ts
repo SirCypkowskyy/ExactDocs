@@ -15,6 +15,7 @@ const messages = defineMessages(
       github_team: "GitHub team",
       group: "group",
       role: "role",
+      everyone: "every account",
     },
     grant: {
       instance_admin: "instance admin",
@@ -32,6 +33,7 @@ const messages = defineMessages(
       github_team: "zespół GitHub",
       group: "grupa",
       role: "rola",
+      everyone: "każde konto",
     },
     grant: {
       instance_admin: "administrator instancji",
@@ -45,9 +47,10 @@ const messages = defineMessages(
   },
 );
 
-/** Who a rule matches: "GitHub team acme/docs-writers". */
+/** Who a rule matches: "GitHub team acme/docs-writers", or "every account" (the default role). */
 export function ruleSource(rule: RoleRule, language: Language = currentLanguage()): string {
-  return `${messages[language].source[rule.source]} ${rule.value}`;
+  const source = messages[language].source[rule.source];
+  return rule.source === "everyone" ? source : `${source} ${rule.value}`;
 }
 
 /** What a rule gives: "contributor on every library", "instance admin". */
