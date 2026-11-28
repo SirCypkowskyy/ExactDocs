@@ -90,11 +90,11 @@ redis = ["redis==8.2.0"]
 # `retrieval/adapters/driven/milvus_index.py`, and only once an operator names the backend. Not in
 # any image. `milvus` is the client alone (a Milvus server or Zilliz Cloud); `milvus-lite` adds
 # Milvus Lite, the embedded engine on a local `.db` directory (pure Python with faiss-cpu: wheels
-# for Linux x86_64 and ARM64, macOS). Exact pins (pymilvus 3.0.2 of 2026-09-18, milvus-lite 3.2.2
+# for Linux x86_64 and ARM64, macOS). Exact pins (pymilvus 3.0.3 of 2026-11-10, milvus-lite 3.2.2
 # of 2026-10-13, both more than 14 days old when taken), tested against the
 # `milvusdb/milvus` standalone server in CI and Milvus Lite on a temporary directory.
-milvus = ["pymilvus==3.0.2"]
-milvus-lite = ["pymilvus==3.0.2", "milvus-lite==3.2.2"]
+milvus = ["pymilvus==3.0.3"]
+milvus-lite = ["pymilvus==3.0.3", "milvus-lite==3.2.2"]
 # MongoDB (Atlas Search and Atlas Vector Search, or MongoDB Community with `mongot`) as the search
 # and vector backend (#363, EXACTDOCS_SEARCH_BACKEND / EXACTDOCS_VECTOR_BACKEND=mongodb): pymongo's
 # own async API, imported only by `retrieval/adapters/driven/mongodb_index.py`, and only once an

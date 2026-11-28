@@ -24,6 +24,7 @@ import { useDataTable } from "@/shared/ui/data-table/use-data-table";
 import { Page, PageHeader } from "@/shared/ui/page";
 import { librariesKeys, librariesSource } from "../api/libraries-query";
 import { syncLibrary } from "../api/sync-library";
+import { librariesHelp } from "../help";
 import { SyncContext } from "../hooks/sync-context";
 import { useSyncStates } from "../hooks/use-libraries";
 import { listMessages } from "../messages/list";
@@ -147,6 +148,7 @@ export function LibrariesPage() {
         title={t.title}
         icon={<LibraryBig />}
         headingRef={heading}
+        help={librariesHelp}
         actions={!firstRun && model.status === "ready" && <AddLibraryLink />}
         description={
           model.total !== undefined &&
@@ -182,21 +184,25 @@ export function LibrariesPage() {
         <FirstRun />
       ) : (
         <SyncContext value={syncs}>
-          <DataTableToolbar
-            model={model}
-            search={{ label: t.toolbar.find, placeholder: t.toolbar.findPlaceholder }}
-          >
-            <PhoneSort view={view} />
-          </DataTableToolbar>
-          <DataTable
-            model={model}
-            label={t.title}
-            rowActions={actions}
-            rowLabel={(library) => library.id}
-            empty={{ icon: LibraryBig, title: t.firstRun.title, action: <AddLibraryLink /> }}
-            noMatch={{ title: t.noMatch.title, body: t.noMatch.body }}
-            errorMessage={t.loadFailed}
-          />
+          <div data-tour="libraries-toolbar">
+            <DataTableToolbar
+              model={model}
+              search={{ label: t.toolbar.find, placeholder: t.toolbar.findPlaceholder }}
+            >
+              <PhoneSort view={view} />
+            </DataTableToolbar>
+          </div>
+          <div data-tour="libraries-table">
+            <DataTable
+              model={model}
+              label={t.title}
+              rowActions={actions}
+              rowLabel={(library) => library.id}
+              empty={{ icon: LibraryBig, title: t.firstRun.title, action: <AddLibraryLink /> }}
+              noMatch={{ title: t.noMatch.title, body: t.noMatch.body }}
+              errorMessage={t.loadFailed}
+            />
+          </div>
           <DataTablePagination model={model} />
         </SyncContext>
       )}

@@ -5,15 +5,19 @@ import { usePageTitle } from "@/shared/lib/use-page-title";
 import { Avatar } from "@/shared/ui/avatar";
 import { Badge } from "@/shared/ui/badge";
 import { Page, PageHeader } from "@/shared/ui/page";
+import type { HelpTopic } from "@/shared/ui/page-help";
 import { useSession } from "../hooks/use-session";
 import { messages, roleName } from "../messages";
 import { SignOutButton } from "./sign-out-button";
 
 export function AccountPanel({
   onSignedOut,
+  help,
   children,
 }: {
   onSignedOut: () => void;
+  /** The page's tour, composed by the route like the sections. */
+  help?: HelpTopic;
   /** Sections composed by the route (the auth slice cannot import other features). */
   children?: ReactNode;
 }) {
@@ -27,6 +31,7 @@ export function AccountPanel({
         title={t.account.title}
         icon={<UserRound />}
         headingRef={heading}
+        help={help}
         description={t.account.description}
       />
       <div className="grid items-start gap-10 lg:grid-cols-[18rem_minmax(0,1fr)] lg:gap-12">

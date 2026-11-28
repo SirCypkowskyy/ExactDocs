@@ -101,7 +101,10 @@ export function FilesAside({
   return (
     <aside aria-label={t.files} className="flex min-w-0 flex-col gap-3 lg:sticky lg:top-17">
       {/* Two side by side while both fit 10rem; one above the other at a large text size (#576). */}
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-2 lg:block">
+      <div
+        data-tour="library-version"
+        className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,10rem),1fr))] gap-2 lg:block"
+      >
         <VersionPicker
           owner={owner}
           repo={repo}
@@ -113,8 +116,16 @@ export function FilesAside({
         <FilesToggle open={filesOpen} label={label} onToggle={() => setChosen(!filesOpen)} />
       </div>
       {/* On a phone the box leads while searching: it is the one control the reader is using. */}
-      {searchBox && <div className={cn(q && "max-lg:order-first")}>{searchBox}</div>}
-      <div id="file-tree" className={cn("space-y-3", !filesOpen && "max-lg:hidden")}>
+      {searchBox && (
+        <div data-tour="library-search" className={cn(q && "max-lg:order-first")}>
+          {searchBox}
+        </div>
+      )}
+      <div
+        id="file-tree"
+        data-tour="library-files"
+        className={cn("space-y-3", !filesOpen && "max-lg:hidden")}
+      >
         {/* While searching, the search box carries its own filter (same `tags` param). */}
         {!q && (
           <TagChips

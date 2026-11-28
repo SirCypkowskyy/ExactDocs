@@ -21,6 +21,7 @@ import {
   TableRowHeader,
 } from "@/shared/ui/table";
 import { RULE_CHANGE_KEYS, removeRoleRule, roleRulesQueryOptions } from "../api/role-rules-query";
+import { roleRulesHelp } from "../help";
 import { messages } from "../messages";
 import { editableProviders, explainRuleError, type RoleRule } from "../model/role-rule";
 import { rulesMessages } from "../rules-messages";
@@ -71,6 +72,7 @@ export function RoleRulesPage() {
         title={m.page.title}
         icon={<Users />}
         headingRef={heading}
+        help={roleRulesHelp}
         description={
           <>
             <p>{t.page.description}</p>
@@ -83,7 +85,7 @@ export function RoleRulesPage() {
         }
         actions={
           editable.length > 0 && (
-            <Button onClick={() => setAdding(true)}>
+            <Button data-tour="rules-add" onClick={() => setAdding(true)}>
               <Plus aria-hidden="true" data-icon-motion="pop" />
               {t.page.add}
             </Button>
@@ -117,7 +119,7 @@ export function RoleRulesPage() {
           {t.list.emptyBody}
         </EmptyState>
       ) : (
-        <Table aria-label={t.list.label}>
+        <Table aria-label={t.list.label} data-tour="rules-list">
           <TableHeader>
             <TableRow>
               <TableHead>{t.list.columns.source}</TableHead>

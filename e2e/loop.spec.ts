@@ -588,3 +588,49 @@ test("the main pages reflow at the two largest text sizes", async ({ browser }) 
   }
   expect(problems).toEqual([]);
 });
+
+// A page's Help tour: it opens from the header, rings each part on a dimmed page, steps by
+// keyboard, leaves with Escape back on the Help button, and reads cleanly in both themes and on a
+// phone. Runs after the first test: the libraries page lists the library it imported.
+test("the libraries page's Help tour walks the page by keyboard", async ({ browser }) => {
+  for (const colorScheme of ["light", "dark"] as const) {
+    for (const [size, viewport] of [
+      ["desktop", { width: 1280, height: 800 }],
+      ["phone", { width: 375, height: 812 }],
+    ] as const) {
+      const context = await browser.newContext({ baseURL, colorScheme, viewport });
+      const page = await context.newPage();
+      await signIn(page);
+      const help = page.getByRole("main").getByRole("button", { name: "Help" });
+      await help.click();
+      const tour = page.getByRole("dialog", { name: "Using the library list" });
+      await expect(tour.getByRole("button", { name: "Next" })).toBeFocused();
+      await expect(tour.getByText("1 of 4", { exact: true })).toBeVisible();
+      const ring = page.locator('[data-slot="tour-spotlight"]');
+      await expect(ring).toBeVisible();
+      await settled(page);
+      await page.screenshot({ path: `shots/tour-${colorScheme}-${size}-1.png` });
+      await expectNoViolations(page, `tour ${colorScheme} ${size}`);
+
+      await page.keyboard.press("ArrowRight");
+      await expect(tour.getByText("2 of 4", { exact: true })).toBeVisible();
+      await page.keyboard.press("Enter");
+      await page.keyboard.press("Enter");
+      await expect(tour.getByText("Add a library")).toBeVisible();
+      // The ringed part is scrolled into view.
+      await expect(page.locator('[data-tour="add-library"]').first()).toBeInViewport();
+      await settled(page);
+      await page.screenshot({ path: `shots/tour-${colorScheme}-${size}-4.png` });
+      const sideways = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(sideways, `tour ${colorScheme} ${size} scrolls sideways`).toBeLessThanOrEqual(0);
+
+      await page.keyboard.press("Escape");
+      await expect(tour).toBeHidden();
+      await expect(ring).toHaveCount(0);
+      await expect(help).toBeFocused();
+      await context.close();
+    }
+  }
+});

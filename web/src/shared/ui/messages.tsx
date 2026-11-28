@@ -160,6 +160,16 @@ export const messages = defineMessages(
       count: (n: number) => String(n),
       truncated: "Showing the most used tags only.",
     },
+    help: {
+      button: "Help",
+      close: "Close the guide",
+      back: "Back",
+      next: "Next",
+      done: "Got it",
+      step: (n: number, total: number) => `${n} of ${total}`,
+      guide: "Read about this in the guide",
+      newTab: "(opens in a new tab)",
+    },
     toasts: {
       region: "Notifications",
       close: "Close toast",
@@ -319,6 +329,16 @@ export const messages = defineMessages(
       filter: "Filtruj według tagu",
       count: (n) => formatNumber(n, "pl"),
       truncated: "Widoczne są tylko najczęściej używane tagi.",
+    },
+    help: {
+      button: "Pomoc",
+      close: "Zamknij przewodnik",
+      back: "Wstecz",
+      next: "Dalej",
+      done: "Rozumiem",
+      step: (n, total) => `${n} z ${total}`,
+      guide: "Przeczytaj o tym w dokumentacji (po angielsku)",
+      newTab: "(otwiera się w nowej karcie)",
     },
     toasts: {
       region: "Powiadomienia",

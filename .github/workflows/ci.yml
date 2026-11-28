@@ -16,7 +16,7 @@ name: CI
 #   hybrid (default, also when unset): every job on GitHub-hosted ubuntu-24.04 (amd64).
 #   self-hosted (the current setting: docs/decisions/ci-runners.md): every job on our GCP
 #     self-hosted ARM64 runners [self-hosted, linux, ARM64, exactdocs, gcp], with fewer shards
-#     (pytest three instead of six, behave two instead of three): shards queue on the self-hosted runners (one 2-vCPU VM since 28 November 2026).
+#     (pytest three instead of six, behave two instead of three): shards queue on the self-hosted runners (four 2-vCPU VMs since 28 November 2026).
 #   A pull request from a fork always runs on GitHub-hosted runners, whatever RUNNER_MODE says: a
 #   fork's code never reaches the self-hosted machines through these jobs. (A fork can still edit
 #   runs-on in its own copy, so approval for outside contributors stays on in the settings.)

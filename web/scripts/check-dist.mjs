@@ -19,7 +19,8 @@ const ALLOWED_IN_JS = [
   // Recharts' state libraries (the overview's lazy chart chunk): text of a thrown error, never fetched
   /^https:\/\/redux(-toolkit)?\.js\.org\/Errors\?code=\$\{/,
   /^https:\/\/bit\.ly\/3cXEKWf$/,
-  // The footer's links to the repository and the docs site: followed by a click, never fetched
+  // The footer's repository link, and the docs site the footer and the Help tours' "Read about this
+  // in the guide" links open: followed by a click, never fetched
   /^https:\/\/github\.com\/SirCypkowskyy\/ExactDocs$/,
   /^https:\/\/sircypkowskyy\.github\.io\/ExactDocs\/$/,
 ];

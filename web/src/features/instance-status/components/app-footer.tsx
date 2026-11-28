@@ -3,12 +3,12 @@ import { Link } from "@tanstack/react-router";
 import { ArrowRight, ExternalLink } from "lucide-react";
 import type { ReactNode } from "react";
 import { useMessages } from "@/shared/lib/i18n";
+import { DOCS_URL, guideUrl } from "@/shared/ui/page-help";
 import { Mark } from "@/shared/ui/wordmark";
 import { healthQueryOptions } from "../api/instance-status";
 import { messages } from "../messages";
 
 const REPO = "https://github.com/SirCypkowskyy/ExactDocs";
-const DOCS = "https://sircypkowskyy.github.io/ExactDocs/";
 
 /** A footer link: muted ink that turns to ink and underlines, a line high with a mouse, 44px on touch. */
 const link =
@@ -60,10 +60,10 @@ export function AppFooter({ signedIn }: { signedIn: boolean }) {
             </li>
           )}
           <li>
-            <Away href={DOCS}>{t.docs}</Away>
+            <Away href={DOCS_URL}>{t.docs}</Away>
           </li>
           <li>
-            <Away href={`${DOCS}rest-api/`}>{t.api}</Away>
+            <Away href={guideUrl("rest-api/")}>{t.api}</Away>
           </li>
           <li>
             {/* The instance's own description of /api/v1, served without a caller. */}
