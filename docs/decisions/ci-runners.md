@@ -1,7 +1,7 @@
 # CI runs on our GCP self-hosted runners
 
 !!! abstract "TL;DR"
-    - CI runs on eight GCP VMs registered as self-hosted runners, and every self-hosted job asks
+    - CI runs on one GCP VM registered as a self-hosted runner, and every self-hosted job asks
       for `[self-hosted, linux, ARM64, exactdocs, gcp]`. The runner on the maintainer's
       workstation gets no job.
     - `RUNNER_MODE` stays, set to `self-hosted`. `hybrid` is the way back to GitHub-hosted
@@ -90,8 +90,9 @@
   same VM runs with, and in `self-hosted` mode that includes the release's publishing jobs and
   their OIDC tokens. The job-started hook in `deploy/runners/` removes leftover containers and is
   installed on every GCP VM.
-- **Capacity is 8 × 2 vCPU** (five VMs at first, three more since 27 November 2026). One pull
-  request's CI is nine jobs plus two for the docs, so two pull requests at once queue. A self-hosted job can run up to 5 days.
+- **Capacity is 1 × 2 vCPU** since 28 November 2026 (five VMs at first, eight from 27 November,
+  then cut to one to save cost). One pull request's CI is nine jobs plus two for the docs, and they
+  run one after another, so a pull request's CI takes hours and others queue behind it. A self-hosted job can run up to 5 days.
 - **The arm64 numbers stay comparable.** The recorded benchmark runs were Linux aarch64, as are
   these VMs, though with 2 CPUs instead of 4.
 - **Follow-up:** ephemeral runners, one fresh VM per job and deregistered after it, which removes
